@@ -9,6 +9,7 @@
 // same version-CAS path as PUT, so it is auditable and cache-invalidating.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import {
   assertPlatformAdminArea,
   PlatformAdminError,
@@ -48,6 +49,6 @@ export async function POST(
     clearPersonaRepositoryCaches();
     return Response.json({ ok: true, slug, version: result.version, restored: true });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

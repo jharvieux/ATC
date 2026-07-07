@@ -4,6 +4,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const SHIP_COLS = "id, cruise_line_id, slug, canonical_name, ship_class, is_active, cruisemapper_slug, created_at";
 
@@ -55,6 +56,6 @@ export async function PATCH(
     if (!ship) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json({ ship });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

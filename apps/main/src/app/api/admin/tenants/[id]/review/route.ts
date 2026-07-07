@@ -12,6 +12,7 @@ import { activateTenant } from "@/lib/tenants/activate-tenant";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 function escapeReviewHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -286,7 +287,6 @@ export async function POST(
 
     return Response.json({ ok: true, action: body.action });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

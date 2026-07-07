@@ -5,6 +5,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -45,7 +46,7 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json({ documents: result });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -181,6 +182,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, ...result });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

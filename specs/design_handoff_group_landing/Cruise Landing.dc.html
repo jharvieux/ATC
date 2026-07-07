@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Quicksand:wght@500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#f0eee9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .dv-turn{padding:40px 44px 60px;scroll-margin-top:16px}
+  .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 22px}
+  .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+  .dv-tname{font:600 14px/1.2 system-ui,sans-serif;color:#1a1a1a}
+  .dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+  .dv-opt{flex:none;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px}
+  .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+  .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 12px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}
+  .dv-card{max-width:100%;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.1),0 12px 40px rgba(0,0,0,.12);overflow:hidden}
+  .dv-opt:target .dv-oid{background:#2a78d6;color:#fff}
+  .dv-next{margin:24px 0 0;font:12px/1.6 system-ui,sans-serif;color:rgba(0,0,0,.5);max-width:900px}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Chosen direction: <a class="dv-oid" href="#1b">1b</a> Bright &amp; Vacation-y — dark theme token map</span></div>
+  <div class="dv-opts">
+    <div class="dv-opt" id="2a">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Light vs. dark tokens (same layout &amp; type as <a class="dv-oid" href="#1b">1b</a>, applied to any cruise/ship/itinerary data)</div>
+      <div class="dv-card" style="width:1040px;background:#fff;padding:36px 40px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
+
+          <div>
+            <div style="font:700 13px Quicksand,sans-serif;color:#0b3a52;letter-spacing:.04em;text-transform:uppercase;margin-bottom:14px">Light theme</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#f4faff;border:1px solid #e4f1f8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Page background</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#f4faff</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#ffffff;border:1px solid #e4f1f8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Surface / cards</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#ffffff</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#0b3a52"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Text primary</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#0b3a52</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#5c7f91"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Text muted</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#5c7f91</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#0f7fa8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — ocean blue</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#0f7fa8</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#ffcc4d"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — sun yellow</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#ffcc4d</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#ff8a65"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — coral</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#ff8a65</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#1fa876"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Success / Booked</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#1fa876</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#fff;border:1px solid #e4f1f8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Hairline border</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#e4f1f8</div></div>
+              <div style="margin-top:6px;font:500 12px -apple-system,sans-serif;color:#5c7f91">Shadows: soft blue-tinted, e.g. <span style="font:500 11px ui-monospace,monospace">0 4px 16px rgba(15,127,168,.08)</span></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font:700 13px Quicksand,sans-serif;color:#eaf4fa;letter-spacing:.04em;text-transform:uppercase;margin-bottom:14px;background:#0a1622;display:inline-block;padding:4px 10px;border-radius:6px">Dark theme</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#0a1622"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Page background</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#0a1622</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#11212f"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Surface / cards</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#11212f</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#eaf4fa;border:1px solid #e4f1f8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Text primary</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#eaf4fa</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#8fadbc"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Text muted</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#8fadbc</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#38b6e8"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — ocean blue</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#38b6e8</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#ffcc4d"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — moon yellow</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#ffcc4d</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#ff8a65"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Accent — coral</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#ff8a65</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#34d399"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Success / Booked</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">#34d399</div></div>
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:22px;height:22px;border-radius:6px;background:#11212f;border:1px solid rgba(255,255,255,.12)"></div><div style="font:500 13px -apple-system,sans-serif;color:#0b3a52;flex:1">Hairline border</div><div style="font:500 12px ui-monospace,monospace;color:#5c7f91">rgba(255,255,255,.08)</div></div>
+              <div style="margin-top:6px;font:500 12px -apple-system,sans-serif;color:#5c7f91">Shadows→borders: swap soft shadows for 1px rgba(255,255,255,.06) borders; hero sun becomes a soft moon + faint stars.</div>
+            </div>
+          </div>
+
+        </div>
+        <p style="margin:24px 0 0;font:400 12px -apple-system,sans-serif;color:#5c7f91;line-height:1.6">Same layout, spacing, radii (16px cards / 999px pills) and Quicksand/system-sans type pairing carry over unchanged — only color tokens swap. Applies to any cruise line, ship, and itinerary; the Norwegian Bliss / Alaska content in <a class="dv-oid" href="#1b">1b</a> is placeholder sample data only, not fixed content.</p>
+      </div>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "build a live theme toggle" · "show the dark theme as a full page, not just tokens" · "generate the Claude Code handoff now"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Group cruise invite landing page — 3 visual directions</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Bold &amp; Festive</div>
+      <div class="dv-card" style="width:1040px;background:#1c0f2b">
+
+        <!-- NAV -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:22px 40px;background:#1c0f2b">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#ff3d81,#ffa24d)"></div>
+            <span style="font:600 15px Fredoka,sans-serif;color:#fff;letter-spacing:.01em">Alaska Group Cruise · 2026</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:32px;height:32px;border-radius:999px;background:#ff3d81;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#fff">JR</div>
+            <div style="width:32px;height:32px;border-radius:999px;background:#ffd166;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#2d0a3d">MT</div>
+          </div>
+        </div>
+
+        <!-- HERO -->
+        <div style="position:relative;padding:56px 40px 64px;background:linear-gradient(135deg,#3d1152 0%,#7d2a6b 38%,#e14e6b 72%,#ffa24d 100%);overflow:hidden">
+          <div style="position:absolute;top:-40px;right:-40px;width:220px;height:220px;border-radius:999px;background:rgba(255,209,102,.18)"></div>
+          <div style="position:absolute;bottom:-60px;left:-30px;width:180px;height:180px;border-radius:999px;background:rgba(255,61,129,.2)"></div>
+          <div style="position:relative;display:inline-block;padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.15);color:#ffd166;font:600 12px Fredoka,sans-serif;letter-spacing:.08em;text-transform:uppercase;margin-bottom:18px">Group Cruise Invite</div>
+          <h1 style="position:relative;margin:0 0 14px;font:700 46px/1.08 Fredoka,sans-serif;color:#fff;max-width:640px">You're invited aboard the Norwegian Bliss!</h1>
+          <p style="position:relative;margin:0 0 26px;font:400 17px/1.6 -apple-system,sans-serif;color:rgba(255,255,255,.85);max-width:560px">7 nights of glaciers, whales &amp; sail-away parties — departing Seattle, Oct 3, 2026. Grab your cabin before they're gone.</p>
+          <div style="position:relative;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="padding:10px 18px;border-radius:999px;background:#1c0f2b;color:#ffd166;font:700 14px Fredoka,sans-serif;letter-spacing:.02em">⏱ 94 days to set sail</div>
+            <div style="font:500 14px -apple-system,sans-serif;color:rgba(255,255,255,.75)">Seattle → Juneau → Skagway → Icy Strait Point → Victoria</div>
+          </div>
+        </div>
+
+        <!-- FOMO STATS -->
+        <div style="padding:44px 40px 8px;background:#1c0f2b">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px">
+            <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:22px;text-align:center">
+              <div style="font:700 34px Fredoka,sans-serif;color:#4ade9a">{{ counts.a.booked }}</div>
+              <div style="font:500 13px -apple-system,sans-serif;color:rgba(255,255,255,.6);margin-top:4px">Booked</div>
+            </div>
+            <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:22px;text-align:center">
+              <div style="font:700 34px Fredoka,sans-serif;color:#ffd166">{{ counts.a.interested }}</div>
+              <div style="font:500 13px -apple-system,sans-serif;color:rgba(255,255,255,.6);margin-top:4px">Interested</div>
+            </div>
+            <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:22px;text-align:center">
+              <div style="font:700 34px Fredoka,sans-serif;color:rgba(255,255,255,.5)">{{ counts.a.pending }}</div>
+              <div style="font:500 13px -apple-system,sans-serif;color:rgba(255,255,255,.6);margin-top:4px">Pending</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:14px;padding:18px 20px;background:rgba(255,255,255,.04);border-radius:16px;margin-bottom:36px">
+            <div style="display:flex">
+              <div style="width:36px;height:36px;border-radius:999px;background:#ff3d81;border:2px solid #1c0f2b;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#fff">JR</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#ffd166;border:2px solid #1c0f2b;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#2d0a3d">MT</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#4ade9a;border:2px solid #1c0f2b;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#0d3320">PK</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#ffa24d;border:2px solid #1c0f2b;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:600 12px Fredoka,sans-serif;color:#3d1a00">AF</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,.15);border:2px solid #1c0f2b;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:600 11px Fredoka,sans-serif;color:#fff">+11</div>
+            </div>
+            <div style="font:500 14px -apple-system,sans-serif;color:rgba(255,255,255,.8)">Jenna, Mike, Priya + 11 others are already booked. Don't be the last one on the dock.</div>
+          </div>
+        </div>
+
+        <!-- SHIP + ITINERARY -->
+        <div style="padding:0 40px 44px;background:#1c0f2b">
+          <div style="font:600 12px Fredoka,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#ff9f45;margin-bottom:10px">The Ship</div>
+          <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;margin-bottom:36px">
+            <div style="position:relative;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,#26123d,#5c2360);min-height:170px;display:flex;align-items:flex-end;padding:16px">
+              <span style="font:500 12px -apple-system,sans-serif;color:rgba(255,255,255,.55)">[ Norwegian Bliss — hero photo ]</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:16px">
+                <div style="font:700 20px Fredoka,sans-serif;color:#fff">4,004</div>
+                <div style="font:500 12px -apple-system,sans-serif;color:rgba(255,255,255,.55)">Guests aboard</div>
+              </div>
+              <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:16px">
+                <div style="font:700 20px Fredoka,sans-serif;color:#fff">20</div>
+                <div style="font:500 12px -apple-system,sans-serif;color:rgba(255,255,255,.55)">Decks</div>
+              </div>
+              <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:16px">
+                <div style="font:700 20px Fredoka,sans-serif;color:#fff">Go-Kart</div>
+                <div style="font:500 12px -apple-system,sans-serif;color:rgba(255,255,255,.55)">Track on deck</div>
+              </div>
+              <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:16px">
+                <div style="font:700 20px Fredoka,sans-serif;color:#fff">2018</div>
+                <div style="font:500 12px -apple-system,sans-serif;color:rgba(255,255,255,.55)">Built</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="font:600 12px Fredoka,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#ff9f45;margin-bottom:14px">7-Night Itinerary</div>
+          <div style="display:flex;flex-direction:column;gap:0">
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Sat</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Seattle, WA</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">Depart 4:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Sun</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Cruising Inside Passage</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">At sea</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Mon</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Tracy Arm Fjord</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">Scenic cruising</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Tue</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Juneau, AK</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">7am – 8:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Wed</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Skagway, AK</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">7am – 8:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Thu</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Icy Strait Point, AK</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">7am – 3pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Fri</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Victoria, BC</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">5pm – 11:59pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:70px 1fr 150px;gap:12px;padding:14px 16px">
+              <div style="font:700 13px Fredoka,sans-serif;color:#ff9f45">Sat</div>
+              <div style="font:600 14px -apple-system,sans-serif;color:#fff">Seattle, WA</div>
+              <div style="font:400 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">Arrive 7am</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FORUM -->
+        <div style="padding:0 40px 44px;background:#1c0f2b">
+          <div style="font:600 12px Fredoka,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#ff9f45;margin-bottom:14px">Group Chat</div>
+          <div style="background:rgba(255,255,255,.05);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;gap:12px">
+              <div style="width:32px;height:32px;flex:none;border-radius:999px;background:#4ade9a;display:flex;align-items:center;justify-content:center;font:600 11px Fredoka,sans-serif;color:#0d3320">PK</div>
+              <div>
+                <div style="font:600 13px -apple-system,sans-serif;color:#fff">Priya K. <span style="font:400 12px -apple-system,sans-serif;color:rgba(255,255,255,.4);margin-left:6px">2h ago</span></div>
+                <div style="font:400 14px -apple-system,sans-serif;color:rgba(255,255,255,.75);margin-top:2px">Just booked our whale-watching excursion in Juneau — anyone want to join?</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:12px">
+              <div style="width:32px;height:32px;flex:none;border-radius:999px;background:#ffa24d;display:flex;align-items:center;justify-content:center;font:600 11px Fredoka,sans-serif;color:#3d1a00">MB</div>
+              <div>
+                <div style="font:600 13px -apple-system,sans-serif;color:#fff">Marcus B. <span style="font:400 12px -apple-system,sans-serif;color:rgba(255,255,255,.4);margin-left:6px">5h ago</span></div>
+                <div style="font:400 14px -apple-system,sans-serif;color:rgba(255,255,255,.75);margin-top:2px">Cabin 8210 — see you all at the sail-away party on the pool deck!</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
+              <div style="font:500 13px -apple-system,sans-serif;color:rgba(255,255,255,.5)">18 messages this week</div>
+              <div style="padding:9px 16px;border-radius:999px;background:#ff3d81;color:#fff;font:600 13px Fredoka,sans-serif">Open Group Chat →</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RSVP -->
+        <div style="padding:44px 40px 48px;background:linear-gradient(180deg,#1c0f2b,#2a1740)">
+          <h2 style="margin:0 0 6px;font:700 24px Fredoka,sans-serif;color:#fff">Will you be joining us?</h2>
+          <p style="margin:0 0 22px;font:400 14px -apple-system,sans-serif;color:rgba(255,255,255,.55)">Let the group know your status — you can always change it later.</p>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <button style="{{ styleA.interested }}" onclick="{{ setRsvpA.interested }}">I'm Interested</button>
+            <button style="{{ styleA.cant }}" onclick="{{ setRsvpA.cant }}">Can't Make It</button>
+            <button style="{{ styleA.booked }}" onclick="{{ setRsvpA.booked }}">I've Booked</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Bright &amp; Vacation-y</div>
+      <div class="dv-card" style="width:1040px;background:#f4faff">
+
+        <!-- NAV -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:22px 40px;background:#fff;border-bottom:1px solid #e4f1f8">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#0f7fa8,#ffcc4d)"></div>
+            <span style="font:700 15px Quicksand,sans-serif;color:#0b3a52;letter-spacing:.01em">Alaska Group Cruise · 2026</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:32px;height:32px;border-radius:999px;background:#0f7fa8;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#fff">JR</div>
+            <div style="width:32px;height:32px;border-radius:999px;background:#ffcc4d;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#5a4300">MT</div>
+          </div>
+        </div>
+
+        <!-- HERO -->
+        <div style="position:relative;padding:56px 40px 64px;background:linear-gradient(180deg,#bfe6f7 0%,#8ed0ec 45%,#4fa8d8 100%);overflow:hidden">
+          <div style="position:absolute;top:34px;right:60px;width:74px;height:74px;border-radius:999px;background:#ffcc4d;box-shadow:0 0 40px 10px rgba(255,204,77,.5)"></div>
+          <div style="position:absolute;bottom:-30px;left:0;right:0;height:60px;background:#f4faff;border-radius:50% 50% 0 0 / 100% 100% 0 0;transform:scaleX(1.4)"></div>
+          <div style="position:relative;display:inline-block;padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.6);color:#0b3a52;font:700 12px Quicksand,sans-serif;letter-spacing:.05em;text-transform:uppercase;margin-bottom:18px">Group Cruise Invite</div>
+          <h1 style="position:relative;margin:0 0 14px;font:700 46px/1.1 Quicksand,sans-serif;color:#0b3a52;max-width:600px">You're invited aboard the Norwegian Bliss!</h1>
+          <p style="position:relative;margin:0 0 26px;font:500 17px/1.6 -apple-system,sans-serif;color:#0b3a52;max-width:560px;opacity:.8">7 sunny days of glaciers, whales &amp; sail-away parties — departing Seattle, Oct 3, 2026.</p>
+          <div style="position:relative;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="padding:10px 18px;border-radius:16px;background:#fff;color:#0f7fa8;font:700 14px Quicksand,sans-serif;white-space:nowrap">☀️ 94 days to set sail</div>
+            <div style="font:600 14px -apple-system,sans-serif;color:#0b3a52;opacity:.75">Seattle → Juneau → Skagway → Icy Strait Point → Victoria</div>
+          </div>
+        </div>
+
+        <!-- FOMO STATS -->
+        <div style="padding:36px 40px 8px;background:#f4faff">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px">
+            <div style="background:#fff;border-radius:16px;padding:22px;text-align:center;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="font:700 34px Quicksand,sans-serif;color:#1fa876">{{ counts.b.booked }}</div>
+              <div style="font:600 13px -apple-system,sans-serif;color:#5c7f91;margin-top:4px">Booked</div>
+            </div>
+            <div style="background:#fff;border-radius:16px;padding:22px;text-align:center;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="font:700 34px Quicksand,sans-serif;color:#e8a017">{{ counts.b.interested }}</div>
+              <div style="font:600 13px -apple-system,sans-serif;color:#5c7f91;margin-top:4px">Interested</div>
+            </div>
+            <div style="background:#fff;border-radius:16px;padding:22px;text-align:center;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="font:700 34px Quicksand,sans-serif;color:#9fb4bf">{{ counts.b.pending }}</div>
+              <div style="font:600 13px -apple-system,sans-serif;color:#5c7f91;margin-top:4px">Pending</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:14px;padding:18px 20px;background:#fff;border-radius:16px;margin-bottom:36px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+            <div style="display:flex">
+              <div style="width:36px;height:36px;border-radius:999px;background:#0f7fa8;border:2px solid #f4faff;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#fff">JR</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#ffcc4d;border:2px solid #f4faff;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#5a4300">MT</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#1fa876;border:2px solid #f4faff;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#fff">PK</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#ff8a65;border:2px solid #f4faff;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:700 12px Quicksand,sans-serif;color:#fff">AF</div>
+              <div style="width:36px;height:36px;border-radius:999px;background:#dcecf3;border:2px solid #f4faff;margin-left:-10px;display:flex;align-items:center;justify-content:center;font:700 11px Quicksand,sans-serif;color:#0b3a52">+11</div>
+            </div>
+            <div style="font:600 14px -apple-system,sans-serif;color:#0b3a52">Jenna, Mike, Priya + 11 others are already booked. Come join the fun!</div>
+          </div>
+        </div>
+
+        <!-- SHIP + ITINERARY -->
+        <div style="padding:0 40px 44px;background:#f4faff">
+          <div style="font:700 12px Quicksand,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#0f7fa8;margin-bottom:10px">The Ship</div>
+          <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;margin-bottom:36px">
+            <div style="position:relative;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,#8ed0ec,#4fa8d8);min-height:170px;display:flex;align-items:flex-end;padding:16px">
+              <span style="font:600 12px -apple-system,sans-serif;color:rgba(255,255,255,.85)">[ Norwegian Bliss — hero photo ]</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+                <div style="font:700 20px Quicksand,sans-serif;color:#0b3a52">4,004</div>
+                <div style="font:600 12px -apple-system,sans-serif;color:#5c7f91">Guests aboard</div>
+              </div>
+              <div style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+                <div style="font:700 20px Quicksand,sans-serif;color:#0b3a52">20</div>
+                <div style="font:600 12px -apple-system,sans-serif;color:#5c7f91">Decks</div>
+              </div>
+              <div style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+                <div style="font:700 20px Quicksand,sans-serif;color:#0b3a52">Go-Kart</div>
+                <div style="font:600 12px -apple-system,sans-serif;color:#5c7f91">Track on deck</div>
+              </div>
+              <div style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+                <div style="font:700 20px Quicksand,sans-serif;color:#0b3a52">2018</div>
+                <div style="font:600 12px -apple-system,sans-serif;color:#5c7f91">Built</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="font:700 12px Quicksand,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#0f7fa8;margin-bottom:14px">7-Night Itinerary</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#0f7fa8"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">SAT · DAY 1</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Seattle, WA</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">Depart 4:30pm</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#8ed0ec"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">SUN · DAY 2</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Inside Passage</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">At sea</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#8ed0ec"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">MON · DAY 3</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Tracy Arm Fjord</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">Scenic cruising</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#ffcc4d"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">TUE · DAY 4</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Juneau, AK</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">7am – 8:30pm</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#ffcc4d"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">WED · DAY 5</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Skagway, AK</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">7am – 8:30pm</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#ff8a65"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">THU · DAY 6</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Icy Strait Point</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">7am – 3pm</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#4fa8d8"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">FRI · DAY 7</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Victoria, BC</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">5pm – 11:59pm</div></div>
+            </div>
+            <div style="background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+              <div style="height:8px;background:#0f7fa8"></div>
+              <div style="padding:14px"><div style="font:700 12px Quicksand,sans-serif;color:#0f7fa8">SAT · DAY 8</div><div style="font:700 14px Quicksand,sans-serif;color:#0b3a52;margin-top:4px">Seattle, WA</div><div style="font:500 12px -apple-system,sans-serif;color:#5c7f91;margin-top:2px">Arrive 7am</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FORUM -->
+        <div style="padding:0 40px 44px;background:#f4faff">
+          <div style="font:700 12px Quicksand,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#0f7fa8;margin-bottom:14px">Group Chat</div>
+          <div style="background:#fff;border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:0 4px 16px rgba(15,127,168,.08)">
+            <div style="display:flex;gap:12px">
+              <div style="width:32px;height:32px;flex:none;border-radius:999px;background:#1fa876;display:flex;align-items:center;justify-content:center;font:700 11px Quicksand,sans-serif;color:#fff">PK</div>
+              <div>
+                <div style="font:700 13px -apple-system,sans-serif;color:#0b3a52">Priya K. <span style="font:500 12px -apple-system,sans-serif;color:#9db2bc;margin-left:6px">2h ago</span></div>
+                <div style="font:500 14px -apple-system,sans-serif;color:#3f6072;margin-top:2px">Just booked our whale-watching excursion in Juneau — anyone want to join?</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:12px">
+              <div style="width:32px;height:32px;flex:none;border-radius:999px;background:#ff8a65;display:flex;align-items:center;justify-content:center;font:700 11px Quicksand,sans-serif;color:#fff">MB</div>
+              <div>
+                <div style="font:700 13px -apple-system,sans-serif;color:#0b3a52">Marcus B. <span style="font:500 12px -apple-system,sans-serif;color:#9db2bc;margin-left:6px">5h ago</span></div>
+                <div style="font:500 14px -apple-system,sans-serif;color:#3f6072;margin-top:2px">Cabin 8210 — see you all at the sail-away party on the pool deck!</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:14px;border-top:1px solid #eaf3f8">
+              <div style="font:600 13px -apple-system,sans-serif;color:#9db2bc">18 messages this week</div>
+              <div style="padding:9px 16px;border-radius:999px;background:#ff8a65;color:#fff;font:700 13px Quicksand,sans-serif">Open Group Chat →</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RSVP -->
+        <div style="padding:44px 40px 48px;background:#fff;border-top:1px solid #e4f1f8">
+          <h2 style="margin:0 0 6px;font:700 24px Quicksand,sans-serif;color:#0b3a52">Will you be joining us?</h2>
+          <p style="margin:0 0 22px;font:500 14px -apple-system,sans-serif;color:#5c7f91">Let the group know your status — you can always change it later.</p>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <button style="{{ styleB.interested }}" onclick="{{ setRsvpB.interested }}">I'm Interested</button>
+            <button style="{{ styleB.cant }}" onclick="{{ setRsvpB.cant }}">Can't Make It</button>
+            <button style="{{ styleB.booked }}" onclick="{{ setRsvpB.booked }}">I've Booked</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Elegant &amp; Premium</div>
+      <div class="dv-card" style="width:1040px;background:#0b0f14">
+
+        <!-- NAV -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:26px 48px;border-bottom:1px solid rgba(201,162,75,.25)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:26px;height:26px;border:1px solid #c9a24b;transform:rotate(45deg)"></div>
+            <span style="font:600 14px Inter,sans-serif;color:#f2ede3;letter-spacing:.12em;text-transform:uppercase">Alaska Group Cruise · 2026</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:30px;height:30px;border-radius:999px;border:1px solid rgba(201,162,75,.5);display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">JR</div>
+            <div style="width:30px;height:30px;border-radius:999px;border:1px solid rgba(201,162,75,.5);display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">MT</div>
+          </div>
+        </div>
+
+        <!-- HERO -->
+        <div style="position:relative;padding:70px 48px 64px;background:radial-gradient(ellipse at 70% 20%,rgba(201,162,75,.08),transparent 60%)">
+          <div style="font:600 11px Inter,sans-serif;letter-spacing:.22em;text-transform:uppercase;color:#c9a24b;margin-bottom:22px">Group Cruise Invitation</div>
+          <h1 style="margin:0 0 20px;font:500 50px/1.2 'Playfair Display',serif;color:#f2ede3;max-width:640px">You are invited aboard the <em style="font-style:italic;color:#c9a24b">Norwegian Bliss</em></h1>
+          <div style="width:56px;height:1px;background:#c9a24b;margin-bottom:22px"></div>
+          <p style="margin:0 0 32px;font:400 16px/1.7 Inter,sans-serif;color:rgba(242,237,227,.65);max-width:520px">Seven nights among glaciers and fjords, departing Seattle on October 3rd, 2026. A gathering of friends, at sea.</p>
+          <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+            <div style="font:500 13px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#f2ede3;border:1px solid #c9a24b;padding:12px 22px">94 Days To Set Sail</div>
+            <div style="font:400 14px Inter,sans-serif;color:rgba(242,237,227,.5);letter-spacing:.02em">Seattle · Juneau · Skagway · Icy Strait Point · Victoria</div>
+          </div>
+        </div>
+
+        <!-- FOMO STATS -->
+        <div style="padding:8px 48px 0">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(201,162,75,.2);margin-bottom:30px">
+            <div style="background:#0b0f14;padding:26px;text-align:center">
+              <div style="font:500 32px 'Playfair Display',serif;color:#c9a24b">{{ counts.c.booked }}</div>
+              <div style="font:500 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:rgba(242,237,227,.5);margin-top:6px">Booked</div>
+            </div>
+            <div style="background:#0b0f14;padding:26px;text-align:center">
+              <div style="font:500 32px 'Playfair Display',serif;color:#f2ede3">{{ counts.c.interested }}</div>
+              <div style="font:500 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:rgba(242,237,227,.5);margin-top:6px">Interested</div>
+            </div>
+            <div style="background:#0b0f14;padding:26px;text-align:center">
+              <div style="font:500 32px 'Playfair Display',serif;color:rgba(242,237,227,.35)">{{ counts.c.pending }}</div>
+              <div style="font:500 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:rgba(242,237,227,.5);margin-top:6px">Pending</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;padding:18px 0;border-top:1px solid rgba(201,162,75,.2);border-bottom:1px solid rgba(201,162,75,.2);margin-bottom:40px">
+            <div style="display:flex">
+              <div style="width:32px;height:32px;border-radius:999px;background:#141a22;border:1px solid rgba(201,162,75,.4);display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">JR</div>
+              <div style="width:32px;height:32px;border-radius:999px;background:#141a22;border:1px solid rgba(201,162,75,.4);margin-left:-8px;display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">MT</div>
+              <div style="width:32px;height:32px;border-radius:999px;background:#141a22;border:1px solid rgba(201,162,75,.4);margin-left:-8px;display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">PK</div>
+              <div style="width:32px;height:32px;border-radius:999px;background:#141a22;border:1px solid rgba(201,162,75,.4);margin-left:-8px;display:flex;align-items:center;justify-content:center;font:500 11px Inter,sans-serif;color:#c9a24b">AF</div>
+              <div style="width:32px;height:32px;border-radius:999px;background:#141a22;border:1px solid rgba(201,162,75,.4);margin-left:-8px;display:flex;align-items:center;justify-content:center;font:500 10px Inter,sans-serif;color:rgba(242,237,227,.6)">+11</div>
+            </div>
+            <div style="font:400 14px Inter,sans-serif;color:rgba(242,237,227,.6)">Jenna, Mike, Priya and 11 others have already reserved their staterooms.</div>
+          </div>
+        </div>
+
+        <!-- SHIP + ITINERARY -->
+        <div style="padding:0 48px 44px">
+          <div style="font:500 11px Inter,sans-serif;letter-spacing:.2em;text-transform:uppercase;color:#c9a24b;margin-bottom:16px">The Ship</div>
+          <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:20px;margin-bottom:44px">
+            <div style="position:relative;overflow:hidden;background:linear-gradient(135deg,#171d25,#0b0f14);min-height:170px;display:flex;align-items:flex-end;padding:18px;border:1px solid rgba(201,162,75,.15)">
+              <span style="font:400 12px Inter,sans-serif;color:rgba(242,237,227,.4);letter-spacing:.04em">[ Norwegian Bliss — hero photo ]</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(201,162,75,.15)">
+              <div style="background:#0b0f14;padding:18px">
+                <div style="font:500 20px 'Playfair Display',serif;color:#f2ede3">4,004</div>
+                <div style="font:400 11px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:rgba(242,237,227,.45)">Guests aboard</div>
+              </div>
+              <div style="background:#0b0f14;padding:18px">
+                <div style="font:500 20px 'Playfair Display',serif;color:#f2ede3">20</div>
+                <div style="font:400 11px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:rgba(242,237,227,.45)">Decks</div>
+              </div>
+              <div style="background:#0b0f14;padding:18px">
+                <div style="font:500 20px 'Playfair Display',serif;color:#f2ede3">Go-Kart</div>
+                <div style="font:400 11px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:rgba(242,237,227,.45)">Track on deck</div>
+              </div>
+              <div style="background:#0b0f14;padding:18px">
+                <div style="font:500 20px 'Playfair Display',serif;color:#f2ede3">2018</div>
+                <div style="font:400 11px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:rgba(242,237,227,.45)">Built</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="font:500 11px Inter,sans-serif;letter-spacing:.2em;text-transform:uppercase;color:#c9a24b;margin-bottom:18px">Seven-Night Itinerary</div>
+          <div style="display:flex;flex-direction:column">
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">I</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Seattle, Washington</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">Depart 4:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">II</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Cruising the Inside Passage</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">At sea</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">III</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Tracy Arm Fjord</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">Scenic cruising</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">IV</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Juneau, Alaska</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">7:00am – 8:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">V</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Skagway, Alaska</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">7:00am – 8:30pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">VI</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Icy Strait Point, Alaska</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">7:00am – 3:00pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;border-bottom:1px solid rgba(201,162,75,.15);align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">VII</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Victoria, British Columbia</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">5:00pm – 11:59pm</div>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 1fr 160px;gap:16px;padding:15px 0;align-items:baseline">
+              <div style="font:500 15px 'Playfair Display',serif;color:#c9a24b">VIII</div>
+              <div style="font:500 15px Inter,sans-serif;color:#f2ede3">Seattle, Washington</div>
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">Arrive 7:00am</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FORUM -->
+        <div style="padding:0 48px 44px">
+          <div style="font:500 11px Inter,sans-serif;letter-spacing:.2em;text-transform:uppercase;color:#c9a24b;margin-bottom:18px">Correspondence</div>
+          <div style="border:1px solid rgba(201,162,75,.2);padding:24px;display:flex;flex-direction:column;gap:18px">
+            <div style="display:flex;gap:14px">
+              <div style="width:30px;height:30px;flex:none;border-radius:999px;border:1px solid rgba(201,162,75,.4);display:flex;align-items:center;justify-content:center;font:500 10px Inter,sans-serif;color:#c9a24b">PK</div>
+              <div>
+                <div style="font:500 13px Inter,sans-serif;color:#f2ede3">Priya K. <span style="font:400 12px Inter,sans-serif;color:rgba(242,237,227,.35);margin-left:8px">2h ago</span></div>
+                <div style="font:400 14px Inter,sans-serif;color:rgba(242,237,227,.6);margin-top:4px;line-height:1.6">Just booked our whale-watching excursion in Juneau — anyone care to join?</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:14px">
+              <div style="width:30px;height:30px;flex:none;border-radius:999px;border:1px solid rgba(201,162,75,.4);display:flex;align-items:center;justify-content:center;font:500 10px Inter,sans-serif;color:#c9a24b">MB</div>
+              <div>
+                <div style="font:500 13px Inter,sans-serif;color:#f2ede3">Marcus B. <span style="font:400 12px Inter,sans-serif;color:rgba(242,237,227,.35);margin-left:8px">5h ago</span></div>
+                <div style="font:400 14px Inter,sans-serif;color:rgba(242,237,227,.6);margin-top:4px;line-height:1.6">Stateroom 8210 — join us for the sail-away toast on the pool deck.</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:18px;border-top:1px solid rgba(201,162,75,.15)">
+              <div style="font:400 13px Inter,sans-serif;color:rgba(242,237,227,.4)">18 messages this week</div>
+              <div style="font:500 12px Inter,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#c9a24b;border-bottom:1px solid #c9a24b;padding-bottom:2px">Open Correspondence →</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RSVP -->
+        <div style="padding:48px;border-top:1px solid rgba(201,162,75,.25)">
+          <h2 style="margin:0 0 8px;font:500 26px 'Playfair Display',serif;color:#f2ede3">Will you be joining us?</h2>
+          <p style="margin:0 0 26px;font:400 14px Inter,sans-serif;color:rgba(242,237,227,.5)">Let the group know your status — you can always change it later.</p>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <button style="{{ styleC.interested }}" onclick="{{ setRsvpC.interested }}">I'm Interested</button>
+            <button style="{{ styleC.cant }}" onclick="{{ setRsvpC.cant }}">Can't Make It</button>
+            <button style="{{ styleC.booked }}" onclick="{{ setRsvpC.booked }}">I've Booked</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "more festive energy in <a class="dv-oid" href="#1a">1a</a>" · "combine the itinerary layout from <a class="dv-oid" href="#1a">1a</a> with the palette of <a class="dv-oid" href="#1c">1c</a>" · "pick one and add real forum posting"</p>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    rsvp: { a: null, b: null, c: null, d: null },
+    base: {
+      a: { booked: 14, interested: 6, pending: 3 },
+      b: { booked: 14, interested: 6, pending: 3 },
+      c: { booked: 14, interested: 6, pending: 3 },
+      d: { booked: 14, interested: 6, pending: 3 }
+    }
+  };
+
+  setRsvp(key, status) {
+    this.setState(s => {
+      const base = { ...s.base[key] };
+      const prev = s.rsvp[key];
+      if (prev === 'interested') base.interested -= 1;
+      if (prev === 'booked') base.booked -= 1;
+      if (status === 'interested') base.interested += 1;
+      if (status === 'booked') base.booked += 1;
+      return {
+        rsvp: { ...s.rsvp, [key]: status },
+        base: { ...s.base, [key]: base }
+      };
+    });
+  }
+
+  makeHandlers(key) {
+    return {
+      interested: () => this.setRsvp(key, 'interested'),
+      cant: () => this.setRsvp(key, 'cant'),
+      booked: () => this.setRsvp(key, 'booked')
+    };
+  }
+
+  festivePill(sel) {
+    return sel
+      ? 'padding:16px 30px;border-radius:999px;font:700 16px Fredoka,sans-serif;cursor:pointer;border:2px solid #ffd166;background:#ffd166;color:#2d0a3d;box-shadow:0 6px 20px rgba(255,209,102,.35)'
+      : 'padding:16px 30px;border-radius:999px;font:700 16px Fredoka,sans-serif;cursor:pointer;border:2px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#fff';
+  }
+
+  vacayPill(sel) {
+    return sel
+      ? 'padding:16px 30px;border-radius:16px;font:700 16px Quicksand,sans-serif;cursor:pointer;border:2px solid #0f7fa8;background:#0f7fa8;color:#fff;box-shadow:0 6px 16px rgba(15,127,168,.25)'
+      : 'padding:16px 30px;border-radius:16px;font:700 16px Quicksand,sans-serif;cursor:pointer;border:2px solid #d6ecf5;background:#fff;color:#0f7fa8';
+  }
+
+  darkVacayPill(sel) {
+    return sel
+      ? 'padding:16px 30px;border-radius:16px;font:700 16px Quicksand,sans-serif;cursor:pointer;border:2px solid #38b6e8;background:#38b6e8;color:#052030;box-shadow:0 6px 16px rgba(56,182,232,.3)'
+      : 'padding:16px 30px;border-radius:16px;font:700 16px Quicksand,sans-serif;cursor:pointer;border:2px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#eaf4fa';
+  }
+
+  elegantPill(sel) {
+    return sel
+      ? 'padding:15px 30px;border-radius:2px;font:600 13px Inter,sans-serif;letter-spacing:.06em;cursor:pointer;border:1px solid #c9a24b;background:#c9a24b;color:#0b0f14;text-transform:uppercase'
+      : 'padding:15px 30px;border-radius:2px;font:600 13px Inter,sans-serif;letter-spacing:.06em;cursor:pointer;border:1px solid rgba(201,162,75,.4);background:transparent;color:#f2ede3;text-transform:uppercase';
+  }
+
+  renderVals() {
+    const rsvp = this.state.rsvp;
+    const counts = this.state.base;
+
+    return {
+      counts,
+      setRsvpA: this.makeHandlers('a'),
+      setRsvpB: this.makeHandlers('b'),
+      setRsvpC: this.makeHandlers('c'),
+      setRsvpD: this.makeHandlers('d'),
+      styleA: {
+        interested: this.festivePill(rsvp.a === 'interested'),
+        cant: this.festivePill(rsvp.a === 'cant'),
+        booked: this.festivePill(rsvp.a === 'booked')
+      },
+      styleB: {
+        interested: this.vacayPill(rsvp.b === 'interested'),
+        cant: this.vacayPill(rsvp.b === 'cant'),
+        booked: this.vacayPill(rsvp.b === 'booked')
+      },
+      styleC: {
+        interested: this.elegantPill(rsvp.c === 'interested'),
+        cant: this.elegantPill(rsvp.c === 'cant'),
+        booked: this.elegantPill(rsvp.c === 'booked')
+      },
+      styleD: {
+        interested: this.darkVacayPill(rsvp.d === 'interested'),
+        cant: this.darkVacayPill(rsvp.d === 'cant'),
+        booked: this.darkVacayPill(rsvp.d === 'booked')
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
