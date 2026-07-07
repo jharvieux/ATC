@@ -17,6 +17,7 @@ import { sendGroupInvitationEmail, type GroupInvitationGroup } from "@/lib/group
 import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
+import { hardDeleteGroup } from "@/lib/groups/delete-group";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -138,10 +139,12 @@ export async function POST(req: Request): Promise<Response> {
       if (invErr) {
         // #1600 — an invitations-insert failure must not leave the group
         // active and orphaned (empty, un-retryable without duplicating).
-        // Best-effort cleanup; ON DELETE CASCADE also removes the forum row.
-        const { error: cleanupErr } = await svc.from("groups").delete().eq("id", group.id).eq("tenant_id", ctx.tenant_id);
-        if (cleanupErr) {
-          console.error(`[groups] compensating delete failed for group=${group.id} after invitations insert failure`, cleanupErr);
+        // Use hardDeleteGroup to ensure all non-cascading FKs (email_log,
+        // group_invite_pending_approval) are handled in the right order.
+        try {
+          await hardDeleteGroup(group.id);
+        } catch (err) {
+          console.error(`[groups] compensating delete failed for group=${group.id} after invitations insert failure`, err);
         }
         return dbErrorResponse(invErr);
       }
