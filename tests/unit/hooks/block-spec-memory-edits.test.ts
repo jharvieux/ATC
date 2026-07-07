@@ -76,6 +76,20 @@ describe("block-spec-memory-edits.mjs — branch-local renumber carve-out (#1661
     expect(code).toBe(2);
   });
 
+  it("blocks a D-number substitution whose old_string is verbatim text from a MERGED entry's BODY (not its header)", () => {
+    // This exact sentence (an inline "D-304" mention inside D-305's body, not
+    // a "## D-NNN" header) is present in MEMORY.md on origin/dev. Renumbering
+    // it must stay blocked even though old_string contains no "## D-NNN"
+    // header at all — the header-only check alone would miss this, since it
+    // only ever inspects `oldNum` against origin/dev's HEADER lines.
+    const { code } = runHook({
+      file_path: "MEMORY.md",
+      old_string: "Supersedes the D-304 \"create-time invitees only via cron\" note.",
+      new_string: "Supersedes the D-999995 \"create-time invitees only via cron\" note.",
+    });
+    expect(code).toBe(2);
+  });
+
   it("blocks when old_string touches two distinct D-numbers (ambiguous — not a single renumber)", () => {
     const { code } = runHook({
       file_path: "MEMORY.md",

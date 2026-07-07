@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-320 — 2026-07-07 — Concurrent-agent numbering collisions fixed (#1660/#1661, PR #1667): scripts/new-migration.sh real-clock version generator (main + RAG, atomic mkdir lock) + check:migration-collision (DB-free) + check-migration-ledger.ts (DB-based, deploy.yml pre-check) + check:memory-decision-collision + block-spec-memory-edits.mjs branch-local-renumber carve-out; found and filed pre-existing RAG 0014 collision as #1664.
 - D-319 — 2026-07-07 — Money-formatter consolidation redone clean (#1638→#1657, 3 audit rounds): fromCents brand-type kept narrow (Cents|bigint, no number widening), any-cast fixed to BigInt(Math.round()), pre-existing JPY formatCents bug filed as #1658 rather than fixed in-PR.
 - D-318 — 2026-07-06 — Groups hardening (#1600): compensating delete over RPC/transaction for orphaned-group defect; partial unique index (group_id, lower(invitee_email)) WHERE token_revoked_at IS NULL for single-invite dedup, cap, and counter parity with the create path.
 - D-317 — 2026-07-06 — Audit-model criteria rebased for Sonnet 5: risk triggers → Opus for BOTH agents; size-only trigger → Opus for d091 only, bar raised to ≥20 files/≥1000 net lines (supersedes D-147 audit half + D-314's "audit unchanged" note).

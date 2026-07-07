@@ -98,6 +98,14 @@ function isAllowedBranchLocalRenumber(oldString, newString) {
   const headerRe = (n) => new RegExp(`^## D-${n}\\b`, "m");
   if (headerRe(oldNum).test(baseMemory)) return false; // merged history — stays blocked
 
+  // The header check above only rules out old_string touching a MERGED
+  // entry's header. A legitimate branch-local renumber only ever targets
+  // text this branch itself added, which by definition can't already be
+  // sitting in origin/dev's file — so if old_string appears there verbatim,
+  // this edit would be rewriting a D-number token inside an already-merged
+  // entry's BODY (a case the header-only check doesn't see). Block it.
+  if (baseMemory.includes(oldString)) return false;
+
   return true;
 }
 

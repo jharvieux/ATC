@@ -118,8 +118,8 @@ export function findBranchVsDevCollisions(
   return violations;
 }
 
-// Exported for tests. Format: `<app>:<version> # reason`. Blank lines and
-// `#`-prefixed comment lines are ignored.
+// Exported for tests. Format: `<app>:<version>:<sorted,comma,joined,files> # reason`.
+// Blank lines and `#`-prefixed comment lines are ignored.
 export function readBaseline(text: string): Set<string> {
   const keys = new Set<string>();
   for (const raw of text.split("\n")) {
