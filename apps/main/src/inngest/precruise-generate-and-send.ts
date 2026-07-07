@@ -400,13 +400,13 @@ export async function loadEmailContext(args: {
   const ports: string[] = [];
   const departurePort = booking.groups?.departure_port;
 
-  const companionToken = signCompanionToken({ booking_id, phase });
+  const companionToken = await signCompanionToken({ booking_id, phase });
   const baseUrl = process.env.PLATFORM_PRIMARY_DOMAIN
     ? `https://${tenant_id}.${process.env.PLATFORM_PRIMARY_DOMAIN}`
     : "https://app.ai-travelconcierge.com";
   const companionPageUrl = `${baseUrl}/companion/${companionToken}`;
 
-  const unsubToken = signUnsubscribeToken({ email: toEmail, tenant_id, category: "pre_cruise" });
+  const unsubToken = await signUnsubscribeToken({ email: toEmail, tenant_id, category: "pre_cruise" });
   const unsubscribeUrl = `${baseUrl}/email/unsubscribe?token=${unsubToken}`;
 
   const layoutProps: Omit<BrandedLayoutProps, "children"> = {

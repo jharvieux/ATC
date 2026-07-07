@@ -95,8 +95,8 @@ beforeEach(() => {
   h.usersId = "users-1";
   h.role = "agent";
   h.isAdmin = false;
-  vi.mocked(verifyAnonSession).mockReturnValue(null);
-  vi.mocked(freshAnonSession).mockReturnValue({ id: "anon-1", cookieValue: "cv" });
+  vi.mocked(verifyAnonSession).mockResolvedValue(null);
+  vi.mocked(freshAnonSession).mockResolvedValue({ id: "anon-1", cookieValue: "cv" });
   vi.mocked(tenantContextFromRequest).mockResolvedValue({
     tenant_id: "tenant-1",
     source: { kind: "http_request", user_id: "auth-1" },
