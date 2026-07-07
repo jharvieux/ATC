@@ -560,6 +560,7 @@ async function buildAndSend(args: {
     template_id: `pre_cruise_${phase}`,
     category: "pre_cruise",
     html,
+    idempotencyKey: `pre_cruise:${emailCtx.booking.id}:${phase}`,
     ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
     ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
   });

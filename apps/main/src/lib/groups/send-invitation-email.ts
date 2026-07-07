@@ -127,6 +127,7 @@ export async function sendGroupInvitationEmail(args: {
     category: "group_invitation",
     html,
     related_group_id: args.group.id,
+    idempotencyKey: `group_invitation:${args.invitationId}`,
   });
 
   if (result.status === "failed") {

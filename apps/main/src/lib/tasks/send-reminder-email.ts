@@ -46,8 +46,9 @@ export async function sendTaskReminderEmail(args: {
   svc: SupabaseClient;
   task_id: string;
   tenant_id: string;
+  reminder_id: string;
 }): Promise<EmailReminderOutcome> {
-  const { svc, task_id, tenant_id } = args;
+  const { svc, task_id, tenant_id, reminder_id } = args;
 
   const { data: taskData } = await svc
     .from("tasks")
@@ -179,6 +180,7 @@ export async function sendTaskReminderEmail(args: {
     category: "transactional",
     html,
     user_id: user.id,
+    idempotencyKey: `task_reminder:${reminder_id}`,
   });
 
   if (result.status === "sent") return { status: "sent" };

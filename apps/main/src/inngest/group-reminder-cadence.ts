@@ -237,6 +237,11 @@ export const groupReminderCadence = inngest.createFunction(
         category: "group_invitation",
         html,
         related_group_id: group.id,
+        // #1580 — keyed on the invitation only so an Inngest retry of this
+        // same cadence run doesn't double-send. The cadence-interval logic
+        // (last_email_sent_at comparison, see line 88) already gates
+        // same-day re-sends; we don't need date-granularity in the dedup key.
+        idempotencyKey: `group_reminder:${inv.id}`,
       });
 
       if (result.status === "sent") {

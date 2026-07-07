@@ -3,7 +3,9 @@
 // Triggered by `abuse.state_transition`. Resolves operator-editable copy
 // from platform_settings.abuse_notification_copy, looks up the tenant's
 // admin recipients + branding, renders AbuseStateTransition, and sends
-// through sendTenantEmail (Pattern A/B per tenant).
+// through the canonical sendEmail (§23) — suppression, rate-limit, staging
+// isolation, and vendor-health all apply the same as every other outbound
+// email (#1580; the prior sendTenantEmail fork bypassed all of them).
 //
 // Also stamps usage_limit_events.notification_sent_to with the recipient
 // list for forensic visibility.
@@ -16,7 +18,7 @@ import * as React from "react";
 import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { sendTenantEmail } from "@/lib/email/send-tenant-email";
+import { sendEmail } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { AbuseStateTransition } from "@/emails/AbuseStateTransition";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -92,7 +94,7 @@ export const abuseStateTransitionNotify = inngest.createFunction(
 
         const { data: bRow } = await db
           .from("tenant_branding")
-          .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+          .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at")
           .eq("tenant_id", data.tenant_id)
           .maybeSingle();
         const branding = bRow as {
@@ -105,6 +107,8 @@ export const abuseStateTransitionNotify = inngest.createFunction(
           tenant_resend_api_key_encrypted?: string | null;
           email_from_address?: string | null;
           email_from_name?: string | null;
+          email_from_domain?: string | null;
+          email_from_domain_verified_at?: string | null;
         } | null;
 
         // 3. Recipients: tenant admins.
@@ -154,11 +158,31 @@ export const abuseStateTransitionNotify = inngest.createFunction(
             }),
           );
 
-          const result = await sendTenantEmail(
-            branding ?? { email_send_pattern: "platform_resend" },
-            { to: admin.email, subject: copy.subject_template, html },
-          );
-          if (result.ok) sentTo.push(admin.email);
+          const result = await sendEmail({
+            db,
+            tenant: {
+              id: tenantRow.id,
+              legal_name: tenantRow.legal_name ?? "Your tenant",
+              mailing_address: tenantRow.mailing_address ?? null,
+              email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
+              tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+              email_from_address: branding?.email_from_address ?? null,
+              email_from_name: branding?.email_from_name ?? null,
+              email_from_domain: branding?.email_from_domain ?? null,
+              email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
+            },
+            to: admin.email,
+            subject: copy.subject_template,
+            template_id: "abuse_state_transition",
+            category: "transactional",
+            html,
+            user_id: admin.id,
+            // Keyed on the transition + recipient so a step retry of this same
+            // event doesn't double-send; a genuinely new transition (different
+            // to_state) gets a new key and sends.
+            idempotencyKey: `abuse_state_transition:${data.tenant_id}:${data.dimension}:${data.to_state}:${admin.id}`,
+          });
+          if (result.status === "sent") sentTo.push(admin.email);
         }
 
         // 5. Stamp the most-recent usage_limit_events row for this transition.
