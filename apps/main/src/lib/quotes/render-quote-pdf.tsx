@@ -12,7 +12,13 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import { formatCents } from "@/lib/money";
-import type { QuoteRenderInput } from "./render-pdf";
+import {
+  type QuoteRenderInput,
+  formatDate,
+  formatTs,
+  ESTIMATE_FOOTER_TEMPLATE,
+  CONFIRMED_FOOTER_TEMPLATE,
+} from "./render-pdf";
 
 const styles = StyleSheet.create({
   page: { padding: 36, fontSize: 11, fontFamily: "Helvetica", color: "#1f2937" },
@@ -62,41 +68,6 @@ const styles = StyleSheet.create({
   },
 });
 
-function formatTs(ts: string | null): string {
-  if (!ts) return "—";
-  try {
-    return new Date(ts).toISOString().replace("T", " ").slice(0, 16) + " UTC";
-  } catch {
-    return ts;
-  }
-}
-
-function formatDate(ts: string): string {
-  try {
-    return new Date(ts).toISOString().slice(0, 10);
-  } catch {
-    return ts;
-  }
-}
-
-function ESTIMATE_FOOTER(varianceUsd: string): string {
-  return (
-    `This is an ESTIMATE — the final price at booking may differ. By accepting, ` +
-    `you authorize us to submit the booking at the actual price PROVIDED the price ` +
-    `is within ${varianceUsd} of the estimate above. If the actual price falls ` +
-    `OUTSIDE this variance, we will pause the booking and ask you to reconfirm ` +
-    `at the new price before submitting. Estimate quotes are valid for the period ` +
-    `shown; after that they automatically expire and a fresh quote is required.`
-  );
-}
-
-function CONFIRMED_FOOTER(host: string, lockEnd: string): string {
-  return (
-    `This is a CONFIRMED quote. ${host} has price-locked this fare through ` +
-    `${lockEnd}. Acceptance submits the booking at the locked price.`
-  );
-}
-
 function QuoteDocument({ input }: { input: QuoteRenderInput }): JSX.Element {
   const isEstimate = input.kind === "estimate";
   const variance = formatCents(input.variance_cents, input.currency);
@@ -107,8 +78,8 @@ function QuoteDocument({ input }: { input: QuoteRenderInput }): JSX.Element {
     ? `Valid for ${input.validity_days} days from ${formatDate(input.priced_at)}.`
     : `Valid through ${formatTs(input.price_lock_expires_at)}.`;
   const footer = isEstimate
-    ? ESTIMATE_FOOTER(variance)
-    : CONFIRMED_FOOTER(input.host_agency_legal_name, formatTs(input.price_lock_expires_at));
+    ? ESTIMATE_FOOTER_TEMPLATE(variance)
+    : CONFIRMED_FOOTER_TEMPLATE(input.host_agency_legal_name, formatTs(input.price_lock_expires_at));
 
   return (
     <Document>

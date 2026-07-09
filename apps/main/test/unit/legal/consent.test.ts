@@ -5,6 +5,7 @@
 // and cross-type isolation.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { sendPlatformUserEmail } from "@/lib/email/notifications";
 
 const state = vi.hoisted(() => ({
   existingDocs:   [] as { id: string; version: number }[],
@@ -12,6 +13,9 @@ const state = vi.hoisted(() => ({
   insertedDocId:  "new-doc-id",
   supersededIds:  [] as string[],
   upsertedRows:   [] as Array<{ auth_user_id: string; document_type: string; document_id_pending: string }>,
+  upsertCallCount: 0,
+  usersLookupCallCount: 0,
+  users:          [] as { auth_user_id: string; email: string; created_at?: string }[],
 }));
 
 vi.mock("@/lib/auth/assert-platform-admin", async () => {
@@ -37,7 +41,6 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
     fn: (db: unknown, rec: () => void) => Promise<unknown>,
   ) => {
     const db = {
-      auth: { admin: { getUserById: async () => ({ data: { user: { email: null } } }) } },
       from: (table: string) => {
         if (table === "legal_documents") {
           return {
@@ -77,13 +80,36 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
         }
         if (table === "user_consent_pending") {
           return {
+            // #1588: the route now sends a single batched array upsert
+            // instead of one call per user.
             upsert: (
-              row: { auth_user_id: string; document_type: string; document_id_pending: string },
+              rows: Array<{ auth_user_id: string; document_type: string; document_id_pending: string }>,
               _opts?: unknown,
             ) => {
-              state.upsertedRows.push(row);
+              state.upsertCallCount++;
+              state.upsertedRows.push(...rows);
               return Promise.resolve({ data: null, error: null });
             },
+          };
+        }
+        if (table === "users") {
+          // #1588: batched email lookup replacing per-user auth.admin.getUserById.
+          // The route chains .in(...).order("created_at", ...) — mirror the
+          // legal_documents mock's chainability above (round 2 audit: a bare
+          // Promise here made .order() throw and silently no-op the pass).
+          return {
+            select: () => ({
+              in: (_col: string, ids: string[]) => ({
+                order: () => {
+                  state.usersLookupCallCount++;
+                  const rows = state.users
+                    .filter((u) => ids.includes(u.auth_user_id))
+                    .slice()
+                    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+                  return Promise.resolve({ data: rows, error: null });
+                },
+              }),
+            }),
           };
         }
         return {};
@@ -117,6 +143,9 @@ beforeEach(() => {
   state.insertedDocId   = "new-doc-id";
   state.supersededIds   = [];
   state.upsertedRows    = [];
+  state.upsertCallCount = 0;
+  state.usersLookupCallCount = 0;
+  state.users           = [];
 });
 
 describe("POST /api/admin/legal-docs — publish flow (§17.5)", () => {
@@ -174,6 +203,45 @@ describe("POST /api/admin/legal-docs — publish flow (§17.5)", () => {
     const res = await publishDoc({ document_type: "tou", content_markdown: "# TOU v2" });
     expect(res.status).toBe(200);
     expect(state.upsertedRows.every((r) => r.document_type === "tou")).toBe(true);
+  });
+
+  // #1588: a publish affecting 2000+ users used to issue one
+  // user_consent_pending.upsert round-trip AND one auth.admin.getUserById
+  // round-trip PER USER — 4000+ serial DB calls in the one admin request
+  // that must succeed. Pin that a large flagged-user set now collapses to
+  // one batched upsert call and one batched users-table lookup call
+  // (rather than scaling 1:1 with user count).
+  it("batches the pending-row upsert and email lookup into a single round-trip each, regardless of flagged-user count", async () => {
+    state.existingDocs = [{ id: "doc-1", version: 1 }];
+    state.existingConsents = Array.from({ length: 50 }, (_, i) => ({ auth_user_id: `user-${i}` }));
+    state.users = state.existingConsents.map((c) => ({ auth_user_id: c.auth_user_id, email: `${c.auth_user_id}@example.com` }));
+
+    const res = await publishDoc({ document_type: "tou", content_markdown: "# Terms v2" });
+
+    expect(res.status).toBe(200);
+    expect(state.upsertedRows).toHaveLength(50);
+    expect(state.upsertCallCount).toBe(1); // one batched array upsert, not 50 serial calls
+    expect(state.usersLookupCallCount).toBe(1); // one batched .in() lookup, not 50 getUserById calls
+  });
+
+  // Round 2 audit (#1701): public.users can have multiple rows per auth_user_id
+  // (one per tenant). Pin the canonical-pick rule — the OLDEST row's email
+  // (ascending created_at, first one kept) is the one notified — regardless
+  // of row insertion order.
+  it("notifies the oldest row's email when a user has multiple users-table rows", async () => {
+    state.existingDocs    = [{ id: "doc-1", version: 1 }];
+    state.existingConsents = [{ auth_user_id: "user-a" }];
+    state.users = [
+      { auth_user_id: "user-a", email: "newer@example.com", created_at: "2026-02-01T00:00:00Z" },
+      { auth_user_id: "user-a", email: "older@example.com", created_at: "2026-01-01T00:00:00Z" },
+    ];
+
+    const res = await publishDoc({ document_type: "tou", content_markdown: "# Terms v2" });
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(sendPlatformUserEmail)).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "older@example.com" }),
+    );
   });
 });
 

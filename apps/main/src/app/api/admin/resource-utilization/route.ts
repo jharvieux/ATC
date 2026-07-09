@@ -14,7 +14,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
+import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, fetchAiCallLogRows, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
 import { fetchRagEmbeddingRows, periodStartIso } from "./rag-fetch";
 
 const RESEND_PRICE_KEY = "resend_cost_per_email_cents";
@@ -55,12 +55,28 @@ export async function GET(req: Request): Promise<Response> {
 
         const ragRowsPromise = fetchRagEmbeddingRows(thirtyDaysAgo, periodStart);
 
+        // #1588: paginated fetch (never a single unbounded select) — see
+        // fetchAiCallLogRows for why. It throws on any page's DB error, so
+        // Promise.all fails loud the same way an { error } field would.
+        // A total order (created_at, then id as tiebreaker) is REQUIRED for
+        // paginated .range() reads — without a deterministic sort, PostgREST
+        // may return the same row on two pages or skip one entirely, which
+        // would double-count or under-count 30-day cost. id is the PK.
+        const aiCallLogRowsPromise = fetchAiCallLogRows((offset, limit) =>
+          db
+            .from("ai_call_log")
+            .select("created_at, vendor, model, input_tokens, output_tokens, cost_estimate_cents")
+            .gte("created_at", thirtyDaysAgo)
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(offset, offset + limit - 1),
+        );
+
         const [
-          aiDailyResult,
+          aiCallLogResult,
           emailDailyResult,
           weatherHistoryResult,
           weatherTodayResult,
-          modelBreakdownResult,
           tenantMetricsResult,
           tenantsResult,
           weatherCapResult,
@@ -69,11 +85,10 @@ export async function GET(req: Request): Promise<Response> {
           apifyLedgerResult,
           apifyBudgetResult,
         ] = await Promise.all([
-          db.from("ai_call_log").select("created_at, cost_estimate_cents").gte("created_at", thirtyDaysAgo),
+          aiCallLogRowsPromise,
           db.from("email_log").select("sent_at").gte("sent_at", thirtyDaysAgo).in("status", ["sent", "delivered"]),
           db.from("weather_usage_metrics").select("metric_date, requests_count").gte("metric_date", thirtyDaysAgo.slice(0, 10)).order("metric_date", { ascending: true }),
           db.from("weather_usage_metrics").select("requests_count").eq("metric_date", new Date().toISOString().slice(0, 10)).maybeSingle(),
-          db.from("ai_call_log").select("vendor, model, input_tokens, output_tokens, cost_estimate_cents").gte("created_at", thirtyDaysAgo),
           db.from("tenant_usage_metrics").select("tenant_id, ai_cost_cents, ai_cost_limit_state, email_sent_count, email_volume_limit_state").eq("billing_period", period),
           db.from("tenants").select("id, slug, display_name"),
           db.from("platform_settings").select("value").eq("key", "weather_daily_request_cap").maybeSingle(),
@@ -84,11 +99,9 @@ export async function GET(req: Request): Promise<Response> {
         ]);
 
         // Fail-closed: surface any DB error rather than silently returning zeros.
-        if (aiDailyResult.error) throw new Error(`ai_call_log read failed: ${aiDailyResult.error.message}`);
         if (emailDailyResult.error) throw new Error(`email_log read failed: ${emailDailyResult.error.message}`);
         if (weatherHistoryResult.error) throw new Error(`weather_usage_metrics read failed: ${weatherHistoryResult.error.message}`);
         if (weatherTodayResult.error) throw new Error(`weather_usage_metrics today read failed: ${weatherTodayResult.error.message}`);
-        if (modelBreakdownResult.error) throw new Error(`ai_call_log model breakdown failed: ${modelBreakdownResult.error.message}`);
         if (tenantMetricsResult.error) throw new Error(`tenant_usage_metrics read failed: ${tenantMetricsResult.error.message}`);
         if (tenantsResult.error) throw new Error(`tenants read failed: ${tenantsResult.error.message}`);
         if (weatherCapResult.error) throw new Error(`weather cap read failed: ${weatherCapResult.error.message}`);
@@ -97,7 +110,8 @@ export async function GET(req: Request): Promise<Response> {
         if (apifyLedgerResult.error) throw new Error(`apify_spend_ledger read failed: ${apifyLedgerResult.error.message}`);
         if (apifyBudgetResult.error) throw new Error(`apify_budget read failed: ${apifyBudgetResult.error.message}`);
 
-        recordQuery({ op: "select", table: "ai_call_log", row_count: (aiDailyResult.data?.length ?? 0) + (modelBreakdownResult.data?.length ?? 0) });
+        const aiCallLogRows = aiCallLogResult.rows;
+        recordQuery({ op: "select", table: "ai_call_log", row_count: aiCallLogRows.length });
         recordQuery({ op: "select", table: "email_log", row_count: emailDailyResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "weather_usage_metrics", row_count: weatherHistoryResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "tenant_usage_metrics", row_count: tenantMetricsResult.data?.length ?? 0 });
@@ -130,20 +144,14 @@ export async function GET(req: Request): Promise<Response> {
         recordQuery({ op: "select", table: "rag_ai_call_log", row_count: ragRows.daily.length + ragRows.byModel.length });
 
         const daily: DailyRow[] = buildDailyArray(
-          [
-            ...(aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>),
-            ...ragRows.daily,
-          ],
+          [...aiCallLogRows, ...ragRows.daily],
           emailDailyResult.data as Array<{ sent_at: string | null }>,
           weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>,
           new Date(),
           apifyLedgerRows,
         );
 
-        const modelBreakdown: ModelRow[] = aggregateByModel([
-          ...(modelBreakdownResult.data as Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>),
-          ...ragRows.byModel,
-        ]);
+        const modelBreakdown: ModelRow[] = aggregateByModel([...aiCallLogRows, ...ragRows.byModel]);
 
         const tenantInfoMap = new Map<string, { slug: string; display_name: string }>();
         for (const t of tenantsResult.data as Array<{ id: string; slug: string; display_name: string }>) {
@@ -200,6 +208,9 @@ export async function GET(req: Request): Promise<Response> {
             weather_cap: weatherCap,
             apify_spend_usd_period: apifySpendUsdPeriod,
             apify_monthly_budget_usd: apifyMonthlyBudgetUsd,
+            // true when ai_call_log paging hit its row ceiling — AI cost
+            // figures are then a lower bound; the dashboard shows a marker.
+            ai_cost_truncated: aiCallLogResult.truncated,
           },
           daily,
           model_breakdown: modelBreakdown,
