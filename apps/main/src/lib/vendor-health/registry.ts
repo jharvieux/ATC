@@ -28,10 +28,19 @@ export const DOWN_AFTER_FAILURES = 5;
 
 const CACHE_TTL_MS = 30_000;
 
+// #1741 — durable-derived reads (resolveVendorHealthStatus, upsertVendorHealth)
+// and instance-local real-traffic writes (recordVendorSuccess/Failure) used to
+// share one BoundedTtlCache slot per vendor. Both write the same key but derive
+// consecutive_failures from different counters (the durable `vendor_health` row
+// vs this instance's memRegistry starting at 0), so a live call after a durable
+// "degraded"/"down" read could silently overwrite it with "healthy" computed
+// from the instance-local counter for the rest of the TTL. Two separate caches
+// means instance-local traffic can no longer clobber a durable-derived reading.
 // #1678 — keyed by VendorName, a fixed 9-value literal union; 32 is generous
 // headroom over that closed set and documents the bound is intentional, not
 // a copy-pasted default.
-const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 32 });
+const durableCache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 32 });
+const instanceCache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 32 });
 
 export function computeStatus(consecutive_failures: number): VendorHealthStatus {
   if (consecutive_failures >= DOWN_AFTER_FAILURES) return "down";
@@ -43,16 +52,16 @@ export function computeStatus(consecutive_failures: number): VendorHealthStatus 
 // In-process cache helpers (used by gate.ts for fast reads)
 // ---------------------------------------------------------------------------
 
-function cacheGet(name: VendorName): VendorHealthState | null {
-  return cache.get(name) ?? null;
+function instanceCacheGet(name: VendorName): VendorHealthState | null {
+  return instanceCache.get(name) ?? null;
 }
 
-function cacheSet(name: VendorName, state: VendorHealthState): void {
-  cache.set(name, state);
+function instanceCacheSet(name: VendorName, state: VendorHealthState): void {
+  instanceCache.set(name, state);
 }
 
 export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
-  return cacheGet(name)?.status ?? "healthy";
+  return instanceCacheGet(name)?.status ?? "healthy";
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +80,7 @@ export async function resolveVendorHealthStatus(
   db: SupabaseClient,
   name: VendorName,
 ): Promise<VendorHealthStatus> {
-  const cached = cacheGet(name);
+  const cached = durableCache.get(name);
   if (cached) return cached.status;
 
   const { data, error } = await db
@@ -93,7 +102,7 @@ export async function resolveVendorHealthStatus(
         status_changed_at: data.status_changed_at,
       }
     : { status: "healthy", consecutive_failures: 0, last_checked_at: null, last_error: null };
-  cacheSet(name, state);
+  durableCache.set(name, state);
   return state.status;
 }
 
@@ -122,7 +131,7 @@ export function recordVendorSuccess(name: VendorName): void {
   state.consecutive_failures = 0;
   state.last_checked_at = new Date().toISOString();
   state.last_error = null;
-  cacheSet(name, { ...state });
+  instanceCacheSet(name, { ...state });
 }
 
 export function recordVendorFailure(name: VendorName, error: string): void {
@@ -131,7 +140,7 @@ export function recordVendorFailure(name: VendorName, error: string): void {
   state.last_checked_at = new Date().toISOString();
   state.last_error = error;
   state.status = computeStatus(state.consecutive_failures);
-  cacheSet(name, { ...state });
+  instanceCacheSet(name, { ...state });
 }
 
 export function snapshotVendorHealth(): Record<VendorName, VendorHealthState> {
@@ -145,7 +154,8 @@ export function snapshotVendorHealth(): Record<VendorName, VendorHealthState> {
 // Test-only: reset all state.
 export function _resetVendorHealthForTests(): void {
   memRegistry.clear();
-  cache.clear();
+  durableCache.clear();
+  instanceCache.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +213,8 @@ export async function upsertVendorHealth(
     throw new Error(`[vendor-health] upsert failed for ${vendor}: ${error.message}`);
   }
 
-  // Update in-process cache.
-  cacheSet(vendor, {
+  // Update the durable-derived cache (this IS the durable state, just written).
+  durableCache.set(vendor, {
     status: new_status,
     consecutive_failures: new_failures,
     last_checked_at: now,
