@@ -14,7 +14,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, fetchAiCallLogRows, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
+import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
 import { fetchRagEmbeddingRows, periodStartIso } from "./rag-fetch";
 
 const RESEND_PRICE_KEY = "resend_cost_per_email_cents";
@@ -49,31 +49,29 @@ export async function GET(req: Request): Promise<Response> {
         reason_detail: "operator viewed platform resource utilization dashboard",
       },
       async (db, recordQuery) => {
+        const nowIso = new Date().toISOString();
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         const period = currentBillingPeriod();
         const periodStart = periodStartIso(period);
 
         const ragRowsPromise = fetchRagEmbeddingRows(thirtyDaysAgo, periodStart);
 
-        // #1588: paginated fetch (never a single unbounded select) — see
-        // fetchAiCallLogRows for why. It throws on any page's DB error, so
-        // Promise.all fails loud the same way an { error } field would.
-        // A total order (created_at, then id as tiebreaker) is REQUIRED for
-        // paginated .range() reads — without a deterministic sort, PostgREST
-        // may return the same row on two pages or skip one entirely, which
-        // would double-count or under-count 30-day cost. id is the PK.
-        const aiCallLogRowsPromise = fetchAiCallLogRows((offset, limit) =>
-          db
-            .from("ai_call_log")
-            .select("created_at, vendor, model, input_tokens, output_tokens, cost_estimate_cents")
-            .gte("created_at", thirtyDaysAgo)
-            .order("created_at", { ascending: true })
-            .order("id", { ascending: true })
-            .range(offset, offset + limit - 1),
-        );
+        // #1698: DB-side aggregation. Two GROUP BY rollups computed in Postgres
+        // (daily cost + per-model breakdown) replace the row-by-row .range()
+        // paging of the 30-day window — every row is aggregated server-side,
+        // so there is no PostgREST max-rows truncation to guard against.
+        const aiDailyRollupPromise = db.rpc("ai_call_log_daily_cost_rollup", {
+          p_from: thirtyDaysAgo,
+          p_to: nowIso,
+        });
+        const aiModelRollupPromise = db.rpc("ai_call_log_model_rollup", {
+          p_from: thirtyDaysAgo,
+          p_to: nowIso,
+        });
 
         const [
-          aiCallLogResult,
+          aiDailyRollupResult,
+          aiModelRollupResult,
           emailDailyResult,
           weatherHistoryResult,
           weatherTodayResult,
@@ -85,7 +83,8 @@ export async function GET(req: Request): Promise<Response> {
           apifyLedgerResult,
           apifyBudgetResult,
         ] = await Promise.all([
-          aiCallLogRowsPromise,
+          aiDailyRollupPromise,
+          aiModelRollupPromise,
           db.from("email_log").select("sent_at").gte("sent_at", thirtyDaysAgo).in("status", ["sent", "delivered"]),
           db.from("weather_usage_metrics").select("metric_date, requests_count").gte("metric_date", thirtyDaysAgo.slice(0, 10)).order("metric_date", { ascending: true }),
           db.from("weather_usage_metrics").select("requests_count").eq("metric_date", new Date().toISOString().slice(0, 10)).maybeSingle(),
@@ -99,6 +98,8 @@ export async function GET(req: Request): Promise<Response> {
         ]);
 
         // Fail-closed: surface any DB error rather than silently returning zeros.
+        if (aiDailyRollupResult.error) throw new Error(`ai_call_log daily rollup failed: ${aiDailyRollupResult.error.message}`);
+        if (aiModelRollupResult.error) throw new Error(`ai_call_log model rollup failed: ${aiModelRollupResult.error.message}`);
         if (emailDailyResult.error) throw new Error(`email_log read failed: ${emailDailyResult.error.message}`);
         if (weatherHistoryResult.error) throw new Error(`weather_usage_metrics read failed: ${weatherHistoryResult.error.message}`);
         if (weatherTodayResult.error) throw new Error(`weather_usage_metrics today read failed: ${weatherTodayResult.error.message}`);
@@ -110,8 +111,32 @@ export async function GET(req: Request): Promise<Response> {
         if (apifyLedgerResult.error) throw new Error(`apify_spend_ledger read failed: ${apifyLedgerResult.error.message}`);
         if (apifyBudgetResult.error) throw new Error(`apify_budget read failed: ${apifyBudgetResult.error.message}`);
 
-        const aiCallLogRows = aiCallLogResult.rows;
-        recordQuery({ op: "select", table: "ai_call_log", row_count: aiCallLogRows.length });
+        // #1698: main ai_call_log is pre-aggregated by the RPCs. Daily rollup
+        // rows are adapted to the { created_at, cost_estimate_cents } shape
+        // buildDailyArray buckets by (one pseudo-row per UTC day); the model
+        // rollup seeds aggregateByModel directly (its columns already match
+        // ModelRow). BIGINT columns arrive as number|string → coerce.
+        const aiDailyRollup = (aiDailyRollupResult.data ?? []) as Array<{ day: string; cost_cents: number | string }>;
+        const aiModelSeed: ModelRow[] = ((aiModelRollupResult.data ?? []) as Array<{
+          vendor: string;
+          model: string;
+          call_count: number | string;
+          input_tokens: number | string;
+          output_tokens: number | string;
+          cost_cents: number | string;
+        }>).map((r) => ({
+          vendor: r.vendor,
+          model: r.model,
+          call_count: parseBigIntCol(r.call_count),
+          input_tokens: parseBigIntCol(r.input_tokens),
+          output_tokens: parseBigIntCol(r.output_tokens),
+          cost_cents: parseBigIntCol(r.cost_cents),
+        }));
+        const aiDailyPseudoRows = aiDailyRollup.map((r) => ({
+          created_at: `${r.day}T00:00:00Z`,
+          cost_estimate_cents: r.cost_cents,
+        }));
+        recordQuery({ op: "select", table: "ai_call_log", row_count: aiDailyRollup.length + aiModelSeed.length });
         recordQuery({ op: "select", table: "email_log", row_count: emailDailyResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "weather_usage_metrics", row_count: weatherHistoryResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "tenant_usage_metrics", row_count: tenantMetricsResult.data?.length ?? 0 });
@@ -144,14 +169,14 @@ export async function GET(req: Request): Promise<Response> {
         recordQuery({ op: "select", table: "rag_ai_call_log", row_count: ragRows.daily.length + ragRows.byModel.length });
 
         const daily: DailyRow[] = buildDailyArray(
-          [...aiCallLogRows, ...ragRows.daily],
+          [...aiDailyPseudoRows, ...ragRows.daily],
           emailDailyResult.data as Array<{ sent_at: string | null }>,
           weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>,
           new Date(),
           apifyLedgerRows,
         );
 
-        const modelBreakdown: ModelRow[] = aggregateByModel([...aiCallLogRows, ...ragRows.byModel]);
+        const modelBreakdown: ModelRow[] = aggregateByModel(ragRows.byModel, aiModelSeed);
 
         const tenantInfoMap = new Map<string, { slug: string; display_name: string }>();
         for (const t of tenantsResult.data as Array<{ id: string; slug: string; display_name: string }>) {
@@ -208,9 +233,10 @@ export async function GET(req: Request): Promise<Response> {
             weather_cap: weatherCap,
             apify_spend_usd_period: apifySpendUsdPeriod,
             apify_monthly_budget_usd: apifyMonthlyBudgetUsd,
-            // true when ai_call_log paging hit its row ceiling — AI cost
-            // figures are then a lower bound; the dashboard shows a marker.
-            ai_cost_truncated: aiCallLogResult.truncated,
+            // #1698: always false now that AI cost is a DB-side aggregate over
+            // the full window (no row-ceiling paging left to truncate). Kept so
+            // the dashboard's truncation marker contract stays stable.
+            ai_cost_truncated: false,
           },
           daily,
           model_breakdown: modelBreakdown,
