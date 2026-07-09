@@ -76,6 +76,10 @@ export async function runTaskRemindersFire() {
   let delivered = 0;
   let suppressed = 0;
   let failed = 0;
+  // #1679 — rows that lost the claim race to a concurrent (still-fresh) run.
+  // Tracked separately so `processed` reconciles with delivered+suppressed+failed
+  // instead of silently absorbing skipped rows.
+  let skipped = 0;
   let batches = 0;
   const start = Date.now();
 
@@ -102,7 +106,14 @@ export async function runTaskRemindersFire() {
       // #1581 — claim before send. 0 rows means a concurrent (still-fresh)
       // run already holds this row; skip it rather than double-sending.
       const claimed = await tryClaimReminderRow(svc, r.id, new Date().toISOString());
-      if (!claimed) continue;
+      if (!claimed) {
+        skipped++;
+        continue;
+      }
+      // #1679 — count only rows we actually claimed and will drive to an
+      // outcome. Every claimed row lands in exactly one of delivered/
+      // suppressed/failed below, so `processed` stays reconcilable.
+      processed++;
 
       const t = Array.isArray(r.tasks) ? r.tasks[0] ?? null : r.tasks;
       // §37.3.3 — suppress reminders that fall inside a snooze window.
@@ -171,11 +182,9 @@ export async function runTaskRemindersFire() {
       }
     }
 
-    processed += rows.length;
-
     // Batch came back short — backlog is drained, no point re-querying.
     if (rows.length < BATCH_LIMIT) break;
   }
 
-  return { processed, delivered, suppressed, failed, batches };
+  return { processed, delivered, suppressed, failed, skipped, batches };
 }

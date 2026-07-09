@@ -51,6 +51,11 @@ let table: StoredRow[] = [];
 // a synthetic DB error, then self-clear — lets a test inject exactly one
 // post-dispatch failure to prove the claim is retained (not released).
 let finalizeFailIds = new Set<string>();
+// #1679: row ids here lose their NEXT claim attempt — the claim `.select("id")`
+// returns [] (as it would when a concurrent run claimed the row between this
+// run's batch select and its per-row claim), letting a test exercise the
+// claim-race skip path deterministically in a single-threaded mock.
+let claimFailIds = new Set<string>();
 
 function makeDb() {
   return {
@@ -117,6 +122,11 @@ function makeDb() {
               return chain;
             },
             select(_cols: string) {
+              // #1679 — simulate losing the claim race to a concurrent run.
+              if (targetId !== undefined && claimFailIds.has(targetId)) {
+                claimFailIds.delete(targetId);
+                return Promise.resolve({ data: [], error: null });
+              }
               const row = applyIfMatch((r) => chain._guards.every((g) => g(r)));
               return Promise.resolve({ data: row ? [{ id: row.id }] : [], error: null });
             },
@@ -164,12 +174,13 @@ import { runTaskRemindersFire, tryClaimReminderRow } from "@/lib/cron/task-remin
 import { sendTaskReminderEmail } from "@/lib/tasks/send-reminder-email";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-type FireResult = { processed: number; delivered: number; suppressed: number; failed: number; batches: number };
+type FireResult = { processed: number; delivered: number; suppressed: number; failed: number; skipped: number; batches: number };
 const run = runTaskRemindersFire as unknown as () => Promise<FireResult>;
 
 beforeEach(() => {
   table = [];
   finalizeFailIds = new Set();
+  claimFailIds = new Set();
   vi.clearAllMocks();
 });
 
@@ -311,6 +322,30 @@ describe("task-reminders-fire — #1581 CAS claim", () => {
     const db = makeDb();
     const claimed = await tryClaimReminderRow(db as never, "r-1", new Date().toISOString());
     expect(claimed).toBe(false);
+  });
+
+  it("#1679: a row whose claim is lost to a concurrent run counts as skipped, not processed", async () => {
+    // WHY: pre-fix, `processed` was `+= rows.length` after the loop, so it
+    // counted claim-losers that were never driven to an outcome — the cron's
+    // own metrics no longer reconciled, making them useless for drain-health
+    // monitoring. `processed` must now equal delivered+suppressed+failed, with
+    // claim-losers tallied separately as `skipped`.
+    table.push(makeRow("winner-0"));
+    table.push(makeRow("winner-1"));
+    table.push(makeRow("loser"));
+    claimFailIds.add("loser");
+
+    const result = await run();
+
+    expect(result.processed).toBe(2);
+    expect(result.skipped).toBe(1);
+    // The reconciliation invariant — this assertion fails if a future change
+    // reintroduces counting a row in `processed` without an outcome.
+    expect(result.delivered + result.suppressed + result.failed).toBe(result.processed);
+    // The lost row was neither finalized nor claimed by this run.
+    const loser = table.find((r) => r.id === "loser")!;
+    expect(loser.fired_at).toBeNull();
+    expect(loser.sending_at).toBeNull();
   });
 
   it("#1581 acceptance: two overlapping simulated runs over the same rows produce exactly one send per row", async () => {

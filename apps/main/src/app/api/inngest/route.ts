@@ -78,6 +78,8 @@ import { forensicsLogPurgeCron } from "@/inngest/forensics-log-purge-cron";
 import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
 // §7.9 — request_idempotency expired-row purge (hourly)
 import { requestIdempotencyPurge } from "@/inngest/request-idempotency-purge";
+// #1590 — retention/pruning for fast-growing log/event tables (daily)
+import { dataRetentionPurge } from "@/inngest/data-retention-purge";
 // #851: daily model canary — pings configured models so a retired one alerts early
 import { modelCanary } from "@/inngest/model-canary";
 // BP27: SaaS abuse monitoring + cost controls (§27)
@@ -216,6 +218,8 @@ export const { GET, POST, PUT } = serve({
     auditLogRetentionPurge,
     // §7.9 — request_idempotency expired-row purge
     requestIdempotencyPurge,
+    // #1590 — retention/pruning for fast-growing log/event tables
+    dataRetentionPurge,
     // #851: daily model canary
     modelCanary,
     // BP27: SaaS abuse monitoring + cost controls (§27)

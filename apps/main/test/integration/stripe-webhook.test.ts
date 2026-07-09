@@ -790,13 +790,16 @@ describeIf("Stripe webhook handler", () => {
     expect(afterStale?.subscription_status).toBe("active");
     expect(afterStale?.non_paying_since).toBeNull();
 
-    // The stale event is recorded as discarded (not applied), not 'success'.
+    // #1677 — the stale event is recorded with the distinct 'stale_discarded'
+    // outcome, NOT 'unhandled' (which means "no handler for this type"). The
+    // two must stay distinguishable so a dashboard doesn't flag a healthy
+    // out-of-order discard as a missing-handler gap.
     const { data: staleEvt } = await admin
       .from("stripe_webhook_events")
       .select("processing_outcome")
       .eq("stripe_event_id", eventIdStalePastDue)
       .single();
-    expect(staleEvt?.processing_outcome).toBe("unhandled");
+    expect(staleEvt?.processing_outcome).toBe("stale_discarded");
 
     await admin.from("tenants").delete().eq("id", tenantId);
   });
