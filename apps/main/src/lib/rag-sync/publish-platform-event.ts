@@ -8,22 +8,13 @@
 // Service-role import permitted: publishes to external service after DB write.
 // Add to no-direct-service-role-import allowlist.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { hmacHexSign, type PlatformEvent, type PlatformEventType, type PlatformSettingsEventPayload } from "@atc/contracts";
 
-export type PlatformEventType = "platform_settings.updated";
-
-export interface PlatformSettingsEventPayload {
-  // One entry per changed key. Send the full new value (not a delta) so the
-  // receiver can upsert without needing the prior state.
-  changes: Array<{ key: string; value: unknown }>;
-}
-
-export interface PlatformEvent {
-  event_type: PlatformEventType;
-  source_revision: number;
-  payload: PlatformSettingsEventPayload;
-}
+export type { PlatformEvent, PlatformEventType, PlatformSettingsEventPayload };
 
 // Keys that the rag side actually consumes. Sending anything else is a
 // privacy / surface-area concern (e.g. supervisor_slur_deny_list contains
@@ -47,22 +38,32 @@ export function isSyncEligibleKey(key: string): boolean {
   return SYNC_ELIGIBLE_KEYS.has(key);
 }
 
-async function hmacHex(secret: string, body: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 const RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
+
+// Queue a platform event for the rag-sync-retry cron to redeliver. Shared by
+// the missing-config and retries-exhausted paths so neither silently drops
+// (#1595 — the missing-config path previously logged and returned, dropping the
+// event; tenant events already queued in the same situation). tenant_id is NULL
+// for platform-scope events (the pending_rag_sync CHECK constraint allows it).
+async function queuePendingPlatformSync(event: PlatformEvent, lastError: string | undefined): Promise<void> {
+  console.warn("[rag-sync] queuing platform event for retry", {
+    event_type: event.event_type,
+    changed_keys: event.payload.changes.map((c) => c.key),
+    last_error: lastError,
+  });
+  try {
+    const db = createServiceRoleClient();
+    await safeAwait(db.from("pending_rag_sync").insert({
+      tenant_id: null,
+      event_type: event.event_type,
+      payload: event.payload,
+      source_revision: event.source_revision,
+      last_error: lastError,
+    }), "pending_rag_sync.insert");
+  } catch (dbErr) {
+    console.error("[rag-sync] Failed to insert platform event into pending_rag_sync:", dbErr);
+  }
+}
 
 async function attemptPost(url: string, body: string, signature: string): Promise<void> {
   const res = await fetch(url, {
@@ -83,15 +84,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function publishPlatformEvent(event: PlatformEvent): Promise<void> {
-  const ragUrl = process.env.RAG_SERVICE_URL;
-  const secret = process.env.RAG_WEBHOOK_SECRET;
-  if (!ragUrl || !secret) {
-    console.error("[rag-sync] RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set");
-    return;
-  }
-
-  // Filter to keys the rag side actually consumes. See SYNC_ELIGIBLE_KEYS
-  // above for the rationale.
+  // Filter to keys the rag side actually consumes FIRST, so a missing-config
+  // event is queued with only the eligible keys (and an all-ineligible event
+  // exits before touching config). See SYNC_ELIGIBLE_KEYS for the rationale.
   const filtered = event.payload.changes.filter((c) => isSyncEligibleKey(c.key));
   const dropped = event.payload.changes.filter((c) => !isSyncEligibleKey(c.key));
   if (dropped.length > 0) {
@@ -107,9 +102,19 @@ export async function publishPlatformEvent(event: PlatformEvent): Promise<void> 
     payload: { changes: filtered },
   };
 
-  const url = `${ragUrl}/api/platform-settings-events`;
+  const ragUrl = process.env.RAG_SERVICE_URL;
+  const secret = process.env.RAG_WEBHOOK_SECRET;
+  if (!ragUrl || !secret) {
+    // Missing config must NOT silently drop the event — queue it so the
+    // rag-sync-retry cron redelivers once config is restored (#1595).
+    console.error("[rag-sync] RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set — queuing platform event for retry");
+    await queuePendingPlatformSync(toPublish, "RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set");
+    return;
+  }
+
+  const url = `${ragUrl.replace(/\/+$/, "")}/api/platform-settings-events`;
   const body = JSON.stringify(toPublish);
-  const signature = await hmacHex(secret, body);
+  const signature = await hmacHexSign(secret, body);
 
   let lastError: string | undefined;
 
@@ -126,27 +131,7 @@ export async function publishPlatformEvent(event: PlatformEvent): Promise<void> 
     }
   }
 
-  // All retries failed — drop into pending_rag_sync. tenant_id is NULL for
-  // platform-scope events (the CHECK constraint in migration
-  // 20260614000000_platform_settings_sync.sql explicitly allows this).
-  console.warn("[rag-sync] All retries failed for platform event, queuing", {
-    event_type: toPublish.event_type,
-    changed_keys: filtered.map((c) => c.key),
-    last_error: lastError,
-  });
-
-  try {
-    const db = createServiceRoleClient();
-    await safeAwait(db.from("pending_rag_sync").insert({
-      tenant_id: null,
-      event_type: toPublish.event_type,
-      payload: toPublish.payload,
-      source_revision: toPublish.source_revision,
-      last_error: lastError,
-    }), "pending_rag_sync.insert");
-  } catch (dbErr) {
-    console.error("[rag-sync] Failed to insert platform event into pending_rag_sync:", dbErr);
-  }
+  await queuePendingPlatformSync(toPublish, lastError);
 }
 
 // Helper: compute the source_revision for a platform_settings change. Uses

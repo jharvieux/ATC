@@ -11,6 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
 
 type MainTenant = {
   id: string;
@@ -27,20 +28,6 @@ type ShadowRow = {
   display_name: string;
   source_revision: number;
 };
-
-// Exported for testing. A `redirect: "manual"` fetch yields either an
-// "opaqueredirect" response (Node/undici: type set, status 0) or a raw 3xx.
-// Following such a redirect cross-origin (e.g. apex→www, or the Vercel
-// deployment-protection wall on atc-main.vercel.app) strips the Authorization
-// header on the next hop, turning an authenticated request into an anonymous
-// one that often returns a 200 HTML login page — a silent, confusing failure.
-// Callers must fail loud instead of following it. (Issue #1273)
-export function isCrossOriginRedirect(res: {
-  type: string;
-  status: number;
-}): boolean {
-  return res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400);
-}
 
 export const tenantRegistryReconcile = inngest.createFunction(
   {

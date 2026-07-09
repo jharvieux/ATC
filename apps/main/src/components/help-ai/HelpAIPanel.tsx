@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { splitSseLines } from "@/lib/http/sse-stream";
 
 interface Props {
   sessionType: "help" | "bug" | "feature";
@@ -112,12 +113,16 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = "";
+      let buf = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        // SSE frames are `data: <text>\n\n`. Concatenate the data: lines.
-        for (const line of chunk.split("\n")) {
+        // SSE frames are `data: <text>\n\n`. A chunk boundary can split a
+        // line, so carry the trailing partial line across reads (#1593).
+        const { lines, remainder } = splitSseLines(buf, chunk);
+        buf = remainder;
+        for (const line of lines) {
           if (line.startsWith("data: ")) {
             const piece = line.slice(6);
             if (piece === "[DONE]") continue;

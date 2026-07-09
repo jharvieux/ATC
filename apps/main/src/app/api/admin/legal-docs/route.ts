@@ -17,6 +17,10 @@ interface PublishBody {
 
 const VALID_TYPES = ["tou","privacy_policy","ai_disclaimer","cookie_policy","ica_subhost","can_spam_addendum","tcpa_addendum"];
 
+// #1588: chunk size for the re-consent fan-out (upsert array + users lookup)
+// so a 2000+-user publish doesn't produce an oversized single payload/URL.
+const CONSENT_BATCH_SIZE = 500;
+
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
@@ -121,13 +125,24 @@ export async function POST(req: Request): Promise<Response> {
           const uniqueUsers = [...new Set((usersToFlag as { auth_user_id: string }[]).map((r) => r.auth_user_id))];
           recordQuery({ op: "insert", table: "user_consent_pending", row_count: uniqueUsers.length });
 
-          for (const authUserId of uniqueUsers) {
-            await safeAwait(db.from("user_consent_pending").upsert({
-              auth_user_id: authUserId,
-              document_type: body.document_type,
-              document_id_pending: (newDoc as { id: string }).id,
-              flagged_at: new Date().toISOString(),
-            }, { onConflict: "auth_user_id,document_type" }), "user_consent_pending.upsert");
+          // #1588: one batched array upsert (chunked) instead of one
+          // round-trip per user — a publish affecting 2000+ users must not
+          // require 2000+ serial writes in the one admin request that MUST
+          // succeed.
+          const pendingRows = uniqueUsers.map((authUserId) => ({
+            auth_user_id: authUserId,
+            document_type: body.document_type,
+            document_id_pending: (newDoc as { id: string }).id,
+            flagged_at: new Date().toISOString(),
+          }));
+          for (let i = 0; i < pendingRows.length; i += CONSENT_BATCH_SIZE) {
+            await safeAwait(
+              db.from("user_consent_pending").upsert(
+                pendingRows.slice(i, i + CONSENT_BATCH_SIZE),
+                { onConflict: "auth_user_id,document_type" },
+              ),
+              "user_consent_pending.upsert",
+            );
           }
 
           // CodeQL log-injection narrowing: body.document_type is validated
@@ -142,11 +157,47 @@ export async function POST(req: Request): Promise<Response> {
             const { sendPlatformUserEmail } = await import("@/lib/email/notifications");
             const summary = body.summary_of_changes ?? "Please review the updated document.";
             const subject = `Updated terms — please review (${body.document_type} v${newVersion})`;
-            // Look up email addresses via the auth admin API one-by-one.
+
+            // #1588: batch email lookups from public.users instead of one
+            // auth.admin.getUserById round-trip per user.
+            const emailByUser = new Map<string, string>();
+            for (let i = 0; i < uniqueUsers.length; i += CONSENT_BATCH_SIZE) {
+              const chunk = uniqueUsers.slice(i, i + CONSENT_BATCH_SIZE);
+              recordQuery({ op: "select", table: "users", row_count: chunk.length });
+              // public.users has one row per (tenant, auth_user_id), so an
+              // auth_user_id can appear multiple times here. Order by created_at
+              // and keep the FIRST (oldest) row's email as the canonical pick so
+              // the chosen address is deterministic across publishes.
+              const { data: userRows, error: usersErr } = await db
+                .from("users")
+                .select("auth_user_id, email")
+                .in("auth_user_id", chunk)
+                .order("created_at", { ascending: true });
+              if (usersErr) {
+                console.warn(`[legal-docs] batch email lookup failed: ${usersErr.message}`);
+                continue;
+              }
+              for (const row of (userRows ?? []) as { auth_user_id: string; email: string }[]) {
+                if (emailByUser.has(row.auth_user_id)) continue;
+                emailByUser.set(row.auth_user_id, row.email);
+              }
+            }
+
+            // One summary line for the whole fan-out: how many affected users we
+            // couldn't resolve an email for (chunk failures + rows with no match).
+            // Per-chunk warns above are noisy; this is the number that matters.
+            const missingEmailCount = uniqueUsers.length - emailByUser.size;
+            if (missingEmailCount > 0) {
+              console.warn(
+                "[legal-docs] %d of %d flagged users had no resolvable email — re-consent notification skipped for them",
+                missingEmailCount,
+                uniqueUsers.length,
+              );
+            }
+
             for (const authUserId of uniqueUsers) {
               try {
-                const { data: au } = await db.auth.admin.getUserById(authUserId);
-                const to = au?.user?.email;
+                const to = emailByUser.get(authUserId);
                 if (!to) continue;
                 await sendPlatformUserEmail({
                   to,

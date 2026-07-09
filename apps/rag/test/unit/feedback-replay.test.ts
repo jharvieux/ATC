@@ -70,8 +70,8 @@ function makeRequest(body: string, sig: string) {
 describe("feedback webhook replay protection (#1385)", () => {
   it("accepts a first delivery", async () => {
     vi.stubEnv("RAG_WEBHOOK_SECRET", TEST_SECRET);
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
-    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    vi.stubEnv("SUPABASE_RAG_URL", "https://example.supabase.co");
+    vi.stubEnv("SUPABASE_RAG_SERVICE_ROLE_KEY", "service-role-key");
 
     const sig = await hmacHex(TEST_SECRET, BODY);
     const res = await POST(makeRequest(BODY, sig));

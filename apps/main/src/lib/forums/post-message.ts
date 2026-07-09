@@ -14,10 +14,11 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { inngest } from "@/inngest/client";
 
 // A message is authored by exactly one of a user row or a guest invitation
-// (forum_messages_author_xor, migration 20260717000000) — recordStrike /
-// checkStrikePatterns key off user_id, so guest-authored hidden messages
-// don't yet get strike-tracked (forum_strikes/forum_user_state have no
-// invitation-author equivalent; tracked as a follow-up, see PR description).
+// (forum_messages_author_xor, migration 20260717000000). forum_strikes and
+// forum_user_state mirror the same XOR (#1572, migration
+// 20260709105548_forum_strikes_guest_authors.sql), so recordStrike /
+// checkStrikePatterns key off whichever author reference is set — guest
+// authors accrue strikes and get auto-muted the same as members.
 export type MessageAuthor = { user_id: string } | { invitation_id: string };
 
 interface ModerationScores {
@@ -222,11 +223,9 @@ export async function insertAndModerateForumMessage(
     moderation_decision_reason: moderationResult.reasoning,
   }).eq("id", msg.id).eq("tenant_id", tenant_id), "forum_messages.update");
 
-  // Strike tracking only covers authenticated users today (forum_strikes.
-  // user_id is NOT NULL) — guest-authored hidden messages skip it.
-  if (status === "hidden" && "user_id" in author) {
-    await recordStrike(svc, { user_id: author.user_id, forum_id, tenant_id, message_id: msg.id, kind: "ai_hidden" });
-    await checkStrikePatterns(svc, { user_id: author.user_id, forum_id, tenant_id });
+  if (status === "hidden") {
+    await recordStrike(svc, { author, forum_id, tenant_id, message_id: msg.id, kind: "ai_hidden" });
+    await checkStrikePatterns(svc, { author, forum_id, tenant_id });
   }
 
   return { body: { ...msg, status, moderation_scores: moderationResult.scores }, status: 201 };

@@ -79,49 +79,45 @@ export const POST = withServiceAuth(async (req, ctx) => {
     // return that column). One additional SELECT keyed by chunk IDs.
     const vectorRows = (chunks ?? []) as Array<Record<string, unknown>>;
 
-    // Structured lookups — each is best-effort; a failure degrades to vector-only.
-    let structuredRows: Array<Record<string, unknown>> = [];
-
-    // #826 — ship + exact date → itinerary chunks.
-    if (body.itinerary_lookup) {
-      try {
-        structuredRows.push(...await fetchItineraryLookupChunks(db, ctx.tenant_id, body.itinerary_lookup));
-      } catch (e) {
-        console.warn(`[retrieve] itinerary_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    // ship_lookup — always include deck_intel + ship_intel for the named ship.
-    // Vector search misses these when the question is about a venue or amenity.
-    if (body.ship_lookup) {
-      try {
-        structuredRows.push(...await fetchShipLookupChunks(db, ctx.tenant_id, body.ship_lookup));
-      } catch (e) {
-        console.warn(`[retrieve] ship_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    // port_lookup — departure-port + date → itinerary chunks.
-    if (body.port_lookup) {
-      try {
-        structuredRows.push(...await fetchPortLookupChunks(db, ctx.tenant_id, body.port_lookup));
-      } catch (e) {
-        console.warn(`[retrieve] port_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    // region_lookup — region/area + date window → itinerary chunks. Catches the
-    // open "what sails Australia next spring?" query where no single ship or
-    // port is named (and most regional rows carry a NULL region column).
-    if (body.region_lookup) {
-      try {
-        structuredRows.push(...await fetchRegionLookupChunks(db, ctx.tenant_id, body.region_lookup));
-      } catch (e) {
-        // Server-side log only (not an API response): pass the error as a separate
-        // console arg so the egress guard sees no `.message`/String(err) in a response.
-        console.warn("[retrieve] region_lookup failed (degrading to vector-only):", e);
-      }
-    }
+    // Structured lookups — each is best-effort; a failure degrades to
+    // vector-only. #1589: run the four concurrently (they hit independent
+    // queries) instead of serially, so a ship-AND-port message pays one round
+    // trip's latency, not four. Each lookup owns its try/catch so one failing
+    // still degrades independently rather than aborting the others.
+    const lookupResults = await Promise.all([
+      body.itinerary_lookup
+        ? fetchItineraryLookupChunks(db, ctx.tenant_id, body.itinerary_lookup).catch((e) => {
+            console.warn(`[retrieve] itinerary_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+            return [];
+          })
+        : Promise.resolve([]),
+      // ship_lookup — always include deck_intel + ship_intel for the named ship.
+      // Vector search misses these when the question is about a venue or amenity.
+      body.ship_lookup
+        ? fetchShipLookupChunks(db, ctx.tenant_id, body.ship_lookup).catch((e) => {
+            console.warn(`[retrieve] ship_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+            return [];
+          })
+        : Promise.resolve([]),
+      body.port_lookup
+        ? fetchPortLookupChunks(db, ctx.tenant_id, body.port_lookup).catch((e) => {
+            console.warn(`[retrieve] port_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+            return [];
+          })
+        : Promise.resolve([]),
+      // region_lookup — region/area + date window → itinerary chunks. Catches the
+      // open "what sails Australia next spring?" query where no single ship or
+      // port is named (and most regional rows carry a NULL region column).
+      body.region_lookup
+        ? fetchRegionLookupChunks(db, ctx.tenant_id, body.region_lookup).catch((e) => {
+            // Server-side log only (not an API response): pass the error as a separate
+            // console arg so the egress guard sees no `.message`/String(err) in a response.
+            console.warn("[retrieve] region_lookup failed (degrading to vector-only):", e);
+            return [];
+          })
+        : Promise.resolve([]),
+    ]);
+    const structuredRows: Array<Record<string, unknown>> = lookupResults.flat();
 
     const structuredIds = new Set(structuredRows.map((c) => c.id as string));
     const chunkRows = [...structuredRows, ...vectorRows.filter((c) => !structuredIds.has(c.id as string))];
@@ -361,7 +357,12 @@ export async function fetchShipLookupChunks(
     .is("superseded_by_chunk_id", null)
     .not("embedding", "is", null)
     .is("sell_by_at", null)
-    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
+    .or(`scope.eq.global,tenant_id.eq.${tenantId}`)
+    // #1589 — bound the leading-wildcard scan; freshest deck/ship intel first so
+    // the cap drops stale chunks, not current ones. A ship has few intel chunks,
+    // so 40 is a generous ceiling that still can't return an unbounded set.
+    .order("ingested_at", { ascending: false })
+    .limit(40);
   if (error) throw new Error(`ship lookup failed: ${error.message}`);
   return shapeStructuredChunks(rows, tenantId, 0.95);
 }

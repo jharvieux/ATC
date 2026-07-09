@@ -22,6 +22,17 @@ import {
 } from "@/lib/auth/ssr-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import {
+  matchesAnyPrefix,
+  ADMIN_API_PREFIXES,
+  AUTH_API_PREFIXES,
+  AUTH_FLOW_PAGE_PREFIXES,
+  CHAT_PAGE_PREFIXES,
+  CHAT_API_PREFIXES,
+  CONSOLE_PAGE_PREFIXES,
+  CONSOLE_API_PREFIXES,
+  LOGIN_GATED_PREFIXES,
+} from "@/lib/tenancy/route-classification";
 
 const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
 // §15.16 — Payment gate banner state, surfaced to the app layout so it can
@@ -138,7 +149,7 @@ function applyPaymentGate(
 // x-admin-user-id pattern (2026-05-25 audit Finding 1, confidence 10) is
 // closed by the combination of this gate + assertPlatformAdmin.
 function isAdminApiPath(pathname: string): boolean {
-  return pathname.startsWith("/api/admin/") || pathname === "/api/admin";
+  return matchesAnyPrefix(pathname, ADMIN_API_PREFIXES);
 }
 
 // §26 — Platform-admin PAGE routes: the (admin) route group, which serves
@@ -160,11 +171,7 @@ function isAdminPagePath(pathname: string): boolean {
 // tenant subdomains. Both are "use client" pages with no server-side gate —
 // unauthenticated deep-links silently fail at submit without this check.
 function isLoginGatedPath(pathname: string): boolean {
-  return (
-    pathname === "/signup/complete" ||
-    pathname === "/onboarding" ||
-    pathname.startsWith("/onboarding/")
-  );
+  return matchesAnyPrefix(pathname, LOGIN_GATED_PREFIXES);
 }
 
 // §17.x self-heal (#1361) — the sign-in / sign-up surface. A request here with
@@ -176,13 +183,10 @@ function isAuthFlowPath(pathname: string): boolean {
   // /signup/complete is POST-auth (login-gated, #1050): it needs a live session,
   // so a dead cookie there must re-auth, not clear-in-place. Exclude it.
   if (pathname === "/signup/complete") return false;
-  return (
-    pathname === "/auth" ||
-    pathname.startsWith("/auth/") ||
-    pathname.startsWith("/api/auth/") ||
-    pathname === "/signup" ||
-    pathname.startsWith("/signup/")
-  );
+  return matchesAnyPrefix(pathname, [
+    ...AUTH_FLOW_PAGE_PREFIXES,
+    ...AUTH_API_PREFIXES,
+  ]);
 }
 
 function hasSupabaseAuthCookie(req: NextRequest): boolean {
@@ -391,30 +395,19 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const isChatPath =
-      pathname === "/chat" ||
-      pathname.startsWith("/chat/") ||
-      pathname === "/api/chat" ||
-      pathname.startsWith("/api/chat/") ||
-      pathname.startsWith("/api/memory");
+    const isChatPath = matchesAnyPrefix(pathname, [
+      ...CHAT_PAGE_PREFIXES,
+      ...CHAT_API_PREFIXES,
+    ]);
 
     // Tenant console and workspace paths that require a resolved tenant ID.
     // /admin/* is intentionally excluded — those routes use the "platform" sentinel.
-    const isConsolePath =
-      pathname === "/settings" ||
-      pathname.startsWith("/settings/") ||
-      pathname === "/concierge" ||
-      pathname.startsWith("/concierge/") ||
-      pathname === "/crm" ||
-      pathname.startsWith("/crm/") ||
-      pathname.startsWith("/api/crm/") ||
-      pathname === "/groups" ||
-      pathname.startsWith("/groups/") ||
-      pathname.startsWith("/api/bookings") ||
-      pathname.startsWith("/api/quotes") ||
-      pathname.startsWith("/api/groups") ||
-      pathname.startsWith("/api/price-watches") ||
-      pathname.startsWith("/api/tenant/");
+    // Classification lives in route-classification.ts (#1601); the walk test
+    // there fails CI when a new tenant-scoped route isn't declared.
+    const isConsolePath = matchesAnyPrefix(pathname, [
+      ...CONSOLE_PAGE_PREFIXES,
+      ...CONSOLE_API_PREFIXES,
+    ]);
 
     if ((isChatPath || isConsolePath) && authUser) {
       try {

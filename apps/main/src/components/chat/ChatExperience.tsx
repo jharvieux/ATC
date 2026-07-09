@@ -24,6 +24,7 @@ import { PoweredBy } from "@/components/branding/PoweredBy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { buildChatRequestBody } from "@/components/chat/build-chat-request-body";
+import { splitSseLines } from "@/lib/http/sse-stream";
 
 const DRAFT_KEY = "atc-chat-draft";
 
@@ -149,9 +150,9 @@ export function ChatExperience({
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
+        const chunk = decoder.decode(value, { stream: true });
+        const { lines, remainder } = splitSseLines(buf, chunk);
+        buf = remainder;
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const ev = JSON.parse(line.slice(6)) as SseEvent;

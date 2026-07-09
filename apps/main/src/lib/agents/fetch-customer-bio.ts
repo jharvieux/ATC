@@ -7,6 +7,8 @@
 // page) can't satisfy that. The field we read is intentionally
 // public-marketing content. Read-only.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 /**

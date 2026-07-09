@@ -10,65 +10,28 @@
 // RAG_WEBHOOK_SECRET keeps it independent of the per-tenant JWT path.
 export const dynamic = "force-dynamic";
 
-import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { z } from "zod";
-import { dbErrorResponse } from "@/lib/api/db-error-response";
-
-const bodySchema = z.object({
-  event_type: z.literal("platform_settings.updated"),
-  source_revision: z.number().int().nonnegative(),
-  payload: z.object({
-    changes: z
-      .array(
-        z.object({
-          key: z.string().min(1).max(128),
-          // value is JSONB — accept anything serialisable.
-          value: z.unknown(),
-        }),
-      )
-      .min(1),
-  }),
-});
-
-async function hmacHex(secret: string, body: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+import { PlatformEventSchema, verifyWebhookSignature, type PlatformEvent } from "@atc/contracts";
 
 export async function POST(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
-  const sigHeader = req.headers.get("x-webhook-signature");
   const secret = process.env.RAG_WEBHOOK_SECRET;
   if (!secret) {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
-  const expected = await hmacHex(secret, rawBody);
-  // Both sides are lowercase hex strings from hmacHex(); Buffer.from(str)
-  // defaults to UTF-8, comparing character bytes — correct for hex comparison.
-  // Length parity check prevents the Buffer.byteLength mismatch throw.
-  if (
-    !sigHeader ||
-    sigHeader.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected))
-  ) {
+  const validSignature = await verifyWebhookSignature(
+    secret,
+    rawBody,
+    req.headers.get("x-webhook-signature"),
+  );
+  if (!validSignature) {
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
 
-  let parsed: z.infer<typeof bodySchema>;
+  let parsed: PlatformEvent;
   try {
-    parsed = bodySchema.parse(JSON.parse(rawBody));
+    parsed = PlatformEventSchema.parse(JSON.parse(rawBody));
   } catch {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }

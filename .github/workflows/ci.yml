@@ -157,6 +157,14 @@ jobs:
       - name: Duplication guard (jscpd)
         run: pnpm check:duplication
 
+      - name: Server-only poison-pill guard (#1524)
+        # Fails when a server-exclusive importable lib module (reads a secret env
+        # or uses the service-role client) lacks `import 'server-only'`. Without
+        # the poison-pill, a future Client Component that transitively imports it
+        # would bundle the secret/service-role reference into the browser with no
+        # error. The package turns that into a build error instead.
+        run: pnpm check:server-only
+
       - name: D-091 anti-pattern gates (#815)
         # Deterministic backstops for the recurring D-091 anti-patterns the
         # probabilistic d091-reviewer subagent has missed. Fails on NEW hits;

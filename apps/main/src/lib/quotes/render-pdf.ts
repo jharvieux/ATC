@@ -1,16 +1,14 @@
-// §21.10.1 — Quote PDF rendering.
+// §21.10.1 — Quote PDF: shared formatting source + audit-snapshot HTML.
 //
-// IMPLEMENTATION STATUS: produces a deterministic HTML representation of the
-// quote that a renderer (react-pdf or puppeteer) consumes. The actual binary
-// PDF generation is wired in a follow-up — neither @react-pdf/renderer nor
-// puppeteer is installed yet (both are heavy deps), and rendering will be
-// invoked from a Vercel serverless function where react-pdf is a better fit
-// per QUOTE_PDF_RENDERER default. Until then, the HTML serialization IS the
-// dispute-defense artifact: it is captured verbatim in the audit_log
-// snapshot, which is the document that wins arbitrations.
+// This file is the single source of truth for the §21.10.1 disclosure copy
+// (ESTIMATE / CONFIRMED footer templates) and the date/money formatters, and
+// it renders the deterministic HTML serialization that is captured verbatim
+// into the audit_log snapshot — the document that wins arbitrations.
 //
-// The estimate-vs-confirmed copy below is the source of truth for the §21.10.1
-// disclosure language. The renderer choice is documented in MEMORY (D-053).
+// The customer-facing binary PDF is produced by render-quote-pdf.tsx (via
+// @react-pdf/renderer), which imports the footer templates and formatters
+// from HERE so the two renderers can't drift on legally-significant text.
+// The renderer choice is documented in MEMORY (D-053).
 
 import { escapeHtml } from "@/lib/utils";
 import { formatCents } from "@/lib/money";
@@ -49,17 +47,19 @@ export interface QuoteRenderResult {
   content_hash: string;
 }
 
-const ESTIMATE_FOOTER_TEMPLATE = (varianceUsd: string): string =>
-  `This is an ESTIMATE — the final price at booking may differ. By accepting,
-you authorize us to submit the booking at the actual price PROVIDED the price
-is within ${varianceUsd} of the estimate above. If the actual price falls
-OUTSIDE this variance, we will pause the booking and ask you to reconfirm
-at the new price before submitting. Estimate quotes are valid for the period
-shown; after that they automatically expire and a fresh quote is required.`;
+// #1596: exported so render-quote-pdf.tsx (the binary renderer) consumes
+// the SAME footer copy instead of a hand-maintained duplicate — the two
+// renderers drifting on legally-significant disclosure text is exactly
+// the bug this fixes.
+// Single-line (spaces, no hard newlines) so each renderer wraps the text to
+// its own column width — react-pdf treats an embedded \n as a forced line
+// break, which would deform the customer-facing PDF. The words are the source
+// of truth; the line breaks are the renderer's business.
+export const ESTIMATE_FOOTER_TEMPLATE = (varianceUsd: string): string =>
+  `This is an ESTIMATE — the final price at booking may differ. By accepting, you authorize us to submit the booking at the actual price PROVIDED the price is within ${varianceUsd} of the estimate above. If the actual price falls OUTSIDE this variance, we will pause the booking and ask you to reconfirm at the new price before submitting. Estimate quotes are valid for the period shown; after that they automatically expire and a fresh quote is required.`;
 
-const CONFIRMED_FOOTER_TEMPLATE = (host: string, lockEnd: string): string =>
-  `This is a CONFIRMED quote. ${host} has price-locked this fare through
-${lockEnd}. Acceptance submits the booking at the locked price.`;
+export const CONFIRMED_FOOTER_TEMPLATE = (host: string, lockEnd: string): string =>
+  `This is a CONFIRMED quote. ${host} has price-locked this fare through ${lockEnd}. Acceptance submits the booking at the locked price.`;
 
 export function renderQuotePdfHtml(input: QuoteRenderInput): QuoteRenderResult {
   const isEstimate = input.kind === "estimate";
@@ -123,7 +123,10 @@ ${itemRows}
   };
 }
 
-function formatDate(ts: string): string {
+// #1596: exported — the single source for both renderers (see
+// render-quote-pdf.tsx), so the HTML snapshot and the binary PDF can't
+// format the same timestamp two different ways.
+export function formatDate(ts: string): string {
   try {
     return new Date(ts).toISOString().slice(0, 10);
   } catch {
@@ -131,7 +134,7 @@ function formatDate(ts: string): string {
   }
 }
 
-function formatTs(ts: string | null): string {
+export function formatTs(ts: string | null): string {
   if (!ts) return "—";
   try {
     return new Date(ts).toISOString().replace("T", " ").slice(0, 16) + " UTC";

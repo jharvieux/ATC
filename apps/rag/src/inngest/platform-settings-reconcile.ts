@@ -17,6 +17,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
 
 // Keep this list in sync with apps/main/src/lib/rag-sync/publish-platform-event.ts
 // SYNC_ELIGIBLE_KEYS. Two copies because rag can't import from main; a
@@ -43,7 +44,24 @@ interface ShadowSetting {
 }
 
 export const platformSettingsReconcile = inngest.createFunction(
-  { id: "platform-settings-reconcile", triggers: [{ cron: "30 3 * * *" }] },
+  {
+    id: "platform-settings-reconcile",
+    triggers: [{ cron: "30 3 * * *" }],
+    // Same silent-failure class as tenant-registry-reconcile (#1273): this cron
+    // hits the same protected main admin API, so a MAIN_APP_URL misconfig makes
+    // it throw silently into Inngest retries. Fire once after retries exhaust so
+    // the drift is loud for Sentry/log aggregation.
+    onFailure: async ({ error, runId }) => {
+      console.error(
+        "[platform-settings-reconcile] PAGE PLATFORM ADMIN: nightly reconcile failed after all retries " +
+          "(runId=%s): %s. platform_settings will drift from main until fixed — verify atc-rag env: " +
+          "MAIN_APP_URL must be the canonical, non-protected main domain (not atc-main.vercel.app) and " +
+          "MAIN_APP_ADMIN_API_KEY must match main.",
+        runId,
+        error?.message ?? String(error),
+      );
+    },
+  },
   async () => {
     const mainAppUrl = process.env.MAIN_APP_URL;
     const adminKey = process.env.MAIN_APP_ADMIN_API_KEY;
@@ -51,9 +69,18 @@ export const platformSettingsReconcile = inngest.createFunction(
       throw new Error("MAIN_APP_URL or MAIN_APP_ADMIN_API_KEY not set");
     }
 
+    // redirect: "manual" so a cross-origin redirect can't silently strip the
+    // bearer (apex→www or the Vercel protection wall). See #1273.
     const res = await fetch(`${mainAppUrl}/api/admin/platform-settings`, {
       headers: { Authorization: `Bearer ${adminKey}` },
+      redirect: "manual",
     });
+    if (isCrossOriginRedirect(res)) {
+      throw new Error(
+        `Main app admin API redirected (status ${res.status || "opaque"}) — a cross-origin redirect ` +
+          `strips the Bearer token. Set MAIN_APP_URL to the canonical, non-protected main domain.`,
+      );
+    }
     if (!res.ok) {
       throw new Error(`Main app admin API returned ${res.status}`);
     }
