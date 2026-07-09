@@ -524,61 +524,64 @@ async function submitBooking(
       "bookings.update.persist_host_ref",
     );
 
-    // §15.12 sandbox: commissions are NOT created in sandbox mode. The booking
-    // still transitions to 'submitted' so the tenant can exercise the rest of
-    // the flow (confirmation email, status display, etc.) — but no row hits
-    // the commissions table, so no payout balance accrues and no statement
-    // reconciliation will look for it.
-    if (!tenant.is_sandbox) {
-      // Write commissions row with locked rates and fee snapshot
-      const { error: commissionError } = await db.from("commissions").insert({
-        tenant_id: ctx.tenant_id,
-        booking_id: bookingId,
-        commissionable_fare_cents: fare.toString(),
-        commission_rate,
-        platform_split_rate,
-        gross_commission_cents: gross_commission_cents.toString(),
-        host_booking_fee_cents: host_booking_fee_cents.toString(),
-        host_booking_fee_rule_ref,
-        net_commission_cents: net_commission_cents.toString(),
-        platform_retained_cents: platform_retained_cents.toString(),
-        subhost_payable_cents: subhost_payable_cents.toString(),
-        currency: booking.currency,
-        status: "expected",
-      });
+    // #1693 (deferred from #1577) — the commission insert and the final status
+    // flip were two separate service-role writes; a crash between them left a
+    // booking with a persisted host ref + a commission row but status still
+    // 'submitting', which the reconcile cron then routed to pending_host_review
+    // (manual-review toil). Fold both into ONE transaction via a SECURITY DEFINER
+    // RPC. §15.12: the RPC no-ops the commission insert for sandbox tenants (the
+    // booking still flips to 'submitted'). Idempotent against
+    // commissions_booking_id_uidx (#1575) so a crash-retry is safe. The RPC
+    // returns the number of booking rows flipped from its CAS guard
+    // (status='submitting'): 0 means a concurrent path moved the row on.
+    const { data: committedCount, error: commitError } = await adminDb.rpc("submit_commit_booking", {
+      p_booking_id: bookingId,
+      p_tenant_id: ctx.tenant_id,
+      p_provider_booking_ref: provider_booking_ref,
+      p_host_adapter: adapter.adapterId,
+      p_is_sandbox: tenant.is_sandbox,
+      p_commissionable_fare_cents: fare.toString(),
+      p_commission_rate: commission_rate,
+      p_platform_split_rate: platform_split_rate,
+      p_gross_commission_cents: gross_commission_cents.toString(),
+      p_host_booking_fee_cents: host_booking_fee_cents.toString(),
+      p_host_booking_fee_rule_ref: host_booking_fee_rule_ref,
+      p_net_commission_cents: net_commission_cents.toString(),
+      p_platform_retained_cents: platform_retained_cents.toString(),
+      p_subhost_payable_cents: subhost_payable_cents.toString(),
+      p_currency: booking.currency,
+    });
 
-      if (commissionError) {
-        // #1577 — the host booking succeeded and the ref is persisted, so we must
-        // NOT leave the row in 'submitting' (the sweep/retry would re-book) nor
-        // revert to 'draft'. Route to manual review; the host record is real and
-        // the commission just needs to be reconciled by hand.
-        await safeAwait(
-          db
-            // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
-            .from("bookings")
-            .update({
-              status: "pending_host_review",
-              review_reason: "commission_write_failed",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", bookingId),
-          "bookings.update.commission_write_failed",
-        );
-        return dbErrorResponse(commissionError);
-      }
+    if (commitError) {
+      // #1577 — the host booking succeeded and the ref is persisted, so we must
+      // NOT leave the row in 'submitting' (the sweep/retry would re-book) nor
+      // revert to 'draft'. Route to manual review; the host record is real and
+      // the commission just needs to be reconciled by hand.
+      await safeAwait(
+        db
+          // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
+          .from("bookings")
+          .update({
+            status: "pending_host_review",
+            review_reason: "commission_write_failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", bookingId),
+        "bookings.update.commission_write_failed",
+      );
+      return dbErrorResponse(commitError);
     }
 
-    // Transition booking to submitted
-    await safeAwait(db
-      .from("bookings")
-      .update({
-        status: "submitted",
-        provider_booking_ref,
-        host_adapter: adapter.adapterId,
-        submitted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", bookingId), "bookings.update");
+    if (!committedCount) {
+      // CAS flip matched 0 rows: a concurrent path (the reconcile cron) moved the
+      // row off 'submitting' between our lock and this commit. The host record is
+      // real and the RPC transaction committed any commission row, so the row is
+      // safely owned by the reconcile path now — surface 409 rather than falsely
+      // report 'submitted'.
+      const ref = crypto.randomUUID();
+      console.error("[bookings/submit] ref=%s commit_lost_race booking=%s", ref, bookingId);
+      return Response.json({ error: "booking_state_changed", ref }, { status: 409 });
+    }
 
     // §35.6 — populate conversion_touch_* on the booking from the
     // contact's most recent attribution touch. Per §35.6.2 this is read
