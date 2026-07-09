@@ -35,8 +35,6 @@ import { sanitizeForLog } from "@/lib/log/sanitize";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
-import { tenantContextFromRequest } from "@/lib/db/factories";
-import { resolveVendorHealthStatus } from "@/lib/vendor-health/registry";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { resolveChatQuota } from "@/lib/chat/resolve-chat-quota";
 import { buildHelpContextBlock } from "@/lib/chat/help-context";
@@ -60,10 +58,14 @@ import { loadTenantSnapshot, type CachedTenantSnapshot } from "@/lib/abuse/snaps
 import { incrementChatMessages } from "@/lib/abuse/counters";
 // #1586 — request-scoped config consolidation + cached platform settings.
 import { loadChatTenantSettings, deriveChatTenantFlags } from "@/lib/chat/chat-tenant-settings";
-import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 import { runGenerationLoop } from "@/lib/chat/run-generation-loop";
-import type { TenantContext } from "@/lib/db/tenant-context";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  resolveChatIdentity,
+  resolveMemberIdentity,
+  type MemberIdentity,
+} from "@/lib/chat/resolve-chat-identity";
+import { resolveAiAvailability } from "@/lib/chat/resolve-ai-availability";
+import { loadOrCreateConversation } from "@/lib/chat/load-or-create-conversation";
 
 const SSE_HEADERS: HeadersInit = {
   "Content-Type": "text/event-stream",
@@ -281,48 +283,6 @@ type HandleChatArgs = {
   close: () => Promise<void>;
 };
 
-type MemberIdentity = {
-  ctx: TenantContext;
-  userId: string;       // public.users.id (FK target)
-  authUserId: string;   // auth.users.id (platform_admins key)
-  customerEmail: string | null;
-  role: string | null;  // public.users.role — the TA-mode boundary (#902)
-};
-
-// #860/#902 — resolve a credentialed request to a member of the resolved
-// tenant. Returns null for invalid/expired sessions, non-members, and missing
-// users rows. The customer path degrades null to anonymous (#860 — never
-// hard-error a customer turn); the TA path hard-fails null with a 403 (#902 —
-// never silently downgrade a staff request).
-async function resolveMemberIdentity(
-  req: Request,
-  tenantId: string,
-  svc: SupabaseClient,
-): Promise<MemberIdentity | null> {
-  try {
-    const ctx = await tenantContextFromRequest(req);
-    const authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
-    if (!authUserId) return null;
-    const { data: urow, error: uerr } = await svc
-      .from("users")
-      .select("id, email, role")
-      .eq("auth_user_id", authUserId)
-      .eq("tenant_id", tenantId)
-      .maybeSingle();
-    // Fail-safe (caller decides anon-vs-403) but observable: a valid session
-    // that can't resolve a users.id is unexpected (tenantContextFromRequest
-    // already verified membership), so surface it rather than silently degrading.
-    if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
-    const u = urow as { id: string; email: string | null; role: string | null } | null;
-    if (!u) return null;
-    return { ctx, userId: u.id, authUserId, customerEmail: u.email, role: u.role };
-  } catch {
-    // Invalid/expired session, or an authenticated user who isn't a member
-    // of this tenant.
-    return null;
-  }
-}
-
 const VALID_CONTEXT_TYPES = new Set(["booking", "trip_itinerary", "quote"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -338,39 +298,30 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   const svc = createServiceRoleClient();
   const { tenantId, hasCredential, userMessage, customerContextRef, send, close } = args;
 
-  // ── 1. Identify caller. #860: recognize the Supabase session COOKIE (not just
-  // a Bearer header) so logged-in customers hit the §24.9 customer tiers instead
-  // of the anon caps. Two distinct ids matter and must NOT be conflated:
-  //   • ctx.source.user_id = the AUTH id (auth.users.id) — tools/RLS need auth.uid().
-  //   • userId             = public.users.id — conversations / ai_call_log /
-  //     customer_* all FK users(id); writing the auth id there 500s (#850-class).
+  // ── 1. Identify caller (see resolveChatIdentity). #860: two distinct ids —
+  // authUserId (auth.users.id, tools/RLS) and userId (public.users.id, the FK
+  // target) — must NOT be conflated (writing the auth id into a users(id) FK
+  // 500s, #850-class). The discriminated union means ctx is always non-null.
   // #902 — audience is decided by the POST handler's verification, never here:
   // a non-null taIdentity means the 403 gate already passed for this request.
   const audience: ChatAudience = args.taIdentity ? "tenant_member" : "customer";
 
-  let ctx: TenantContext | null = null;
-  let userId: string | null = null;     // public.users.id (FK target) or null
-  let authUserId: string | null = null; // auth.users.id (platform_admins key)
+  const identity = await resolveChatIdentity({
+    req: args.req,
+    tenantId,
+    hasCredential,
+    taIdentity: args.taIdentity,
+    resolvedAnonSessionId: args.resolvedAnonSessionId,
+    svc,
+  });
+  const ctx = identity.ctx;
+  const userId = identity.kind === "member" ? identity.userId : null;
+  const authUserId = identity.kind === "member" ? identity.authUserId : null;
   // Signed-in customer's account email — the ONLY address email_customer can
-  // send to. Resolved here server-side; never supplied by the model.
-  let customerEmail: string | null = null;
-
-  if (args.taIdentity) {
-    ({ ctx, userId, authUserId, customerEmail } = args.taIdentity);
-  } else if (hasCredential) {
-    // #860: null (invalid/expired session, non-member) → DEGRADE to anonymous.
-    // Never hard-error a customer turn.
-    const ident = await resolveMemberIdentity(args.req, tenantId, svc);
-    if (ident) ({ ctx, userId, authUserId, customerEmail } = ident);
-  }
-
-  // Anonymous when no resolved member user (no credential / invalid / non-member).
+  // send to. Resolved server-side; never supplied by the model.
+  const customerEmail = identity.kind === "member" ? identity.customerEmail : null;
   // Anon attribution rides conversation_id, not user_id.
-  const anonSessionId: string | null = userId ? null : args.resolvedAnonSessionId;
-  if (!userId) {
-    // Forge a minimal ctx for downstream helpers that only need tenant_id.
-    ctx = { tenant_id: tenantId, source: { kind: "http_request", user_id: anonSessionId! } };
-  }
+  const anonSessionId = identity.kind === "anon" ? identity.anonSessionId : null;
 
   // ── 2. Rate limit (#1015 — see resolveChatQuota). #860: platform admins
   // bypass entirely (unmetered; costs are still logged). Authenticated
@@ -437,61 +388,31 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     }
   }
 
-  // ── 4. Load or create conversation; persist user message.
-  let conversationId = args.conversationIdInput;
-  let conversationActivePersonaId: string | null = null;
-  let conversationContactId: string | null = null;
-  if (conversationId) {
-    // #902: the audience filter blocks cross-register continuation — a TA
-    // continuing a customer thread (or vice versa) would leak the wrong
-    // Layer-2 rules into an existing transcript.
-    const { data: conv } = await svc
-      .from("conversations")
-      .select("id, active_persona_id, contact_id")
-      .eq("id", conversationId)
-      .eq("tenant_id", tenantId)
-      .eq("audience", audience)
-      .maybeSingle();
-    if (!conv) {
+  // ── 4. Load or create conversation; persist user message. #1586: is_test
+  // (sandbox stamp) comes from the request-scoped tenant snapshot, fail-closed
+  // to true on snapshot failure.
+  const convResult = await loadOrCreateConversation({
+    svc,
+    tenantId,
+    audience,
+    conversationIdInput: args.conversationIdInput,
+    userId,
+    anonSessionId,
+    isTest: tenantIsSandbox,
+  });
+  if (!convResult.ok) {
+    if (convResult.reason === "not_found") {
       await send({ type: "error", message: "conversation_not_found" });
-      await close();
-      return;
-    }
-    conversationActivePersonaId = (conv as { active_persona_id?: string } | null)?.active_persona_id ?? null;
-    conversationContactId = (conv as { contact_id?: string | null } | null)?.contact_id ?? null;
-  } else {
-    // §15.12 sandbox: stamp is_test on the conversation row at creation time.
-    // Snapshot semantics — a tenant who toggles is_sandbox later does NOT
-    // retroactively flip existing rows. #1586: is_sandbox now comes from the
-    // request-scoped tenant snapshot (fail-closed to true on snapshot failure).
-    const isTest = tenantIsSandbox;
-
-    const { data: created, error: createErr } = await svc
-      .from("conversations")
-      .insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        anonymous_session_id: !userId ? anonSessionId : null,
-        audience,
-        status: "active",
-        first_message_at: new Date().toISOString(),
-        last_message_at: new Date().toISOString(),
-        message_count: 0,
-        is_test: isTest,
-      })
-      .select("id")
-      .single();
-    if (createErr || !created) {
+    } else {
       // F-leak-01: generic message + server-logged ref, never the raw DB error.
-      const ref = randomUUID();
-      console.error("[chat] ref=%s conversation_create_failed", ref, createErr);
-      await send({ type: "error", message: "Something went wrong", ref });
-      await close();
-      return;
+      await send({ type: "error", message: "Something went wrong", ref: convResult.ref });
     }
-
-    conversationId = (created as { id: string }).id;
+    await close();
+    return;
   }
+  const conversationId = convResult.conversationId;
+  const conversationActivePersonaId = convResult.activePersonaId;
+  const conversationContactId = convResult.contactId;
 
   // Persist user message.
   await safeAwait(svc.from("messages").insert({
@@ -683,60 +604,13 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     return;
   }
 
-  // §10.6 / D-091 Round-3 #43 — global AI kill switch. Checked BEFORE the
-  // streaming wrapper is acquired so a paused AI doesn't leak partial
-  // tokens to the customer or burn a vendor call. The help-AI route has
-  // had this check from day one; the customer chat path was missing it,
-  // which the audit flagged as a kill-switch escape in streaming mode.
-  // #1586 — served from the shared 60s platform_settings cache. A ≤60s
-  // propagation delay is acceptable (it already races in-flight streams).
-  // Fail-open preserved: a read error → value null → not engaged. The
-  // authoritative fail-CLOSED layer is the supervisor (reads
-  // ai_kill_switch_state); this pre-gate only stops streaming early.
-  // #1653 — platform_settings.ai_kill_switch_engaged is written by
-  // /api/admin/ai-kill-switch alongside ai_kill_switch_state, so the admin
-  // global-pause toggle drives this gate too (previously it did not).
-  const { value: killValue } = await getCachedPlatformSetting(
-    svc,
-    "ai_kill_switch_engaged",
-    bumpConfigReads,
-  );
-  const killEngaged = killValue === true || killValue === "true";
-  if (killEngaged) {
-    const fallbackBody =
-      "Our AI is paused right now. Please leave a message and we'll be in touch.";
-    await send({ type: "delta", text: fallbackBody });
-    await send({ type: "supervisor", action: "allow", regens: 0 });
-    await send({ type: "done" });
-    await close();
-    return;
-  }
-
-  // §10.6 per-tenant AI kill switch. Same fallback as the global one but
-  // scoped to the resolved tenant — the platform-admin's lever for "this
-  // one tenant's persona is misbehaving" without taking the whole platform
-  // down. #1586: read from the request-scoped snapshot (≤30s propagation,
-  // acceptable per the issue) instead of a third `tenants` read.
-  if (tenantAiPaused) {
-    const fallbackBody =
-      "Our AI is taking a brief break. A human will be in touch shortly.";
-    await send({ type: "delta", text: fallbackBody });
-    await send({ type: "supervisor", action: "allow", regens: 0 });
-    await send({ type: "done" });
-    await close();
-    return;
-  }
-
-  // §26.9 — Anthropic vendor health gate. If the registry says Anthropic is
-  // down, surface the §26.9 fallback message directly instead of attempting
-  // the call. The probe cron updates the registry every minute; degraded
-  // state activates after 3 consecutive failures, down after 5.
-  // #1646 — durable read-through so a cold instance (no in-process failures
-  // of its own) still sees a fleet-wide "down" recorded by another instance.
-  if ((await resolveVendorHealthStatus(svc, "anthropic")) === "down") {
-    const fallbackBody =
-      "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.";
-    await send({ type: "delta", text: fallbackBody });
+  // §10.6 / §26.9 / D-091 Round-3 #43 — the three AI kill-switch gates (global
+  // pause, per-tenant pause, vendor-health down) resolved together BEFORE the
+  // streaming wrapper is acquired, so a paused AI can't leak partial tokens or
+  // burn a vendor call. See resolveAiAvailability for the fail-open/order rules.
+  const availability = await resolveAiAvailability({ svc, tenantAiPaused, bumpConfigReads });
+  if (!availability.available) {
+    await send({ type: "delta", text: availability.fallbackBody });
     await send({ type: "supervisor", action: "allow", regens: 0 });
     await send({ type: "done" });
     await close();
@@ -775,8 +649,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // On "aborted" the loop already sent the terminal SSE events and closed.
   const gen = await runGenerationLoop({
     svc,
-    // Non-null: every identity path above sets ctx (anon turns forge one in §1).
-    ctx: ctx!,
+    // resolveChatIdentity always returns a non-null ctx (anon turns forge one).
+    ctx,
     tenantId,
     conversationId,
     conversationContactId,
