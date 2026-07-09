@@ -28,13 +28,19 @@
 // the loop from the top idempotent.
 //
 // #1697 — the job-level total_cost_cents/total_*_tokens rollup is summed
-// from ALL persisted 'completed' rows for the job (a post-loop aggregate
-// SELECT), not just rows this run's loop processed. Before the fix an
-// in-loop accumulator undercounted whenever a batch split across reconcile
-// runs: rows a prior (crashed) run already completed are skipped by the
-// CAS gate below and never re-enter the accumulator. Per-row cost_cents and
-// the tenant_usage_metrics increments (what's actually billed) were always
+// from ALL persisted 'completed' rows for the job (a post-loop aggregate),
+// not just rows this run's loop processed. Before the fix an in-loop
+// accumulator undercounted whenever a batch split across reconcile runs:
+// rows a prior (crashed) run already completed are skipped by the CAS gate
+// below and never re-enter the accumulator. Per-row cost_cents and the
+// tenant_usage_metrics increments (what's actually billed) were always
 // correct — this fix only concerns the job-level observability rollup.
+//
+// #1743 — that rollup used to be a `.select(...).limit(job.request_count)`
+// aggregate SELECT computed in JS, which PostgREST's ~1000-row db-max-rows
+// cap silently truncates regardless of the requested .limit(). It's now the
+// ai_batch_requests_rollup() RPC (migration 20260722000015), which sums
+// server-side and returns only the aggregate — no rows, no cap to hit.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
@@ -52,7 +58,6 @@ interface JobRow {
   id: string;
   anthropic_batch_id: string;
   purpose: BatchablePurpose;
-  request_count: number;
   status: string;
 }
 
@@ -65,16 +70,22 @@ interface RequestRow {
   status: string;
 }
 
-// Shape of the per-job rollup aggregate SELECT (#1697). result_metadata is
-// the JSONB written per row at reconcile time; tokens live inside it.
+// Shape of the ai_batch_requests_rollup() RPC's single result row (#1743).
+// BIGINT columns arrive as number|string over PostgREST — coerce with Number().
 interface RollupRow {
-  cost_cents: number | null;
-  result_metadata: { input_tokens?: number; output_tokens?: number } | null;
+  total_cost_cents: number | string;
+  total_input_tokens: number | string;
+  total_output_tokens: number | string;
 }
 
 export interface ReconcileResult {
   jobs_polled: number;
   jobs_completed: number;
+  // Per-run accumulator values (#1743 nit) — undercount across a batch that
+  // spans multiple reconcile runs, since a row a prior run already claimed
+  // never re-enters this run's loop. Fine for cron-log observability; if
+  // this is ever surfaced for accuracy, sum from persisted row status
+  // instead (as the job-level cost/token rollup above already does).
   requests_succeeded: number;
   requests_failed: number;
 }
@@ -95,7 +106,7 @@ export async function reconcileSubmittedBatches(args: {
   // cadence, 20 per run = 240/hour reconciliations capacity.
   const { data: jobs, error: jobsErr } = await db
     .from("ai_batch_jobs")
-    .select("id, anthropic_batch_id, purpose, request_count, status")
+    .select("id, anthropic_batch_id, purpose, status")
     .in("status", ["submitted", "processing"])
     .order("submitted_at", { ascending: true })
     .limit(20);
@@ -156,31 +167,24 @@ export async function reconcileSubmittedBatches(args: {
       });
     }
 
-    // #1697 — aggregate the job rollup from every persisted 'completed' row,
-    // so a batch reconciled across multiple runs still rolls up the full
-    // total (rows an earlier run finished are skipped by the CAS gate and
-    // would never re-enter an in-loop accumulator). Bounded by request_count:
-    // completed rows can never exceed what was submitted.
-    const { data: rollupRows, error: rollupErr } = await db
-      // d091-allow:service-role-tenant — platform reconcile rollup sums one batch's rows across all tenants by design; per-row tenant attribution already happened in the processing loop above.
-      .from("ai_batch_requests")
-      .select("cost_cents, result_metadata")
-      .eq("batch_job_id", job.id)
-      .eq("status", "completed")
-      .limit(job.request_count);
+    // #1743 — DB-side SUM rollup (ai_batch_requests_rollup RPC) over every
+    // persisted 'completed' row, so a batch reconciled across multiple runs
+    // still rolls up the full total (rows an earlier run finished are
+    // skipped by the CAS gate and would never re-enter an in-loop
+    // accumulator) — and, unlike a `.select().limit()` aggregate, isn't
+    // subject to PostgREST's row cap regardless of how many rows completed.
+    const { data: rollupData, error: rollupErr } = await db.rpc("ai_batch_requests_rollup", {
+      p_batch_job_id: job.id,
+    });
     if (rollupErr) {
       throw new Error(
         `reconcileSubmittedBatches: rollup aggregate failed for job ${job.id}: ${rollupErr.message}`,
       );
     }
-    let totalInput = 0n;
-    let totalOutput = 0n;
-    let totalCostCents = 0n;
-    for (const r of (rollupRows ?? []) as RollupRow[]) {
-      totalCostCents += BigInt(r.cost_cents ?? 0);
-      totalInput += BigInt(r.result_metadata?.input_tokens ?? 0);
-      totalOutput += BigInt(r.result_metadata?.output_tokens ?? 0);
-    }
+    const rollup = ((rollupData ?? []) as RollupRow[])[0];
+    const totalCostCents = Number(rollup?.total_cost_cents ?? 0);
+    const totalInput = Number(rollup?.total_input_tokens ?? 0);
+    const totalOutput = Number(rollup?.total_output_tokens ?? 0);
 
     // Mark the job completed with totals.
     await safeAwait(
@@ -191,9 +195,9 @@ export async function reconcileSubmittedBatches(args: {
           anthropic_processing_status: status.processing_status,
           completed_at: new Date().toISOString(),
           reconciled_at: new Date().toISOString(),
-          total_input_tokens: Number(totalInput),
-          total_output_tokens: Number(totalOutput),
-          total_cost_cents: Number(totalCostCents),
+          total_input_tokens: totalInput,
+          total_output_tokens: totalOutput,
+          total_cost_cents: totalCostCents,
         })
         .eq("id", job.id),
       "ai_batch_jobs.update.completed",
