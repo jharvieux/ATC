@@ -2,8 +2,11 @@
 //
 // Constructs its own dedicated service-role client per call so the audit
 // row commits independently of any caller's transaction. If the insert
-// itself fails, logs to console — never throws (audit writes are forensic;
-// losing one isn't worth masking a caller's error).
+// itself fails, logs to console and by default does NOT throw (audit writes
+// are forensic; losing one isn't worth masking a caller's error). Callers
+// that pass { throwOnError: true } opt into a thrown error instead — used by
+// the tenant-suspension crons where a dropped security-relevant row must
+// surface via Inngest retry/alerting rather than being swallowed.
 //
 // Callers in route handlers, Inngest jobs, libraries — every prior
 // [audit-log:STUB] call site goes through here after BP26.
