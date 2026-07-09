@@ -119,6 +119,16 @@ describe("checkStrikePatterns — guest (invitation_id) authors — #1572", () =
     const result = await checkStrikePatterns(db, { author: { invitation_id: "inv-1" }, forum_id: "f1", tenant_id: "t1" });
 
     expect(result.auto_muted).toBe(true);
+    // The onConflict arbiter must target "forum_id,invitation_id" and — since
+    // PostgREST emits no predicate on ON CONFLICT — that target must resolve to
+    // a FULL (non-partial) unique constraint, else Postgres raises 42P10 and the
+    // guest is never muted. Migration
+    // 20260709111701_forum_user_state_invitation_full_unique.sql replaces the
+    // original partial index with constraint forum_user_state_forum_invitation_key
+    // to satisfy exactly this. NOTE: this mock cannot prove arbiter semantics —
+    // it only asserts the target string. Real 42P10-vs-no-error behaviour is
+    // proven by the live test-DB smoke test recorded in PR #1709's Verification
+    // section (guest upsert twice → no 42P10, exactly one row).
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({ invitation_id: "inv-1", forum_id: "f1", is_muted: true }),
       expect.objectContaining({ onConflict: "forum_id,invitation_id" }),

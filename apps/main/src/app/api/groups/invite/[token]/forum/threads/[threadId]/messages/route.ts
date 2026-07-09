@@ -84,6 +84,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
     .select("is_muted,muted_until")
     .eq("forum_id", forum.id)
     .eq("invitation_id", invitation.id)
+    .eq("tenant_id", group.tenant_id)
     .maybeSingle();
 
   const canPostMessage = canPost({

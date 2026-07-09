@@ -137,6 +137,11 @@ export async function sendGroupInvitationEmail(args: {
     // last_email_sent_at as "never emailed" and skips its interval check, so
     // every new invitee got a near-duplicate GroupReminder the very next
     // 08:00 UTC run regardless of how far out the sailing is.
+    // Crash-window trade-off (#1716): the email is already sent above; if the
+    // process dies before this stamp lands, last_email_sent_at stays null and
+    // the next cadence run can send at most ONE duplicate — bounded by the
+    // email_log 3-per-24h guard. Accepted over a pre-send stamp (which would
+    // suppress legitimate reminders on a send that never went out).
     await safeAwait(
       // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
       args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId),

@@ -61,7 +61,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.forumLookup }) }) }) };
       }
       if (table === "forum_user_state") {
-        return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.userStateMaybeSingle }) }) }) };
+        return { select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.userStateMaybeSingle }) }) }) }) };
       }
       if (table === "forum_threads") {
         return { select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ maybeSingle: mocks.threadLookup }) }) }) }) }) };
