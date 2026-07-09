@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   invitationsQuery: vi.fn(),
   updateQuery: vi.fn(),
   inviteCountQuery: vi.fn(),
+  inviteFreqQuery: vi.fn(),
   inviteInsertQuery: vi.fn(),
   inviteEmailSingleQuery: vi.fn(),
   inviteRsvpSelectQuery: vi.fn(),
@@ -75,8 +76,15 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return {
           select: (cols: string, opts?: { count?: string; head?: boolean }) => {
             if (opts?.count === "exact" && opts?.head) {
-              // #1600 cap-check count query — ends with .eq().is()
-              return { eq: () => ({ is: () => mocks.inviteCountQuery() }) };
+              // Two head-count queries share this shape:
+              //   #1654 frequency gate — ends with .eq().gte()
+              //   #1600 cap-check      — ends with .eq().is()
+              return {
+                eq: () => ({
+                  gte: () => mocks.inviteFreqQuery(),
+                  is: () => mocks.inviteCountQuery(),
+                }),
+              };
             }
             if (cols.includes("token_revoked_at")) {
               // GET list query — ends with .eq().order()
@@ -269,6 +277,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
       user: { id: COORDINATOR_ID },
     });
     mocks.groupQuery.mockResolvedValue({ data: FULL_GROUP, error: null });
+    mocks.inviteFreqQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteInsertQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
     mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
@@ -383,6 +392,37 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     expect(res.status).toBe(400);
     expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
     expect(mocks.incrementGroupInvitees).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 without inserting when the invite frequency gate trips (#1654)", async () => {
+    // 5 invites already created in the 5-minute window — the next is throttled
+    // before any row is inserted or email sent, bounding the spam burst.
+    mocks.inviteFreqQuery.mockResolvedValue({ count: 5, error: null });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(429);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("invite_rate_limited");
+    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("fails closed — a frequency-gate query error denies the invite (#1654)", async () => {
+    mocks.inviteFreqQuery.mockResolvedValue({ count: null, error: { message: "db down" } });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(429);
+    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
   });
 
   it("returns 409 when the invitee_email already has an active invitation (dedup, #1600)", async () => {

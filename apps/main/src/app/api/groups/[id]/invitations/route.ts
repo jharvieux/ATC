@@ -13,8 +13,8 @@ import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-
-const MAX_INVITEES_PER_GROUP = 50;
+import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
+import { checkInviteFrequency } from "@/lib/groups/invite-rate-limit";
 
 type RouteProps = { params: Promise<{ id: string }> };
 
@@ -106,8 +106,29 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         return Response.json({ error: "Invalid visibility_choice" }, { status: 400 });
       }
 
+      // #1654 — per-endpoint frequency gate. group_invitation sends bypass the
+      // general per-send email throttle by design (email/rate-limit.ts), so
+      // without this a coordinator could rapid-fire unique-address invites (a
+      // revoke→reinvite spam vector). DB-backed shared store, fail-closed: a
+      // count-query error denies (D-091 #19).
+      const freq = await checkInviteFrequency(svc, params.id);
+      if (!freq.allowed) {
+        return Response.json(
+          { error: "invite_rate_limited", retry_after_seconds: freq.retryAfterSeconds },
+          { status: 429 },
+        );
+      }
+
       // #1600 — the create path caps at 50 active invitees per group
       // (groups/route.ts); the single-invite path must enforce the same cap.
+      // #1680: this count-then-insert is NOT atomic — two concurrent invites to
+      // the same group can both read count=49 and both insert, overshooting the
+      // cap. Accepted as low-severity: the actor is an authenticated
+      // coordinator, the race requires two invites to the SAME group within one
+      // request window, and the blast radius is a handful of invitees over 50.
+      // A fully-atomic fix needs a DB advisory-lock trigger/RPC (a migration);
+      // deferred here because the migration-version guard (#1717) currently
+      // blocks new migration files. Tracked on #1680.
       const { count: activeCount, error: countErr } = await svc
         // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
         .from("invitations")
