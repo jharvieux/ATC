@@ -1,28 +1,19 @@
 // §17.4 — Returns the current user's pending consent obligations with document content.
 
-import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { authenticateUser } from "@/lib/auth/authenticate-user";
 
 export async function GET(req: Request): Promise<Response> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return Response.json({ pending: [] });
+  // #1591 — was `return { pending: [] }` on missing/invalid auth (silent 200),
+  // out of step with the 401 the other four user-self routes return. An
+  // unauthenticated caller now gets a consistent 401; the authenticated consent
+  // page (which sends its session cookie) gets its real pending list.
+  const authed = await authenticateUser(req);
+  if (!authed) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
   }
-  const accessToken = authHeader.slice("Bearer ".length);
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(url, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return Response.json({ pending: [] });
-  }
-  const authUserId = authData.user.id;
+  const authUserId = authed.authUserId;
 
   const db = createServiceRoleClient();
   const { data: rows, error } = await db
