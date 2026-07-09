@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { TIER_CODE_MAP } from "@/lib/stripe/tier-code-map";
 
 interface TierRow {
@@ -43,8 +43,9 @@ const OPEN_SENTINEL = 2147483647;
 
 // Plain decimal string for <input type="number"> values — NOT formatCents,
 // which returns a currency string ("$12.34") that number inputs reject.
+// fromCents accepts bigint directly (D-319), so BigInt(...) needs no brand cast.
 const dollars = (cents: number | null | undefined) =>
-  cents == null ? "" : fromCents(BigInt(Math.round(cents)) as Cents);
+  cents == null ? "" : fromCents(BigInt(Math.round(cents)));
 const toCents = (d: string): number | null => {
   const n = Number.parseFloat(d);
   if (!Number.isFinite(n) || n < 0) return null;
