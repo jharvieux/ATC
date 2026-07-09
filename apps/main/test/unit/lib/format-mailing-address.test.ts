@@ -27,4 +27,36 @@ describe("formatMailingAddress", () => {
     expect(formatMailingAddress(null)).toBe("");
     expect(formatMailingAddress(undefined)).toBe("");
   });
+
+  // Coverage migrated from compliance-nightly's local formatAddress (#1556),
+  // which used postal_code/line2 field names instead of zip/no-line2.
+  it("includes line2 and accepts postal_code as a zip alias", () => {
+    expect(
+      formatMailingAddress({
+        line1: "1 Main St",
+        line2: "Suite 4",
+        city: "Austin",
+        state: "TX",
+        postal_code: "78701",
+        country: "USA",
+      }),
+    ).toBe("1 Main St, Suite 4, Austin, TX 78701, USA");
+  });
+
+  it("drops missing, empty, and non-string parts (no stray commas)", () => {
+    expect(
+      formatMailingAddress({
+        line1: "1 Main St",
+        line2: "",
+        city: "Austin",
+        state: null,
+        postal_code: 78701, // number, not string — must be dropped
+        country: "USA",
+      }),
+    ).toBe("1 Main St, Austin, USA");
+  });
+
+  it("returns empty string when no part is a non-empty string", () => {
+    expect(formatMailingAddress({ line1: "", city: null, postal_code: 0 })).toBe("");
+  });
 });
