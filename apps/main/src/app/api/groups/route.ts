@@ -20,6 +20,7 @@ import { incrementGroupInvitees } from "@/lib/abuse/counters";
 import { hardDeleteGroup } from "@/lib/groups/delete-group";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 
 interface InviteeInput {
   email: string;
@@ -58,8 +59,8 @@ export async function POST(req: Request): Promise<Response> {
     if (!cruise_line || !ship_name || !sailing_date || !departure_port) {
       return Response.json({ error: "cruise_line, ship_name, sailing_date, departure_port are required" }, { status: 400 });
     }
-    if (invitees.length > 50) {
-      return Response.json({ error: "Maximum 50 invitees per group" }, { status: 400 });
+    if (invitees.length > MAX_INVITEES_PER_GROUP) {
+      return Response.json({ error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` }, { status: 400 });
     }
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (sailing_id !== undefined && !UUID_RE.test(sailing_id)) {

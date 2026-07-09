@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   invitationInsert: vi.fn(),
   invitationInsertResult: vi.fn(),
   inviteCountQuery: vi.fn(),
+  inviteFreqQuery: vi.fn(),
   loadTenantSnapshot: vi.fn(),
   incrementGroupInvitees: vi.fn(),
   fetch: vi.fn(),
@@ -95,8 +96,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return {
           select: (_cols: string, opts?: { count?: string; head?: boolean }) => {
             if (opts?.count === "exact" && opts?.head) {
-              // #1600 cap-check count query — ends with .eq().is()
-              return { eq: () => ({ is: () => mocks.inviteCountQuery() }) };
+              // #1654 frequency gate ends with .eq().gte(); #1600 cap-check ends with .eq().is()
+              return {
+                eq: () => ({
+                  gte: () => mocks.inviteFreqQuery(),
+                  is: () => mocks.inviteCountQuery(),
+                }),
+              };
             }
             return {
               eq: () => ({
@@ -168,6 +174,7 @@ beforeEach(() => {
   // safeAwait resolves to a non-empty array (row inserted) — still used by
   // the reissue_all path, not the single-invite insert under test here.
   mocks.safeAwait.mockResolvedValue([{ id: "inv-new" }]);
+  mocks.inviteFreqQuery.mockResolvedValue({ count: 0, error: null });
   mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
   mocks.invitationInsertResult.mockResolvedValue({ data: [{ id: "inv-new" }], error: null });
   mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
