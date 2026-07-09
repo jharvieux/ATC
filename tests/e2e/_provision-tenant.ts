@@ -101,6 +101,11 @@ export async function provisionTestTenant(): Promise<ProvisionedTenant> {
       slug,
       display_name: `E2E Funnel ${slug}`,
       legal_name: `E2E Funnel ${slug} LLC`,
+      // byo_host, not sub_host: connect_setup is organically a sub_host stage
+      // (#1131), but the connect/link route doesn't branch on tenant_type and
+      // OWNER_GRANTS includes connect:setup for byo_host too, so the
+      // return_url-host assertion under test is unaffected; byo_host also
+      // matches the existing scripts/seed-tier2-test.ts fixture.
       tenant_type: "byo_host",
       status: "active",
       tier_id: tier.id,
@@ -111,9 +116,16 @@ export async function provisionTestTenant(): Promise<ProvisionedTenant> {
     .select("id")
     .single();
   if (tErr || !tenant) {
-    // Roll back the auth user so a failed run leaves nothing behind.
-    await supabase.auth.admin.deleteUser(authUserId).catch(() => undefined);
-    throw new Error(`provisionTestTenant: tenants.insert failed: ${tErr?.message ?? "no row"}`);
+    // Roll back the auth user so a failed run leaves nothing behind. Surface a
+    // failed rollback too — swallowing it here would silently strand the auth
+    // user in a live environment with no signal that manual cleanup is needed.
+    const { error: rollbackErr } = await supabase.auth.admin.deleteUser(authUserId);
+    const base = `provisionTestTenant: tenants.insert failed: ${tErr?.message ?? "no row"}`;
+    throw new Error(
+      rollbackErr
+        ? `${base}; additionally rollback failed: ${rollbackErr.message} — MANUAL CLEANUP needed for authUserId=${authUserId}`
+        : base,
+    );
   }
   const tenantId = tenant.id as string;
 
@@ -131,8 +143,18 @@ export async function provisionTestTenant(): Promise<ProvisionedTenant> {
     .select("id")
     .single();
   if (uErr || !pubUser) {
-    await teardownTestTenant({ tenantId, authUserId }).catch(() => undefined);
-    throw new Error(`provisionTestTenant: users.insert failed: ${uErr?.message ?? "no row"}`);
+    // Same rationale as the tenants.insert rollback above: a failed teardown
+    // here must not be swallowed, or the tenant/auth rows strand silently.
+    const base = `provisionTestTenant: users.insert failed: ${uErr?.message ?? "no row"}`;
+    try {
+      await teardownTestTenant({ tenantId, authUserId });
+    } catch (rollbackErr) {
+      const msg = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+      throw new Error(
+        `${base}; additionally rollback failed: ${msg} — MANUAL CLEANUP needed for tenantId=${tenantId} authUserId=${authUserId}`,
+      );
+    }
+    throw new Error(base);
   }
 
   const host = `${slug}.${TENANT_APEX}`;
@@ -152,19 +174,28 @@ export async function provisionTestTenant(): Promise<ProvisionedTenant> {
 // before the tenant row; the auth user goes last. A stray Stripe test-mode
 // Connect account created by step 3 is left in place — it's a disposable
 // test-mode object and the harness holds no STRIPE_SECRET_KEY to delete it.
+// Attempts all three deletes independently — a failure on an earlier one (e.g.
+// users) must not abort the later ones (tenants, auth user), or that resource
+// strands with no attempt made to clean it up. Collects every failure into one
+// aggregate error naming exactly which resources need manual cleanup.
 export async function teardownTestTenant(t: Pick<ProvisionedTenant, "tenantId" | "authUserId">): Promise<void> {
   if (!provisionEnabled()) return;
   const supabase = adminClient();
+  const failures: string[] = [];
 
   if (t.tenantId) {
     const { error: uErr } = await supabase.from("users").delete().eq("tenant_id", t.tenantId);
-    if (uErr) throw new Error(`teardownTestTenant: users.delete failed: ${uErr.message}`);
+    if (uErr) failures.push(`users.delete failed for tenantId=${t.tenantId}: ${uErr.message}`);
     const { error: tErr } = await supabase.from("tenants").delete().eq("id", t.tenantId);
-    if (tErr) throw new Error(`teardownTestTenant: tenants.delete failed: ${tErr.message}`);
+    if (tErr) failures.push(`tenants.delete failed for tenantId=${t.tenantId}: ${tErr.message}`);
   }
   if (t.authUserId) {
     const { error } = await supabase.auth.admin.deleteUser(t.authUserId);
-    if (error) throw new Error(`teardownTestTenant: auth.admin.deleteUser failed: ${error.message}`);
+    if (error) failures.push(`auth.admin.deleteUser failed for authUserId=${t.authUserId}: ${error.message}`);
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`teardownTestTenant: MANUAL CLEANUP needed — ${failures.join("; ")}`);
   }
 }
 

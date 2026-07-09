@@ -189,6 +189,9 @@ test.describe("onboarding funnel provisioning (beta/staging)", () => {
   });
 
   test("step 3: Stripe Connect return_url resolves to the tenant host (#1131/#1132/#1133, #1724)", async () => {
+    // completeStripeTestOnboarding polls up to 60s; Playwright's default
+    // per-test timeout is 30s, so the helper's budget alone can exceed it.
+    test.setTimeout(90_000);
     expect(page, "browser page must be initialized").not.toBeNull();
     const linkResp = await page!.request.post(`${tenant!.origin}/api/onboarding/connect/link`);
 
