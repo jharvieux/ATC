@@ -20,10 +20,17 @@ vi.mock("@/lib/webhooks/resend-signature", () => ({
 const calls: string[] = [];
 
 let mockResolution: unknown = { method: "unresolved" };
+let mockAttachResult: unknown = { status: "attached", conversation_id: "conv-1" };
+const attachCalls: Record<string, unknown>[] = [];
 vi.mock("@/lib/email/inbound", () => ({
   fetchReceivedEmail: async () => ({ text: "reply body", headers: {} }),
   extractReferencedMessageIds: () => [],
   resolveInboundTenant: async () => mockResolution,
+  attachInboundToTimeline: async (input: Record<string, unknown>) => {
+    calls.push("attach");
+    attachCalls.push(input);
+    return mockAttachResult;
+  },
 }));
 
 let mockForwardResult: Record<string, unknown> = { status: "sent", email_log_id: "log-7" };
@@ -98,6 +105,7 @@ function receivedBody(extra: Record<string, unknown> = {}): string {
 beforeEach(() => {
   mockVerifyResult = true;
   mockResolution = { method: "unresolved" };
+  mockAttachResult = { status: "attached", conversation_id: "conv-1" };
   mockForwardResult = { status: "sent", email_log_id: "log-7" };
   mockExistingRow = null;
   mockTenantRow = { support_email: "support@acme.com" };
@@ -105,6 +113,7 @@ beforeEach(() => {
   calls.length = 0;
   forwardCalls.length = 0;
   insertCalls.length = 0;
+  attachCalls.length = 0;
   vi.stubEnv("RESEND_INBOUND_WEBHOOK_SECRET", "whsec_test");
 });
 
@@ -142,11 +151,18 @@ describe("resend-inbound webhook", () => {
     expect(calls).toEqual([]);
   });
 
-  it("resolved mail forwards to support_email THEN persists (dedup row = fully processed)", async () => {
+  it("references resolution attaches to the CRM timeline BEFORE forwarding, THEN persists", async () => {
     mockResolution = { method: "references", tenant_id: "t-1", contact_id: "c-1" };
     const res = await POST(makeReq(receivedBody()));
     expect(res.status).toBe(200);
-    expect(calls).toEqual(["forward", "insert"]);
+    // Attach first so the reply is on the timeline even if the forward is later
+    // suppressed, and so the forward can link to the conversation (#1728).
+    expect(calls).toEqual(["attach", "forward", "insert"]);
+
+    const attach = attachCalls[0] as Record<string, unknown>;
+    expect(attach.tenant_id).toBe("t-1");
+    expect(attach.contact_id).toBe("c-1");
+    expect(attach.providerMessageId).toBe("inb-abc");
 
     const fwd = forwardCalls[0] as Record<string, unknown>;
     expect(fwd.to).toBe("support@acme.com");
@@ -210,5 +226,31 @@ describe("resend-inbound webhook", () => {
     mockInsertError = { code: "XX000", message: "boom" };
     const res = await POST(makeReq(receivedBody()));
     expect(res.status).toBe(500);
+  });
+
+  it("sender resolution forwards but NEVER attaches (spoof-resistant gate — design Security notes)", async () => {
+    mockResolution = { method: "sender", tenant_id: "t-1", contact_id: "c-1" };
+    const res = await POST(makeReq(receivedBody()));
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["forward", "insert"]);
+    expect(attachCalls).toHaveLength(0);
+  });
+
+  it("timeline attach failure → 500 before forward or persist, so the provider retry reprocesses", async () => {
+    mockResolution = { method: "references", tenant_id: "t-1", contact_id: "c-1" };
+    mockAttachResult = { status: "error" };
+    const res = await POST(makeReq(receivedBody()));
+    expect(res.status).toBe(500);
+    expect(calls).toEqual(["attach"]);
+    expect(forwardCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it("forward links the TA to the CRM contact when the reply was attached", async () => {
+    mockResolution = { method: "references", tenant_id: "t-1", contact_id: "c-1" };
+    const res = await POST(makeReq(receivedBody()));
+    expect(res.status).toBe(200);
+    const fwd = forwardCalls[0] as Record<string, unknown>;
+    expect(String(fwd.html)).toContain("/crm/contacts/c-1");
   });
 });

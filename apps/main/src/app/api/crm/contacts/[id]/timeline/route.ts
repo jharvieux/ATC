@@ -53,10 +53,28 @@ export async function GET(
     if (quotesResult.error) return dbErrorResponse(quotesResult.error);
     if (bookingsResult.error) return dbErrorResponse(bookingsResult.error);
 
+    // #1728 — inbound persona-email replies attached to this contact's
+    // conversations (source='email', role='user'). Bounded (D-091 #25). Scoped
+    // to the contact's own conversation ids; RLS is the second isolation layer.
+    const convIds = (convResult.data ?? []).map((c) => c.id);
+    let emailRows: { id: string; created_at: string; content: string }[] = [];
+    if (convIds.length > 0) {
+      const emailResult = await db
+        .from("messages")
+        .select("id, created_at, content")
+        .in("conversation_id", convIds)
+        .eq("source", "email")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (emailResult.error) return dbErrorResponse(emailResult.error);
+      emailRows = (emailResult.data ?? []) as typeof emailRows;
+    }
+
     const timeline = [
       ...(convResult.data ?? []).map((c) => ({ type: "conversation", ...c })),
       ...(quotesResult.data ?? []).map((q) => ({ type: "quote", ...q })),
       ...(bookingsResult.data ?? []).map((b) => ({ type: "booking", ...b })),
+      ...emailRows.map((e) => ({ type: "email", ...e })),
     ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     return Response.json({ timeline });
