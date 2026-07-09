@@ -39,6 +39,8 @@
 // the genuine second layer for the SEPARATE authenticated-client / SSR path,
 // where the caller's JWT (not service_role) drives the query.
 
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "./service-role-client";
 import type { TenantContext } from "./tenant-context";

@@ -8,6 +8,8 @@
 // Service-role import permitted: publishes to external service after DB write.
 // Add to no-direct-service-role-import allowlist.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 

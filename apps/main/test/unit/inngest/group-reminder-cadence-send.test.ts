@@ -8,7 +8,7 @@
 //     last_email_sent_at is NOT stamped (so a later run re-evaluates once the
 //     suppression clears) and the run counts it as skipped.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
@@ -49,7 +49,7 @@ vi.mock("@/lib/db/safe-mutation", async () => {
 // out → 7-day interval, so it fires on the first run).
 const FUTURE_SAILING = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
 
-const invitationsPool = [
+const invitationsPool: { id: string; invitee_email: string; invitee_name: string; last_email_sent_at: string | null; group_id: string }[] = [
   { id: "inv-1", invitee_email: "kim@example.com", invitee_name: "Kim", last_email_sent_at: null, group_id: "g-1" },
 ];
 const groupsPool = [
@@ -131,6 +131,10 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
 });
 
+afterEach(() => {
+  invitationsPool[0]!.last_email_sent_at = null;
+});
+
 describe("group-reminder-cadence — send path (#1102)", () => {
   it("sends a due reminder through sendEmail and stamps last_email_sent_at", async () => {
     sendEmailMock.mockResolvedValue({ status: "sent", resend_message_id: "m-1" });
@@ -165,6 +169,24 @@ describe("group-reminder-cadence — send path (#1102)", () => {
     // sendEmail was still consulted (suppression is decided inside it), but the
     // reminder was not delivered — so we must not advance the cadence clock.
     expect(sendEmailMock).toHaveBeenCalledOnce();
+    expect(result.sent).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(invitationUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  // #1584 — send-invitation-email.ts now stamps last_email_sent_at on the
+  // initial send (previously it never did, so this cadence job treated a
+  // brand-new invitee as "never emailed" and sent a near-duplicate
+  // GroupReminder the very next 08:00 UTC run). Proves the initial send
+  // counts as the first reminder for cadence purposes: with
+  // last_email_sent_at set to "now" and a 7-day interval (90-day-out
+  // sailing), the very next run must not re-select this invitation.
+  it("does not re-send: an invite emailed earlier today is not selected by the next cadence run", async () => {
+    invitationsPool[0]!.last_email_sent_at = new Date().toISOString();
+
+    const result = await run();
+
+    expect(sendEmailMock).not.toHaveBeenCalled();
     expect(result.sent).toBe(0);
     expect(result.skipped).toBe(1);
     expect(invitationUpdateSpy).not.toHaveBeenCalled();

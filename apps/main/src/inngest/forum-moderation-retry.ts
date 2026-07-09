@@ -14,6 +14,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyEnvAtBoot } from "@/lib/env";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
+import type { MessageAuthor } from "@/lib/forums/post-message";
 import { instrumentedClaudeCall, type AICallPurpose } from "@/lib/ai/call-wrapper";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -116,7 +117,7 @@ export const forumModerationRetry = inngest.createFunction(
 
     const { data: msg } = await svc
       .from("forum_messages")
-      .select("id,content,status,moderation_attempt_count,pending_moderation_since,user_id")
+      .select("id,content,status,moderation_attempt_count,pending_moderation_since,user_id,invitation_id")
       .eq("id", message_id)
       .maybeSingle();
 
@@ -218,14 +219,13 @@ export const forumModerationRetry = inngest.createFunction(
     const won = (updated ?? []).length > 0;
 
     if (won && status === "hidden") {
-      await recordStrike(svc, {
-        user_id: msg.user_id as string,
-        forum_id,
-        tenant_id,
-        message_id,
-        kind: "ai_hidden",
-      });
-      await checkStrikePatterns(svc, { user_id: msg.user_id as string, forum_id, tenant_id });
+      // #1572 — a message is authored by exactly one of user_id/invitation_id
+      // (forum_messages_author_xor); strike on whichever is set.
+      const author: MessageAuthor = msg.invitation_id
+        ? { invitation_id: msg.invitation_id as string }
+        : { user_id: msg.user_id as string };
+      await recordStrike(svc, { author, forum_id, tenant_id, message_id, kind: "ai_hidden" });
+      await checkStrikePatterns(svc, { author, forum_id, tenant_id });
     }
 
     return { resolved: won, status, attempt: expectedCount };

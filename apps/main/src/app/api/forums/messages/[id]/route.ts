@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate, forumCoordinatorId } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
+import type { MessageAuthor } from "@/lib/forums/post-message";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 
@@ -79,15 +80,20 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
         // as defense-in-depth: the upstream select already validated tenant,
         // but this update is now self-contained.
         await safeAwait(svc.from("forum_messages").update({ status: "hidden" }).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
+        // #1572 — a message is authored by exactly one of user_id/invitation_id
+        // (forum_messages_author_xor); strike on whichever is set.
+        const author: MessageAuthor = msg.invitation_id
+          ? { invitation_id: msg.invitation_id as string }
+          : { user_id: msg.user_id as string };
         await recordStrike(svc, {
-          user_id: msg.user_id as string,
+          author,
           forum_id: msg.forum_id as string,
           tenant_id: ctx.tenant_id,
           message_id: params.id,
           kind: "coordinator_hidden",
         });
         await checkStrikePatterns(svc, {
-          user_id: msg.user_id as string,
+          author,
           forum_id: msg.forum_id as string,
           tenant_id: ctx.tenant_id,
         });

@@ -7,6 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // Narrow shape of the group fields the invitation email needs.
 export type GroupInvitationGroup = {
@@ -130,12 +131,28 @@ export async function sendGroupInvitationEmail(args: {
     idempotencyKey: `group_invitation:${args.invitationId}`,
   });
 
-  if (result.status === "failed") {
+  if (result.status === "sent") {
+    // #1584 — this initial send counts as the first reminder for cadence
+    // purposes. Without this stamp, group-reminder-cadence.ts treats a null
+    // last_email_sent_at as "never emailed" and skips its interval check, so
+    // every new invitee got a near-duplicate GroupReminder the very next
+    // 08:00 UTC run regardless of how far out the sailing is.
+    // Crash-window trade-off (#1716): the email is already sent above; if the
+    // process dies before this stamp lands, last_email_sent_at stays null and
+    // the next cadence run can send at most ONE duplicate — bounded by the
+    // email_log 3-per-24h guard. Accepted over a pre-send stamp (which would
+    // suppress legitimate reminders on a send that never went out).
+    await safeAwait(
+      // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
+      args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId),
+      "invitations.update.last_email_sent_at",
+    );
+  } else if (result.status === "failed") {
     // Something broke (key missing/malformed, Resend 5xx) — actionable.
     console.error(
       `[group-invitation] send failed for inv=${args.invitationId}: ${result.reason ?? "unknown"}`,
     );
-  } else if (result.status !== "sent") {
+  } else {
     // suppressed / rate_limited — expected, not an error.
     console.warn(
       `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
