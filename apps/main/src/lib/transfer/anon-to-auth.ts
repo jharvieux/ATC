@@ -80,9 +80,20 @@ export async function softCommitTransfer({
   // 3. Emit the finalize event with a 24-hour delay via Inngest.
   //    The finalize function re-checks transfer_committed_at on arrival —
   //    if the transfer was undone by then, it no-ops.
+  //
+  //    transfer_soft_commit_at is the per-attempt marker: the finalize
+  //    function's idempotency key combines it with anonymous_session_id so two
+  //    concurrent runs of the SAME soft-commit attempt collapse to one (no
+  //    double memory-emit / double contact-bind, #1655), while a legitimate
+  //    undo→re-commit produces a NEW timestamp → new key → still finalizes.
   await inngest.send({
     name: "anonymous_session.transfer_finalize",
-    data: { tenant_id, anonymous_session_id, user_id },
+    data: {
+      tenant_id,
+      anonymous_session_id,
+      user_id,
+      transfer_soft_commit_at: now.toISOString(),
+    },
     ts: now.getTime() + TRANSFER_WINDOW_MS,
   });
 

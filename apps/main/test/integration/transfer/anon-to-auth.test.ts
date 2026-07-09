@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { softCommitTransfer } from "@/lib/transfer/anon-to-auth";
 import { assertNotInDeferredWindow, DeferredProcessingError } from "@/lib/transfer/deferred-processing-guard";
+import { inngest } from "@/inngest/client";
 
 // Mock Inngest send so the 24h event emission doesn't error in tests.
 vi.mock("@/inngest/client", () => ({
@@ -122,6 +123,7 @@ describe("softCommitTransfer — happy path", () => {
       sessionUpdates: (patch) => updates.push(patch),
     });
 
+    vi.mocked(inngest.send).mockClear();
     const result = await softCommitTransfer({
       db,
       anonymous_session_id: ANON_SESSION_ID,
@@ -134,6 +136,14 @@ describe("softCommitTransfer — happy path", () => {
     const sessionUpdate = updates.find((p) => "transfer_soft_commit_at" in p);
     expect(sessionUpdate?.transfer_soft_commit_at).toBeTruthy();
     expect(sessionUpdate?.transferred_to_user_id).toBe(USER_ID);
+
+    // #1655 — the finalize event must carry the per-attempt marker, and it must
+    // equal the timestamp written to the row, so the finalize function's
+    // idempotency key + commit-CAS gate identify exactly this attempt.
+    const sent = vi.mocked(inngest.send).mock.calls.at(-1)?.[0] as {
+      data: { transfer_soft_commit_at?: string };
+    };
+    expect(sent.data.transfer_soft_commit_at).toBe(sessionUpdate?.transfer_soft_commit_at);
   });
 
   it("returns expires_at approximately 24 hours from now", async () => {
