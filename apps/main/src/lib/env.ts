@@ -223,6 +223,10 @@ const envSchema = z.object({
   // Email & Notifications — §23
   // Resend webhook signing secret (required — verifies bounce/complaint events from Resend).
   RESEND_WEBHOOK_SECRET: z.string().optional(),
+  // #890 — Resend INBOUND (email.received) webhook signing secret. Separate
+  // Resend webhook endpoint, so it has its own Svix secret; the handler fails
+  // closed (500) when unset.
+  RESEND_INBOUND_WEBHOOK_SECRET: z.string().optional(),
   // Pre-cruise email timing — hours before sailing for each phase (§23.4).
   PRECRUISE_T90_HOURS_BEFORE: z.coerce.number().int().positive().optional().default(2160),
   PRECRUISE_T30_HOURS_BEFORE: z.coerce.number().int().positive().optional().default(720),

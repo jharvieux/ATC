@@ -575,6 +575,70 @@ jobs:
         run: |
           psql "$DB_URL" -f scripts/staging-fixups.sql
 
+      # #1316 — DROP SCHEMA public CASCADE (above) drops storage RLS policies
+      # that reference public functions, and `supabase db push` won't recreate
+      # them (they're already in the migration ledger). Re-apply them here.
+      # Fails the job on error: these run as postgres exactly as the owning
+      # migrations do, so a failure is a real regression, not a privilege gap.
+      - name: Restore storage RLS policies (#1316)
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/restore-staging-policies.sql
+
+      # #1316 — Realtime publication membership. `DROP TABLE` removed public
+      # tables from the supabase_realtime publication. There is no source of
+      # truth for the membership in the repo (the app defines no realtime
+      # subscriptions and no migration manages the publication), so we CAPTURE
+      # the live membership from prod and REPLAY it onto staging rather than
+      # hard-code a guessed table list. The generated SQL is idempotent.
+      - name: Capture prod realtime publication membership (#1316)
+        run: |
+          set -euo pipefail
+          # Emit one idempotent DO-block per public table currently in the
+          # supabase_realtime publication on prod. string_agg → NULL (empty
+          # file) when prod has no public members, making replay a clean no-op.
+          psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 -tA -o realtime-publication-restore.sql -c "
+            SELECT COALESCE(string_agg(
+              format(
+                'DO \$do\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=%L) THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.%I; END IF; END \$do\$;',
+                tablename, tablename
+              ),
+              E'\n'
+            ), '')
+            FROM pg_publication_tables
+            WHERE pubname = 'supabase_realtime' AND schemaname = 'public';
+          "
+          echo '::notice::Captured realtime membership from prod:'
+          cat realtime-publication-restore.sql
+
+      - name: Replay realtime publication membership onto staging (#1316)
+        run: |
+          set -euo pipefail
+          if [ ! -s realtime-publication-restore.sql ]; then
+            echo '::notice::No prod realtime public-table membership to restore — skipping.'
+            exit 0
+          fi
+          # Tolerant, not fail-closed: supabase_realtime is owned by
+          # supabase_admin, and the postgres role may lack ALTER PUBLICATION on
+          # it. A permission failure here is the known #1316 limitation, not a
+          # broken refresh — warn loudly (operator restores via service role)
+          # and let the pipeline continue. Any OTHER error still surfaces.
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f realtime-publication-restore.sql 2> realtime_err.log
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            if grep -qiE 'must be owner|permission denied' realtime_err.log; then
+              echo "::warning::postgres role cannot ALTER PUBLICATION supabase_realtime (owned by supabase_admin). Restore realtime membership via service role. See #1316."
+              cat realtime_err.log
+            else
+              echo "::error::Unexpected error replaying realtime publication membership:"
+              cat realtime_err.log
+              exit 1
+            fi
+          else
+            echo '::notice::Realtime publication membership restored onto staging.'
+          fi
+
   # ============================================================
   # Staging block — deploy + E2E + smoke (job 6)
   # Runs only on push to release/* branches
@@ -631,6 +695,12 @@ jobs:
           vercel deploy --prebuilt --target=preview --token=$VERCEL_TOKEN
 
       - name: Run Playwright E2E tests
+        # This step is the pre-prod-promotion gate. It runs the full tests/e2e
+        # suite against the real staging subdomain, which is where the
+        # onboarding-funnel smoke spec (#1159, tests/e2e/onboarding-funnel.spec.ts)
+        # activates: it needs BASE_URL (a real subdomain) + TEST_E2E_OWNER_EMAIL/
+        # PASSWORD, all set below. When the #1286 secrets are absent the funnel
+        # spec skips loudly rather than failing (see its describe gate).
         env:
           BASE_URL: https://staging.ai-travelconcierge.com
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
