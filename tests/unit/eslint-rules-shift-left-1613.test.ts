@@ -6,7 +6,17 @@
 // can't catch a rule that silently matches nothing (stub-shaped, D-091 #1).
 
 import { describe, it } from "vitest";
-import { RuleTester } from "eslint";
+import type { RuleTester as RuleTesterType } from "eslint";
+
+// "eslint" isn't reliably resolvable as a bare specifier from the root
+// tests/ context under CI's pnpm hoisting; anchor the require to
+// packages/config, which declares eslint as a devDependency — same reasoning
+// as the require()s below.
+type RuleTester = RuleTesterType;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { RuleTester } = require(
+  require.resolve("eslint", { paths: [require.resolve("../../packages/config/package.json")] }),
+);
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const noDirectAuditLogWrite = require("../../packages/config/eslint-rules/no-direct-audit-log-write");
@@ -20,14 +30,18 @@ const noMoneyMath = require("../../packages/config/eslint-rules/no-money-math");
 const noSecretShapedPublicEnv = require("../../packages/config/eslint-rules/no-secret-shaped-public-env");
 
 const tester = new RuleTester({
-  parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+  languageOptions: { ecmaVersion: 2022, sourceType: "module" },
 });
 
 // TS-syntax cases (`import type`, inline `type` specifiers) need the
 // @typescript-eslint parser — espree can't parse them.
 const tsTester = new RuleTester({
-  parser: require.resolve("@typescript-eslint/parser"),
-  parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+  languageOptions: {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    parser: require("@typescript-eslint/parser"),
+    ecmaVersion: 2022,
+    sourceType: "module",
+  },
 });
 
 // RuleTester.run throws on failure; wrap each in a vitest `it` so failures are
