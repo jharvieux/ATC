@@ -40,6 +40,8 @@ interface SendTenantNotificationInput {
   template_variables?: Record<string, unknown>;
   user_id?: string;
   contact_id?: string;
+  reply_to?: string;
+  idempotencyKey?: string;
 }
 
 /**
@@ -91,6 +93,8 @@ export async function sendTenantNotification(
     html: input.html,
     ...(input.user_id ? { user_id: input.user_id } : {}),
     ...(input.contact_id ? { contact_id: input.contact_id } : {}),
+    ...(input.reply_to ? { reply_to: input.reply_to } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   });
 }
 
