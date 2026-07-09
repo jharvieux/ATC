@@ -34,7 +34,20 @@ const capturedSelectCalls: Array<{ method: string; args: unknown[] }> = [];
 const capturedUpdateCalls: Array<{ method: string; args: unknown[] }> = [];
 let selectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [], error: null };
 const updateResults: Array<{ data: { id: string }[] | null; error: { message: string } | null }> = [];
-const auditInsertSpy = vi.fn();
+
+// #1607 — the audit_log INSERT now goes through the canonical writeAuditLog
+// helper rather than a direct `.from("audit_log").insert(...)` on the
+// platform-admin db, so it's mocked at the module level instead of via the
+// fake `db` below.
+let auditWriteShouldThrow = false;
+const auditInsertSpy = vi.fn(async (_row: unknown, _opts?: { throwOnError?: boolean }) => {
+  if (auditWriteShouldThrow) {
+    throw new Error("audit_log insert failed [tenant.auto_suspended_stale_onboarding]: connection refused");
+  }
+});
+vi.mock("@/lib/audit/write", () => ({
+  writeAuditLog: auditInsertSpy,
+}));
 
 function makeSelectChain(): Record<string, (...a: unknown[]) => unknown> {
   const chain: Record<string, (...a: unknown[]) => unknown> = {
@@ -101,14 +114,6 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
               },
             };
           }
-          if (table === "audit_log") {
-            return {
-              insert(payload: unknown) {
-                auditInsertSpy(payload);
-                return Promise.resolve({ data: null, error: null });
-              },
-            };
-          }
           throw new Error(`unexpected table: ${table}`);
         },
       };
@@ -122,7 +127,8 @@ beforeEach(() => {
   capturedUpdateCalls.length = 0;
   updateResults.length = 0;
   selectResult = { data: [], error: null };
-  auditInsertSpy.mockReset();
+  auditInsertSpy.mockClear();
+  auditWriteShouldThrow = false;
 });
 
 async function runHandler(): Promise<unknown> {
@@ -214,6 +220,9 @@ describe("onboardingStaleSuspend — CAS guard + audit gating", () => {
     // Slug landed in the audit `changes` JSONB (was previously only in
     // the console.info log — pre-pr audit W3).
     expect((auditPayload.changes as Record<string, unknown>).slug).toBe("abandoned-co");
+    // #1607 — requests throwOnError so a failed audit write still fails the
+    // run for retry, matching the pre-migration safeAwait-throws behavior.
+    expect(auditInsertSpy.mock.calls[0]?.[1]).toMatchObject({ throwOnError: true });
   });
 
   it("throws on UPDATE error so Inngest auto-retries (does NOT silently skip the tenant)", async () => {
@@ -228,6 +237,21 @@ describe("onboardingStaleSuspend — CAS guard + audit gating", () => {
 
     await expect(runHandler()).rejects.toThrow(/connection refused/);
     expect(auditInsertSpy).not.toHaveBeenCalled();
+  });
+
+  // #1607 — pins the throwOnError:true contract: a failed audit_log write
+  // for an automated tenant suspension must still fail the Inngest run
+  // (visible, retryable) rather than being silently swallowed the way
+  // writeAuditLog behaves for its other 47+ non-cron call sites.
+  it("throws when the audit write itself fails so Inngest retries", async () => {
+    selectResult = {
+      data: [{ id: "t-stuck-4", slug: "y", onboarding_stage: "legal", created_at: "2026-04-01T00:00:00Z" }],
+      error: null,
+    };
+    updateResults.push({ data: [{ id: "t-stuck-4" }], error: null });
+    auditWriteShouldThrow = true;
+
+    await expect(runHandler()).rejects.toThrow(/audit_log insert failed/);
   });
 });
 

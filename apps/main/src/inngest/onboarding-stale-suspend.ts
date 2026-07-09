@@ -23,6 +23,7 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { writeAuditLog } from "@/lib/audit/write";
 import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
 
 // 14 days from signup. Short enough to deter the abuse vector, long
@@ -116,8 +117,8 @@ export const onboardingStaleSuspend = inngest.createFunction(
               "[onboarding-stale-suspend] suspended tenant=%s slug=%s stage=%s created_at=%s",
               t.id, t.slug, t.onboarding_stage ?? "null", t.created_at,
             );
-            await safeAwait(
-              db.from("audit_log").insert({
+            await writeAuditLog(
+              {
                 tenant_id: t.id,
                 actor_user_id: null,
                 actor_type: "system",
@@ -131,8 +132,8 @@ export const onboardingStaleSuspend = inngest.createFunction(
                   stale_threshold_days: STALE_ONBOARDING_DAYS,
                   cron_id: "onboarding-stale-suspend",
                 },
-              }),
-              "audit_log.insert.auto_suspend_stale_onboarding",
+              },
+              { throwOnError: true },
             );
             // Propagate the suspension to RAG so retrieval is cut off.
             await publishTenantShadowEvent(db, t.id, "tenant.status_changed");
