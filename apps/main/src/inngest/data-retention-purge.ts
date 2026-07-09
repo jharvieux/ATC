@@ -86,9 +86,12 @@ async function purgeTable(
       .select("id")
       .lt(target.tsColumn, cutoff)
       .limit(DELETE_BATCH);
+    // #1722 — THROW (don't return) on a DB error so the wrapping step.run rejects
+    // and Inngest retries the step with backoff. Returning the error resolves the
+    // step non-throwing, which memoizes a one-off transient blip for the whole run.
+    // Re-selecting after a partial drain is safe: already-deleted rows can't match.
     if (selErr) {
-      console.error(`[data-retention-purge] ${target.table} select failed:`, selErr.message);
-      return { table: target.table, affected: deleted, window_days: windowDays, error: selErr.message };
+      throw new Error(`data-retention-purge: ${target.table} select failed: ${selErr.message}`);
     }
     const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
     if (ids.length === 0) break;
@@ -98,8 +101,7 @@ async function purgeTable(
       .delete({ count: "exact" })
       .in("id", ids);
     if (delErr) {
-      console.error(`[data-retention-purge] ${target.table} delete failed:`, delErr.message);
-      return { table: target.table, affected: deleted, window_days: windowDays, error: delErr.message };
+      throw new Error(`data-retention-purge: ${target.table} delete failed: ${delErr.message}`);
     }
     deleted += count ?? ids.length;
     if (ids.length < DELETE_BATCH) break;
@@ -122,9 +124,10 @@ async function scrubStripeRawEvents(
       .lt("created_at", cutoff)
       .not("raw_event", "is", null)
       .limit(DELETE_BATCH);
+    // #1722 — throw on error so the step retries (see purgeTable). Re-selecting is
+    // safe: the `.not("raw_event","is",null)` filter excludes already-scrubbed rows.
     if (selErr) {
-      console.error("[data-retention-purge] stripe_webhook_events select failed:", selErr.message);
-      return { table: "stripe_webhook_events.raw_event", affected: scrubbed, window_days: windowDays, error: selErr.message };
+      throw new Error(`data-retention-purge: stripe_webhook_events select failed: ${selErr.message}`);
     }
     const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
     if (ids.length === 0) break;
@@ -135,8 +138,7 @@ async function scrubStripeRawEvents(
       .update({ raw_event: null })
       .in("id", ids);
     if (updErr) {
-      console.error("[data-retention-purge] stripe_webhook_events raw_event scrub failed:", updErr.message);
-      return { table: "stripe_webhook_events.raw_event", affected: scrubbed, window_days: windowDays, error: updErr.message };
+      throw new Error(`data-retention-purge: stripe_webhook_events scrub failed: ${updErr.message}`);
     }
     scrubbed += ids.length;
     if (ids.length < DELETE_BATCH) break;
@@ -154,24 +156,51 @@ export const dataRetentionPurge = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
-      await safeAwait(
-        svc.from("staging_cron_skips").insert({ cron_id: "data-retention-purge" }),
-        "staging_cron_skips.insert",
+      // #1722 — wrap in a step so a function retry replays the memoized insert
+      // instead of writing a second benign skip-marker row.
+      await step.run("staging-skip-marker", () =>
+        safeAwait(
+          svc.from("staging_cron_skips").insert({ cron_id: "data-retention-purge" }),
+          "staging_cron_skips.insert",
+        ),
       );
       return { skipped_for_staging: true };
     }
 
-    // Each table purge and the audit write run in their own memoized step. The
-    // terminal fail-loud throw below retries the WHOLE function; without steps
-    // that retry would re-run every DELETE and append a duplicate audit row.
-    // With per-table steps, a retry replays completed tables from the memo (no
-    // re-delete) and skips the already-written audit row (D-091 Inngest
+    // Each table purge and the audit write run in their own memoized step.
+    //
+    // #1722 — purgeTable/scrubStripeRawEvents now THROW on a DB error, so a
+    // failing step rejects and Inngest retries THAT step with backoff — a
+    // transient blip on one table recovers within the run instead of being
+    // memoized as a permanent failure (the old return-the-error shape locked a
+    // one-off connection reset in for the whole run). A step that still fails
+    // after its retries is caught here so the other tables are still swept and
+    // the failure is recorded in the audit row. Completed tables stay memoized,
+    // so the terminal fail-loud retry never re-deletes them (D-091 Inngest
     // retry-safety).
     const results: TableResult[] = [];
     for (const target of DELETE_TARGETS) {
-      results.push(await step.run(`purge-${target.table}`, () => purgeTable(svc, target)));
+      try {
+        results.push(await step.run(`purge-${target.table}`, () => purgeTable(svc, target)));
+      } catch (err) {
+        results.push({
+          table: target.table,
+          affected: 0,
+          window_days: resolveWindowDays(target.envVar, target.defaultDays),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-    results.push(await step.run("purge-stripe_webhook_events", () => scrubStripeRawEvents(svc)));
+    try {
+      results.push(await step.run("purge-stripe_webhook_events", () => scrubStripeRawEvents(svc)));
+    } catch (err) {
+      results.push({
+        table: "stripe_webhook_events.raw_event",
+        affected: 0,
+        window_days: resolveWindowDays(STRIPE_RAW_EVENT_ENV, STRIPE_RAW_EVENT_DEFAULT_DAYS),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     const failures = results.filter((r) => r.error);
 
