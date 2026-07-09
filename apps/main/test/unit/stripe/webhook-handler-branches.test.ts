@@ -463,6 +463,29 @@ describe("Stripe webhook — customer.subscription.* status handling", () => {
     expect(res.status).toBe(200);
     expect(dbCalls.some((c) => c.table === "tenants" && c.op === "update")).toBe(false);
   });
+
+  it("[#1677] stale event (older than last-applied) records outcome='stale_discarded', not 'unhandled'", async () => {
+    // The last-applied timestamp is in the future relative to this event's
+    // `created` (= now), so isStaleSubscriptionEvent short-circuits the handler.
+    // WHY the distinct value matters: 'unhandled' means "no handler for this
+    // type" (a real gap); a stale out-of-order discard is healthy. Recording
+    // both as 'unhandled' (the pre-#1677 behavior) makes a dashboard over
+    // processing_outcome unable to tell them apart.
+    mockEventType = "customer.subscription.updated";
+    mockEventData = { id: "sub_1", status: "past_due" };
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    selectMaybeSingle = {
+      data: { id: "t-1", non_paying_since: null, subscription_status_event_at: future },
+      error: null,
+    };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    // Discarded, not applied: no tenant state write.
+    expect(dbCalls.some((c) => c.table === "tenants" && c.op === "update")).toBe(false);
+    // And the dedup row records the distinct outcome.
+    const evt = findUpdate("stripe_webhook_events");
+    expect(evt!.processing_outcome).toBe("stale_discarded");
+  });
 });
 
 // ---------------------------------------------------------------------------

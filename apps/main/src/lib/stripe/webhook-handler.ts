@@ -347,6 +347,11 @@ export async function handleStripeWebhook(
             (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
           )
         ) {
+          // #1677 — we HAD a handler and deliberately discarded this event as an
+          // out-of-order stale duplicate. Record a distinct outcome so a
+          // dashboard doesn't conflate this healthy case with 'unhandled'
+          // (= no handler for the type, a real gap).
+          processingOutcome = "stale_discarded";
           break;
         }
 
@@ -420,6 +425,11 @@ export async function handleStripeWebhook(
             (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
           )
         ) {
+          // #1677 — we HAD a handler and deliberately discarded this event as an
+          // out-of-order stale duplicate. Record a distinct outcome so a
+          // dashboard doesn't conflate this healthy case with 'unhandled'
+          // (= no handler for the type, a real gap).
+          processingOutcome = "stale_discarded";
           break;
         }
         const cur = (tenantRow as { subscription_status: string | null }).subscription_status;
@@ -485,6 +495,11 @@ export async function handleStripeWebhook(
             (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
           )
         ) {
+          // #1677 — we HAD a handler and deliberately discarded this event as an
+          // out-of-order stale duplicate. Record a distinct outcome so a
+          // dashboard doesn't conflate this healthy case with 'unhandled'
+          // (= no handler for the type, a real gap).
+          processingOutcome = "stale_discarded";
           break;
         }
         const updates: Record<string, unknown> = {
