@@ -16,6 +16,7 @@
 // Templates: callers pass plain HTML + text. These are operational, not
 // marketing — keep them simple, no React-email rendering required.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail, type EmailSendResult } from "./send";
 import type { EmailCategory } from "./rate-limit";

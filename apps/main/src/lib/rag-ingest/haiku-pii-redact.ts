@@ -16,6 +16,7 @@
 // safety-critical layer. This module's `failed` status means
 // "tolerable-PII layer did not run; caller decides what to do."
 
+import "server-only";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type HaikuRedactResult =

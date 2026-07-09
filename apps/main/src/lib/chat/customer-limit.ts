@@ -12,6 +12,7 @@
 // Cooldowns: Soft1 nudge once per 7 days, Soft2 once per 3 days, to avoid
 // nagging at the same customer on every message in a hot tier.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";

@@ -20,6 +20,7 @@
 // inside the chat path must pass tenantClient(ctx); callers that run in test
 // harnesses may pass a service-role client scoped to the conversation's tenant.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import type { SupervisorFinding, SupervisorOutcome } from "./types";

@@ -4,6 +4,8 @@
 // crown-jewel-domain guard layers (the first is at boot in env.ts; the third
 // is the annual operator audit in inngest/crown-jewel-annual-audit.ts).
 
+import "server-only";
+
 export class VercelApiError extends Error {
   constructor(public status: number, public body: string) {
     super(`Vercel API ${status}: ${body}`);

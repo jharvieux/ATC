@@ -10,6 +10,7 @@
 // Uses native fetch (Node 18+) — no Apify SDK, keeps the dependency
 // surface small and the request shape inspectable.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import type {

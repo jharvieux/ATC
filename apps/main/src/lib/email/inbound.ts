@@ -16,6 +16,7 @@
 //   3. "unresolved" — persisted with tenant_id NULL; surfaced on the
 //      platform-admin list instead of being dropped.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // NOTE(#890): REST path inferred from the SDK's `emails.receiving.get()` —

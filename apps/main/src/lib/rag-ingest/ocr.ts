@@ -11,6 +11,8 @@
 //
 // Returns { status: 'extracted', text } or { status: 'unavailable'|'failed', error }.
 
+import "server-only";
+
 export interface OcrResult {
   status: "extracted" | "failed" | "unavailable";
   text?: string;

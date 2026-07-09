@@ -1,0 +1,8 @@
+{
+  "_comment": "Projects scanned by scripts/check-supabase-advisors.ts (#1635). Refs are semi-public (they appear in the project URL / anon key). failLevels sets the minimum advisor level that fails the check; accepted findings are frozen in scripts/supabase-advisor-baseline.txt keyed <name>:<cache_key>.",
+  "failLevels": ["WARN", "ERROR"],
+  "projects": [
+    { "name": "atc-main", "ref": "mfaknjyqiwcjojukcnea" },
+    { "name": "atc-rag", "ref": "jjznkprbotkqqnuvcost" }
+  ]
+}

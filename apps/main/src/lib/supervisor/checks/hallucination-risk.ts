@@ -20,6 +20,7 @@
 // preferable to false positives that thrash the regen budget. The fail-rate
 // metric (Task 12) lets operators tune over time.
 
+import "server-only";
 import type { CheckInput, SupervisorFinding } from "../types";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 

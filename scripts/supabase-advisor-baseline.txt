@@ -1,0 +1,25 @@
+# Supabase advisor accepted-risk baseline (scripts/check-supabase-advisors.ts, #1635).
+# One accepted WARN+ finding per line, keyed <project-name>:<cache_key>.
+# The check fails on any WARN+ advisor NOT listed here. Add a line ONLY after
+# confirming the finding is intentional/accepted (note the reason inline).
+# INFO-level lints (e.g. rls_enabled_no_policy on service-role-only tables) are
+# below the fail threshold and are not listed here.
+#
+# --- atc-main: SECURITY DEFINER RPC helpers used INSIDE RLS policies (#1369) ---
+# These are intentional: signed-in users invoking them directly only get a
+# boolean tenant/authorization check they already implicitly pass through RLS.
+# Confirmed intentional during #1621 triage (2026-07-06); re-confirm if their
+# body changes.
+atc-main:authenticated_security_definer_function_executable_public_auth_user_can_access_conversation_conv_id uuid, target_tenant_id uuid
+atc-main:authenticated_security_definer_function_executable_public_auth_user_in_tenant_target_tenant_id uuid
+atc-main:authenticated_security_definer_function_executable_public_tenant_is_active_target_tenant_id uuid
+#
+# --- atc-rag: pgvector installed in public schema ---
+# The `vector` extension is installed in `public` (Supabase default for pgvector).
+# Moving it is disruptive and low-risk here; accepted. Revisit if a schema-move
+# migration is ever done.
+atc-rag:extension_in_public_vector
+#
+# NOTE: atc-main `auth_leaked_password_protection` is deliberately NOT baselined —
+# it is an actionable WARN (enable HaveIBeenPwned check in Auth settings, an
+# operator dashboard toggle). The check will surface it until it is enabled.

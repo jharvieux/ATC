@@ -24,6 +24,8 @@
 // boot-time env schema does not even list it — it's read via direct
 // process.env lookup so the var stays out of the canonical config surface.
 
+import "server-only";
+
 export interface TestBypassIdentity {
   auth_user_id: string;
   tenant_id: string;

@@ -21,8 +21,12 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const BLOCKING = process.env.BLOCKING === "1";
 
 // Reads a secret env or constructs the service-role client → server-exclusive.
+// Widened in #1713: *_API_KEY / *_TOKEN / *_PRIVATE_KEY / *_HMAC_KEY env reads
+// are credentials too (Resend, Apify, Vercel, service-JWT signing, HMAC tokens).
+// NEXT_PUBLIC_* is excluded — those are client-bundled by design (a secret-
+// shaped NEXT_PUBLIC name is a separate lint, atc/no-secret-shaped-public-env).
 const SECRET_RE =
-  /service-role-client|createServiceRoleClient|SUPABASE_SERVICE_ROLE|SERVICE_ROLE_KEY|STRIPE_SECRET|process\.env\.[A-Z0-9_]*SECRET[A-Z0-9_]*/;
+  /service-role-client|createServiceRoleClient|SUPABASE_SERVICE_ROLE|SERVICE_ROLE_KEY|STRIPE_SECRET|process\.env\.(?!NEXT_PUBLIC_)[A-Z0-9_]*(?:SECRET|_API_KEY|_TOKEN|_PRIVATE_KEY|_HMAC_KEY)[A-Z0-9_]*/;
 const SERVER_ONLY_RE = /import\s+['"]server-only['"]/;
 
 // Exported for tests — pure decision over (relPath, contents).
@@ -34,7 +38,7 @@ export function isServerExclusiveLeakRisk(relPath: string, contents: string): bo
   // secret can't reach the browser bundle. app/ (routes/pages/layouts/server
   // components), inngest/ (background jobs), and middleware are entry points, not
   // client-importable modules. The real risk is shared lib/ utilities.
-  if (/\/app\/|\/inngest\/|\/middleware\.|\.server\.(ts|tsx)$/.test(relPath)) return false;
+  if (/\/app\/|\/inngest\/|\/middleware\.|\/proxy\.ts$|\.server\.(ts|tsx)$/.test(relPath)) return false;
   if (/Server\.(ts|tsx)$/.test(relPath)) return false; // server components (RSC-only by convention)
   if (!SECRET_RE.test(contents)) return false;
   return !SERVER_ONLY_RE.test(contents);
