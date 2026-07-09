@@ -247,6 +247,9 @@ module.exports = [
   "/inngest/email-soft-bounce-retry.ts",
   // BP23: Resend webhook handler — writes email_log + suppressions outside user session. §23.7.
   "/app/api/webhooks/resend/route.ts",
+  // #890: Resend INBOUND webhook — signature-only auth, resolves the tenant and
+  // writes inbound_emails outside any user session. docs/design/inbound-persona-email.md.
+  "/app/api/webhooks/resend-inbound/route.ts",
   // BP23: Unsubscribe endpoint — writes email_suppressions without user session. §23.3.
   "/app/api/email/unsubscribe/route.ts",
   // BP23: Companion page — reads pre_cruise_email_content via token, no user session. §23.5.
