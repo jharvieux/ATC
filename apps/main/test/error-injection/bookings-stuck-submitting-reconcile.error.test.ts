@@ -71,18 +71,45 @@ beforeEach(() => {
 });
 
 const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
+const ORIG_RECONCILE = process.env.BOOKING_RECONCILE_DISABLED;
 
 afterEach(() => {
   vi.restoreAllMocks();
   if (ORIG_BOOKING_CRONS === undefined) delete process.env.BOOKING_CRONS_DISABLED;
   else process.env.BOOKING_CRONS_DISABLED = ORIG_BOOKING_CRONS;
+  if (ORIG_RECONCILE === undefined) delete process.env.BOOKING_RECONCILE_DISABLED;
+  else process.env.BOOKING_RECONCILE_DISABLED = ORIG_RECONCILE;
 });
 
-describe("runBookingsStuckSubmittingReconcile — BOOKING_CRONS_DISABLED kill switch", () => {
-  it("returns zero counts without touching the DB when flag is true", async () => {
-    process.env.BOOKING_CRONS_DISABLED = "true";
+// #1694 — this safety net now gates on BOOKING_RECONCILE_DISABLED, not
+// BOOKING_CRONS_DISABLED. Both-directions: the dedicated switch stops it; the
+// money-movement switch does NOT (a stuck 'submitting' row most needs flagging
+// exactly when new money movement is paused).
+describe("runBookingsStuckSubmittingReconcile — BOOKING_RECONCILE_DISABLED kill switch (#1694)", () => {
+  it("returns zero counts without touching the DB when BOOKING_RECONCILE_DISABLED is true", async () => {
+    process.env.BOOKING_RECONCILE_DISABLED = "true";
+    mocks.stuckRows = [
+      { id: "booking-1", tenant_id: "t-1", updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+    ];
     const result = await runBookingsStuckSubmittingReconcile();
     expect(result).toEqual({ flagged: 0, total_stuck: 0 });
+    // DB was never consulted — no CAS update captured.
+    expect(mocks.updatePayloads).toHaveLength(0);
+  });
+
+  it("STILL runs and flags stuck rows when only BOOKING_CRONS_DISABLED is true (safety net survives the money-movement pause)", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    delete process.env.BOOKING_RECONCILE_DISABLED;
+    mocks.stuckRows = [
+      { id: "booking-1", tenant_id: "t-1", updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+    ];
+    mocks.casRowsPerRow = 1;
+    const result = await runBookingsStuckSubmittingReconcile();
+    expect(result).toEqual({ flagged: 1, total_stuck: 1 });
+    expect(mocks.updatePayloads[0]).toMatchObject({
+      status: "pending_host_review",
+      review_reason: "host_state_unknown",
+    });
   });
 });
 
