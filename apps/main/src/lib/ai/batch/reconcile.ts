@@ -16,6 +16,23 @@
 // the direct-call path in instrumentedClaudeCall. The reconciler reads
 // the model from the result message and computes via getCostEstimate
 // (already public from lib/ai/pricing.ts).
+//
+// #1599 — processOneResult CAS-claims each row (.eq("status","submitted"))
+// before attributing cost or emitting a completion/failure event. Without
+// this, a crash partway through streaming a batch's results (row 30 of
+// 50) leaves the job at status='submitted'; the next 5-minute reconcile
+// re-streams the WHOLE batch from Anthropic, and rows 1-29 (already
+// 'completed') would otherwise get cost re-incremented and a duplicate
+// event emitted. A 0-row CAS result means an earlier run already claimed
+// this row — skip cost/event and move on, which is what makes re-running
+// the loop from the top idempotent.
+//
+// Known limitation (tracked as #1697, not fixed here): the job-level
+// total_cost_cents/total_*_tokens rollup below is summed only from rows
+// processed in THIS run's loop, so a batch split across two reconcile
+// runs ends up with an undercounted job-level total. Per-row cost_cents
+// and the tenant_usage_metrics increments (what's actually billed) are
+// unaffected — this is a job-level observability field only.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
@@ -195,7 +212,11 @@ async function processOneResult(args: {
     const cost = getCostEstimate({ model, input_tokens, output_tokens });
     const costNumber = Number(cost);
 
-    await safeAwait(
+    // CAS-claim: only proceed to cost attribution + event emit if this
+    // update actually flipped the row out of 'submitted'. A 0-row result
+    // means a prior (possibly crashed) reconcile run already completed
+    // this row — treat as an idempotent no-op, not an error.
+    const claimed = await safeAwait(
       db
         .from("ai_batch_requests")
         .update({
@@ -210,9 +231,14 @@ async function processOneResult(args: {
           cost_cents: costNumber,
           completed_at: new Date().toISOString(),
         })
-        .eq("id", req.id),
+        .eq("id", req.id)
+        .eq("status", "submitted")
+        .select("id"),
       "ai_batch_requests.update.succeeded",
     );
+    if (!claimed || claimed.length === 0) {
+      return;
+    }
 
     // Cost attribution: same shape as instrumentedClaudeCall's per-call
     // increment — one ai_call_log row + one tenant_usage_metrics RPC.
@@ -263,7 +289,7 @@ async function processOneResult(args: {
       ? `${result.result.error.type}: ${result.result.error.message}`
       : result.result.type;
 
-  await safeAwait(
+  const claimed = await safeAwait(
     db
       .from("ai_batch_requests")
       .update({
@@ -271,9 +297,14 @@ async function processOneResult(args: {
         error_detail: errorDetail,
         completed_at: new Date().toISOString(),
       })
-      .eq("id", req.id),
+      .eq("id", req.id)
+      .eq("status", "submitted")
+      .select("id"),
     "ai_batch_requests.update.failed",
   );
+  if (!claimed || claimed.length === 0) {
+    return;
+  }
 
   const failPayload: BatchRequestFailedPayload = {
     request_id: req.id,
