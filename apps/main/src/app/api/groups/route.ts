@@ -204,6 +204,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("id,status,cruise_line,ship_name,sailing_date,departure_port,hero_image_url,created_at,cruise_line_id,cruise_lines(display_name)", { count: "exact" })
       .eq("tenant_id", ctx.tenant_id)
       .order("sailing_date", { ascending: true })
+      .order("id", { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (error) return dbErrorResponse(error);

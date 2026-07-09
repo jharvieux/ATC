@@ -26,11 +26,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.forumMaybeSingle }) }) }) };
       }
       if (table === "forum_messages") {
-        // #1588: .order() is followed by .range() (bounded pagination),
-        // which is the terminal call.
+        // #1588: .order() is followed by .range() (bounded pagination).
+        // #1701 audit r2: a second .order("id") tiebreaker precedes .range().
         const builder = {
           eq: () => builder,
-          order: () => ({ range: () => mocks.messagesResult() }),
+          order: () => ({ order: () => ({ range: () => mocks.messagesResult() }) }),
         };
         return { select: () => builder };
       }

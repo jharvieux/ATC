@@ -86,6 +86,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("quotes")
       .select("id, status, created_at", { count: "exact" })
       .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
       .range(offset, offset + limit - 1);
     if (quotesErr) return dbErrorResponse(quotesErr);
 

@@ -77,8 +77,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   order: () => ({
                     // #1588: second .order() is followed by .range() now
                     // (bounded pagination) rather than terminating itself.
+                    // #1701 audit r2: a third .order("id") tiebreaker precedes .range().
                     order: () => ({
-                      range: (...args: unknown[]) => mocks.threadsQuery(...args),
+                      order: () => ({
+                        range: (...args: unknown[]) => mocks.threadsQuery(...args),
+                      }),
                     }),
                   }),
                 }),
@@ -95,10 +98,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
       if (table === "forum_messages") {
         // Self-referential chain: .eq() records calls so tests can assert the
         // status="visible" filter is applied for non-coordinators; .order()
-        // is followed by .range() (#1588 — bounded pagination), which is terminal.
+        // is followed by another .order("id") tiebreaker (#1701 audit r2),
+        // then .range() (#1588 — bounded pagination), which is terminal.
         const msgChain: Record<string, unknown> = {};
         msgChain.eq = (col: string, val: unknown) => { mocks.messagesEqSpy(col, val); return msgChain; };
-        msgChain.order = () => ({ range: (...args: unknown[]) => mocks.messagesQuery(...args) });
+        msgChain.order = () => ({ order: () => ({ range: (...args: unknown[]) => mocks.messagesQuery(...args) }) });
         return { select: () => msgChain };
       }
       return {};

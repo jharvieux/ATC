@@ -26,8 +26,12 @@ vi.mock("@/lib/db/service-role-client", () => ({
       return {
         select: () => ({
           eq: () => ({
+            // #1701 audit r2: route now chains .order(sailing_date).order(id)
+            // before .range() — a tiebreaker for DATE-column ties.
             order: () => ({
-              range: (...args: unknown[]) => mocks.groupsQuery(...args),
+              order: () => ({
+                range: (...args: unknown[]) => mocks.groupsQuery(...args),
+              }),
             }),
           }),
         }),

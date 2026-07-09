@@ -46,10 +46,11 @@ function makeDb(quotes: Result, options: Result) {
     from(table: string) {
       tablesQueried.push(table);
       const result = table === "quotes" ? quotes : options;
-      // The quotes query chains .order().range(); the quote_options query
-      // terminates at .order(). This object satisfies both: it's a
-      // thenable (so `await ...order(...)` resolves directly) and also
-      // exposes .range() for the paginated quotes call (#1588).
+      // The quotes query chains .order(created_at).order(id).range() (#1701
+      // audit r2 tiebreaker); the quote_options query terminates at a single
+      // .order(option_index). `firstOrder` is thenable (so quote_options
+      // resolves directly) and also exposes .order() so the quotes
+      // tiebreaker chain reaches `terminal`, which exposes .range() (#1588).
       const terminal = {
         range: (from: number, to: number) => {
           rangeCalls.push([from, to]);
@@ -58,10 +59,15 @@ function makeDb(quotes: Result, options: Result) {
         then: (resolve: (v: Result) => void, reject: (e: unknown) => void) =>
           Promise.resolve(result).then(resolve, reject),
       };
+      const firstOrder = {
+        order: () => terminal,
+        then: (resolve: (v: Result) => void, reject: (e: unknown) => void) =>
+          Promise.resolve(result).then(resolve, reject),
+      };
       const chain = {
         select: () => chain,
         in: () => chain,
-        order: () => terminal,
+        order: () => firstOrder,
       };
       return chain;
     },

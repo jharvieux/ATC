@@ -80,6 +80,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
 
     const { data: messages, error, count } = await baseQuery
       .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
       .range(offset, offset + limit - 1);
     if (error) return dbErrorResponse(error);
 
