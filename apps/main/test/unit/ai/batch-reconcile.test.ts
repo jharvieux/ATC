@@ -268,3 +268,63 @@ describe("reconcileSubmittedBatches — event-loss fix (#1702)", () => {
     expect(requests.rows[0]!.result_text).toBe("already-processed");
   });
 });
+
+// #1697 — the job-level rollup (total_cost_cents / total_*_tokens) is summed
+// from every persisted 'completed' row for the job, not just the rows the
+// current run's loop processed. Without this, a batch reconciled across two
+// runs (crash mid-stream) undercounts the job total by exactly the rows the
+// earlier run already finished.
+describe("reconcileSubmittedBatches — job rollup across runs (#1697)", () => {
+  it("rolls up the job total from ALL completed rows, not just this run's loop", async () => {
+    // A 3-row batch where req-1 was already 'completed' by a prior run that
+    // crashed before finishing. This run re-streams the whole batch and
+    // finishes req-2/req-3; the job total must cover all three.
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: 3, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const requests = new InMemoryTable([
+      {
+        id: "req-1", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-1",
+        caller_metadata: null, status: "completed", batch_job_id: "job-1",
+        result_text: "from-prior-run", cost_cents: 42,
+        result_metadata: { model: "claude-haiku-4-5-20251001", input_tokens: 100, output_tokens: 50 },
+      },
+      { id: "req-2", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-2", caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+      { id: "req-3", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-3", caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+
+    // Anthropic re-streams the whole batch (no resume cursor).
+    mockResults.mockImplementation(async function* () {
+      yield succeededRow("req-1", "must NOT overwrite prior-run req-1");
+      yield succeededRow("req-2", "req-2 result");
+      yield succeededRow("req-3", "req-3 result");
+    });
+
+    await reconcileSubmittedBatches({ db: db as never });
+
+    const completed = requests.rows.filter((r) => r.status === "completed");
+    expect(completed).toHaveLength(3);
+
+    // The job rollup equals the SUM over every completed row — including req-1
+    // from the prior run, which this run's loop skipped via the CAS gate.
+    const expectedCost = completed.reduce((s, r) => s + Number(r.cost_cents ?? 0), 0);
+    const expectedInput = completed.reduce(
+      (s, r) => s + Number((r.result_metadata as { input_tokens?: number } | null)?.input_tokens ?? 0),
+      0,
+    );
+    const expectedOutput = completed.reduce(
+      (s, r) => s + Number((r.result_metadata as { output_tokens?: number } | null)?.output_tokens ?? 0),
+      0,
+    );
+    const job = jobs.rows[0]!;
+    expect(job.total_cost_cents).toBe(expectedCost);
+    expect(job.total_input_tokens).toBe(expectedInput);
+    expect(job.total_output_tokens).toBe(expectedOutput);
+
+    // Concretely: the prior-run row's 42¢ + 100 input tokens are present, which
+    // the pre-#1697 in-loop sum (this run only) would have dropped.
+    expect(Number(job.total_cost_cents)).toBeGreaterThanOrEqual(42);
+    expect(Number(job.total_input_tokens)).toBeGreaterThanOrEqual(300); // 3 × 100
+  });
+});
