@@ -106,6 +106,10 @@ export async function resolveInboundTenant(args: {
 
   // limit(2) is all the ambiguity check needs — 2+ rows means non-unique.
   const { data: contacts } = await db
+    // Deliberately cross-tenant: the tenant is what this lookup DETERMINES.
+    // Read-only, and ambiguity (2+ tenants) fails closed to unresolved so a
+    // forged sender can't steer another tenant's mail.
+    // d091-allow:service-role-tenant tenant unknown until this resolves it
     .from("contacts")
     .select("id, tenant_id")
     .eq("email", fromEmail)

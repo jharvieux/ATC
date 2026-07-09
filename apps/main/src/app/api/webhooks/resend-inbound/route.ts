@@ -75,6 +75,7 @@ export async function POST(req: Request): Promise<Response> {
   // Fast-path dedup/replay: an existing row means a prior delivery was fully
   // processed (row insert is the LAST step below).
   const { data: existing, error: existingErr } = await svc
+    // d091-allow:service-role-tenant dedup key is the globally-unique provider message id; tenant unknown until resolution below
     .from("inbound_emails")
     .select("id")
     .eq("provider_message_id", providerMessageId)
