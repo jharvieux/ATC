@@ -25,7 +25,20 @@ export interface AuditRowInput {
   context?: Record<string, unknown> | null;
 }
 
-export async function writeAuditLog(row: AuditRowInput): Promise<void> {
+export interface WriteAuditLogOptions {
+  // Some callers (the tenant-suspension crons) need the audit write to
+  // fail loud — a thrown error triggers Inngest's automated retry/alerting
+  // for security-relevant events where a silently-dropped row is
+  // unacceptable. Default (false) preserves the "never masks the caller's
+  // own result" behavior every other call site relies on.
+  throwOnError?: boolean;
+}
+
+export async function writeAuditLog(
+  row: AuditRowInput,
+  opts?: WriteAuditLogOptions,
+): Promise<void> {
+  let failure: string | null = null;
   try {
     const db = createServiceRoleClient();
     const { error } = await db.from("audit_log").insert({
@@ -39,18 +52,20 @@ export async function writeAuditLog(row: AuditRowInput): Promise<void> {
       context: row.context ?? null,
     });
     if (error) {
+      failure = error.message;
       console.warn(
         "[audit-log:write-failed] " +
           JSON.stringify({ error: error.message, action: row.action }),
       );
     }
   } catch (err) {
+    failure = err instanceof Error ? err.message : String(err);
     console.warn(
       "[audit-log:write-threw] " +
-        JSON.stringify({
-          error: err instanceof Error ? err.message : String(err),
-          action: row.action,
-        }),
+        JSON.stringify({ error: failure, action: row.action }),
     );
+  }
+  if (failure && opts?.throwOnError) {
+    throw new Error(`audit_log insert failed [${row.action}]: ${failure}`);
   }
 }

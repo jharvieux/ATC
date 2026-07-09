@@ -18,6 +18,7 @@ import { escapeHtml } from "@/lib/utils";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorNotification } from "@/lib/email/notifications";
 
 const WARN_DAYS = 25;
@@ -195,8 +196,8 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
             );
           }
 
-          await safeAwait(
-            db.from("audit_log").insert({
+          await writeAuditLog(
+            {
               tenant_id: tenant.id,
               actor_user_id: null,
               actor_type: "system",
@@ -209,8 +210,8 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
                 auto_decline_threshold_days: AUTO_DECLINE_DAYS,
                 cron_id: "sub-host-review-sla-monitor",
               },
-            }),
-            "audit_log.insert.sub_host_auto_decline",
+            },
+            { throwOnError: true },
           );
 
           // Emit termination side-effects (domain unbind, credential deletion, RAG cleanup).

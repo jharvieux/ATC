@@ -38,8 +38,20 @@ type Candidate = {
 let mockCandidates: Candidate[] = [];
 // Configurable: whether the CAS update succeeds (returns 1 row) or misses (0 rows).
 let casUpdateRows: Array<{ id: string }> = [{ id: "t1" }];
-let auditInsertError: null | { message: string } = null;
 let selectUsersError: null | { message: string } = null;
+// Configurable: simulates writeAuditLog's throwOnError:true path (a real audit
+// insert failure) so the retry-on-audit-failure guarantee can be pinned.
+let auditWriteShouldThrow = false;
+
+const mockWriteAuditLog = vi.fn(async (_row: unknown, _opts?: { throwOnError?: boolean }) => {
+  ops.push("audit_log.write");
+  if (auditWriteShouldThrow) {
+    throw new Error("audit_log insert failed [tenant.auto_declined_review_sla]: connection refused");
+  }
+});
+vi.mock("@/lib/audit/write", () => ({
+  writeAuditLog: mockWriteAuditLog,
+}));
 
 vi.mock("@/lib/db/platform-admin-client", () => ({
   withPlatformAdminAudit: vi.fn(
@@ -87,10 +99,6 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
               }),
             }),
           }),
-          insert: (_row: unknown) => {
-            ops.push(`insert.${table}`);
-            return Promise.resolve({ data: null, error: auditInsertError });
-          },
         }),
       };
       return fn(db, () => undefined);
@@ -133,7 +141,7 @@ describe("sub-host-review-sla-monitor", () => {
     ops.length = 0;
     mockCandidates = [];
     casUpdateRows = [{ id: "t1" }];
-    auditInsertError = null;
+    auditWriteShouldThrow = false;
     selectUsersError = null;
     process.env.STRIPE_SECRET_KEY = "sk_test_fake";
   });
@@ -198,12 +206,54 @@ describe("sub-host-review-sla-monitor", () => {
     );
     await (subHostReviewSlaMonitor as unknown as { __handler: () => Promise<unknown> }).__handler();
     const updateIdx = ops.indexOf("update.tenants");
-    const auditIdx = ops.indexOf("insert.audit_log");
+    const auditIdx = ops.indexOf("audit_log.write");
     expect(updateIdx).toBeGreaterThanOrEqual(0);
     expect(auditIdx).toBeGreaterThan(updateIdx);
     // The Inngest send happens after audit_log — verify call order via mock.invocationCallOrder
     const sendCallOrder = mockInngestSend.mock.invocationCallOrder[0];
     expect(sendCallOrder).toBeGreaterThan(0);
+  });
+
+  // #1607 — this cron's audit row now goes through the canonical writeAuditLog
+  // helper instead of a direct `.from("audit_log").insert(...)`. Pin the exact
+  // field shape (a schema/redaction change to the helper must not silently
+  // change what this cron records) and the throwOnError:true contract (a
+  // failed audit write must still fail the run so Inngest retries — the
+  // guarantee the old safeAwait call provided).
+  it("writes the auto-decline audit row via writeAuditLog with the exact prior fields, and requests throwOnError", async () => {
+    mockCandidates = [makeCandidate({ review_submitted_at: daysAgo(31), slug: "sunset" })];
+    const { subHostReviewSlaMonitor } = await import(
+      "@/inngest/sub-host-review-sla-monitor"
+    );
+    await (subHostReviewSlaMonitor as unknown as { __handler: () => Promise<unknown> }).__handler();
+
+    expect(mockWriteAuditLog).toHaveBeenCalledTimes(1);
+    const [row, opts] = mockWriteAuditLog.mock.calls[0]!;
+    expect(row).toMatchObject({
+      tenant_id: "t1",
+      actor_user_id: null,
+      actor_type: "system",
+      action: "tenant.auto_declined_review_sla",
+      resource_type: "tenant",
+      resource_id: "t1",
+      changes: expect.objectContaining({
+        slug: "sunset",
+        auto_decline_threshold_days: 30,
+        cron_id: "sub-host-review-sla-monitor",
+      }),
+    });
+    expect(opts).toMatchObject({ throwOnError: true });
+  });
+
+  it("a failed audit write throws so Inngest retries — losing the auto-decline audit row silently is unacceptable", async () => {
+    mockCandidates = [makeCandidate({ review_submitted_at: daysAgo(31) })];
+    auditWriteShouldThrow = true;
+    const { subHostReviewSlaMonitor } = await import(
+      "@/inngest/sub-host-review-sla-monitor"
+    );
+    await expect(
+      (subHostReviewSlaMonitor as unknown as { __handler: () => Promise<unknown> }).__handler(),
+    ).rejects.toThrow(/audit_log insert failed/);
   });
 
   it("CAS miss is silently skipped — tenant reviewed between SELECT and UPDATE is not double-terminated", async () => {
