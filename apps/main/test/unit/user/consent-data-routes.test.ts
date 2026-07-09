@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   eqCalls: [] as Array<[string, unknown]>,
   inserted: [] as unknown[],
   existingExport: [] as unknown[],
+  insertError: null as { code: string } | null,
   pendingRows: [] as unknown[],
   docs: [] as unknown[],
 }));
@@ -31,8 +32,11 @@ vi.mock("@/inngest/client", () => ({
   inngest: { send: vi.fn(async () => {}) },
 }));
 
-function resultFor(table: string, isInsert: boolean): { data: unknown; error: null } {
-  if (isInsert) return { data: { id: "export-1" }, error: null };
+function resultFor(table: string, isInsert: boolean): { data: unknown; error: unknown } {
+  if (isInsert) {
+    if (h.insertError) return { data: null, error: h.insertError };
+    return { data: { id: "export-1" }, error: null };
+  }
   if (table === "user_data_export_requests") return { data: h.existingExport, error: null };
   if (table === "user_consent_pending") return { data: h.pendingRows, error: null };
   if (table === "legal_documents") return { data: h.docs, error: null };
@@ -71,6 +75,7 @@ beforeEach(() => {
   h.eqCalls = [];
   h.inserted = [];
   h.existingExport = [];
+  h.insertError = null;
   h.pendingRows = [];
   h.docs = [];
 });
@@ -129,8 +134,11 @@ describe("data/export-request — auth + isolation (#1591)", () => {
     expect(res.status).toBe(200);
     // App-layer isolation: rate-limit SELECT filters by the token's auth_user_id.
     expect(h.eqCalls).toContainEqual(["auth_user_id", "user-xyz"]);
-    // The inserted row is keyed by the verified id — never a client value.
-    expect(h.inserted).toContainEqual({ auth_user_id: "user-xyz" });
+    // The inserted row is keyed by the verified id — never a client value — and
+    // carries the 30-day window_bucket the unique index dedups on (#1705).
+    expect(h.inserted).toHaveLength(1);
+    expect(h.inserted[0]).toMatchObject({ auth_user_id: "user-xyz" });
+    expect(typeof (h.inserted[0] as { window_bucket: unknown }).window_bucket).toBe("number");
   });
 
   it("returns 429 when the user already requested an export in the window", async () => {
@@ -141,6 +149,22 @@ describe("data/export-request — auth + isolation (#1591)", () => {
     expect(res.status).toBe(429);
     // A rate-limited request must NOT insert a new row.
     expect(h.inserted).toHaveLength(0);
+  });
+
+  it("returns 429 (not 500) when the DB unique index rejects a concurrent double-submit (#1705)", async () => {
+    // The SELECT gate passes (no prior row visible to this racing request) but
+    // a sibling request already inserted for the same window_bucket, so the
+    // insert hits the unique constraint. This is the race the app-layer check
+    // alone can't stop — the DB backstop must convert the 23505 into a
+    // rate-limit response, never a 500.
+    h.authed = { authUserId: "user-race", email: null };
+    h.existingExport = [];
+    h.insertError = { code: "23505" };
+    const { POST } = await import("@/app/api/user/data/export-request/route");
+    const res = await POST(post("/api/user/data/export-request"));
+    expect(res.status).toBe(429);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error).toBe("rate_limited");
   });
 });
 
