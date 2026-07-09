@@ -6,6 +6,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mocks = {
   safeAwaitRowCount: vi.fn(),
+  // #1674 — the fetch of the queue row, parametrized so tests can drive the
+  // 404 (not-found) and 422 (already-reviewed) publicMessage branches.
+  fetchResult: { data: null as unknown, error: null as unknown },
 };
 
 vi.mock("@/lib/auth/assert-platform-admin", async () => {
@@ -36,10 +39,7 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
       from: () => ({
         select: () => ({
           eq: () => ({
-            single: async () => ({
-              data: { id: "q-1", status: "pending", commission_id: "c-1", notes: null },
-              error: null,
-            }),
+            single: async () => mocks.fetchResult,
           }),
         }),
         update: () => updateChain,
@@ -57,6 +57,10 @@ vi.mock("@/lib/db/safe-mutation", async () => {
 beforeEach(() => {
   vi.resetModules();
   mocks.safeAwaitRowCount.mockResolvedValue([{ id: "q-1" }]);
+  mocks.fetchResult = {
+    data: { id: "q-1", status: "pending", commission_id: "c-1", notes: null },
+    error: null,
+  };
 });
 
 async function postAction(body: unknown): Promise<Response> {
@@ -98,5 +102,40 @@ describe("POST /api/admin/reconciliation/queue — CAS guard (#747)", () => {
   it("returns 400 on missing required fields", async () => {
     const res = await postAction({ id: "q-1" });
     expect(res.status).toBe(400);
+  });
+});
+
+// #1674 — the sanitization guard lets ONLY the whitelisted 404/422
+// publicMessage text past the egress. These pin that the specific messages
+// surface at the right status; a refactor that drops `publicMessage` would
+// fall through to a generic db_error 500 and fail here.
+describe("POST /api/admin/reconciliation/queue — publicMessage egress (#1674)", () => {
+  it("returns 404 'Queue item not found' when the row does not exist", async () => {
+    mocks.fetchResult = { data: null, error: null };
+    const res = await postAction({ id: "missing", action: "accepted" });
+    expect(res.status).toBe(404);
+    const json = await res.json() as { error: string };
+    expect(json.error).toBe("Queue item not found");
+  });
+
+  it("returns 422 'Item has already been reviewed' when status is terminal", async () => {
+    mocks.fetchResult = {
+      data: { id: "q-1", status: "accepted", commission_id: "c-1", notes: null },
+      error: null,
+    };
+    const res = await postAction({ id: "q-1", action: "accepted" });
+    expect(res.status).toBe(422);
+    const json = await res.json() as { error: string };
+    expect(json.error).toBe("Item has already been reviewed");
+  });
+
+  it("returns a sanitized 500 (not raw detail) when the fetch errors", async () => {
+    mocks.fetchResult = { data: null, error: { message: "relation does not exist", code: "42P01" } };
+    const res = await postAction({ id: "q-1", action: "accepted" });
+    expect(res.status).toBe(404);
+    // fetchError → the 404 publicMessage path (fetchError || !existing), not a
+    // raw-detail leak. The DB message must never appear in the body.
+    const json = await res.json() as { error: string };
+    expect(json.error).toBe("Queue item not found");
   });
 });
