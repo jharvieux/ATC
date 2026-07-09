@@ -4,7 +4,7 @@
 // Draft-only by contract: there is no send button on this page and no send
 // path in the API. The TA edits and copies into their own mail client.
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { InquiryDropZone } from "@/components/draft/InquiryDropZone";
 import type { ParsedInquiry } from "@/lib/draft/parse-inquiry";
@@ -30,11 +30,37 @@ export default function DraftReplyPage(): React.JSX.Element {
 
 function DraftReplyForm(): React.JSX.Element {
   const search = useSearchParams();
+  const contactId = search.get("contactId");
+  const messageId = search.get("messageId");
   const [inquiry, setInquiry] = useState(() => search.get("inquiry") ?? "");
   const [subject, setSubject] = useState(() => search.get("subject") ?? "");
   const [customerName, setCustomerName] = useState(() => search.get("customerName") ?? "");
   const [personaSlug, setPersonaSlug] = useState<string>(AGENT_CATALOG[0]!.slug);
   const [personaTouched, setPersonaTouched] = useState(false);
+  const [inquiryLoadError, setInquiryLoadError] = useState(false);
+
+  // #1756 — the CRM deep link passes contactId/messageId instead of the full
+  // body (a long inbound email can exceed browser/proxy URL length limits
+  // via ?inquiry=<body> and silently truncate the pre-fill). Fetch the body
+  // here instead.
+  useEffect(() => {
+    if (!contactId || !messageId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/crm/contacts/${contactId}/messages/${messageId}`);
+        if (!res.ok) {
+          if (!cancelled) setInquiryLoadError(true);
+          return;
+        }
+        const data = (await res.json()) as { content?: string };
+        if (!cancelled && data.content) setInquiry(data.content);
+      } catch {
+        if (!cancelled) setInquiryLoadError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [contactId, messageId]);
 
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState("");
@@ -132,6 +158,12 @@ function DraftReplyForm(): React.JSX.Element {
           />
         </label>
       </div>
+
+      {inquiryLoadError && (
+        <p className="text-[12px] text-red-700 dark:text-red-400 mb-3">
+          Couldn&apos;t load the email body — paste it in below.
+        </p>
+      )}
 
       <label className="text-[12px] text-muted-foreground block mb-4">
         Customer inquiry

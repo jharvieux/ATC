@@ -9,8 +9,12 @@ import { RelationshipsPanel } from "@/components/crm/RelationshipsPanel";
 
 // #1728 — deep-link the draft composer with the inbound reply pre-filled.
 // Draft-only: this is a link to the §904 composer, which has no send path.
-function draftReplyHref(body: string, firstName: string | null): string {
-  const params = new URLSearchParams({ inquiry: body });
+//
+// #1756 — passes contactId/messageId, not the full body: a long inbound
+// email can exceed browser/proxy URL length limits and silently truncate
+// an ?inquiry=<body> param. The composer fetches the body itself.
+function draftReplyHref(contactId: string, messageId: string, firstName: string | null): string {
+  const params = new URLSearchParams({ contactId, messageId });
   if (firstName) params.set("customerName", firstName);
   return `/concierge/draft?${params.toString()}`;
 }
@@ -132,7 +136,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       {item.content ?? ""}
                     </span>
                     <a
-                      href={draftReplyHref(item.content ?? "", contact.first_name)}
+                      href={draftReplyHref(id, item.id, contact.first_name)}
                       className="ml-auto text-blue-600 underline whitespace-nowrap"
                     >
                       Draft reply
