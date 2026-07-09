@@ -40,7 +40,7 @@ function latestCheckList(constraintName: string): string[] {
   for (const file of [...files].reverse()) {
     const sql = readFileSync(path.join(migrationsDir, file), "utf8");
     const m = re.exec(sql);
-    if (m) {
+    if (m && m[1]) {
       return m[1]
         .split(",")
         .map((s) => s.trim().replace(/^'/, "").replace(/'$/, ""))
