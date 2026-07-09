@@ -9,7 +9,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { isStatusPatchable, isFieldPatchable } from "@/lib/bookings/patchable-fields";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
@@ -198,8 +198,8 @@ function serializeBooking(b: BookingRow) {
     // #1190: expose the real columns under the names the detail UI consumes.
     host_booking_reference: provider_booking_ref,
     is_test: is_sandbox,
-    total_amount: total_amount_cents === null ? null : fromCents(BigInt(total_amount_cents) as Cents),
+    total_amount: total_amount_cents === null ? null : fromCents(BigInt(total_amount_cents)),
     commissionable_fare:
-      commissionable_fare_cents === null ? null : fromCents(BigInt(commissionable_fare_cents) as Cents),
+      commissionable_fare_cents === null ? null : fromCents(BigInt(commissionable_fare_cents)),
   };
 }

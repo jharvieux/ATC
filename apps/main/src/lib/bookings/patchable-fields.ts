@@ -17,9 +17,12 @@
 // while the CAS status-flip lost); commissions_booking_id_uidx (#1575) would
 // 23505 any blind re-insert. Resolution here is field edits only (PATCH forbids
 // status changes) plus hand reconciliation via the commission update/waive
-// paths — no code inserts a commission during resolution. The sole commission
-// insert for a booking is the idempotent submit_commit_booking RPC
-// (ON CONFLICT (booking_id) DO NOTHING). commission-insert-idempotent.test.ts
+// paths — no code inserts a commission during resolution. Each insert path —
+// the submit_commit_booking RPC (ON CONFLICT (booking_id) DO NOTHING) for
+// host-submitted bookings, and promote_import (#1711, migration
+// 20260722000006) for imported booking_confirmations — is independently
+// idempotent via commissions_booking_id_uidx, and neither is reachable from
+// PATCH or pending_host_review resolution. commission-insert-idempotent.test.ts
 // pins this so a future resolve route can't reintroduce a blind insert.
 
 export const PATCHABLE_FIELDS_BY_STATUS: Record<string, ReadonlyArray<string>> = {

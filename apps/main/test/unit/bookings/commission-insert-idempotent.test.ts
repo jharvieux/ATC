@@ -12,9 +12,13 @@
 // resolution path an operator uses to clear pending_host_review must therefore
 // never blind-insert a commission.
 //
-// Today that invariant holds structurally: the ONLY commission INSERT for a
-// booking is inside the submit_commit_booking RPC, which is idempotent
-// (ON CONFLICT (booking_id) DO NOTHING). No app-layer code does
+// Today that invariant holds structurally: commission INSERTs happen only in
+// two DB-side paths — the submit_commit_booking RPC for host-submitted
+// bookings (ON CONFLICT (booking_id) DO NOTHING), and promote_import for
+// imported booking_confirmations (#1711, migration 20260722000006), which
+// checks for an existing row before inserting. Both are independently
+// idempotent via commissions_booking_id_uidx, and neither is reachable from
+// PATCH or pending_host_review resolution. No app-layer code does
 // `.from("commissions").insert(...)` at all — resolution is field-edit-only
 // (patchable-fields.ts; the [id] PATCH route forbids status changes) plus hand
 // reconciliation of the already-present row via update/waive paths.
