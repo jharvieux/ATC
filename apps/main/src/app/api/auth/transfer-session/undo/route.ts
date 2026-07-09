@@ -115,6 +115,25 @@ export async function POST(req: Request): Promise<Response> {
       throw casErr;
     }
 
+    // #1647 — Revert the conversation re-keying softCommitTransfer applied.
+    // The CAS above only cleared the anonymous_sessions soft-commit state;
+    // without this, the conversations softCommitTransfer moved to the user
+    // stayed owned by the user, defeating the undo. Messages carry no user_id
+    // (ownership follows the conversation), so re-nulling conversations.user_id
+    // is the only revert needed. Tenant-scoped (§ two-layer isolation). Runs
+    // after the CAS win so a lost race never reverts a committed transfer. The
+    // pending finalize Inngest event no-ops on arrival: transfer_soft_commit_at
+    // is now NULL.
+    const { error: convErr } = await svc
+      .from("conversations")
+      .update({ user_id: null })
+      .eq("anonymous_session_id", parsed.data.anonymous_session_id)
+      .eq("tenant_id", ctx.tenant_id);
+
+    if (convErr) {
+      return dbErrorResponse(convErr);
+    }
+
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
       actor_user_id: user.id,

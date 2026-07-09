@@ -29,6 +29,8 @@ const { MockSupabaseMutationError, h } = vi.hoisted(() => {
       sessionReadError: null as { message: string } | null,
       safeAwaitRowCountShouldThrow: false as boolean | "ROW_COUNT_MISMATCH",
       writeAuditCalled: false,
+      convUpdatePatch: null as Record<string, unknown> | null,
+      convUpdateError: null as { message: string } | null,
     },
   };
 });
@@ -63,18 +65,35 @@ vi.mock("@/lib/db/safe-mutation", () => ({
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
-    from: (_table: string) => ({
-      select: () => ({
-        eq: () => ({
+    from: (table: string) => {
+      // #1647 — the conversation-revert is the whole point of the undo; the
+      // mock records its patch so the tests can prove it fires (and, on a lost
+      // CAS race, that it does NOT).
+      if (table === "conversations") {
+        return {
+          update: (patch: Record<string, unknown>) => {
+            h.convUpdatePatch = patch;
+            const chain: Record<string, unknown> = {};
+            chain.eq = () => chain;
+            chain.then = (resolve: (v: unknown) => unknown) =>
+              resolve({ data: null, error: h.convUpdateError });
+            return chain;
+          },
+        };
+      }
+      return {
+        select: () => ({
           eq: () => ({
-            maybeSingle: () => Promise.resolve({ data: h.sessionRow, error: h.sessionReadError }),
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: h.sessionRow, error: h.sessionReadError }),
+            }),
           }),
         }),
-      }),
-      update: () => ({
-        eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ not: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) }) }),
-      }),
-    }),
+        update: () => ({
+          eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ not: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) }) }),
+        }),
+      };
+    },
   }),
 }));
 
@@ -117,6 +136,8 @@ beforeEach(() => {
   h.sessionReadError = null;
   h.safeAwaitRowCountShouldThrow = false;
   h.writeAuditCalled = false;
+  h.convUpdatePatch = null;
+  h.convUpdateError = null;
 });
 
 // ── auth gate ──────────────────────────────────────────────────────────────
@@ -256,5 +277,36 @@ describe("transfer-session undo — happy path", () => {
     const body = await res.json() as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(h.writeAuditCalled).toBe(true);
+  });
+
+  it("reverts the session's conversations to user_id=null (#1647)", async () => {
+    // The whole point of undo: the conversations softCommitTransfer re-keyed to
+    // the user must go back to anonymous. Before #1647 the wired route cleared
+    // the session state but left conversations owned by the user.
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(h.convUpdatePatch).toEqual({ user_id: null });
+  });
+
+  it("returns 500 (fail-closed) when the conversation revert errors", async () => {
+    h.convUpdateError = { message: "connection reset" };
+    const res = await POST(req());
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("db_error");
+    // Must not claim success or write the audit log if the revert failed.
+    expect(h.writeAuditCalled).toBe(false);
+  });
+});
+
+describe("transfer-session undo — revert never runs on a lost CAS race", () => {
+  it("does not revert conversations when the finalize cron won the race", async () => {
+    // A ROW_COUNT_MISMATCH means the transfer was committed between pre-check
+    // and CAS. Reverting conversations then would corrupt a finalized transfer,
+    // so the revert must be unreachable on that path.
+    h.safeAwaitRowCountShouldThrow = "ROW_COUNT_MISMATCH";
+    const res = await POST(req());
+    expect(res.status).toBe(409);
+    expect(h.convUpdatePatch).toBeNull();
   });
 });
