@@ -61,19 +61,35 @@ async function scanAndEmit(args: {
   // confirmed group bookings platform-wide and fans out per booking, carrying
   // booking.tenant_id into each downstream send. A tenant_id filter here would
   // defeat the scheduler's purpose; tenant scoping happens at the per-send step.
-  const { data: bookings, error } = await svc
-    .from("bookings")
-    // #1190: the FK column is group_booking_id, not group_id.
-    .select("id, tenant_id, group_booking_id, groups(sailing_date)")
-    .eq("status", "confirmed")
-    .not("group_booking_id", "is", null);
-  if (error) {
-    console.error(`[pre-cruise-scheduler:${via}] query error`, error.message);
-    return { triggered: 0 };
+  //
+  // #1745 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+  // regardless of a requested .limit(), which would silently drop some
+  // confirmed group bookings from the fan-out (those customers would never
+  // get a pre-cruise email). Page in 1000-row windows (matches
+  // apps/rag/src/lib/embeddings/batch/flush.ts, #808) so every confirmed
+  // group booking is scanned.
+  const PAGE = 1000;
+  const bookings: BookingRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error } = await svc
+      .from("bookings")
+      // #1190: the FK column is group_booking_id, not group_id.
+      .select("id, tenant_id, group_booking_id, groups(sailing_date)")
+      .eq("status", "confirmed")
+      .not("group_booking_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error(`[pre-cruise-scheduler:${via}] query error`, error.message);
+      return { triggered: 0 };
+    }
+    const batch = (page ?? []) as BookingRow[];
+    bookings.push(...batch);
+    if (batch.length < PAGE) break;
   }
 
   let triggered = 0;
-  for (const booking of (bookings ?? []) as BookingRow[]) {
+  for (const booking of bookings) {
     const groupsRaw = booking.groups;
     const groupRow = Array.isArray(groupsRaw) ? groupsRaw[0] : groupsRaw;
     const sailingDateStr = groupRow?.sailing_date;

@@ -328,3 +328,57 @@ describe("reconcileSubmittedBatches — job rollup across runs (#1697)", () => {
     expect(Number(job.total_input_tokens)).toBeGreaterThanOrEqual(300); // 3 × 100
   });
 });
+
+// #1743 — the rollup used to be a `.select(...).limit(job.request_count)`
+// aggregate SELECT, which PostgREST's ~1000-row db-max-rows cap silently
+// truncates regardless of the requested .limit(). It's now the
+// ai_batch_requests_rollup() DB-side SUM RPC (mirrored by makeBatchDb's
+// .rpc(), which mimics a Postgres aggregate: no row cap). This fixture
+// proves a job with MORE than 1000 already-completed rows still rolls up
+// every one of them.
+describe("reconcileSubmittedBatches — rollup survives >1000 completed rows (#1743)", () => {
+  it("sums cost/tokens across all 1500 completed rows, not just the first 1000", async () => {
+    const ROW_COUNT = 1500;
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: ROW_COUNT, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const priorRows = Array.from({ length: ROW_COUNT - 1 }, (_, i) => ({
+      id: `req-${i}`,
+      tenant_id: "t-1",
+      purpose: "memory_extraction" as const,
+      custom_id: `req-${i}`,
+      caller_metadata: null,
+      status: "completed",
+      batch_job_id: "job-1",
+      result_text: "already-processed",
+      cost_cents: 1,
+      result_metadata: { model: "claude-haiku-4-5-20251001", input_tokens: 10, output_tokens: 5 },
+    }));
+    // The last row is still submitted — this run's loop finishes it, so the
+    // rollup must include both the 1499 prior-run rows AND this one.
+    const requests = new InMemoryTable([
+      ...priorRows,
+      { id: `req-${ROW_COUNT - 1}`, tenant_id: "t-1", purpose: "memory_extraction", custom_id: `req-${ROW_COUNT - 1}`, caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+
+    mockResults.mockImplementation(async function* () {
+      yield succeededRow(`req-${ROW_COUNT - 1}`, "final row");
+    });
+
+    await reconcileSubmittedBatches({ db: db as never });
+
+    // The final row's cost_cents is whatever getCostEstimate computed for its
+    // (100 input, 50 output) usage — read it back rather than hard-coding the
+    // pricing model. What matters for #1743 is that the rollup includes ALL
+    // 1500 rows, not just the first 1000 PostgREST would have returned.
+    const finalRow = requests.rows.find((r) => r.id === `req-${ROW_COUNT - 1}`)!;
+    expect(finalRow.status).toBe("completed");
+    const finalCostCents = Number(finalRow.cost_cents ?? 0);
+
+    const job = jobs.rows[0]!;
+    expect(Number(job.total_cost_cents)).toBe((ROW_COUNT - 1) * 1 + finalCostCents);
+    expect(Number(job.total_input_tokens)).toBe((ROW_COUNT - 1) * 10 + 100);
+    expect(Number(job.total_output_tokens)).toBe((ROW_COUNT - 1) * 5 + 50);
+  });
+});

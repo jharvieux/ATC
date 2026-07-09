@@ -84,12 +84,28 @@ describe("resolveVendorHealthStatus", () => {
     expect(status).toBe("down");
   });
 
-  it("warm in-process cache short-circuits the durable read (at most one DB round-trip per TTL)", async () => {
-    recordVendorFailure("anthropic", "timeout"); // populates the in-process cache
+  it("warm durable cache short-circuits repeated durable reads (at most one DB round-trip per TTL)", async () => {
     const db = makeSelectDb({ status: "down", consecutive_failures: 6, last_checked_at: null, last_error: null, status_changed_at: null });
-    const status = await resolveVendorHealthStatus(db as never, "anthropic");
-    expect(status).toBe("healthy"); // reflects the cached (1-failure) state, not the stale durable mock
-    expect(db.from).not.toHaveBeenCalled();
+    const first = await resolveVendorHealthStatus(db as never, "anthropic");
+    const second = await resolveVendorHealthStatus(db as never, "anthropic");
+    expect(first).toBe("down");
+    expect(second).toBe("down");
+    expect(db._maybeSingle).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1741: instance-local traffic (recordVendorSuccess/Failure) cannot clobber a cached durable reading within the TTL", async () => {
+    const db = makeSelectDb({ status: "degraded", consecutive_failures: 3, last_checked_at: null, last_error: null, status_changed_at: null });
+    const first = await resolveVendorHealthStatus(db as never, "anthropic");
+    expect(first).toBe("degraded");
+
+    // Real-traffic path fires after the durable read; before the fix this wrote
+    // the same cache slot and would silently flip it to "healthy" for the rest
+    // of the TTL, masking the fleet-wide degraded reading.
+    recordVendorSuccess("anthropic");
+
+    const second = await resolveVendorHealthStatus(db as never, "anthropic");
+    expect(second).toBe("degraded");
+    expect(db._maybeSingle).toHaveBeenCalledTimes(1); // durable cache untouched by the instance-local write
   });
 
   it("fail-open on a durable read error: returns healthy and does not poison the cache for the next call", async () => {

@@ -52,7 +52,15 @@ export interface FlushResult {
  * Anthropic Message Batches max 100,000 requests per batch, 256 MB.
  * We slice at 50 requests/batch for now — keeps payload size very
  * conservative and means a partial-batch failure costs less. Tune
- * upward once we see real volume.
+ * upward once we see real volume. #1743: reconcile.ts's job rollup is now a
+ * DB-side SUM RPC with no PostgREST row cap, so raising this past ~1000 no
+ * longer risks a silent rollup undercount the way the old .select().limit()
+ * aggregate did. That said, the pending-rows SELECT just below this constant
+ * is still a single `.limit(MAX_REQUESTS_PER_BATCH)` call — PostgREST's
+ * db-max-rows (~1000) would silently cap it, so raising this value past
+ * ~1000 would need that SELECT paginated with `.range()` (see #1745's model
+ * in apps/rag/src/lib/embeddings/batch/flush.ts) before it could actually
+ * flush more than ~1000 requests per batch.
  */
 const MAX_REQUESTS_PER_BATCH = 50;
 
