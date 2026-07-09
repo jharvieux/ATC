@@ -6,6 +6,14 @@ import { useState, useEffect, use } from "react";
 import { dobDisplayLabel } from "@/lib/contacts/dob-display";
 import { RelationshipsPanel } from "@/components/crm/RelationshipsPanel";
 
+// #1728 — deep-link the draft composer with the inbound reply pre-filled.
+// Draft-only: this is a link to the §904 composer, which has no send path.
+function draftReplyHref(body: string, firstName: string | null): string {
+  const params = new URLSearchParams({ inquiry: body });
+  if (firstName) params.set("customerName", firstName);
+  return `/concierge/draft?${params.toString()}`;
+}
+
 interface Contact {
   id: string;
   first_name: string | null;
@@ -20,10 +28,11 @@ interface Contact {
 }
 
 interface TimelineItem {
-  type: "conversation" | "quote" | "booking";
+  type: "conversation" | "quote" | "booking" | "email";
   id: string;
   created_at: string;
   status?: string;
+  content?: string;
   [key: string]: unknown;
 }
 
@@ -115,8 +124,25 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <span className="text-gray-400 w-24 shrink-0">
                   {new Date(item.created_at).toLocaleDateString()}
                 </span>
-                <span className="capitalize text-blue-600">{item.type}</span>
-                <span className="text-gray-500">{item.status ?? ""}</span>
+                {item.type === "email" ? (
+                  <>
+                    <span className="text-blue-600">Email reply</span>
+                    <span className="text-gray-500 truncate max-w-sm">
+                      {item.content ?? ""}
+                    </span>
+                    <a
+                      href={draftReplyHref(item.content ?? "", contact.first_name)}
+                      className="ml-auto text-blue-600 underline whitespace-nowrap"
+                    >
+                      Draft reply
+                    </a>
+                  </>
+                ) : (
+                  <>
+                    <span className="capitalize text-blue-600">{item.type}</span>
+                    <span className="text-gray-500">{item.status ?? ""}</span>
+                  </>
+                )}
               </li>
             ))}
           </ul>

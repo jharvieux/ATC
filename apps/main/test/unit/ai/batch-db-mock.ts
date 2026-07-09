@@ -138,5 +138,32 @@ export function makeBatchDb(tables: Record<string, InMemoryTable>) {
       if (!t) throw new Error(`makeBatchDb: unexpected table "${tableName}"`);
       return query(tableName, t);
     },
+    // #1743 — mirrors the ai_batch_requests_rollup() Postgres RPC: a
+    // server-side SUM with no row cap, so a >1000-row fixture can prove the
+    // rollup doesn't inherit PostgREST's row-cap the old .select().limit()
+    // aggregate was subject to.
+    async rpc(name: string, params: Record<string, unknown>) {
+      if (name !== "ai_batch_requests_rollup") {
+        throw new Error(`makeBatchDb: unexpected rpc "${name}"`);
+      }
+      const requests = tables.ai_batch_requests;
+      if (!requests) throw new Error("makeBatchDb: rpc requires an ai_batch_requests table");
+      const matched = requests.rows.filter(
+        (r) => r.batch_job_id === params.p_batch_job_id && r.status === "completed",
+      );
+      let totalCostCents = 0;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      for (const r of matched) {
+        totalCostCents += Number(r.cost_cents ?? 0);
+        const meta = r.result_metadata as { input_tokens?: number; output_tokens?: number } | null;
+        totalInputTokens += Number(meta?.input_tokens ?? 0);
+        totalOutputTokens += Number(meta?.output_tokens ?? 0);
+      }
+      return {
+        data: [{ total_cost_cents: totalCostCents, total_input_tokens: totalInputTokens, total_output_tokens: totalOutputTokens }],
+        error: null,
+      };
+    },
   };
 }

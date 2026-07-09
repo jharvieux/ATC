@@ -122,3 +122,80 @@ export async function resolveInboundTenant(args: {
   }
   return { method: "unresolved" };
 }
+
+// #1728 Phase 2 — CRM timeline attach.
+//
+// Attach a References-resolved inbound reply to the customer's CRM timeline as
+// a role='user' message tagged source='email'. ONLY the "references" path may
+// reach here (docs/design "Security notes": the spoofable sender fallback must
+// never attach mail to another tenant's CRM — the route enforces that gate).
+//
+// Idempotency (D-091 #10/#22/#24): the webhook redelivers, and two deliveries
+// can race. The message carries the provider's inbound id in source_message_id,
+// which has a partial UNIQUE index, so a re-attach raises 23505 and no-ops. The
+// two dependent writes (conversation find-or-create, message insert) are
+// individually retriable — a create-conversation race at worst leaves a second
+// empty conversation for the contact, never a lost or duplicated message.
+export type TimelineAttachOutcome =
+  | { status: "attached" | "duplicate"; conversation_id: string }
+  | { status: "error" };
+
+export async function attachInboundToTimeline(args: {
+  db: SupabaseClient;
+  tenant_id: string;
+  contact_id: string;
+  providerMessageId: string;
+  subject: string | null;
+  text: string | null;
+}): Promise<TimelineAttachOutcome> {
+  const { db, tenant_id, contact_id, providerMessageId, subject, text } = args;
+
+  // Match the contact's most-recent conversation (two-layer isolation: explicit
+  // tenant_id filter under the service-role client, RLS behind it).
+  const { data: convRows, error: convErr } = await db
+    .from("conversations")
+    .select("id")
+    .eq("tenant_id", tenant_id)
+    .eq("contact_id", contact_id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (convErr) return { status: "error" };
+
+  let conversationId = (convRows as { id: string }[] | null)?.[0]?.id ?? null;
+  if (!conversationId) {
+    const title = subject?.trim() ? subject.trim().slice(0, 200) : "Email reply";
+    const { data: created, error: createErr } = await db
+      .from("conversations")
+      .insert({ tenant_id, contact_id, title, status: "active" })
+      .select("id")
+      .single();
+    if (createErr || !created) return { status: "error" };
+    conversationId = (created as { id: string }).id;
+  }
+
+  const content = text?.trim() ? text : "(Email reply — body unavailable.)";
+  const { error: msgErr } = await db.from("messages").insert({
+    tenant_id,
+    conversation_id: conversationId,
+    role: "user",
+    content,
+    source: "email",
+    source_message_id: providerMessageId,
+  });
+  if (msgErr) {
+    if ((msgErr as { code?: string }).code === "23505") {
+      // Already attached by a prior/concurrent delivery. Return where it landed
+      // (may differ from conversationId if a sibling delivery created its own).
+      const { data: existing } = await db
+        .from("messages")
+        .select("conversation_id")
+        .eq("tenant_id", tenant_id)
+        .eq("source_message_id", providerMessageId)
+        .maybeSingle();
+      const landed = (existing as { conversation_id: string } | null)?.conversation_id ?? conversationId;
+      return { status: "duplicate", conversation_id: landed };
+    }
+    return { status: "error" };
+  }
+  return { status: "attached", conversation_id: conversationId };
+}
