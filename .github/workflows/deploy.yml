@@ -631,6 +631,12 @@ jobs:
           vercel deploy --prebuilt --target=preview --token=$VERCEL_TOKEN
 
       - name: Run Playwright E2E tests
+        # This step is the pre-prod-promotion gate. It runs the full tests/e2e
+        # suite against the real staging subdomain, which is where the
+        # onboarding-funnel smoke spec (#1159, tests/e2e/onboarding-funnel.spec.ts)
+        # activates: it needs BASE_URL (a real subdomain) + TEST_E2E_OWNER_EMAIL/
+        # PASSWORD, all set below. When the #1286 secrets are absent the funnel
+        # spec skips loudly rather than failing (see its describe gate).
         env:
           BASE_URL: https://staging.ai-travelconcierge.com
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}

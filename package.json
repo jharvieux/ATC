@@ -62,6 +62,7 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm lint:migrations && pnpm test && pnpm test:rag && pnpm slop-check && pnpm check:auth-error && pnpm check:dropped-columns && pnpm check:column-readers && pnpm check:ambiguous-embeds && pnpm check:duplication && pnpm check:page-service-role && pnpm check:server-only && pnpm check:d091 && pnpm check:permission-matrix && pnpm check:admin-auth && pnpm check:error-egress && pnpm check:url-validator && pnpm check:rate-limit-store && pnpm check:webhook-replay && pnpm check:policy-snapshot && pnpm check:ai-purpose && pnpm check:schema-drift && pnpm check:migration-collision && pnpm check:memory-decision-collision && pnpm check:help-screenshots",
     "verify:fast": "pnpm typecheck && pnpm lint",
     "test:security": "vitest run tests/security",
+    "test:e2e": "playwright test",
     "fixtures:load": "tsx scripts/load-fixtures.ts",
     "fixtures:dry-run": "tsx scripts/load-fixtures.ts --dry-run",
     "db:reset": "tsx scripts/db-reset.ts",
