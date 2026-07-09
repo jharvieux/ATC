@@ -15,8 +15,8 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     let body: ReturnType<typeof PatchWatchSchema.parse>;
     try {
       body = PatchWatchSchema.parse(await req.json());
-    } catch (err) {
-      return Response.json({ error: "invalid_request", detail: String(err) }, { status: 400 });
+    } catch {
+      return Response.json({ error: "invalid_request" }, { status: 400 });
     }
 
     const db = tenantClient(ctx);

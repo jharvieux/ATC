@@ -94,7 +94,13 @@ function currentIsoDate(): string {
 }
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE = new BoundedTtlCache<string, EntitySet>({ defaultTtlMs: CACHE_TTL_MS });
+// #1678 — keyed by hash(tenant_id + message + context + day), so cardinality
+// tracks distinct customer messages fleet-wide within the 1-hour TTL, not a
+// small closed set like the other BoundedTtlCache sites. A too-small bound
+// here only degrades to a repeat (paid) Haiku extraction call, not incorrect
+// behavior, but 5000 buys real headroom against that repeat-cost risk under
+// production traffic without meaningfully growing the memory footprint.
+const CACHE = new BoundedTtlCache<string, EntitySet>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 5000 });
 
 function hash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);

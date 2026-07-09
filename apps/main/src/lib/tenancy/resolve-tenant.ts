@@ -39,9 +39,16 @@ export type Tenant = {
 
 const TTL_MS = 60_000;
 
+// #1678 — per-site sizing. slug/domain/id are keyed per TENANT: this is a B2B
+// multi-tenant platform (cruise/travel agencies), so tenant count is orders
+// of magnitude below 1000 for the foreseeable future — default is fine.
 const slugCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
 const domainCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
-const userTenantCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
+// userTenantCache is keyed per AUTHENTICATED USER, not per tenant — active-user
+// count can run well above tenant count. Sized to 5000 so a busy instance
+// doesn't fall back to a DB read per user once concurrent active users exceed
+// the old 1000 default (the #1678 regression risk).
+const userTenantCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS, maxEntries: 5000 });
 const idCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
 
 // ---------------------------------------------------------------------------
