@@ -27,12 +27,14 @@
 // this row — skip cost/event and move on, which is what makes re-running
 // the loop from the top idempotent.
 //
-// Known limitation (tracked as #1697, not fixed here): the job-level
-// total_cost_cents/total_*_tokens rollup below is summed only from rows
-// processed in THIS run's loop, so a batch split across two reconcile
-// runs ends up with an undercounted job-level total. Per-row cost_cents
-// and the tenant_usage_metrics increments (what's actually billed) are
-// unaffected — this is a job-level observability field only.
+// #1697 — the job-level total_cost_cents/total_*_tokens rollup is summed
+// from ALL persisted 'completed' rows for the job (a post-loop aggregate
+// SELECT), not just rows this run's loop processed. Before the fix an
+// in-loop accumulator undercounted whenever a batch split across reconcile
+// runs: rows a prior (crashed) run already completed are skipped by the
+// CAS gate below and never re-enter the accumulator. Per-row cost_cents and
+// the tenant_usage_metrics increments (what's actually billed) were always
+// correct — this fix only concerns the job-level observability rollup.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
@@ -61,6 +63,13 @@ interface RequestRow {
   custom_id: string;
   caller_metadata: Record<string, unknown> | null;
   status: string;
+}
+
+// Shape of the per-job rollup aggregate SELECT (#1697). result_metadata is
+// the JSONB written per row at reconcile time; tokens live inside it.
+interface RollupRow {
+  cost_cents: number | null;
+  result_metadata: { input_tokens?: number; output_tokens?: number } | null;
 }
 
 export interface ReconcileResult {
@@ -132,9 +141,6 @@ export async function reconcileSubmittedBatches(args: {
       requestRows.map((r) => [r.custom_id, r]),
     );
 
-    let totalInput = 0n;
-    let totalOutput = 0n;
-    let totalCostCents = 0n;
     let perJobSucceeded = 0;
     let perJobFailed = 0;
 
@@ -143,14 +149,37 @@ export async function reconcileSubmittedBatches(args: {
         db,
         result: row,
         byCustomId,
-        accumulate: (succ, fail, inTok, outTok, costCents) => {
+        accumulate: (succ, fail) => {
           if (succ) perJobSucceeded++;
           if (fail) perJobFailed++;
-          totalInput += BigInt(inTok);
-          totalOutput += BigInt(outTok);
-          totalCostCents += BigInt(costCents);
         },
       });
+    }
+
+    // #1697 — aggregate the job rollup from every persisted 'completed' row,
+    // so a batch reconciled across multiple runs still rolls up the full
+    // total (rows an earlier run finished are skipped by the CAS gate and
+    // would never re-enter an in-loop accumulator). Bounded by request_count:
+    // completed rows can never exceed what was submitted.
+    const { data: rollupRows, error: rollupErr } = await db
+      // d091-allow:service-role-tenant — platform reconcile rollup sums one batch's rows across all tenants by design; per-row tenant attribution already happened in the processing loop above.
+      .from("ai_batch_requests")
+      .select("cost_cents, result_metadata")
+      .eq("batch_job_id", job.id)
+      .eq("status", "completed")
+      .limit(job.request_count);
+    if (rollupErr) {
+      throw new Error(
+        `reconcileSubmittedBatches: rollup aggregate failed for job ${job.id}: ${rollupErr.message}`,
+      );
+    }
+    let totalInput = 0n;
+    let totalOutput = 0n;
+    let totalCostCents = 0n;
+    for (const r of (rollupRows ?? []) as RollupRow[]) {
+      totalCostCents += BigInt(r.cost_cents ?? 0);
+      totalInput += BigInt(r.result_metadata?.input_tokens ?? 0);
+      totalOutput += BigInt(r.result_metadata?.output_tokens ?? 0);
     }
 
     // Mark the job completed with totals.
@@ -182,13 +211,7 @@ async function processOneResult(args: {
   db: SupabaseClient;
   result: BatchResultRow;
   byCustomId: Map<string, { id: string; tenant_id: string; purpose: BatchablePurpose; caller_metadata: Record<string, unknown> | null; status: string }>;
-  accumulate: (
-    succeeded: boolean,
-    failed: boolean,
-    input_tokens: number,
-    output_tokens: number,
-    cost_cents: number,
-  ) => void;
+  accumulate: (succeeded: boolean, failed: boolean) => void;
 }): Promise<void> {
   const { db, result, byCustomId, accumulate } = args;
   const req = byCustomId.get(result.custom_id);
@@ -293,7 +316,7 @@ async function processOneResult(args: {
       );
     }
 
-    accumulate(true, false, input_tokens, output_tokens, costNumber);
+    accumulate(true, false);
     return;
   }
 
@@ -338,5 +361,5 @@ async function processOneResult(args: {
     return;
   }
 
-  accumulate(false, true, 0, 0, 0);
+  accumulate(false, true);
 }

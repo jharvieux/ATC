@@ -567,4 +567,87 @@ describeIf("RLS integration", () => {
       ).rejects.toSatisfy((err: unknown) => (err as { code?: string }).code === "23505");
     });
   });
+
+  // #1523 / D-295 — SECURITY DEFINER tenant-helper functions exposed at
+  // /rest/v1/rpc. The Supabase security advisor flags auth_user_in_tenant,
+  // tenant_is_active, and auth_user_can_access_conversation as EXECUTE-able by
+  // `authenticated` and suggests REVOKE. That REVOKE was proven to break every
+  // tenant RLS policy (#1369, closed not-planned): Postgres evaluates a policy's
+  // USING/WITH CHECK as the querying role, so `authenticated` must hold EXECUTE
+  // on the helpers the policy calls — the grant is load-bearing, not an
+  // oversight. These tests are the #1523 acceptance-criteria RLS regression:
+  // they assert the grant stays (a re-applied REVOKE surfaces as a 42501 here,
+  // not as a silent prod outage) AND that each helper is caller-scoped, which
+  // is why the residual RPC exposure is an accepted risk rather than a leak.
+  describe("#1523 SECURITY DEFINER helper RPC grants (D-295 keep-the-grant)", () => {
+    let convId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const [conv] = await fx.sql<{ id: string }[]>`
+        INSERT INTO public.conversations (tenant_id, user_id, title, status)
+        VALUES (${fx.tenantA.id}, ${fx.userA.rowId}, '1523 rpc helper test', 'active')
+        RETURNING id
+      `;
+      if (!conv) throw new Error("1523 conversation fixture insert failed");
+      convId = conv.id;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      await fx.sql`DELETE FROM public.conversations WHERE id = ${convId}`;
+    }, 30000);
+
+    it("auth_user_in_tenant: authenticated can EXECUTE; result is caller-scoped", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      // Own tenant → true. A revoked grant would surface as error 42501 here.
+      const own = await clientA.rpc("auth_user_in_tenant", {
+        target_tenant_id: fx.tenantA.id,
+      });
+      expect(own.error).toBeNull();
+      expect(own.data).toBe(true);
+      // Non-member tenant → false: the helper reads the CALLER's membership
+      // (auth.uid()), so it cannot be used to probe other users' memberships.
+      const other = await clientA.rpc("auth_user_in_tenant", {
+        target_tenant_id: fx.tenantB.id,
+      });
+      expect(other.error).toBeNull();
+      expect(other.data).toBe(false);
+    });
+
+    it("tenant_is_active: authenticated can EXECUTE; reflects tenant status", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const active = await clientA.rpc("tenant_is_active", {
+        target_tenant_id: fx.tenantA.id,
+      });
+      expect(active.error).toBeNull();
+      expect(active.data).toBe(true);
+      const suspended = await clientA.rpc("tenant_is_active", {
+        target_tenant_id: fx.tenantSuspended.id,
+      });
+      expect(suspended.error).toBeNull();
+      expect(suspended.data).toBe(false);
+    });
+
+    it("auth_user_can_access_conversation: authenticated can EXECUTE; result is caller-scoped", async () => {
+      // Owner in own tenant → true.
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const owner = await clientA.rpc("auth_user_can_access_conversation", {
+        conv_id: convId,
+        target_tenant_id: fx.tenantA.id,
+      });
+      expect(owner.error).toBeNull();
+      expect(owner.data).toBe(true);
+      // A user from a different tenant → false: the helper resolves the
+      // caller's membership in target_tenant_id, so it cannot leak another
+      // tenant's conversation access.
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const outsider = await clientB.rpc("auth_user_can_access_conversation", {
+        conv_id: convId,
+        target_tenant_id: fx.tenantA.id,
+      });
+      expect(outsider.error).toBeNull();
+      expect(outsider.data).toBe(false);
+    });
+  });
 });
