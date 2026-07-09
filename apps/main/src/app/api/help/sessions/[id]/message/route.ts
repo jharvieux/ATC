@@ -130,7 +130,11 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       }
 
       // §10.6 kill-switch — if global AI is paused, return the standard
-      // fallback without ever calling Anthropic.
+      // fallback without ever calling Anthropic. #1653 —
+      // platform_settings.ai_kill_switch_engaged is written by
+      // /api/admin/ai-kill-switch alongside ai_kill_switch_state (the
+      // supervisor's source), so the admin global-pause toggle drives this
+      // gate too.
       const { data: killRow } = await db
         .from("platform_settings")
         .select("value")

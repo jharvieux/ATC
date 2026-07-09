@@ -18,7 +18,6 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const BodySchema = z.object({
@@ -48,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     // log misfiling + cross-tenant visibility).
     const { data: session, error: readErr } = await svc
       .from("anonymous_sessions")
-      .select("id, transferred_to_user_id, transfer_soft_commit_at, transfer_committed_at, transfer_undo_count")
+      .select("id, transferred_to_user_id, transfer_soft_commit_at, transfer_committed_at")
       .eq("id", parsed.data.anonymous_session_id)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
@@ -66,7 +65,6 @@ export async function POST(req: Request): Promise<Response> {
       transferred_to_user_id: string | null;
       transfer_soft_commit_at: string | null;
       transfer_committed_at: string | null;
-      transfer_undo_count: number;
     };
 
     if (row.transferred_to_user_id !== user.id) {
@@ -83,36 +81,34 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "undo_window_elapsed" }, { status: 409 });
     }
 
-    // CAS update: only flip if the row is still in the soft-commit state.
-    // Prevents a race with the transfer-finalize Inngest job firing between
-    // our pre-check and this update. Zero-row → finalize cron won the race
-    // → return 409, not 500 (the user can see this is recoverable info).
-    try {
-      await safeAwaitRowCount(
-        svc.from("anonymous_sessions")
-          .update({
-            transfer_soft_commit_at: null,
-            transferred_to_user_id: null,
-            transfer_undo_count: row.transfer_undo_count + 1,
-          })
-          .eq("id", row.id)
-          .eq("tenant_id", ctx.tenant_id)
-          .eq("transferred_to_user_id", user.id)
-          .is("transfer_committed_at", null)
-          .not("transfer_soft_commit_at", "is", null)
-          .select("id"),
-        "anonymous_sessions.undo_transfer",
-        1,
+    // #1703 — Atomic undo: one RPC does the CAS clear of the soft-commit state
+    // AND the conversation revert in a single transaction. Splitting these into
+    // two dependent app-layer writes (D-091 pattern 21/22) left a dead-retry
+    // window: if the conversation revert failed after the CAS committed, the
+    // session read as "undone" (transferred_to_user_id NULL) so a re-POST hit
+    // the not_owner 403 before the revert could re-run, stranding conversations
+    // owned by the user. The RPC's CAS guard mirrors the pre-checks above; it
+    // returns the number of session rows updated. Zero means the finalize cron
+    // won the race between our pre-check read and the RPC → 409 (recoverable
+    // info the user can act on), and the conversation revert never ran. The
+    // pending finalize Inngest event no-ops on arrival: transfer_soft_commit_at
+    // is now NULL.
+    const { data: undoneCount, error: rpcErr } = await svc.rpc("undo_session_transfer", {
+      p_session_id: parsed.data.anonymous_session_id,
+      p_tenant_id: ctx.tenant_id,
+      p_user_id: user.id,
+    });
+
+    if (rpcErr) {
+      // Fail-closed: a genuine RPC/DB failure is a sanitized 500, never a
+      // silent success.
+      return dbErrorResponse(rpcErr);
+    }
+    if (!undoneCount) {
+      return Response.json(
+        { error: "transfer_already_finalized" },
+        { status: 409 },
       );
-    } catch (casErr) {
-      if (casErr instanceof SupabaseMutationError && casErr.code === "ROW_COUNT_MISMATCH") {
-        // Lost the race with the finalize cron between pre-check and CAS.
-        return Response.json(
-          { error: "transfer_already_finalized" },
-          { status: 409 },
-        );
-      }
-      throw casErr;
     }
 
     await writeAuditLog({
