@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import type { MessageAuthor } from "@/lib/forums/post-message";
 
 export type StrikeKind = "ai_hidden" | "coordinator_hidden";
 
@@ -17,42 +18,48 @@ export interface StrikeCheckResult {
 export async function recordStrike(
   db: SupabaseClient,
   {
-    user_id,
+    author,
     forum_id,
     tenant_id,
     message_id,
     kind,
   }: {
-    user_id: string;
+    author: MessageAuthor;
     forum_id: string;
     tenant_id: string;
     message_id: string | null;
     kind: StrikeKind;
   },
 ): Promise<void> {
-  await safeAwait(db.from("forum_strikes").insert({ user_id, forum_id, tenant_id, message_id, strike_kind: kind }), "forum_strikes.insert");
+  await safeAwait(db.from("forum_strikes").insert({ ...author, forum_id, tenant_id, message_id, strike_kind: kind }), "forum_strikes.insert");
 }
 
 export async function checkStrikePatterns(
   db: SupabaseClient,
   {
-    user_id,
+    author,
     forum_id,
     tenant_id,
   }: {
-    user_id: string;
+    author: MessageAuthor;
     forum_id: string;
     tenant_id: string;
   },
 ): Promise<StrikeCheckResult> {
   const now = new Date();
   const window24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // #1572 — forum_strikes/forum_user_state mirror forum_messages'
+  // user_id/invitation_id author-XOR (migration
+  // 20260709105548_forum_strikes_guest_authors.sql), so a guest's author
+  // column keys strikes/mutes the same way a member's does.
+  const [col, val]: ["user_id" | "invitation_id", string] =
+    "user_id" in author ? ["user_id", author.user_id] : ["invitation_id", author.invitation_id];
 
   // AI-hidden strikes within last 24h
   const { data: recent } = await db
     .from("forum_strikes")
     .select("id")
-    .eq("user_id", user_id)
+    .eq(col, val)
     .eq("forum_id", forum_id)
     .eq("tenant_id", tenant_id)
     .eq("strike_kind", "ai_hidden")
@@ -68,13 +75,13 @@ export async function checkStrikePatterns(
       .upsert(
         {
           forum_id,
-          user_id,
+          ...author,
           tenant_id,
           is_muted: true,
           muted_until: muteUntil.toISOString(),
           mute_reason: "auto_three_ai_hidden_24h",
         },
-        { onConflict: "forum_id,user_id" },
+        { onConflict: col === "user_id" ? "forum_id,user_id" : "forum_id,invitation_id" },
       ), "forum_user_state.upsert");
     return { auto_muted: true, coordinator_review_prompt: false, recommend_removal: false };
   }
@@ -83,7 +90,7 @@ export async function checkStrikePatterns(
   const { data: coordStrikes } = await db
     .from("forum_strikes")
     .select("id")
-    .eq("user_id", user_id)
+    .eq(col, val)
     .eq("forum_id", forum_id)
     .eq("tenant_id", tenant_id)
     .eq("strike_kind", "coordinator_hidden");
@@ -94,7 +101,7 @@ export async function checkStrikePatterns(
   const { data: allStrikes } = await db
     .from("forum_strikes")
     .select("id")
-    .eq("user_id", user_id)
+    .eq(col, val)
     .eq("forum_id", forum_id)
     .eq("tenant_id", tenant_id);
 
