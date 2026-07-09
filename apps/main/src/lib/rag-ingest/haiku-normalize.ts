@@ -11,6 +11,7 @@
 // caller (Inngest job) retries up to 3 times; further failures route the
 // item to manual review without AI metadata per §22.13.
 
+import "server-only";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export interface NormalizationOutput {

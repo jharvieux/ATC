@@ -16,6 +16,7 @@
 // Callers must pass a service-role SupabaseClient (db) — this function writes
 // email_log and reads suppressions at the service level.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";

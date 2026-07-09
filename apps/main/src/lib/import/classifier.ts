@@ -9,6 +9,7 @@
 // routes the document to the §34.6 review queue with type='unknown' so
 // the agent can manually set the type and re-process.
 
+import "server-only";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type DocumentType =

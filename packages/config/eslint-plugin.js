@@ -19,6 +19,11 @@ const noNarratingComments = require("./eslint-rules/no-narrating-comments");
 const noUncheckedSupabaseMutation = require("./eslint-rules/no-unchecked-supabase-mutation");
 const noCredentialsInUrl = require("./eslint-rules/no-credentials-in-url");
 const noFailOpenOnResourceError = require("./eslint-rules/no-fail-open-on-resource-error");
+// Shift-left guard batch (#1613) — audit-write, escapeHtml, and rag client-factory discipline.
+const noDirectAuditLogWrite = require("./eslint-rules/no-direct-audit-log-write");
+const noLocalEscapeHtml = require("./eslint-rules/no-local-escape-html");
+const noInlineSupabaseClient = require("./eslint-rules/no-inline-supabase-client");
+const noSecretShapedPublicEnv = require("./eslint-rules/no-secret-shaped-public-env");
 
 module.exports = {
   rules: {
@@ -37,5 +42,10 @@ module.exports = {
     "no-unchecked-supabase-mutation": noUncheckedSupabaseMutation,
     "no-credentials-in-url": noCredentialsInUrl,
     "no-fail-open-on-resource-error": noFailOpenOnResourceError,
+    // Shift-left guard batch (#1613)
+    "no-direct-audit-log-write": noDirectAuditLogWrite,
+    "no-local-escape-html": noLocalEscapeHtml,
+    "no-inline-supabase-client": noInlineSupabaseClient,
+    "no-secret-shaped-public-env": noSecretShapedPublicEnv,
   },
 };

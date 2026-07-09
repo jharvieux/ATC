@@ -8,6 +8,7 @@
 // Per §26.8: document content is DATA. The system prompt frames it that
 // way explicitly so embedded instructions don't steer extraction.
 
+import "server-only";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import type { ExtractionResult } from "./types";
 

@@ -69,6 +69,12 @@ export default [
       "atc/no-unchecked-supabase-mutation": "error",
       "atc/no-credentials-in-url": "error",
       "atc/no-fail-open-on-resource-error": "off",
+      // Shift-left guard batch (#1613): audit writes go through lib/audit/;
+      // a single consolidated escapeHtml (canonical in lib/utils.ts).
+      "atc/no-direct-audit-log-write": "error",
+      "atc/no-local-escape-html": "error",
+      // Secret-shaped NEXT_PUBLIC_* env vars ship to the client bundle (#1637).
+      "atc/no-secret-shaped-public-env": "error",
     },
   },
   ...sonarjsConfig,

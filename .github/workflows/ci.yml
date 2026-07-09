@@ -191,6 +191,13 @@ jobs:
         # new ones through dbErrorResponse. Root cause of F-leak-01/02/03.
         run: pnpm check:error-egress
 
+      - name: Unbounded-select guard (#1613 / D-091 #25)
+        # Fails on a NEW .select() on a user-growing table (messages, quotes,
+        # forum_*, email_log, …) with no .limit()/.range() — PostgREST silently
+        # truncates at its default cap and returns a partial result with no
+        # error. Presence check; pre-existing sites frozen in the baseline.
+        run: pnpm check:unbounded-select
+
       - name: URL-validator guard (#1393/G2)
         # Fails on a new z.string().url() for a stored/rendered URL field —
         # must use safeUrl (@atc/contracts) which denies file://, cloud-metadata,
@@ -222,6 +229,17 @@ jobs:
 
       - name: Auth-error adoption guard (#556)
         run: pnpm check:auth-error
+
+      - name: Debug/dev/test route guard (#1637)
+        # Fails on any /api/debug|dev|test* route — forgotten scaffolding is a
+        # classic unauthenticated foothold. Zero-tolerance (no baseline).
+        run: pnpm check:debug-routes
+
+      - name: Lifecycle-script supply-chain guard (#1636)
+        # Fails on a NEW/CHANGED preinstall/install/postinstall/prepare hook in
+        # any installed dependency (Shai-Hulud pattern). Keyed by content hash so
+        # routine bumps don't churn; pre-existing hooks frozen in the baseline.
+        run: pnpm check:lifecycle-scripts
 
       - name: Help-screenshot drift gate
         # Keeps the screenshot manifest (scripts/help-screenshots/manifest.ts),
@@ -272,3 +290,9 @@ jobs:
           OPENAI_API_KEY: ci-placeholder-openai-api-key
           OPENAI_EMBEDDING_MODEL: text-embedding-3-small
           SUPABASE_RAG_ANON_KEY: ci-placeholder-rag-anon-key
+
+      - name: Bundle secret scan (#1637)
+        # Post-build: scan the .next output for a service_role JWT (decode the
+        # role claim — the anon key is a JWT too and is meant to ship). gitleaks
+        # scans source; this scans the built client bundle.
+        run: pnpm scan:bundle-secrets

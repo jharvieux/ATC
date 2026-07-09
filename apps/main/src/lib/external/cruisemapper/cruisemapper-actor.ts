@@ -20,6 +20,7 @@
 //   the same guard fence as the per-line scrapers (token, kill switch,
 //   monthly cap).
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "@/lib/pricing/budget-priority";

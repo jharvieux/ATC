@@ -16,6 +16,7 @@
 // ingest crons were silently 401ing in any environment with a real verifier
 // configured. This module produces tokens the verifier actually accepts.
 
+import "server-only";
 import { SignJWT, importPKCS8 } from "jose";
 import { randomUUID } from "node:crypto";
 

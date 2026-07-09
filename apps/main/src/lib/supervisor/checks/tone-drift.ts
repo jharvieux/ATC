@@ -15,6 +15,7 @@
 // Callers supply the union deny list (loaded once per turn in run-supervisor)
 // and optional heuristic context (tenant tone settings + customer prior msg).
 
+import "server-only";
 import { createHash } from "node:crypto";
 import type { CheckInput, SupervisorFinding } from "../types";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";

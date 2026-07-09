@@ -6,6 +6,7 @@
 // (staff) and apps/main/src/app/api/groups/invite/[token]/forum/threads/
 // [threadId]/messages/route.ts (guest), both of which call this.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { decideModerationStatus } from "@/lib/forums/moderation-status";

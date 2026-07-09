@@ -8,6 +8,7 @@
 // Cached by message-hash for 1 hour to avoid re-extraction on regen-loop
 // re-tries within the same conversation.
 
+import "server-only";
 import { createHash } from "node:crypto";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";

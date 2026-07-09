@@ -14,6 +14,7 @@
 //
 // Severity levels mirror the §26.7 incident priority matrix.
 
+import "server-only";
 import { escapeHtml } from "@/lib/utils";
 import { writeAuditLog } from "@/lib/audit/write";
 

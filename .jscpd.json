@@ -13,5 +13,5 @@
     "**/*.json"
   ],
   "reporters": ["console"],
-  "threshold": 5
+  "threshold": 4.5
 }

@@ -1,0 +1,25 @@
+# Unbounded-select guard baseline (scripts/check-unbounded-select.ts, #1613 item 6 / D-091 #25).
+# Frozen pre-existing `.from("<user-growing table>").select(...)` chains with no
+# .limit()/.range(). The guard blocks NEW occurrences only. Each line: <count> <relpath>::<table>.
+# Lower a count / remove a line once that query gains a bound (or is confirmed
+# intentionally whole-table). DO NOT add new entries to silence the guard.
+1 apps/main/src/app/api/auth/transfer-session/preview/route.ts::conversations
+1 apps/main/src/app/api/auth/transfer-session/preview/route.ts::messages
+1 apps/main/src/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts::forum_messages
+1 apps/main/src/app/api/groups/invite/[token]/forum/route.ts::forum_threads
+1 apps/main/src/app/api/groups/invite/[token]/forum/threads/[threadId]/messages/route.ts::forum_messages
+1 apps/main/src/app/api/groups/invite/[token]/forum/threads/route.ts::forum_threads
+1 apps/main/src/app/api/public/quote/[token]/select/route.ts::quotes
+1 apps/main/src/inngest/customer-chat-counter-recompute.ts::messages
+1 apps/main/src/inngest/dob-estimate-reprompt-eligible.ts::messages
+2 apps/main/src/inngest/forum-moderation-retry.ts::forum_messages
+1 apps/main/src/inngest/group-reminder-cadence.ts::email_log
+1 apps/main/src/inngest/quote-estimate-expiry-sweep.ts::quotes
+1 apps/main/src/inngest/transfer-finalize.ts::conversations
+1 apps/main/src/inngest/user-data-export-build.ts::conversations
+1 apps/main/src/lib/cron/forum-moderation-timeout-sweep.ts::forum_messages
+5 apps/main/src/lib/email/rate-limit.ts::email_log
+3 apps/main/src/lib/forums/strikes.ts::forum_strikes
+2 apps/main/src/lib/privacy/purge-user-data.ts::conversations
+2 apps/main/src/lib/privacy/purge-user-data.ts::messages
+1 apps/main/src/lib/privacy/purge-user-data.ts::quotes

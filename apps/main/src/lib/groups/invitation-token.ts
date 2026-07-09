@@ -9,6 +9,7 @@
 // natural-expiry sweep (§18.9), not by anything encoded in the token itself,
 // so there is no cutoff date that's safe to stop accepting the old format.
 
+import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { isCompactJws, signHmacJwt, verifyHmacJwt } from "@/lib/auth/hmac-jwt";
 

@@ -13,6 +13,7 @@
 // no separate revocation, so there is no cutoff date that's safe to pick;
 // legacy verification stays until the old format is naturally unreachable.
 
+import "server-only";
 import { createHmac, timingSafeEqual } from "crypto";
 import { isCompactJws, signHmacJwt, verifyHmacJwt } from "@/lib/auth/hmac-jwt";
 

@@ -1,0 +1,77 @@
+name: supabase-advisor-check
+
+# Weekly poll of the Supabase Security Advisor (project/platform config layer:
+# leaked-password protection, SECURITY DEFINER RPC exposure, extensions in
+# public, RLS-without-policy). SQL-layer gates (rls:check, grants:check,
+# check:policy-snapshot) don't cover this. Fails + opens/updates a tracked issue
+# on any WARN+ finding not in scripts/supabase-advisor-baseline.txt.
+# Script: scripts/check-supabase-advisors.ts. Config: .github/supabase-advisor-config.json.
+# Runbook: docs/runbooks/supabase-advisor-check.md.
+#
+# Operator prerequisite: the SUPABASE_ACCESS_TOKEN secret must exist (a Supabase
+# PAT with database:read + advisors_read). No such secret exists in CI today —
+# until it is added, this job fails loud with that instruction (by design).
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # 09:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  advisor-check:
+    name: Supabase Security Advisor scan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan Supabase advisors
+        id: scan
+        run: pnpm tsx scripts/check-supabase-advisors.ts 2>&1 | tee /tmp/advisor-out.txt
+        continue-on-error: true
+
+      - name: Open / update tracked issue on findings
+        if: steps.scan.outcome == 'failure'
+        run: |
+          title="Supabase Security Advisor: WARN+ finding(s) need review"
+          body=$(cat <<'BODY'
+          The weekly Supabase advisor scan reported WARN+ security finding(s) not in the accepted-risk baseline.
+
+          Fix the finding (preferred) or, if it is accepted risk, add its `baseline key` line to
+          `scripts/supabase-advisor-baseline.txt` with a reason. See docs/runbooks/supabase-advisor-check.md.
+
+          Scan output:
+          BODY
+          )
+          body="${body}"$'\n\n```\n'"$(cat /tmp/advisor-out.txt)"$'\n```'
+          gh label create supabase-advisor --color FBCA04 --description "Supabase Security Advisor findings" --force || true
+          existing=$(gh issue list --state open --label supabase-advisor --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label "supabase-advisor" --body "$body"
+          fi
+
+      - name: Fail the job if findings were reported
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "Supabase advisor scan reported findings — see the tracked issue."
+          exit 1
