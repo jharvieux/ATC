@@ -14,8 +14,13 @@
 -- 'submitting'; the stuck-submitting reconcile cron then routes it to
 -- pending_host_review (reason host_state_unknown) — money-safe but manual-review
 -- toil. This RPC folds the commission insert and the final status flip into ONE
--- transaction: either the commission row exists AND status flips to 'submitted', or
--- nothing changes and the caller routes the row to review.
+-- transaction: the commission row is inserted idempotently, and the status flips to
+-- 'submitted' only if the row is still 'submitting'. A lost race (something else
+-- moved the booking off 'submitting' first, e.g. reconcile) leaves the idempotent
+-- 'expected' commission in place with the status unflipped — benign, since nothing
+-- is paid on an 'expected' commission — and the caller routes the row to review; the
+-- manual pending_host_review resolution path must tolerate that pre-existing
+-- commission row rather than assuming a clean slate (#1755).
 --
 -- Idempotent against the commissions(booking_id) UNIQUE index (#1575,
 -- commissions_booking_id_uidx): the INSERT uses ON CONFLICT (booking_id) DO NOTHING

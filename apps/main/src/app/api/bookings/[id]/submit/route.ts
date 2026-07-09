@@ -530,10 +530,12 @@ async function submitBooking(
     // 'submitting', which the reconcile cron then routed to pending_host_review
     // (manual-review toil). Fold both into ONE transaction via a SECURITY DEFINER
     // RPC. §15.12: the RPC no-ops the commission insert for sandbox tenants (the
-    // booking still flips to 'submitted'). Idempotent against
-    // commissions_booking_id_uidx (#1575) so a crash-retry is safe. The RPC
-    // returns the number of booking rows flipped from its CAS guard
-    // (status='submitting'): 0 means a concurrent path moved the row on.
+    // booking still flips to 'submitted'). The commission insert is idempotent
+    // (commissions_booking_id_uidx, #1575) and status only flips if the row is
+    // still 'submitting'; the RPC returns the number of booking rows flipped, so 0
+    // means a concurrent path (e.g. reconcile) moved the row on first — a lost race
+    // that leaves the idempotent 'expected' commission in place (benign, nothing
+    // paid) for the manual pending_host_review path to tolerate (#1755).
     const { data: committedCount, error: commitError } = await adminDb.rpc("submit_commit_booking", {
       p_booking_id: bookingId,
       p_tenant_id: ctx.tenant_id,
