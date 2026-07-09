@@ -55,14 +55,14 @@ const SECRET = "test-rag-webhook-secret";
 
 const ORIG = {
   RAG_WEBHOOK_SECRET: process.env.RAG_WEBHOOK_SECRET,
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  SUPABASE_RAG_URL: process.env.SUPABASE_RAG_URL,
+  SUPABASE_RAG_SERVICE_ROLE_KEY: process.env.SUPABASE_RAG_SERVICE_ROLE_KEY,
 };
 
 beforeEach(() => {
   process.env.RAG_WEBHOOK_SECRET = SECRET;
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "http://test-supabase.local";
-  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-key";
+  process.env.SUPABASE_RAG_URL = "http://test-supabase.local";
+  process.env.SUPABASE_RAG_SERVICE_ROLE_KEY = "test-service-key";
   mocks.insertResult = { data: [{ id: "ev-1" }], error: null };
   mocks.rateLimitAllowed = true;
 });
@@ -126,8 +126,8 @@ describe("RAG feedback webhook — Pattern 2 (config + signature fail-closed)", 
   });
 
   it("returns 500 when Supabase env is unset (fail-closed on missing infra)", async () => {
-    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    delete process.env.SUPABASE_RAG_URL;
+    delete process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
     const res = await POST(makeReq());
     expect(res.status).toBe(500);
     const json = await res.json() as { error: string };

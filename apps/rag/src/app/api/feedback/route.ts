@@ -18,41 +18,10 @@ export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { ChunkFeedbackEventSchema, verifyWebhookSignature } from "@atc/contracts";
 import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
 import { getRedis } from "@/lib/redis/client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-
-const bodySchema = z.object({
-  message_id: z.string().uuid().nullable(),
-  signal_direction: z.enum(["up", "down"]),
-  raw_weight: z.number().min(0).max(10),
-  chunk_ids: z.array(z.string().uuid()).min(1).max(20),
-});
-
-async function hmacHex(secret: string, body: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) {
-    r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return r === 0;
-}
 
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.RAG_WEBHOOK_SECRET;
@@ -67,15 +36,18 @@ export async function POST(req: Request): Promise<Response> {
   // share + exhaust the legitimate caller's bucket — 429'ing real feedback
   // before its signature was ever checked.
   const rawBody = await req.text();
-  const provided = req.headers.get("x-webhook-signature") ?? "";
-  const expected = await hmacHex(secret, rawBody);
-  if (!timingSafeEqual(provided, expected)) {
+  const validSignature = await verifyWebhookSignature(
+    secret,
+    rawBody,
+    req.headers.get("x-webhook-signature"),
+  );
+  if (!validSignature) {
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
 
   let parsed;
   try {
-    parsed = bodySchema.parse(JSON.parse(rawBody));
+    parsed = ChunkFeedbackEventSchema.parse(JSON.parse(rawBody));
   } catch {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }
@@ -104,8 +76,12 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
+  // #1595 / D-151 — resolve rag env vars only. The prior
+  // `NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_RAG_URL` fallback mixed main-app env
+  // names into the rag app: in an env that set the main vars, this client would
+  // point at the WRONG project's database.
+  const url = process.env.SUPABASE_RAG_URL;
+  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
   if (!url || !key) {
     return Response.json({ error: "supabase_env_not_set" }, { status: 500 });
   }
