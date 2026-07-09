@@ -9,8 +9,9 @@
 // from anywhere — the request-side adapter is in resolve-post-login.ts.
 
 import { type OnboardingStage } from "@/lib/onboarding/state-machine";
+import type { UserRole } from "./permission-grants";
 
-export type PostLoginRole = "tenant_owner" | "agent" | "viewer";
+export type PostLoginRole = UserRole;
 
 /**
  * Discriminated union so the type can't represent nonsense (e.g.

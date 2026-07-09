@@ -3,13 +3,18 @@
 // §12 — Contact detail: timeline + relationship graph + DOB display rules (§11.5).
 
 import { useState, useEffect, use } from "react";
+import { formatDate } from "@/lib/format-date";
 import { dobDisplayLabel } from "@/lib/contacts/dob-display";
 import { RelationshipsPanel } from "@/components/crm/RelationshipsPanel";
 
 // #1728 — deep-link the draft composer with the inbound reply pre-filled.
 // Draft-only: this is a link to the §904 composer, which has no send path.
-function draftReplyHref(body: string, firstName: string | null): string {
-  const params = new URLSearchParams({ inquiry: body });
+//
+// #1756 — passes contactId/messageId, not the full body: a long inbound
+// email can exceed browser/proxy URL length limits and silently truncate
+// an ?inquiry=<body> param. The composer fetches the body itself.
+function draftReplyHref(contactId: string, messageId: string, firstName: string | null): string {
+  const params = new URLSearchParams({ contactId, messageId });
   if (firstName) params.set("customerName", firstName);
   return `/concierge/draft?${params.toString()}`;
 }
@@ -122,7 +127,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
             {timeline.map((item) => (
               <li key={`${item.type}-${item.id}`} className="flex gap-3 text-sm">
                 <span className="text-gray-400 w-24 shrink-0">
-                  {new Date(item.created_at).toLocaleDateString()}
+                  {formatDate(item.created_at)}
                 </span>
                 {item.type === "email" ? (
                   <>
@@ -131,7 +136,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       {item.content ?? ""}
                     </span>
                     <a
-                      href={draftReplyHref(item.content ?? "", contact.first_name)}
+                      href={draftReplyHref(id, item.id, contact.first_name)}
                       className="ml-auto text-blue-600 underline whitespace-nowrap"
                     >
                       Draft reply

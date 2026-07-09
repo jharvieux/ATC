@@ -4,6 +4,7 @@
 // Visible to tenant_billing_admin role. Read-only if pending_review or suspended.
 
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
 
 type BillingData = {
@@ -92,7 +93,7 @@ export default function BillingPage() {
           <div><dt className="inline font-medium">Seats:</dt> <dd className="inline">{tenant.seat_count}</dd></div>
           {tenant.pending_billing_period_change_effective_at && (
             <div className="text-amber-600">
-              Switching to monthly effective {new Date(tenant.pending_billing_period_change_effective_at).toLocaleDateString()}
+              Switching to monthly effective {formatDate(tenant.pending_billing_period_change_effective_at)}
             </div>
           )}
         </dl>
@@ -157,7 +158,7 @@ export default function BillingPage() {
             {invoices.map((inv) => (
               <div key={inv.id} className="border rounded p-3 flex items-center justify-between text-sm">
                 <div>
-                  <p>{new Date(inv.period_start * 1000).toLocaleDateString()} – {new Date(inv.period_end * 1000).toLocaleDateString()}</p>
+                  <p>{formatDate(inv.period_start * 1000)} – {formatDate(inv.period_end * 1000)}</p>
                   <p className="text-xs text-gray-500 capitalize">{inv.status}</p>
                 </div>
                 <div className="text-right">

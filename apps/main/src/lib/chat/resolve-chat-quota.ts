@@ -12,6 +12,7 @@
 // stream: a blocked decision carries the exact event to send.
 
 import { randomUUID } from "node:crypto";
+import { formatDate } from "@/lib/format-date";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -97,7 +98,7 @@ export async function resolveChatQuota(args: ResolveChatQuotaArgs): Promise<Chat
     const decision = await enforceCustomerLimit(svc, { user_id: userId, tenant_id: tenantId });
     if (decision.tier === "hard") {
       // §24.9 system-spoken hard-limit message — NOT in-character.
-      const resetAtPretty = new Date(decision.reset_at).toLocaleDateString();
+      const resetAtPretty = formatDate(decision.reset_at);
       const sysBody =
         "Chat limit reached. You've reached the message limit for this billing period. " +
         "To continue chatting, you can book a cruise (which doubles your quota while you have " +

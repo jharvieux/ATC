@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { validateTemplate, renderTemplate, bodyTextToHtml } from "@/lib/email/template-engine";
+import { formatDate } from "@/lib/format-date";
 
 const TEXT_INPUT_CLS =
   "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
@@ -88,14 +89,6 @@ function AiContentBlock(props: { description: string }) {
       <p className="text-[12px] text-violet-900 italic">{props.description}</p>
     </div>
   );
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
 }
 
 export default function EmailTemplatesSettingsPage() {
@@ -833,7 +826,7 @@ export default function EmailTemplatesSettingsPage() {
                                 ) : null}
                                 {b.sailing_date ? (
                                   <span className="text-[12px] text-muted-foreground ml-1">
-                                    ({formatDate(b.sailing_date)})
+                                    ({formatDate(b.sailing_date, "medium")})
                                   </span>
                                 ) : null}
                               </button>

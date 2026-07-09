@@ -1,6 +1,10 @@
 // BP40 §40.3 / §40.9 — Per-type item_details validation + date-semantics check.
 
-export type ItemType = "flight" | "hotel" | "transfer" | "excursion" | "insurance" | "other";
+export const ITEM_TYPES = ["flight", "hotel", "transfer", "excursion", "insurance", "other"] as const;
+export type ItemType = (typeof ITEM_TYPES)[number];
+
+export const LINE_ITEM_STATUSES = ["planned", "booked", "confirmed", "cancelled", "completed"] as const;
+export type LineItemStatus = (typeof LINE_ITEM_STATUSES)[number];
 
 export type ValidationResult = { ok: true } | { ok: false; errors: string[] };
 

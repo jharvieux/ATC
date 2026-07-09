@@ -14,6 +14,8 @@
 // after first entering a non-paying state. Past that, "past grace" —
 // middleware redirects to billing, crons skip them.
 
+import type { TenantLifecycleStatus } from "@/lib/tenants/lifecycle";
+
 export const NON_PAYING_GRACE_DAYS = 7;
 
 export type SubscriptionStatus =
@@ -39,7 +41,7 @@ export interface TenantPaymentFields {
   non_paying_since: string | null;
   // Onboarding tenants haven't paid yet by design; they shouldn't get
   // gated out of the onboarding flow.
-  status: "onboarding" | "pending_review" | "active" | "suspended" | "terminated" | string;
+  status: TenantLifecycleStatus | string;
   // #699 — ATC-owned tenants bypass the payment gate. The platform
   // doesn't bill itself. Optional in the type so callers that don't
   // select the column (the cron loops written before this flag landed)

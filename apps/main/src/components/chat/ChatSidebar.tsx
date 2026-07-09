@@ -9,6 +9,7 @@
 // No new server work — this is purely UI assembly.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -92,7 +93,7 @@ function HistoryPanel(): JSX.Element {
           </a>
           <span className="text-muted-foreground text-[11px]">
             {c.message_count ?? 0} msgs ·{" "}
-            {c.last_message_at ? new Date(c.last_message_at).toLocaleDateString() : "—"}
+            {c.last_message_at ? formatDate(c.last_message_at) : "—"}
           </span>
         </li>
       ))}

@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertAssignmentAllowed } from "@/lib/tasks/tier-gate";
+import { TASK_PRIORITIES } from "@/lib/tasks/constants";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
@@ -18,7 +19,7 @@ const TaskCreateSchema = z
     title: z.string().min(1),
     description: z.string().optional(),
     task_type: z.enum(["call", "email", "text", "meeting", "follow_up", "review", "document", "custom"]),
-    priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+    priority: z.enum(TASK_PRIORITIES).optional(),
     due_at: z.string().datetime().optional(),
     due_is_all_day: z.boolean().optional(),
     assigned_to_user_id: z.string().uuid().optional(),

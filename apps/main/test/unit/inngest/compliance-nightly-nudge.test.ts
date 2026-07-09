@@ -1,11 +1,13 @@
 // §compliance — compliance-nightly recompute core (P3 for #1217).
 //
-// File was 1% (169 NoCoverage) in the 2026-06-17 Stryker sweep. The two pure
-// cores worth pinning are the inactivity-level selection (which reminder a
-// tenant trips) and the mailing-address formatter (what lands in the footer).
+// File was 1% (169 NoCoverage) in the 2026-06-17 Stryker sweep. The pure core
+// worth pinning is the inactivity-level selection (which reminder a tenant
+// trips). The mailing-address formatter used to live here too (formatAddress)
+// but was consolidated into the shared formatMailingAddress (#1556) — its
+// coverage moved to test/unit/lib/format-mailing-address.test.ts.
 
 import { describe, it, expect } from "vitest";
-import { selectNudgeLevel, formatAddress } from "@/inngest/compliance-nightly";
+import { selectNudgeLevel } from "@/inngest/compliance-nightly";
 
 describe("selectNudgeLevel — most severe applicable level, 30d floor", () => {
   it("returns null below the 30-day floor", () => {
@@ -33,41 +35,5 @@ describe("selectNudgeLevel — most severe applicable level, 30d floor", () => {
   it("trips 180d at 180 and stays there for very long inactivity", () => {
     expect(selectNudgeLevel(180)).toBe("180d");
     expect(selectNudgeLevel(3650)).toBe("180d");
-  });
-});
-
-describe("formatAddress", () => {
-  it("returns empty string for a null address", () => {
-    expect(formatAddress(null)).toBe("");
-  });
-
-  it("joins present string parts in field order with ', '", () => {
-    expect(
-      formatAddress({
-        line1: "1 Main St",
-        line2: "Suite 4",
-        city: "Austin",
-        state: "TX",
-        postal_code: "78701",
-        country: "USA",
-      }),
-    ).toBe("1 Main St, Suite 4, Austin, TX, 78701, USA");
-  });
-
-  it("drops missing, empty, and non-string parts (no stray commas)", () => {
-    expect(
-      formatAddress({
-        line1: "1 Main St",
-        line2: "",
-        city: "Austin",
-        state: null,
-        postal_code: 78701, // number, not string — must be dropped
-        country: "USA",
-      }),
-    ).toBe("1 Main St, Austin, USA");
-  });
-
-  it("returns empty string when no part is a non-empty string", () => {
-    expect(formatAddress({ line1: "", city: null, postal_code: 0 })).toBe("");
   });
 });

@@ -10,6 +10,7 @@
 // CRM content rather than displacing it.
 
 import * as React from "react";
+import { formatDate } from "@/lib/format-date";
 import Link from "next/link";
 import { PanelLeft, X, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -126,7 +127,7 @@ export function ConversationRailDrawer(): React.JSX.Element {
                 </p>
                 {conv.last_message_at && (
                   <p className="text-xs text-muted-foreground">
-                    {new Date(conv.last_message_at).toLocaleDateString()}
+                    {formatDate(conv.last_message_at)}
                   </p>
                 )}
               </div>

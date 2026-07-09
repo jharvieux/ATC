@@ -8,6 +8,7 @@
 // domain request field that emails support@.
 
 import React, { useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -411,7 +412,7 @@ function EmailDomainVerificationCard() {
                   ✓ Verified
                   {status.verified_at && (
                     <span className="text-green-700">
-                      &nbsp;{new Date(status.verified_at).toLocaleDateString()}
+                      &nbsp;{formatDate(status.verified_at)}
                     </span>
                   )}
                 </span>

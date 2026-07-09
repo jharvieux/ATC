@@ -26,6 +26,7 @@ import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 import { sendEmail } from "@/lib/email/send";
 import { InactivityReminder, type InactivityNudgeLevel } from "@/emails/InactivityReminder";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 
 type NudgeLevel = "30d" | "60d" | "90d" | "180d";
 
@@ -270,7 +271,7 @@ async function sendReminderEmail(args: {
   const unsubscribeUrl = `${appUrl.replace(/\/$/, "")}/api/email/unsubscribe?email=${encodeURIComponent(tenant.support_email!)}&category=marketing`;
 
   const tenantLegalName = tenant.legal_name ?? tenant.display_name ?? "Your business";
-  const businessAddress = formatAddress(tenant.mailing_address);
+  const businessAddress = formatMailingAddress(tenant.mailing_address);
 
   const { renderToStaticMarkup } = await import("react-dom/server");
   const html = "<!doctype html>" + renderToStaticMarkup(
@@ -311,16 +312,3 @@ const SUBJECT_BY_LEVEL: Record<InactivityNudgeLevel, string> = {
   "60d": "Checking in on your AI Travel Concierge account",
   "90d": "Still here whenever you're ready",
 };
-
-export function formatAddress(addr: Record<string, unknown> | null): string {
-  if (!addr) return "";
-  const parts = [
-    addr.line1,
-    addr.line2,
-    addr.city,
-    addr.state,
-    addr.postal_code,
-    addr.country,
-  ].filter((p): p is string => typeof p === "string" && p.length > 0);
-  return parts.join(", ");
-}

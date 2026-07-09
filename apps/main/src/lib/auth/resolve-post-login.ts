@@ -16,6 +16,7 @@ import {
   postLoginDestination,
   type PostLoginRole,
 } from "@/lib/auth/post-login-destination";
+import { ROUTEABLE_TENANT_STATUSES } from "@/lib/tenants/lifecycle";
 
 /** PostgREST returns embedded foreign-table joins as either a single
  *  object OR an array depending on how the FK is resolved — even for
@@ -33,15 +34,6 @@ type EmbeddedTenant = {
    *  onboarding-stage URL map. */
   status: string;
 };
-
-/** Tenant statuses that route normally (onboarding flow + crm). Other
- *  statuses (`suspended`, `terminated`) drop the membership row from the
- *  picker — the user falls through to /chat. */
-const ROUTEABLE_TENANT_STATUSES: ReadonlySet<string> = new Set([
-  "onboarding",
-  "pending_review",
-  "active",
-]);
 
 export function isRouteableTenant(t: EmbeddedTenant | null): boolean {
   return t !== null && ROUTEABLE_TENANT_STATUSES.has(t.status);

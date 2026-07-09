@@ -15,8 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { UserRole } from "@/lib/auth/permission-grants";
 
-type Role = "tenant_owner" | "agent" | "viewer";
+type Role = UserRole;
 
 interface Member {
   id: string;

@@ -6,6 +6,7 @@
 // public-token AI assistant for follow-up questions.
 
 import { notFound } from "next/navigation";
+import { formatDate } from "@/lib/format-date";
 import type { Metadata } from "next";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { headers } from "next/headers";
@@ -155,7 +156,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
         </div>
         {quote.valid_until && (
           <div className="mt-1.5 text-[12px] text-amber-800 dark:text-amber-400">
-            Hold expires {new Date(quote.valid_until).toLocaleDateString()}
+            Hold expires {formatDate(quote.valid_until)}
           </div>
         )}
       </header>

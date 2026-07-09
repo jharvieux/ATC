@@ -118,7 +118,7 @@ function applyOverrides(
         if (row.tier_override === "base_cap") {
           // Recompute effective + approaching from the override base.
           base.rag_cap_total.base = Number(v);
-          base.rag_cap_total.effective = Number(v) + PROMOTION_BONUS_PER_CHUNK * 0; // promoted-bonus applies at the call site
+          base.rag_cap_total.effective = Number(v); // promoted-bonus applies at the call site
           base.rag_cap_total.approaching = Math.floor(base.rag_cap_total.effective * 0.85);
         }
         break;

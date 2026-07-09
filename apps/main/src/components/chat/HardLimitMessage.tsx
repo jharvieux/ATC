@@ -2,6 +2,7 @@
 // NOT in-character — clearly platform-spoken.
 
 import { Button } from "@/components/ui/button";
+import { formatDate } from "@/lib/format-date";
 
 export function HardLimitMessage({
   body,
@@ -10,7 +11,7 @@ export function HardLimitMessage({
   body: string;
   resetAt: string;
 }): JSX.Element {
-  const resetPretty = new Date(resetAt).toLocaleDateString();
+  const resetPretty = formatDate(resetAt);
   return (
     <div
       role="alert"

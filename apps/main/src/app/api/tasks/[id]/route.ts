@@ -5,12 +5,13 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { TASK_PRIORITIES } from "@/lib/tasks/constants";
 
 const TaskPatchSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   status: z.enum(["open", "in_progress", "completed", "snoozed", "cancelled"]).optional(),
-  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  priority: z.enum(TASK_PRIORITIES).optional(),
   due_at: z.string().datetime().nullable().optional(),
   snoozed_until: z.string().datetime().nullable().optional(),
   assigned_to_user_id: z.string().uuid().nullable().optional(),

@@ -7,6 +7,7 @@
 // this — the UI just hides the controls so it isn't a click-then-409).
 
 import { useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { adminFetch } from "@/lib/admin-fetch";
 import {
   Select,
@@ -261,7 +262,7 @@ export default function AdminAdminsPage(): JSX.Element {
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">
-                        {new Date(a.created_at).toLocaleDateString()}
+                        {formatDate(a.created_at)}
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">{a.notes ?? "—"}</td>
                       <td className="px-4 py-2.5 text-right">
