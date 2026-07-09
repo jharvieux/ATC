@@ -53,6 +53,15 @@ vi.mock("@/lib/monitoring/send-operator-alert", () => ({
 
 // A recent created_at keeps rows inside the Stripe idempotency window by default.
 const RECENT = () => new Date(Date.now() - 5 * 60_000).toISOString();
+const RECENT_ROW = () => ({
+  id: "payout-1",
+  tenant_id: "t-1",
+  amount_cents: 5000,
+  attempt_generation: 0,
+  currency: "USD",
+  stripe_transfer_id: null,
+  created_at: RECENT(),
+});
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
@@ -134,17 +143,7 @@ const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
-  mocks.processingRows = [
-    {
-      id: "payout-1",
-      tenant_id: "t-1",
-      amount_cents: 5000,
-      attempt_generation: 0,
-      currency: "USD",
-      stripe_transfer_id: null,
-      created_at: RECENT(),
-    },
-  ];
+  mocks.processingRows = [RECENT_ROW()];
   mocks.fetchError = null;
   mocks.tenantRow = { stripe_connect_account_id: "acct_test_1" };
   mocks.existingTransferMatches = false;
@@ -251,7 +250,7 @@ describe("runPayoutsReconcileProcessing — settle CAS write (§14.7, no transfe
 // double-pay. Instead the operator is alerted to reconcile by hand.
 describe("runPayoutsReconcileProcessing — past Stripe idempotency window (#1579)", () => {
   it("does NOT create a transfer and alerts the operator when the row is >24h old and no transfer exists", async () => {
-    mocks.processingRows[0].created_at = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    mocks.processingRows = [{ ...RECENT_ROW(), created_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() }];
     mocks.existingTransferMatches = false; // list finds nothing across the window
 
     const result = await runPayoutsReconcileProcessing();
@@ -269,7 +268,7 @@ describe("runPayoutsReconcileProcessing — past Stripe idempotency window (#157
   });
 
   it("still settles a >24h-old row (no new money) when the transfer is found in the paged window", async () => {
-    mocks.processingRows[0].created_at = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    mocks.processingRows = [{ ...RECENT_ROW(), created_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() }];
     mocks.existingTransferMatches = true; // transfer landed earlier; paginated lookup finds it
 
     const result = await runPayoutsReconcileProcessing();
