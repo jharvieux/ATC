@@ -9,6 +9,8 @@
 // isolated purely by the HMAC → invitation_id → group_id chain). A future
 // session-aware forum feature would need to add it back explicitly.
 
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";

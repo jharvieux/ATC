@@ -9,6 +9,8 @@
 // auth_user_id — the route returns 403 with `consent_pending` and the
 // client routes to /consent.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export interface PendingConsent {

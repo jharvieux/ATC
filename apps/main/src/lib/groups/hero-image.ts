@@ -6,6 +6,8 @@
 //   3. AI generation (DALL-E 3) — tier-gated, rate-limited, cached
 //   4. Cruise-line default fallback
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 

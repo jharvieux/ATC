@@ -5,6 +5,8 @@
 // + the coordinator check, that `groupId` belongs to the caller's tenant and the
 // caller is its coordinator. These queries filter by that verified id alone.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 

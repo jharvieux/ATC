@@ -12,6 +12,8 @@
 // The lint rule atc/no-direct-anthropic-or-openai-import allows ONLY this
 // file (tightened from src/lib/ai/** in BP26 to this single path).
 
+import "server-only";
+
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { resolveModelChain, attemptModelChain, HAIKU_PINNED, SONNET, OPUS_LATEST, OPUS_PINNED } from "./models";

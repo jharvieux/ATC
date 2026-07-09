@@ -4,6 +4,8 @@
 // context exists, so there is no tenant JWT to attach. This file is in the
 // no-direct-service-role-import allowlist.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 

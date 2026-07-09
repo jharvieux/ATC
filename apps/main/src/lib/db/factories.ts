@@ -14,6 +14,8 @@
 // membership check survives because RLS lets a user SELECT their own users
 // row.
 
+import "server-only";
+
 import type { TenantContext } from "./tenant-context";
 import { tryTestBypass } from "../auth/test-bypass";
 import { createRequestScopedClient, createBearerClient, extractBearerToken } from "../auth/ssr-client";

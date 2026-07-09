@@ -11,6 +11,8 @@
 //   - `FORENSICS_ENCRYPTION_KEY_PRIOR_1`/`_2` two-step grace stays; spec lists `_PREVIOUS`.
 // See docs/env-audit.md and MEMORY.md D-062 for the full reconciliation.
 
+import "server-only";
+
 import { z } from "zod";
 import { Buffer } from "node:buffer";
 

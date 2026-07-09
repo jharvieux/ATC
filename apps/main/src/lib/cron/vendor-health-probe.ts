@@ -7,6 +7,8 @@
 //
 // Service-role import permitted: background cron, no user session. §5.4.4.
 
+import "server-only";
+
 import { upsertVendorHealth, type VendorName } from "@/lib/vendor-health/registry";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";

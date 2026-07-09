@@ -37,6 +37,8 @@
 // staleness check atomic in the DB; a 0-row result means a concurrent newer
 // event already won and this write is silently dropped.
 
+import "server-only";
+
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";

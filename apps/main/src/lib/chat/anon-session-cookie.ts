@@ -5,6 +5,8 @@
 // naturally within a month of deploy, but there's no reason to reject them
 // early and force every anon visitor's session to reset.
 
+import "server-only";
+
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { isCompactJws, signHmacJwt, verifyHmacJwt } from "@/lib/auth/hmac-jwt";
 
