@@ -58,16 +58,22 @@ export async function GET(req: Request): Promise<Response> {
         // #1588: paginated fetch (never a single unbounded select) — see
         // fetchAiCallLogRows for why. It throws on any page's DB error, so
         // Promise.all fails loud the same way an { error } field would.
+        // A total order (created_at, then id as tiebreaker) is REQUIRED for
+        // paginated .range() reads — without a deterministic sort, PostgREST
+        // may return the same row on two pages or skip one entirely, which
+        // would double-count or under-count 30-day cost. id is the PK.
         const aiCallLogRowsPromise = fetchAiCallLogRows((offset, limit) =>
           db
             .from("ai_call_log")
             .select("created_at, vendor, model, input_tokens, output_tokens, cost_estimate_cents")
             .gte("created_at", thirtyDaysAgo)
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
             .range(offset, offset + limit - 1),
         );
 
         const [
-          aiCallLogRows,
+          aiCallLogResult,
           emailDailyResult,
           weatherHistoryResult,
           weatherTodayResult,
@@ -104,6 +110,7 @@ export async function GET(req: Request): Promise<Response> {
         if (apifyLedgerResult.error) throw new Error(`apify_spend_ledger read failed: ${apifyLedgerResult.error.message}`);
         if (apifyBudgetResult.error) throw new Error(`apify_budget read failed: ${apifyBudgetResult.error.message}`);
 
+        const aiCallLogRows = aiCallLogResult.rows;
         recordQuery({ op: "select", table: "ai_call_log", row_count: aiCallLogRows.length });
         recordQuery({ op: "select", table: "email_log", row_count: emailDailyResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "weather_usage_metrics", row_count: weatherHistoryResult.data?.length ?? 0 });
@@ -201,6 +208,9 @@ export async function GET(req: Request): Promise<Response> {
             weather_cap: weatherCap,
             apify_spend_usd_period: apifySpendUsdPeriod,
             apify_monthly_budget_usd: apifyMonthlyBudgetUsd,
+            // true when ai_call_log paging hit its row ceiling — AI cost
+            // figures are then a lower bound; the dashboard shows a marker.
+            ai_cost_truncated: aiCallLogResult.truncated,
           },
           daily,
           model_breakdown: modelBreakdown,

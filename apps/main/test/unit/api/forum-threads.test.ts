@@ -225,6 +225,23 @@ describe("GET /api/forums/[forumId]/threads", () => {
     expect(body.offset).toBe(20);
   });
 
+  // Mirror of quotes/list-route.test.ts: a caller-supplied oversized limit must
+  // be clamped to the route's MAX (200), not trusted — otherwise a client could
+  // ask for an unbounded page and defeat the whole point of the .range() bound.
+  it("clamps an oversized limit to the 200 cap rather than trusting the caller", async () => {
+    mocks.threadsQuery.mockResolvedValue({ data: [], error: null, count: 0 });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/route");
+    const res = await GET(makeReq(`/api/forums/${FORUM_ID}/threads?limit=100000`), {
+      params: Promise.resolve({ forumId: FORUM_ID }),
+    });
+
+    expect(res.status).toBe(200);
+    const body: { limit: number } = await res.json();
+    expect(body.limit).toBe(200);
+    expect(mocks.threadsQuery).toHaveBeenCalledWith(0, 199); // clamped: offset 0, offset + 200 - 1
+  });
+
   it("returns 404 when forum not found", async () => {
     mocks.forumQuery.mockResolvedValue({ data: null, error: null });
 
@@ -355,6 +372,80 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
     );
 
     expect(res.status).toBe(500);
+  });
+
+  // #1588 pagination surface — the messages GET pages newest-first then
+  // .reverse()s back to ascending. These pin the three behaviours that were
+  // previously untested: limit/offset echo, the 500 clamp, and that the
+  // reverse actually restores ascending chronological order for the client.
+  it("honors limit/offset query params via .range() and echoes total/limit/offset", async () => {
+    mocks.forumQuery.mockResolvedValue({
+      data: { tenant_id: TENANT_ID, groups: [{ coordinator_user_id: USER_ID }] },
+      error: null,
+    });
+    mocks.messagesQuery.mockResolvedValue({ data: [], error: null, count: 412 });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/[threadId]/messages/route");
+    const res = await GET(
+      makeReq(`/api/forums/${FORUM_ID}/threads/${THREAD_ID}/messages?limit=25&offset=50`),
+      { params: Promise.resolve({ forumId: FORUM_ID, threadId: THREAD_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body: { total: number; limit: number; offset: number } = await res.json();
+    expect(mocks.messagesQuery).toHaveBeenCalledWith(50, 74); // offset, offset + limit - 1
+    expect(body.total).toBe(412);
+    expect(body.limit).toBe(25);
+    expect(body.offset).toBe(50);
+  });
+
+  it("clamps an oversized limit to the 500 cap rather than trusting the caller", async () => {
+    mocks.forumQuery.mockResolvedValue({
+      data: { tenant_id: TENANT_ID, groups: [{ coordinator_user_id: USER_ID }] },
+      error: null,
+    });
+    mocks.messagesQuery.mockResolvedValue({ data: [], error: null, count: 0 });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/[threadId]/messages/route");
+    const res = await GET(
+      makeReq(`/api/forums/${FORUM_ID}/threads/${THREAD_ID}/messages?limit=100000`),
+      { params: Promise.resolve({ forumId: FORUM_ID, threadId: THREAD_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body: { limit: number } = await res.json();
+    expect(body.limit).toBe(500);
+    expect(mocks.messagesQuery).toHaveBeenCalledWith(0, 499); // clamped: offset 0, offset + 500 - 1
+  });
+
+  it("reverses the newest-first page back to ascending chronological order for the client", async () => {
+    mocks.forumQuery.mockResolvedValue({
+      data: { tenant_id: TENANT_ID, groups: [{ coordinator_user_id: USER_ID }] },
+      error: null,
+    });
+    // The route reads .order(created_at DESC) so the DB hands back newest-first;
+    // the client renders oldest→newest, so the route must .reverse() it.
+    mocks.messagesQuery.mockResolvedValue({
+      data: [
+        { id: "m3", content: "third", status: "visible", user_id: "u1", invitation_id: null, parent_message_id: null, created_at: "2026-01-03T00:00:00Z" },
+        { id: "m2", content: "second", status: "visible", user_id: "u1", invitation_id: null, parent_message_id: null, created_at: "2026-01-02T00:00:00Z" },
+        { id: "m1", content: "first", status: "visible", user_id: "u1", invitation_id: null, parent_message_id: null, created_at: "2026-01-01T00:00:00Z" },
+      ],
+      error: null,
+      count: 3,
+    });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/[threadId]/messages/route");
+    const res = await GET(
+      makeReq(`/api/forums/${FORUM_ID}/threads/${THREAD_ID}/messages`),
+      { params: Promise.resolve({ forumId: FORUM_ID, threadId: THREAD_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body: { messages: Array<{ id: string; created_at: string }> } = await res.json();
+    expect(body.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+    const times = body.messages.map((m) => m.created_at);
+    expect([...times].sort()).toEqual(times); // strictly ascending
   });
 
   it("filters to visible-only for non-coordinator (route adds .eq(status, visible))", async () => {

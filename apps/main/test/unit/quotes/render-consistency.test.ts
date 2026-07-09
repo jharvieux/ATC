@@ -8,7 +8,14 @@
 // functions from lib/quotes/render-pdf.ts rather than redefining them.
 
 import { describe, it, expect } from "vitest";
-import { renderQuotePdfHtml, formatDate, formatTs, type QuoteRenderInput } from "@/lib/quotes/render-pdf";
+import {
+  renderQuotePdfHtml,
+  formatDate,
+  formatTs,
+  ESTIMATE_FOOTER_TEMPLATE,
+  CONFIRMED_FOOTER_TEMPLATE,
+  type QuoteRenderInput,
+} from "@/lib/quotes/render-pdf";
 import { renderQuotePdf } from "@/lib/quotes/render-quote-pdf";
 import { extractPdfText } from "@/lib/pdf/extract-pdf-text";
 import { formatCents } from "@/lib/money";
@@ -72,5 +79,43 @@ describe("quote render consistency (#1596)", () => {
     const expectedLockEnd = formatTs(confirmedFixture.price_lock_expires_at);
     expect(html).toContain(expectedLockEnd);
     expect(pdfText).toContain(expectedLockEnd);
+  });
+
+  // #1596 footer parity — the legally-significant disclosure footer is the one
+  // string that MUST read identically in the audit-snapshot HTML and the
+  // customer-facing binary PDF. The shared template is single-line (spaces, no
+  // hard \n) so each renderer word-wraps to its own width; we compare with
+  // whitespace collapsed so a wrap-break in either renderer doesn't mask a real
+  // wording drift. If a renderer ever stops importing the shared template, the
+  // words diverge and this fails.
+  const collapse = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+  it("both renderers embed the exact ESTIMATE footer disclosure wording", async () => {
+    const { html } = renderQuotePdfHtml(FIXTURE);
+    const pdfText = await extractPdfText(new Uint8Array(await renderQuotePdf(FIXTURE)));
+
+    const variance = formatCents(FIXTURE.variance_cents, FIXTURE.currency);
+    const footer = ESTIMATE_FOOTER_TEMPLATE(variance);
+
+    expect(collapse(html)).toContain(collapse(footer));
+    expect(collapse(pdfText)).toContain(collapse(footer));
+  });
+
+  it("both renderers embed the exact CONFIRMED footer disclosure wording", async () => {
+    const confirmedFixture: QuoteRenderInput = {
+      ...FIXTURE,
+      kind: "confirmed",
+      price_lock_expires_at: "2026-05-22T11:00:00Z",
+    };
+    const { html } = renderQuotePdfHtml(confirmedFixture);
+    const pdfText = await extractPdfText(new Uint8Array(await renderQuotePdf(confirmedFixture)));
+
+    const footer = CONFIRMED_FOOTER_TEMPLATE(
+      confirmedFixture.host_agency_legal_name,
+      formatTs(confirmedFixture.price_lock_expires_at),
+    );
+
+    expect(collapse(html)).toContain(collapse(footer));
+    expect(collapse(pdfText)).toContain(collapse(footer));
   });
 });

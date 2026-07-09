@@ -164,17 +164,35 @@ export async function POST(req: Request): Promise<Response> {
             for (let i = 0; i < uniqueUsers.length; i += CONSENT_BATCH_SIZE) {
               const chunk = uniqueUsers.slice(i, i + CONSENT_BATCH_SIZE);
               recordQuery({ op: "select", table: "users", row_count: chunk.length });
+              // public.users has one row per (tenant, auth_user_id), so an
+              // auth_user_id can appear multiple times here. Order by created_at
+              // and keep the FIRST (oldest) row's email as the canonical pick so
+              // the chosen address is deterministic across publishes.
               const { data: userRows, error: usersErr } = await db
                 .from("users")
                 .select("auth_user_id, email")
-                .in("auth_user_id", chunk);
+                .in("auth_user_id", chunk)
+                .order("created_at", { ascending: true });
               if (usersErr) {
                 console.warn(`[legal-docs] batch email lookup failed: ${usersErr.message}`);
                 continue;
               }
               for (const row of (userRows ?? []) as { auth_user_id: string; email: string }[]) {
+                if (emailByUser.has(row.auth_user_id)) continue;
                 emailByUser.set(row.auth_user_id, row.email);
               }
+            }
+
+            // One summary line for the whole fan-out: how many affected users we
+            // couldn't resolve an email for (chunk failures + rows with no match).
+            // Per-chunk warns above are noisy; this is the number that matters.
+            const missingEmailCount = uniqueUsers.length - emailByUser.size;
+            if (missingEmailCount > 0) {
+              console.warn(
+                "[legal-docs] %d of %d flagged users had no resolvable email — re-consent notification skipped for them",
+                missingEmailCount,
+                uniqueUsers.length,
+              );
             }
 
             for (const authUserId of uniqueUsers) {

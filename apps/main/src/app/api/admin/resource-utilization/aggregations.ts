@@ -56,6 +56,18 @@ interface AiCallLogPageResult {
 }
 
 export const AI_CALL_LOG_PAGE_SIZE = 1000;
+// Hard ceiling: 50 pages × 1000 rows = 50k rows. A dashboard read that would
+// need to walk more than this stops and flags `truncated` rather than risking
+// a serverless timeout paging an unbounded window — the operator sees a
+// lower-bound cost figure instead of a dead request.
+export const AI_CALL_LOG_MAX_PAGES = 50;
+
+export interface AiCallLogFetchResult {
+  rows: AiCallLogRow[];
+  // true when the MAX_PAGES ceiling was hit before the window was exhausted —
+  // the returned rows (and any cost derived from them) are a lower bound.
+  truncated: boolean;
+}
 
 // #1588: the GET handler used to run two separate unbounded selects over
 // ai_call_log (one for the daily rollup, one for the model breakdown) —
@@ -70,15 +82,18 @@ export async function fetchAiCallLogRows(
   // real Promise instances.
   fetchPage: (offset: number, limit: number) => PromiseLike<AiCallLogPageResult>,
   pageSize: number = AI_CALL_LOG_PAGE_SIZE,
-): Promise<AiCallLogRow[]> {
+  maxPages: number = AI_CALL_LOG_MAX_PAGES,
+): Promise<AiCallLogFetchResult> {
   const rows: AiCallLogRow[] = [];
+  let pages = 0;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await fetchPage(offset, pageSize);
     if (error) throw new Error(`ai_call_log read failed: ${error.message}`);
     rows.push(...(data ?? []));
-    if (!data || data.length < pageSize) break;
+    pages++;
+    if (!data || data.length < pageSize) return { rows, truncated: false };
+    if (pages >= maxPages) return { rows, truncated: true };
   }
-  return rows;
 }
 
 // Builds a sorted 30-day array anchored on `today`, zero-filling days with no

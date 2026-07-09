@@ -310,9 +310,10 @@ describe("fetchAiCallLogRows", () => {
     const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
     const fetchPage = vi.fn().mockResolvedValue({ data: [row(1), row(2)], error: null });
 
-    const rows = await fetchAiCallLogRows(fetchPage, 1000);
+    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, 1000);
 
     expect(rows).toHaveLength(2);
+    expect(truncated).toBe(false);
     expect(fetchPage).toHaveBeenCalledTimes(1); // stops after a short page — no wasted round-trip
   });
 
@@ -324,9 +325,10 @@ describe("fetchAiCallLogRows", () => {
       .mockResolvedValueOnce({ data: [row(3), row(4)], error: null }) // full page — must keep going
       .mockResolvedValueOnce({ data: [row(5)], error: null }); // short page — must stop
 
-    const rows = await fetchAiCallLogRows(fetchPage, pageSize);
+    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize);
 
     expect(rows).toHaveLength(5);
+    expect(truncated).toBe(false);
     expect(fetchPage).toHaveBeenCalledTimes(3);
     expect(fetchPage).toHaveBeenNthCalledWith(1, 0, pageSize);
     expect(fetchPage).toHaveBeenNthCalledWith(2, 2, pageSize);
@@ -340,10 +342,26 @@ describe("fetchAiCallLogRows", () => {
       .mockResolvedValueOnce({ data: [row(1), row(2)], error: null })
       .mockResolvedValueOnce({ data: [], error: null });
 
-    const rows = await fetchAiCallLogRows(fetchPage, pageSize);
+    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize);
 
     expect(rows).toHaveLength(2);
+    expect(truncated).toBe(false);
     expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps at maxPages and flags truncated:true rather than paging an unbounded window into a timeout", async () => {
+    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const pageSize = 2;
+    // Every page is full, so the loop would never self-terminate — the cap is
+    // the only thing that stops it. truncated:true tells the dashboard the AI
+    // cost figure is a lower bound, not a dead request.
+    const fetchPage = vi.fn().mockResolvedValue({ data: [row(1), row(2)], error: null });
+
+    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize, 3);
+
+    expect(truncated).toBe(true);
+    expect(rows).toHaveLength(6); // 3 pages × 2 rows
+    expect(fetchPage).toHaveBeenCalledTimes(3); // stopped exactly at the cap
   });
 
   it("fails loud on a mid-pagination DB error instead of returning a partial, silently-wrong result", async () => {
