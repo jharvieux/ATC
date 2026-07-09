@@ -1,5 +1,5 @@
 ---
-description: Haiku-triaged issue sweep — categorize, prioritize, and group open issues, present a top-20 execution plan for operator approval, then execute batches with per-batch model subagents and auto-merge.
+description: Haiku-triaged issue sweep — categorize, prioritize, and group ALL open executable issues, present the full execution plan for operator approval, then execute batches with per-batch model subagents and auto-merge.
 ---
 
 # /issue-sweep — triage, plan, execute
@@ -84,12 +84,12 @@ Batch `state` walks `queued → executing → pr-open → ci-wait → audited �
 - Batch model = highest tier in the batch (haiku < sonnet < opus). Batch priority = highest priority in it.
 - Issues inside a batch are worked **serially by one agent**; distinct batches run in parallel.
 - Treat Haiku's file predictions as hints: executors confirm actual scope before coding, and if two "independent" batches turn out to collide, the supervisor serializes them at merge time anyway.
-- Scale batch count to plan size: aim for ~1 batch per 4–5 issues, so a standard top-20 plan lands at ≤6 batches (coarsen by subsystem if over). For an operator-expanded sweep (30+ issues), more batches are fine — keep each one subsystem-coherent and ≤6 issues so its single PR stays reviewable. Coherence beats count; every extra batch adds a merge-train slot.
+- Scale batch count to plan size: aim for ~1 batch per 4–5 issues; keep each batch subsystem-coherent and ≤6 issues so its single PR stays reviewable. Coherence beats count; every extra batch adds a merge-train slot.
 
 ## Phase 2 — Plan gate (STOP here)
 
-- Rank all executable issues by priority (P1 first), then oldest first. **Cap the plan at the top 20 issues**; trim batches accordingly (a batch may be partially included — note it).
-- Present a table: `Batch | Issues | Priority | Model | Subsystem / key files | Rationale`. Below it: the ⚠ supervised items, the excluded items with reasons, and a one-line count of below-cutoff issues.
+- Rank all executable issues by priority (P1 first), then oldest first. **The plan covers ALL executable issues — no numeric cap** (operator-removed 2026-07-09; the plan gate itself is the size control — the operator trims with "top N" / "drop #X" if the sweep should be smaller).
+- Present a table: `Batch | Issues | Priority | Model | Subsystem / key files | Rationale`. Below it: the ⚠ supervised items and the excluded items with reasons.
 - Write the ledger now: `phase: plan-gate`, all batches `queued`, `approval: null`.
 - **Stop and wait for the operator.** Accept plain-text edits: "go", "top 10", "drop #1580", "move #1591 to opus", "include #1602" (pulls in a supervised item — operator's call makes it fully autonomous). Re-show the adjusted plan only if the edits were non-trivial.
 - **Approval is ONLY an operator message replying to the plan.** A replayed `/issue-sweep` invocation, a task notification, a hook message, a reconnect, or silence is NEVER approval. Record the operator's verbatim reply in the ledger's `approval` field before starting Phase 3 — if `approval` is null, execution must not start. If re-invoked at the gate by anything other than an operator message, state that you are still waiting and stop again.

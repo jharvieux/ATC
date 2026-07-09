@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-331 — 2026-07-09 — /issue-sweep top-20 plan cap removed by operator direction; plan gate is the sole size control
+
+**Decision**: both skill copies now present ALL executable issues in the Phase-2 plan (no numeric cap; the below-cutoff concept is gone). The operator trims at the gate ("top N", "drop #X") when a smaller sweep is wanted. Batch-scaling guidance (~1 batch per 4–5 issues, ≤6 issues per batch, subsystem-coherent) unchanged.
+
+**Why**: operator instruction after two same-day sweeps where the cap was overridden anyway ("it's ok to hover over the 20 issue limit" in D-327's sweep; rider mechanics in D-329's). The cap was costing plan-gate round-trips without limiting anything in practice.
+
+**Rejected**: keeping a soft cap with a default-expanded view (extra mechanism for no control the gate doesn't already give).
+
+**Related artifacts**: `.claude/commands/issue-sweep.md`, `~/.claude/commands/issue-sweep.md`; supersedes the top-20 language from D-314/D-325/D-328.
+
+---
+
 ## D-330 — 2026-07-09 — Worktree discipline added to /issue-sweep after case-insensitive-path incidents (3 executors silently edited the shared checkout)
 
 **Decision**: both issue-sweep skill copies gain (a) executor safeguard rule 6 — all operations by worktree ABSOLUTE path, any casing variant of the primary path IS the primary checkout, pre-commit cleanliness check on both trees; (b) a supervisor "shared-checkout hygiene" step — check the primary tree after every agent completes, restore only verified-duplicated droppings, message (never race) a live agent; (c) fix-agent prompts must name the branch's existing worktree by absolute path with the casing warning.
