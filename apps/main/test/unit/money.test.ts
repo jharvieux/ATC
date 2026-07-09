@@ -111,12 +111,21 @@ describe("formatCents (canonical display formatter with currency)", () => {
     expect(formatCents(100, "GBP")).toBe("£1.00");
   });
 
-  it("known limitation: always divides by 100, which is wrong for zero-decimal currencies (issue #1658)", () => {
-    // formatCents assumes a 2-decimal minor unit (cents), so JPY/KRW/etc. — which
-    // have no minor unit — render 100x too small. Pre-existing behavior inherited
-    // from the formatters PR #1657 consolidated; not introduced there. Tracked
-    // as #1658 rather than fixed inline (needs a product decision first).
-    expect(formatCents(100, "JPY")).toBe("¥1");
+  it("scales zero-decimal currencies by their ISO-4217 exponent, not by 100 (#1658)", () => {
+    // JPY/KRW/VND have no minor unit (exponent 0), so the stored integer IS the
+    // major amount — dividing by 100 rendered it 100x too small. The exponent
+    // now comes from Intl's own CLDR data, so scale and precision agree.
+    expect(formatCents(100, "JPY")).toBe("¥100");
+    expect(formatCents(100, "KRW")).toBe("₩100");
+  });
+
+  it("scales three-decimal currencies by 1000 (#1658)", () => {
+    // KWD/BHD/OMR have exponent 3: 100 minor units = 0.100 major. Proves the
+    // fix reads the real exponent rather than assuming 0 or 2. (Intl separates
+    // the KWD code from the number with a non-breaking space, so normalize it.)
+    const norm = (s: string) => s.replace(/[^\x21-\x7e]+/g, " ");
+    expect(norm(formatCents(100, "KWD"))).toBe("KWD 0.100");
+    expect(norm(formatCents(12345, "KWD"))).toBe("KWD 12.345");
   });
 
   it("falls back to 'CODE amount' for invalid currency codes", () => {

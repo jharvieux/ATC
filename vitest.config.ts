@@ -16,6 +16,17 @@ const virtualNodeModules = path.join(path.dirname(testingLibReal), "..", "..", "
 const reactDir = fs.realpathSync(path.join(virtualNodeModules, "react"));
 const reactDomDir = fs.realpathSync(path.join(virtualNodeModules, "react-dom"));
 
+// `server-only` (the #1524 poison-pill) throws on import unless the bundler
+// sets the `react-server` resolve condition, which Next.js does at build time
+// but vitest does not. Point the bare specifier at the package's own no-op
+// `empty.js` — the exact file the `react-server` condition resolves to — so
+// server-exclusive modules remain importable in the node/jsdom test env.
+// Resolved from apps/main (where the dep lives; not hoisted to root).
+const serverOnlyEmpty = path.join(
+  path.dirname(require.resolve("server-only", { paths: [path.resolve(__dirname, "apps/main")] })),
+  "empty.js",
+);
+
 export default defineConfig({
   // apps/main tsconfig uses "jsx": "preserve" (Next.js handles it at build time).
   // Vitest uses esbuild and must be told to use the automatic JSX runtime so
@@ -38,6 +49,7 @@ export default defineConfig({
       "react-dom": reactDomDir,
       "react-dom/server": path.join(reactDomDir, "server"),
       "react-dom/client": path.join(reactDomDir, "client"),
+      "server-only": serverOnlyEmpty,
     },
   },
   test: {

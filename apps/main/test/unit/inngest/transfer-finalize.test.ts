@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // convention — see onboarding-stale-suspend.test.ts).
 vi.mock("@/inngest/client", () => ({
   inngest: {
-    createFunction: (_: unknown, handler: unknown) => ({ __handler: handler }),
+    createFunction: (config: unknown, handler: unknown) => ({ __config: config, __handler: handler }),
   },
 }));
 
@@ -27,6 +27,10 @@ const TENANT_ID = "tenant-uuid";
 const USER_ID = "user-uuid";
 const ANON_SESSION_ID = "anon-session-uuid";
 const CONV_ID = "conv-uuid";
+// Per-attempt marker threaded through the finalize event (#1655). Fixed so the
+// event's marker and the session row's transfer_soft_commit_at line up in the
+// tests that should proceed; the supersede test deliberately diverges them.
+const SOFT_COMMIT_AT = "2026-07-09T00:00:00.000Z";
 
 const mocks = vi.hoisted(() => ({
   bind: vi.fn(),
@@ -139,15 +143,28 @@ function makeStep(): {
   };
 }
 
-async function runHandler(step: unknown): Promise<unknown> {
+async function loadFinalize(): Promise<{
+  __config: { idempotency?: string };
+  __handler: (arg: unknown) => Promise<unknown>;
+}> {
   const mod = (await import("@/inngest/transfer-finalize")) as unknown as {
-    transferFinalize: { __handler: (arg: unknown) => Promise<unknown> };
+    transferFinalize: { __config: { idempotency?: string }; __handler: (arg: unknown) => Promise<unknown> };
   };
-  return mod.transferFinalize.__handler({
+  return mod.transferFinalize;
+}
+
+async function runHandler(step: unknown, eventSoftCommitAt: string | undefined = SOFT_COMMIT_AT): Promise<unknown> {
+  const fn = await loadFinalize();
+  return fn.__handler({
     event: {
       id: "evt-1",
       name: "anonymous_session.transfer_finalize",
-      data: { anonymous_session_id: ANON_SESSION_ID, user_id: USER_ID, tenant_id: TENANT_ID },
+      data: {
+        anonymous_session_id: ANON_SESSION_ID,
+        user_id: USER_ID,
+        tenant_id: TENANT_ID,
+        transfer_soft_commit_at: eventSoftCommitAt,
+      },
     },
     step,
   });
@@ -157,7 +174,7 @@ const softCommittedSession = () => ({
   id: ANON_SESSION_ID,
   tenant_id: TENANT_ID,
   transferred_to_user_id: USER_ID,
-  transfer_soft_commit_at: new Date().toISOString(),
+  transfer_soft_commit_at: SOFT_COMMIT_AT,
   transfer_committed_at: null,
 });
 
@@ -223,7 +240,7 @@ describe("transferFinalize — CAS race with undo (defect 2)", () => {
       commitRows: [], // already committed by the prior partial run → 0 rows now
       reReadRow: {
         transfer_committed_at: new Date().toISOString(),
-        transfer_soft_commit_at: new Date().toISOString(),
+        transfer_soft_commit_at: SOFT_COMMIT_AT, // same attempt as our event
         transferred_to_user_id: USER_ID,
       },
       convRows: [{ id: CONV_ID }],
@@ -287,6 +304,50 @@ describe("transferFinalize — exactly-once side effects across retry (defect 3)
     expect(emitted.filter((e) => e.id === "emit-memory-extractions")).toHaveLength(1);
     expect(commitUpdateCount).toBe(1);
     expect(mocks.bind).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("transferFinalize — per-attempt idempotency + supersede (#1655)", () => {
+  it("keys idempotency on the soft-commit attempt marker, not the bare session id", async () => {
+    // Encodes WHY: a plain anonymous_session_id key would collapse a legitimate
+    // undo→re-commit (a new finalize for the same session) into the first run's
+    // dedup window and silently drop it. Including transfer_soft_commit_at makes
+    // each attempt its own key while still deduping concurrent duplicate runs of
+    // the SAME attempt.
+    const fn = await loadFinalize();
+    expect(fn.__config.idempotency).toContain("event.data.anonymous_session_id");
+    expect(fn.__config.idempotency).toContain("event.data.transfer_soft_commit_at");
+  });
+
+  it("supersedes a stale attempt: an older finalize event no-ops once a newer soft-commit overwrote the marker", async () => {
+    // A user undid and re-committed: the row's transfer_soft_commit_at advanced
+    // to a NEWER value, but this event was scheduled for the OLD attempt. The
+    // marker-gated commit CAS matches zero rows, and the re-read must NOT
+    // misclassify the newer live attempt as our own self-recommit → no commit,
+    // no double memory-emit / double contact-bind.
+    mocks.db.current = buildFinalizeDb({
+      sessionRow: {
+        id: ANON_SESSION_ID,
+        tenant_id: TENANT_ID,
+        transferred_to_user_id: USER_ID,
+        transfer_soft_commit_at: "2026-07-09T05:00:00.000Z", // newer than our event
+        transfer_committed_at: null,
+      },
+      commitRows: [], // marker mismatch → CAS zero rows
+      reReadRow: {
+        transfer_committed_at: null,
+        transfer_soft_commit_at: "2026-07-09T05:00:00.000Z",
+        transferred_to_user_id: USER_ID,
+      },
+      convRows: [{ id: CONV_ID }],
+    });
+
+    const { step, emitted } = makeStep();
+    const result = await runHandler(step, SOFT_COMMIT_AT); // our event = OLD attempt
+
+    expect(result).toEqual({ status: "undone_noop" });
+    expect(emitted).toHaveLength(0);
+    expect(mocks.bind).not.toHaveBeenCalled();
   });
 });
 

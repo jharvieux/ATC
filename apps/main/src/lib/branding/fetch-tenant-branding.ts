@@ -7,6 +7,8 @@
 // public-marketing-only (display_name, logo URLs, slogan, theme colors,
 // font, favicon), never PII or credentials.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export interface TenantBranding {

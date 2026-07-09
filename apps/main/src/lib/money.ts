@@ -88,24 +88,22 @@ export function fromCents(cents: Cents | bigint): string {
 }
 
 /**
- * Format cents for display with currency symbol using Intl.NumberFormat.
- * The canonical display formatter — all /100 patterns must use this.
- * Handles currency codes (USD, EUR, etc.) and falls back to "CODE amount" if unknown.
- * Returns "—" for null/undefined input.
- *
- * @param cents - the amount in cents
- * @param currency - ISO 4217 code (e.g., "USD"), defaults to "USD"
- * @returns formatted string with currency symbol (e.g., "$123.45")
+ * Canonical display formatter for an integer amount in a currency's MINOR units —
+ * all /100 patterns must route here. The divisor is the currency's own ISO-4217
+ * exponent from Intl's CLDR data (so scale and rendered precision can't disagree),
+ * NOT a hardcoded 100 — a flat ÷100 rendered zero-decimal currencies 100× too small (#1658).
+ * Falls back to "CODE amount" for codes Intl rejects; returns "—" for null/undefined.
  */
-export function formatCents(cents: number | null | undefined, currency: string = "USD"): string {
-  if (cents == null) return "—";
-  const amount = cents / 100;
+export function formatCents(minorUnits: number | null | undefined, currency: string = "USD"): string {
+  if (minorUnits == null) return "—";
   const code = currency.toUpperCase();
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(amount);
+    const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: code });
+    const fractionDigits = fmt.resolvedOptions().maximumFractionDigits ?? 2;
+    return fmt.format(minorUnits / 10 ** fractionDigits);
   } catch {
-    // Fallback for invalid currency codes
-    return `${code} ${amount.toFixed(2)}`;
+    // Invalid currency code — no minor-unit data, assume 2 decimals.
+    return `${code} ${(minorUnits / 100).toFixed(2)}`;
   }
 }
 

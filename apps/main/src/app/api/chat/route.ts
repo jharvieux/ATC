@@ -690,7 +690,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // which the audit flagged as a kill-switch escape in streaming mode.
   // #1586 — served from the shared 60s platform_settings cache. A ≤60s
   // propagation delay is acceptable (it already races in-flight streams).
-  // Fail-open preserved: a read error → value null → not engaged.
+  // Fail-open preserved: a read error → value null → not engaged. The
+  // authoritative fail-CLOSED layer is the supervisor (reads
+  // ai_kill_switch_state); this pre-gate only stops streaming early.
+  // #1653 — platform_settings.ai_kill_switch_engaged is written by
+  // /api/admin/ai-kill-switch alongside ai_kill_switch_state, so the admin
+  // global-pause toggle drives this gate too (previously it did not).
   const { value: killValue } = await getCachedPlatformSetting(
     svc,
     "ai_kill_switch_engaged",

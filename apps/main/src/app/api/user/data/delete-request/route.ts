@@ -8,36 +8,22 @@
 // flagged the user's tenant B row too. The middleware now reliably propagates
 // x-resolved-tenant-id to handlers (per #164), so we filter by it.
 
-import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { authenticateUser } from "@/lib/auth/authenticate-user";
 
 interface DeleteBody {
   email_confirmation: string;
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const authed = await authenticateUser(req);
+  if (!authed) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
-  const accessToken = authHeader.slice("Bearer ".length);
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(url, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const authUser = authData.user;
-  const authUserId = authUser.id;
+  const authUserId = authed.authUserId;
 
   // Tenant scope (audit Auth #4): a single auth user can have rows in
   // multiple tenants; clicking "delete my account" on tenant A's app must
@@ -56,7 +42,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Confirm email matches.
-  const userEmail = authUser.email ?? "";
+  const userEmail = authed.email ?? "";
   if (!body.email_confirmation || body.email_confirmation.trim().toLowerCase() !== userEmail.toLowerCase()) {
     return Response.json({ error: "email_confirmation_mismatch" }, { status: 422 });
   }

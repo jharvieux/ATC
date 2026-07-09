@@ -10,6 +10,8 @@
 //
 // On every transition an audit_log row is written.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 

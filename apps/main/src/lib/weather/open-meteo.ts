@@ -25,6 +25,8 @@
 // the service-role client (no tenant context — weather is platform-scoped).
 // The lint allowlist for direct service-role import covers this file.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { wmoCodeToText } from "./wmo-codes";

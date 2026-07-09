@@ -3,6 +3,8 @@
 // Submission must be blocked until all estimated DOBs are confirmed.
 // Throws DOBEstimateUnresolvedError listing affected passenger names.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export class DOBEstimateUnresolvedError extends Error {

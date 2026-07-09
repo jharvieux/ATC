@@ -23,6 +23,8 @@
 // right HTTP status (401 for missing/invalid token, 403 for token-valid-but-
 // not-an-admin, 500 for misconfiguration).
 
+import "server-only";
+
 import { cache as reactCache } from "react";
 import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";

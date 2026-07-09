@@ -13,6 +13,8 @@
 //   stateless and read per-tenant credentials from HostCallContext at
 //   call time.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import type { HostAgencyClient } from "@atc/shared-types";
 

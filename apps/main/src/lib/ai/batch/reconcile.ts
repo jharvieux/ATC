@@ -16,6 +16,23 @@
 // the direct-call path in instrumentedClaudeCall. The reconciler reads
 // the model from the result message and computes via getCostEstimate
 // (already public from lib/ai/pricing.ts).
+//
+// #1599 — processOneResult CAS-claims each row (.eq("status","submitted"))
+// before attributing cost or emitting a completion/failure event. Without
+// this, a crash partway through streaming a batch's results (row 30 of
+// 50) leaves the job at status='submitted'; the next 5-minute reconcile
+// re-streams the WHOLE batch from Anthropic, and rows 1-29 (already
+// 'completed') would otherwise get cost re-incremented and a duplicate
+// event emitted. A 0-row CAS result means an earlier run already claimed
+// this row — skip cost/event and move on, which is what makes re-running
+// the loop from the top idempotent.
+//
+// Known limitation (tracked as #1697, not fixed here): the job-level
+// total_cost_cents/total_*_tokens rollup below is summed only from rows
+// processed in THIS run's loop, so a batch split across two reconcile
+// runs ends up with an undercounted job-level total. Per-row cost_cents
+// and the tenant_usage_metrics increments (what's actually billed) are
+// unaffected — this is a job-level observability field only.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
@@ -164,7 +181,7 @@ export async function reconcileSubmittedBatches(args: {
 async function processOneResult(args: {
   db: SupabaseClient;
   result: BatchResultRow;
-  byCustomId: Map<string, { id: string; tenant_id: string; purpose: BatchablePurpose; caller_metadata: Record<string, unknown> | null }>;
+  byCustomId: Map<string, { id: string; tenant_id: string; purpose: BatchablePurpose; caller_metadata: Record<string, unknown> | null; status: string }>;
   accumulate: (
     succeeded: boolean,
     failed: boolean,
@@ -184,6 +201,15 @@ async function processOneResult(args: {
     return;
   }
 
+  // Idempotency gate (#1702): only rows still 'submitted' as loaded at the top
+  // of THIS reconcile run are ours to process. A row already terminal was
+  // finished by a prior run — return before the event is sent so a re-streamed
+  // batch (Anthropic has no resume cursor) neither re-emits nor re-attributes
+  // cost. This is what lets the completion event be sent BEFORE the CAS-claim
+  // below: the send only runs for genuinely-unprocessed rows, and the CAS
+  // remains the authoritative guard against a concurrent run double-counting.
+  if (req.status !== "submitted") return;
+
   if (result.result.type === "succeeded") {
     const msg = result.result.message;
     const text = msg.content
@@ -195,7 +221,31 @@ async function processOneResult(args: {
     const cost = getCostEstimate({ model, input_tokens, output_tokens });
     const costNumber = Number(cost);
 
-    await safeAwait(
+    // Emit the completion event BEFORE the CAS-claim (#1702). Previously the
+    // row was flipped terminal first and the event sent after; if inngest.send
+    // threw, the event was lost forever (the next run's CAS returns 0 rows and
+    // skips). Sending first means a crash between send and claim just re-runs
+    // both on retry — the deterministic `id` makes Inngest dedup the re-send so
+    // it never double-fires. The status gate above guarantees we only reach
+    // here for a still-'submitted' row, so an already-processed row from a prior
+    // run never re-emits.
+    const payload: BatchRequestCompletedPayload = {
+      request_id: req.id,
+      tenant_id: req.tenant_id,
+      purpose: req.purpose,
+      result_text: text,
+      caller_metadata: req.caller_metadata,
+    };
+    await inngest.send({
+      id: `batch-result-${req.id}`,
+      name: `ai.batch_request.completed.${req.purpose}` as never,
+      data: payload as unknown as Record<string, unknown>,
+    });
+
+    // CAS-claim: authoritative guard for cost attribution. Only proceed if this
+    // update actually flipped the row out of 'submitted'. A 0-row result means a
+    // concurrent run already claimed it — skip cost (the event is deduped by id).
+    const claimed = await safeAwait(
       db
         .from("ai_batch_requests")
         .update({
@@ -210,9 +260,14 @@ async function processOneResult(args: {
           cost_cents: costNumber,
           completed_at: new Date().toISOString(),
         })
-        .eq("id", req.id),
+        .eq("id", req.id)
+        .eq("status", "submitted")
+        .select("id"),
       "ai_batch_requests.update.succeeded",
     );
+    if (!claimed || claimed.length === 0) {
+      return;
+    }
 
     // Cost attribution: same shape as instrumentedClaudeCall's per-call
     // increment — one ai_call_log row + one tenant_usage_metrics RPC.
@@ -238,19 +293,6 @@ async function processOneResult(args: {
       );
     }
 
-    // Emit completion event so the consumer can do its side effect.
-    const payload: BatchRequestCompletedPayload = {
-      request_id: req.id,
-      tenant_id: req.tenant_id,
-      purpose: req.purpose,
-      result_text: text,
-      caller_metadata: req.caller_metadata,
-    };
-    await inngest.send({
-      name: `ai.batch_request.completed.${req.purpose}` as never,
-      data: payload as unknown as Record<string, unknown>,
-    });
-
     accumulate(true, false, input_tokens, output_tokens, costNumber);
     return;
   }
@@ -263,18 +305,9 @@ async function processOneResult(args: {
       ? `${result.result.error.type}: ${result.result.error.message}`
       : result.result.type;
 
-  await safeAwait(
-    db
-      .from("ai_batch_requests")
-      .update({
-        status: "failed",
-        error_detail: errorDetail,
-        completed_at: new Date().toISOString(),
-      })
-      .eq("id", req.id),
-    "ai_batch_requests.update.failed",
-  );
-
+  // Send the failure event BEFORE the CAS-claim, same rationale as the success
+  // path (#1702): a send that throws after the row was flipped terminal would
+  // otherwise lose the event permanently. The deterministic id dedups the retry.
   const failPayload: BatchRequestFailedPayload = {
     request_id: req.id,
     tenant_id: req.tenant_id,
@@ -283,9 +316,27 @@ async function processOneResult(args: {
     caller_metadata: req.caller_metadata,
   };
   await inngest.send({
+    id: `batch-result-${req.id}`,
     name: `ai.batch_request.failed.${req.purpose}` as never,
     data: failPayload as unknown as Record<string, unknown>,
   });
+
+  const claimed = await safeAwait(
+    db
+      .from("ai_batch_requests")
+      .update({
+        status: "failed",
+        error_detail: errorDetail,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", req.id)
+      .eq("status", "submitted")
+      .select("id"),
+    "ai_batch_requests.update.failed",
+  );
+  if (!claimed || claimed.length === 0) {
+    return;
+  }
 
   accumulate(false, true, 0, 0, 0);
 }

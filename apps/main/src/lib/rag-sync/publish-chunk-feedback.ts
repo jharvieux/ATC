@@ -10,6 +10,8 @@
 // feedback write. The §6.10 ranking gracefully degrades when feedback
 // data is missing (treats the chunk as un-rated).
 
+import "server-only";
+
 import { hmacHexSign } from "@atc/contracts";
 
 export interface PublishChunkFeedbackInput {
