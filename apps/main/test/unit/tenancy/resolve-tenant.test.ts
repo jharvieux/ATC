@@ -232,4 +232,18 @@ describe("getTenantByAuthUserId", () => {
     const tenant = await getTenantByAuthUserId("auth-terminated-tenant");
     expect(tenant).toBeNull();
   });
+
+  it("#1678: survives 1001 distinct active users without evicting the first — the shared BoundedTtlCache default (1000) would have evicted it, forcing a DB read per user under realistic active-user counts", async () => {
+    mockUsersRow = { tenant_id: "tenant-1" };
+    const firstUser = "auth-cardinality-user-0";
+    await getTenantByAuthUserId(firstUser);
+    for (let i = 1; i <= 1000; i++) {
+      await getTenantByAuthUserId(`auth-cardinality-user-${i}`);
+    }
+    dbCallKeys.length = 0;
+    const tenant = await getTenantByAuthUserId(firstUser);
+    expect(tenant).not.toBeNull();
+    // A cache hit issues no new `users.auth_user_id=` lookup for firstUser.
+    expect(dbCallKeys.some((k) => k === `users.auth_user_id=${firstUser}`)).toBe(false);
+  });
 });

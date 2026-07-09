@@ -26,7 +26,10 @@ export const DOWN_AFTER_FAILURES = 5;
 
 const CACHE_TTL_MS = 30_000;
 
-const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS });
+// #1678 — keyed by VendorName, a fixed 9-value literal union; 32 is generous
+// headroom over that closed set and documents the bound is intentional, not
+// a copy-pasted default.
+const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 32 });
 
 export function computeStatus(consecutive_failures: number): VendorHealthStatus {
   if (consecutive_failures >= DOWN_AFTER_FAILURES) return "down";
