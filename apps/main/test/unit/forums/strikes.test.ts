@@ -50,7 +50,7 @@ function buildMockDb(rows: {
   return { from: fromMock } as unknown as SupabaseClient;
 }
 
-const ctx = { user_id: "u1", forum_id: "f1", tenant_id: "t1" };
+const ctx = { author: { user_id: "u1" }, forum_id: "f1", tenant_id: "t1" };
 
 describe("checkStrikePatterns — §19.9", () => {
   it("2 ai_hidden strikes in 24h → no action", async () => {
@@ -96,5 +96,32 @@ describe("checkStrikePatterns — §19.9", () => {
     const db = buildMockDb({ aiHiddenRecent: 0, coordinatorHiddenCumulative: 5, totalCumulative: 10 });
     const result = await checkStrikePatterns(db, ctx);
     expect(result.recommend_removal).toBe(true);
+  });
+});
+
+// #1572 — guest (invitation-authored) parity: the same pattern logic must
+// fire off invitation_id, not just user_id, and the auto-mute upsert must
+// write invitation_id (not a null-cast user_id) so a guest actually gets
+// muted rather than silently no-op-ing.
+describe("checkStrikePatterns — guest (invitation_id) authors — #1572", () => {
+  it("3 ai_hidden strikes in 24h for a guest → auto-mute, upserts by invitation_id", async () => {
+    const upsertMock = vi.fn().mockResolvedValue({ error: null });
+    const fromMock = vi.fn().mockImplementation((table: string) => {
+      if (table === "forum_user_state") return { upsert: upsertMock };
+      const chain: Record<string, unknown> = {};
+      chain.select = () => chain;
+      chain.eq = () => chain;
+      chain.gte = () => Promise.resolve({ data: Array(3).fill({}) });
+      return chain;
+    });
+    const db = { from: fromMock } as unknown as SupabaseClient;
+
+    const result = await checkStrikePatterns(db, { author: { invitation_id: "inv-1" }, forum_id: "f1", tenant_id: "t1" });
+
+    expect(result.auto_muted).toBe(true);
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({ invitation_id: "inv-1", forum_id: "f1", is_muted: true }),
+      expect.objectContaining({ onConflict: "forum_id,invitation_id" }),
+    );
   });
 });

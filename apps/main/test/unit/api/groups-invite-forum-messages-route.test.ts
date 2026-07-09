@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   messageInsertSingle: vi.fn(),
   parentMaybeSingle: vi.fn(),
   updateEq: vi.fn(),
+  userStateMaybeSingle: vi.fn(),
   verifyEnvAtBoot: vi.fn(),
   inngestSend: vi.fn(),
   writeAuditLog: vi.fn(),
@@ -58,6 +59,9 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "forums") {
         return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.forumLookup }) }) }) };
+      }
+      if (table === "forum_user_state") {
+        return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.userStateMaybeSingle }) }) }) };
       }
       if (table === "forum_threads") {
         return { select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ maybeSingle: mocks.threadLookup }) }) }) }) }) };
@@ -131,6 +135,7 @@ beforeEach(() => {
   mocks.messagesListLookup.mockResolvedValue({ data: [], error: null });
   mocks.parentMaybeSingle.mockResolvedValue({ data: null, error: null });
   mocks.updateEq.mockResolvedValue({ data: null, error: null });
+  mocks.userStateMaybeSingle.mockResolvedValue({ data: null, error: null });
   mocks.rpc.mockResolvedValue({ data: 1, error: null });
   mocks.verifyEnvAtBoot.mockReturnValue({
     FORUM_MODERATION_HAIKU_TIMEOUT_MS: 5000,
@@ -234,10 +239,16 @@ describe("POST /api/groups/invite/[token]/forum/threads/[threadId]/messages", ()
     expect(body.user_id).toBeNull();
     expect(body.status).toBe("visible"); // Haiku mock returns a low score
     expect(mocks.messageInsertSingle).toHaveBeenCalledOnce();
-    expect(mocks.recordStrike).not.toHaveBeenCalled(); // only hidden messages strike, and guest authors don't strike-track at all
+    expect(mocks.recordStrike).not.toHaveBeenCalled(); // only hidden messages strike
   });
 
-  it("skips strike-tracking for a guest-authored hidden message (no user_id to key strikes on)", async () => {
+  // #1572 — before this fix, guest-authored hidden messages skipped strike
+  // tracking entirely (forum_strikes.user_id was NOT NULL, so there was no
+  // column to key a guest's strike on). Now forum_strikes/forum_user_state
+  // have a nullable invitation_id mirroring forum_messages_author_xor, so a
+  // repeat-offender guest accrues strikes and can be auto-muted exactly like
+  // an authenticated member.
+  it("strike-tracks a guest-authored hidden message by invitation_id", async () => {
     mocks.fetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -257,6 +268,30 @@ describe("POST /api/groups/invite/[token]/forum/threads/[threadId]/messages", ()
     const body = await res.json();
 
     expect(body.status).toBe("hidden");
-    expect(mocks.recordStrike).not.toHaveBeenCalled();
+    expect(mocks.recordStrike).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ author: { invitation_id: "inv-1" }, kind: "ai_hidden" }),
+    );
+    expect(mocks.checkStrikePatterns).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ author: { invitation_id: "inv-1" } }),
+    );
+  });
+
+  // #1572 — the route previously hardcoded muteState: null for guests, so
+  // even after adding invitation_id-keyed mute rows a muted guest could still
+  // post. This proves the route actually reads forum_user_state and blocks.
+  it("blocks posting for a muted guest invitation", async () => {
+    mocks.userStateMaybeSingle.mockResolvedValue({
+      data: { is_muted: true, muted_until: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      error: null,
+    });
+    const { POST } = await import("@/app/api/groups/invite/[token]/forum/threads/[threadId]/messages/route");
+
+    const res = await POST(postReq(), PARAMS);
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("posting_not_permitted");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
   });
 });

@@ -12,9 +12,10 @@
 // POST /api/groups/invite/[token]/forum/threads/[threadId]/messages
 //   Body: { content, parent_message_id? }. Same fail-closed Haiku moderation
 //   pipeline as the staff-facing route (insertAndModerateForumMessage) —
-//   guest messages aren't special-cased. Blocked for `not_going` invitees
-//   (canPost), a locked forum/thread, or a sailed group (§19.10 parity with
-//   the staff-facing route, which enforces this at post-time, not just
+//   guest messages aren't special-cased. Blocked for `not_going` invitees,
+//   an auto-mute (canPost; #1572 — forum_user_state keyed by invitation_id),
+//   a locked forum/thread, or a sailed group (§19.10 parity with the
+//   staff-facing route, which enforces this at post-time, not just
 //   thread-creation time).
 
 import { validateInviteTokenChecks1to4 } from "@/lib/groups/invitation-token-checks";
@@ -75,11 +76,21 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
     return Response.json({ error: "forum_read_only_post_sailing" }, { status: 410 });
   }
 
+  // #1572 — guests can now be auto-muted (forum_user_state.invitation_id);
+  // look it up the same way the staff-facing route looks up muteState by
+  // user_id, instead of hardcoding null.
+  const { data: muteState } = await svc
+    .from("forum_user_state")
+    .select("is_muted,muted_until")
+    .eq("forum_id", forum.id)
+    .eq("invitation_id", invitation.id)
+    .maybeSingle();
+
   const canPostMessage = canPost({
     user: { id: invitation.id, role: "guest", is_coordinator: false },
     forum,
     thread,
-    muteState: null,
+    muteState,
     invitation,
   });
   if (!canPostMessage) {
