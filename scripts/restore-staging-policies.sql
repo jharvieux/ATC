@@ -3,8 +3,13 @@
 -- =============================================================================
 -- Run by: .github/workflows/deploy.yml, db-copy job, step
 --         "Restore storage RLS policies (#1316)" — AFTER pg_restore + staging
---         fixups, and AFTER `supabase db push` would have run (it doesn't
---         recreate these; see below).
+--         fixups, in db-copy, which runs BEFORE deploy-staging's
+--         `supabase db push` (db-copy is a `needs:` of deploy-staging). That
+--         ordering is safe: these policies' owning migrations (bp34,
+--         quote_pdfs) are already recorded in the migration ledger, so the
+--         later `db push` treats them as already-applied and is a no-op for
+--         them either way — it neither recreates nor disturbs what this file
+--         just restored.
 -- When:   Every staging refresh, immediately following the public-schema copy.
 -- Why:    `DROP SCHEMA public CASCADE` (deploy.yml) drops any object that
 --         DEPENDS ON a public object. Storage RLS policies on storage.objects

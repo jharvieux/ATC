@@ -582,7 +582,7 @@ jobs:
       # migrations do, so a failure is a real regression, not a privilege gap.
       - name: Restore storage RLS policies (#1316)
         run: |
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f db/restore-staging-policies.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/restore-staging-policies.sql
 
       # #1316 — Realtime publication membership. `DROP TABLE` removed public
       # tables from the supabase_realtime publication. There is no source of
@@ -596,7 +596,7 @@ jobs:
           # Emit one idempotent DO-block per public table currently in the
           # supabase_realtime publication on prod. string_agg → NULL (empty
           # file) when prod has no public members, making replay a clean no-op.
-          psql "$PROD_DB_URL" -tA -o realtime-publication-restore.sql -c "
+          psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 -tA -o realtime-publication-restore.sql -c "
             SELECT COALESCE(string_agg(
               format(
                 'DO \$do\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=%L) THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.%I; END IF; END \$do\$;',

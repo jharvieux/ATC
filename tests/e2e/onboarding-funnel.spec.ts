@@ -69,7 +69,9 @@ test.describe("onboarding funnel smoke (beta/staging)", () => {
     // Landed on a real authenticated surface, not bounced back to the public
     // sign-in — the post-login dispatch produced a destination.
     await expect(authedPage).not.toHaveURL(/\/auth\/reauth/);
-    await expect(authedPage).toHaveURL(/\/(crm|chat|onboarding)?/);
+    expect(new URL(authedPage.url()).pathname, "must land on a real dashboard surface").toMatch(
+      /^\/(crm|chat|onboarding)(\/|$)/,
+    );
   });
 
   // Step 5 (#1048/#1091): a permission-gated tenant action must succeed for the
