@@ -11,11 +11,20 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  alert: vi.fn(async (_a: { severity: string; signal: string; detail: string }) => undefined),
-  sign: vi.fn(async () => "jwt-token"),
-  fetch: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const emptyEntities = {
+    destinations: [], departure_ports: [], cruise_lines: [], ships: [],
+    travel_dates: { earliest: null, latest: null },
+    passenger_composition: "", intent: "research", categories_hint: [],
+  };
+  return {
+    alert: vi.fn(async (_a: { severity: string; signal: string; detail: string }) => undefined),
+    sign: vi.fn(async () => "jwt-token"),
+    fetch: vi.fn(),
+    extractEntities: vi.fn(async () => emptyEntities),
+    emptyEntities,
+  };
+});
 
 vi.mock("@/lib/monitoring/send-operator-alert", () => ({
   sendOperatorAlert: mocks.alert,
@@ -24,7 +33,7 @@ vi.mock("@/lib/rag-auth/sign-service-jwt", () => ({
   signServiceJwt: mocks.sign,
 }));
 vi.mock("@/lib/rag/entity-extraction", () => ({
-  extractEntities: async () => ({ destinations: [], departure_ports: [], cruise_lines: [], ships: [], travel_dates: { earliest: null, latest: null }, passenger_composition: "", intent: "research", categories_hint: [] }),
+  extractEntities: mocks.extractEntities,
 }));
 
 const ORIG_URL = process.env.RAG_SERVICE_URL;
@@ -34,6 +43,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.stubGlobal("fetch", mocks.fetch);
   mocks.sign.mockResolvedValue("jwt-token");
+  mocks.extractEntities.mockResolvedValue(mocks.emptyEntities);
   process.env.RAG_SERVICE_URL = "https://rag.test";
 });
 
@@ -255,5 +265,114 @@ describe("buildRegionLookup — region/area + date window → region structured 
     const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
     expect(buildRegionLookup(entities({ destinations: ["Australia"] }))).toBeNull(); // no date
     expect(buildRegionLookup(entities({ travel_dates: { earliest: "2027-03-01", latest: null } }))).toBeNull(); // no destination
+  });
+});
+
+// #1551 — the structuredLookupDescription branch (retrieve-for-chat.ts:191-206)
+// decides WHAT the agent is told a sailing search covered when a structured
+// lookup fired but the RAG service returned zero chunks. Every prior test in
+// this file stubs extractEntities to always-empty, so sailingLookupAttempted
+// is always false and this string-building code never runs. If a future edit
+// dropped a field from one of these descriptions (e.g. forgot cruise_lines on
+// the region branch), the persona would tell the customer a narrower search
+// ran than actually did — these tests pin the exact text per branch so that
+// regression is caught at the unit level instead of only in a live chat.
+describe("structuredLookupDescription — sailing-search description builder (#1551)", () => {
+  function emptyRetrieveResponse(): void {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null }),
+    } as unknown as Response);
+  }
+
+  async function runWithEntities(over: Partial<typeof mocks.emptyEntities>) {
+    mocks.extractEntities.mockResolvedValueOnce({ ...mocks.emptyEntities, ...over });
+    emptyRetrieveResponse();
+    const { retrieveForChat } = await import("@/lib/rag/retrieve-for-chat");
+    return retrieveForChat({
+      message: "test message",
+      tenant_id: "t-1",
+      user_id: "u-1",
+      conversation_id: "c-1",
+      persona_id: "p-1",
+    });
+  }
+
+  it("itinerary branch: describes ship + sail_date_from (no chunks found)", async () => {
+    const res = await runWithEntities({
+      ships: ["Norwegian Bliss"],
+      travel_dates: { earliest: "2026-10-03", latest: null },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (Norwegian Bliss itinerary, from 2026-10-03)",
+    );
+  });
+
+  it("itinerary branch: includes sail_date_to when the message gave a range", async () => {
+    const res = await runWithEntities({
+      ships: ["Icon of the Seas"],
+      travel_dates: { earliest: "2026-10-01", latest: "2026-10-31" },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (Icon of the Seas itinerary, from 2026-10-01 to 2026-10-31)",
+    );
+  });
+
+  it("region branch: describes destinations + date window (no ship, no cruise line named)", async () => {
+    const res = await runWithEntities({
+      destinations: ["Australia"],
+      travel_dates: { earliest: "2027-03-01", latest: "2027-05-31" },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (Australia, 2027-03-01 to 2027-05-31)",
+    );
+  });
+
+  it("region branch: folds in cruise_lines and uses 'onward' when only a start date is known", async () => {
+    const res = await runWithEntities({
+      destinations: ["Caribbean"],
+      cruise_lines: ["Royal Caribbean"],
+      travel_dates: { earliest: "2027-02-01", latest: null },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (Caribbean, on Royal Caribbean, 2027-02-01 onward)",
+    );
+  });
+
+  it("port branch: describes departure_port + date_from (no ship, no destination named)", async () => {
+    const res = await runWithEntities({
+      departure_ports: ["Miami"],
+      travel_dates: { earliest: "2026-06-01", latest: null },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (departing Miami, from 2026-06-01)",
+    );
+  });
+
+  it("port branch: includes date_to when a range is given", async () => {
+    const res = await runWithEntities({
+      departure_ports: ["Port Canaveral"],
+      travel_dates: { earliest: "2026-10-23", latest: "2026-10-30" },
+    });
+    expect(res.knowledge_block).toContain(
+      "A sailing search was performed (departing Port Canaveral, from 2026-10-23 to 2026-10-30)",
+    );
+  });
+
+  it("no structured lookup fired: falls back to the plain no-result block, not a search description", async () => {
+    // Entities stay empty (default mock) — itinerary/region/port lookups all
+    // return null, so sailingLookupAttempted is false and formatKnowledgeBlock
+    // must get no structuredLookupDescription at all.
+    emptyRetrieveResponse();
+    const { retrieveForChat } = await import("@/lib/rag/retrieve-for-chat");
+    const res = await retrieveForChat({
+      message: "hi",
+      tenant_id: "t-1",
+      user_id: "u-1",
+      conversation_id: "c-1",
+      persona_id: "p-1",
+    });
+    expect(res.knowledge_block).toContain("No retrieved chunks");
+    expect(res.knowledge_block).not.toContain("A sailing search was performed");
   });
 });
