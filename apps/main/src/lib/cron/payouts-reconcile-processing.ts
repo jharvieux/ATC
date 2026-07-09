@@ -105,9 +105,19 @@ async function settleReconciledRow(
 }
 
 export async function runPayoutsReconcileProcessing(): Promise<{ recovered: number; total_processing: number }> {
-  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+  // #1694 — gate the whole safety net on BOOKING_RECONCILE_DISABLED, NOT
+  // BOOKING_CRONS_DISABLED. During an incident the operator sets BOOKING_CRONS_DISABLED
+  // to stop new money movement; this reconcile sweep must keep running so a stuck
+  // 'processing' payout still gets recovered/flagged. Only the dedicated reconcile
+  // switch stops it entirely.
+  if (process.env.BOOKING_RECONCILE_DISABLED === "true") {
     return { recovered: 0, total_processing: 0 };
   }
+  // #1694 — when the money-movement switch is on we may still READ Stripe and settle
+  // already-existing transfers (recording money that has already moved is not new
+  // movement), but we must NOT INITIATE a transfer via transfers.create. That branch
+  // is suppressed below and the operator is alerted to reconcile by hand.
+  const moneyMovementDisabled = process.env.BOOKING_CRONS_DISABLED === "true";
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
   const stripe = new Stripe(stripeKey);
@@ -174,6 +184,29 @@ export async function runPayoutsReconcileProcessing(): Promise<{ recovered: numb
             `The reconcile cron will NOT auto-recreate the transfer (the idempotency key may have ` +
             `expired, so a re-call could double-pay). Confirm whether a transfer landed and, if not, ` +
             `bump attempt_generation to allow a fresh, safely-keyed retry.`,
+          payload: {
+            payout_record_id: row.id,
+            tenant_id: row.tenant_id,
+            amount_cents: row.amount_cents.toString(),
+            created_at: row.created_at,
+            idempotency_key: idempotencyKey,
+          },
+        });
+        continue;
+      }
+
+      // #1694 — money-movement switch on: do NOT initiate a transfer even though the
+      // idempotency key is still valid. Leave the row 'processing' and alert the
+      // operator so a human decides when new money may move again.
+      if (moneyMovementDisabled) {
+        await sendOperatorAlert({
+          severity: "high",
+          signal: "payout_reconcile_transfer_suppressed_money_movement_disabled",
+          detail:
+            `Payout ${row.id} has no Stripe transfer and is within the idempotency window, ` +
+            `but BOOKING_CRONS_DISABLED is on, so the reconcile cron will NOT initiate a ` +
+            `transfer. The row stays 'processing'. Re-enable money movement (or transfer by ` +
+            `hand) to release it.`,
           payload: {
             payout_record_id: row.id,
             tenant_id: row.tenant_id,

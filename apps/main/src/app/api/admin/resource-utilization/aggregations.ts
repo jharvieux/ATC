@@ -41,61 +41,6 @@ export function parseBigIntCol(v: unknown): number {
   return parseInt(String(v), 10) || 0;
 }
 
-export interface AiCallLogRow {
-  created_at: string;
-  vendor: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cost_estimate_cents: unknown;
-}
-
-interface AiCallLogPageResult {
-  data: AiCallLogRow[] | null;
-  error: { message: string } | null;
-}
-
-export const AI_CALL_LOG_PAGE_SIZE = 1000;
-// Hard ceiling: 50 pages × 1000 rows = 50k rows. A dashboard read that would
-// need to walk more than this stops and flags `truncated` rather than risking
-// a serverless timeout paging an unbounded window — the operator sees a
-// lower-bound cost figure instead of a dead request.
-export const AI_CALL_LOG_MAX_PAGES = 50;
-
-export interface AiCallLogFetchResult {
-  rows: AiCallLogRow[];
-  // true when the MAX_PAGES ceiling was hit before the window was exhausted —
-  // the returned rows (and any cost derived from them) are a lower bound.
-  truncated: boolean;
-}
-
-// #1588: the GET handler used to run two separate unbounded selects over
-// ai_call_log (one for the daily rollup, one for the model breakdown) —
-// both silently truncated at PostgREST's max-rows default once a tenant's
-// 30-day call volume passed it, quietly UNDER-counting cost instead of
-// failing loud. This pages explicitly (every row counted exactly once,
-// never silently dropped) and merges what were two duplicate full-table
-// reads of the same window into a single pass. `fetchPage` is injected so
-// the pagination/fail-loud logic is unit-testable without a real DB client.
-export async function fetchAiCallLogRows(
-  // PromiseLike, not Promise: Supabase query builders are thenables, not
-  // real Promise instances.
-  fetchPage: (offset: number, limit: number) => PromiseLike<AiCallLogPageResult>,
-  pageSize: number = AI_CALL_LOG_PAGE_SIZE,
-  maxPages: number = AI_CALL_LOG_MAX_PAGES,
-): Promise<AiCallLogFetchResult> {
-  const rows: AiCallLogRow[] = [];
-  let pages = 0;
-  for (let offset = 0; ; offset += pageSize) {
-    const { data, error } = await fetchPage(offset, pageSize);
-    if (error) throw new Error(`ai_call_log read failed: ${error.message}`);
-    rows.push(...(data ?? []));
-    pages++;
-    if (!data || data.length < pageSize) return { rows, truncated: false };
-    if (pages >= maxPages) return { rows, truncated: true };
-  }
-}
-
 // Builds a sorted 30-day array anchored on `today`, zero-filling days with no
 // activity. Zero-fill is intentional: the chart must always render 30 points
 // regardless of data density.
@@ -146,6 +91,11 @@ export function buildDailyArray(
   return daily;
 }
 
+// `seed` carries already-aggregated per-model totals (e.g. the DB-side
+// ai_call_log_model_rollup RPC from #1698). Seed entries are pre-summed
+// call_counts/tokens/cost; `rows` are raw per-call rows (the RAG embedding
+// rows, still fetched from a separate DB) folded on top. A vendor:model that
+// appears in both merges correctly.
 export function aggregateByModel(
   rows: Array<{
     vendor: string;
@@ -154,8 +104,12 @@ export function aggregateByModel(
     output_tokens: number;
     cost_estimate_cents: unknown;
   }>,
+  seed: ModelRow[] = [],
 ): ModelRow[] {
   const modelMap = new Map<string, ModelRow>();
+  for (const s of seed) {
+    modelMap.set(`${s.vendor}:${s.model}`, { ...s });
+  }
   for (const row of rows) {
     const key = `${row.vendor}:${row.model}`;
     const existing = modelMap.get(key) ?? { vendor: row.vendor, model: row.model, call_count: 0, input_tokens: 0, output_tokens: 0, cost_cents: 0 };

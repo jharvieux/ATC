@@ -188,11 +188,10 @@ export const importPipeline = inngest.createFunction(
         // straight from doc-parsed → agent_set.
         getAdapterRate: undefined,
         acceptingUserId: null,
-        // #1576 — this step's retries are sequential (one run per row + the
-        // status guard above), so re-entering a 'promoting' row is this same
-        // execution finishing; re-drive from the checkpoints rather than
-        // aborting and leaving the row stuck mid-promotion.
-        resumeInProgress: true,
+        // #1712 — a whole-step Inngest retry re-runs promoteImport; the atomic
+        // promote_import RPC re-reads status='accepted' on the second run and
+        // returns the already-promoted ids idempotently (no duplicate writes),
+        // so no resume flag is needed.
       }),
     );
 

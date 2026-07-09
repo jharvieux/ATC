@@ -20,11 +20,15 @@
 // (nothing ever links its results back to these rows). Rows are now
 // CAS-claimed to 'submitted' status BEFORE the Anthropic call; if the
 // call fails, the claim is released back to 'pending' so the next
-// flush retries cleanly instead of resubmitting. If the process dies
-// in the narrow window between a successful submit and the
-// ai_batch_jobs insert/link below, the claimed rows are stranded
-// (status='submitted', batch_job_id=null) rather than double-submitted
-// — a strictly smaller residual risk, tracked as a follow-up (#1696).
+// flush retries cleanly instead of resubmitting.
+//
+// #1696 — the remaining crash window (between a successful submit and the
+// ai_batch_jobs insert/link below) no longer strands rows unrecoverably: right
+// after submit we stamp anthropic_batch_id + submitted_at onto the claimed rows
+// (see below), so a crash before the job insert leaves rows that record which
+// live batch they belong to. The reconcile adoption sweep (adopt.ts) then
+// find-or-creates the job and links them — no orphaned paid-for batch, no
+// resubmission.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { submitAnthropicBatch, type BatchRequest } from "@/lib/ai/call-wrapper";
@@ -144,6 +148,34 @@ export async function flushPendingForPurpose(args: {
     throw err;
   }
 
+  // #1696 — stamp the Anthropic batch id (and submit time) onto the claimed
+  // rows BEFORE inserting the job. If we crash after this point but before the
+  // job insert/link below, the rows still record which live batch they belong
+  // to, so the reconcile adoption sweep can recover them into a job instead of
+  // orphaning a paid-for batch (resetting them to 'pending' would double-submit
+  // — D-091 #21). submitted_at now marks actual submit time (previously set at
+  // link) so the sweep can age-gate stranded rows against a real timestamp.
+  const stamped = await safeAwait(
+    db
+      // d091-allow:service-role-tenant — platform cron stamps all tenants' rows in one batch by design; no tenant_id filter is correct here.
+      .from("ai_batch_requests")
+      .update({
+        anthropic_batch_id: submitted.batch_id,
+        submitted_at: new Date().toISOString(),
+      })
+      .in("id", pendingIds)
+      .eq("status", "submitted")
+      .select("id"),
+    "ai_batch_requests.stamp_batch_id",
+  );
+  if (!stamped || stamped.length !== pendingIds.length) {
+    // The batch is live at Anthropic; whatever rows DID stamp are recoverable
+    // by the adoption sweep. Fail loud so the missing-job condition is visible.
+    throw new Error(
+      `flushPendingForPurpose: expected to stamp ${pendingIds.length} rows with batch id ${submitted.batch_id}, stamped ${stamped?.length ?? 0}`,
+    );
+  }
+
   // Create the ai_batch_jobs row.
   const jobRow = await safeAwait(
     db
@@ -161,16 +193,14 @@ export async function flushPendingForPurpose(args: {
   );
   const job = jobRow as unknown as { id: string };
 
-  // Link the already-claimed requests to the job. They're already
-  // 'submitted' from the claim step above; this just attaches batch_job_id.
+  // Link the already-claimed, already-stamped requests to the job. They're
+  // 'submitted' with submitted_at + anthropic_batch_id set from the steps
+  // above; this just attaches batch_job_id.
   const linked = await safeAwait(
     db
       // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
       .from("ai_batch_requests")
-      .update({
-        batch_job_id: job.id,
-        submitted_at: new Date().toISOString(),
-      })
+      .update({ batch_job_id: job.id })
       .in("id", pendingIds)
       .eq("status", "submitted")
       .select("id"),
