@@ -21,6 +21,17 @@ export type ChatTurn = { role: ChatRole; content: string };
 // approaching the limit, while comfortably holding a long support thread.
 const DEFAULT_MAX_CHARS = 50_000;
 
+// #1587: row cap on the query itself. Without this a long thread refetches
+// every row every turn, and past PostgREST's default max-rows (1000) the
+// ascending-order query got silently truncated from the front — dropping
+// the NEWEST messages, the opposite of what trimToBudget's char-budget is
+// supposed to protect. 60 rows comfortably exceeds what trimToBudget's
+// 50k-char default keeps (even short messages rarely push past that in
+// under 60 turns), so the row cap is never the binding constraint in
+// practice — it's a floor under the query, not a replacement for the
+// char-budget trim.
+const HISTORY_ROW_LIMIT = 60;
+
 interface MessagesRow {
   role: string;
   content: string | null;
@@ -53,7 +64,11 @@ export async function loadConversationHistory(
               order: (
                 col: string,
                 opts: { ascending: boolean },
-              ) => Promise<{ data: MessagesRow[] | null; error: { message: string } | null }>;
+              ) => {
+                limit: (
+                  n: number,
+                ) => Promise<{ data: MessagesRow[] | null; error: { message: string } | null }>;
+              };
             };
           };
         };
@@ -65,14 +80,17 @@ export async function loadConversationHistory(
     .eq("tenant_id", tenantId)
     .eq("conversation_id", conversationId)
     .in("role", ["user", "assistant"])
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false })
+    .limit(HISTORY_ROW_LIMIT);
 
   const { data, error } = await query;
   if (error) {
     throw new Error(`loadConversationHistory: ${error.message}`);
   }
 
-  const rows = data ?? [];
+  // Query returns newest-first (so LIMIT keeps the newest rows, not the
+  // oldest); reverse back to chronological order before building turns.
+  const rows = (data ?? []).slice().reverse();
   const turns: ChatTurn[] = [];
   for (const row of rows) {
     if (row.role !== "user" && row.role !== "assistant") continue;
