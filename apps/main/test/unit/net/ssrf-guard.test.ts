@@ -226,3 +226,95 @@ describe("fetchGuarded — body forwarding, size cap, decompression (#1597)", ()
     expect(httpMockRequests).toHaveLength(0);
   });
 });
+
+// #1702 — a compressed response could decompress into something far larger than
+// the raw-byte cap ever sees. The zlib maxOutputLength guard must reject the
+// bomb as it decodes rather than after materializing multi-GB in memory.
+describe("fetchGuarded — decompression bomb cap (#1702)", () => {
+  it("rejects a gzip payload whose decompressed size exceeds the cap without materializing it", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    // ~11MB of zeros compresses to a few KB on the wire (sails past the raw-byte
+    // cap) but blows the 10MB decompressed cap. WHY this matters: without
+    // maxOutputLength, zlib allocates the full 11MB+ before the post-check runs,
+    // so a small hostile response can exhaust memory. ResponseTooLargeError
+    // proves the guard fired during decode, not after.
+    const bomb = gzipSync(Buffer.alloc(11 * 1024 * 1024, 0));
+    httpMockRequests.push({
+      status: 200,
+      headers: { "content-encoding": "gzip", "content-length": String(bomb.length) },
+      body: bomb,
+    });
+    await expect(fetchGuarded("https://feeds.example.com/bomb.gz")).rejects.toBeInstanceOf(
+      ResponseTooLargeError,
+    );
+  });
+
+  it("still decompresses a small legitimate gzip body once the cap is in place", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    const plaintext = "small legit payload under the cap";
+    httpMockRequests.push({
+      status: 200,
+      headers: { "content-encoding": "gzip" },
+      body: gzipSync(Buffer.from(plaintext, "utf8")),
+    });
+    const res = await fetchGuarded("https://feeds.example.com/small.gz");
+    expect(await res.text()).toBe(plaintext);
+  });
+});
+
+// #1702 — fetchGuarded forwarded the request body + headers unchanged on every
+// redirect hop. Standard fetch security semantics: strip the body/Authorization
+// crossing an origin, downgrade to GET on 301/302/303, and only keep method+body
+// on a same-origin 307/308.
+describe("fetchGuarded — redirect body/header semantics (#1702)", () => {
+  function lowerKeys(headers?: Record<string, string>): string[] {
+    return Object.keys(headers ?? {}).map((k) => k.toLowerCase());
+  }
+
+  it("drops the body and strips Authorization on a cross-origin redirect", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    // 307 normally preserves method+body, so this isolates the cross-origin rule:
+    // the method survives but the body + bearer token must not reach a new host.
+    httpMockRequests.push({ status: 307, headers: { location: "https://other.example.com/next" } });
+    httpMockRequests.push({ status: 200, headers: {}, body: "ok" });
+    await fetchGuarded("https://api.example.com/start", {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      body: JSON.stringify({ a: 1 }),
+    });
+    expect(httpMockCalls).toHaveLength(2);
+    const secondHop = httpMockCalls[1]!;
+    expect(secondHop.opts.method).toBe("POST"); // 307 keeps the method
+    expect(secondHop.endBody).toBeUndefined(); // ...but the body is dropped cross-origin
+    const keys = lowerKeys(secondHop.opts.headers);
+    expect(keys).not.toContain("authorization"); // credential must not leak
+    expect(keys).not.toContain("content-length"); // no stale length without a body
+  });
+
+  it("downgrades to GET and drops the body on a 303 (same origin)", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    httpMockRequests.push({ status: 303, headers: { location: "https://api.example.com/next" } });
+    httpMockRequests.push({ status: 200, headers: {}, body: "ok" });
+    await fetchGuarded("https://api.example.com/start", {
+      method: "POST",
+      body: JSON.stringify({ a: 1 }),
+    });
+    expect(httpMockCalls).toHaveLength(2);
+    const secondHop = httpMockCalls[1]!;
+    expect(secondHop.opts.method).toBe("GET");
+    expect(secondHop.endBody).toBeUndefined();
+  });
+
+  it("preserves method and body on a 307 to the same origin", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    httpMockRequests.push({ status: 307, headers: { location: "https://api.example.com/next" } });
+    httpMockRequests.push({ status: 200, headers: {}, body: "ok" });
+    const payload = JSON.stringify({ a: 1 });
+    await fetchGuarded("https://api.example.com/start", { method: "POST", body: payload });
+    expect(httpMockCalls).toHaveLength(2);
+    const secondHop = httpMockCalls[1]!;
+    expect(secondHop.opts.method).toBe("POST");
+    expect(Buffer.isBuffer(secondHop.endBody)).toBe(true);
+    expect((secondHop.endBody as Buffer).toString("utf8")).toBe(payload);
+  });
+});

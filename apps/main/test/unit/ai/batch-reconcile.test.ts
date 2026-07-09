@@ -169,3 +169,102 @@ describe("reconcileSubmittedBatches — CAS idempotency (#1599)", () => {
     expect(req1.error_detail).toBe("already-recorded-error");
   });
 });
+
+// #1702 — the completion/failure event is now sent BEFORE the CAS-claim with a
+// deterministic idempotency id. This closes the event-loss window (a send that
+// threw after the row was flipped terminal was lost forever) without
+// re-emitting for rows a prior run already finished.
+describe("reconcileSubmittedBatches — event-loss fix (#1702)", () => {
+  it("emits the completion event with a deterministic idempotency id (Inngest dedups the retry)", async () => {
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: 1, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const requests = new InMemoryTable([
+      { id: "req-1", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-1", caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+    mockResults.mockImplementation(async function* () {
+      yield succeededRow("req-1", "hi");
+    });
+
+    await reconcileSubmittedBatches({ db: db as never });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "batch-result-req-1",
+        name: "ai.batch_request.completed.memory_extraction",
+      }),
+    );
+  });
+
+  it("emits the failure event with the same deterministic idempotency id", async () => {
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: 1, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const requests = new InMemoryTable([
+      { id: "req-1", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-1", caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+    mockResults.mockImplementation(async function* () {
+      yield failedRow("req-1");
+    });
+
+    await reconcileSubmittedBatches({ db: db as never });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "batch-result-req-1",
+        name: "ai.batch_request.failed.memory_extraction",
+      }),
+    );
+  });
+
+  it("leaves the row claimable when the event send throws — never a terminal row with a lost event", async () => {
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: 1, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const requests = new InMemoryTable([
+      { id: "req-1", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-1", caller_metadata: null, status: "submitted", batch_job_id: "job-1" },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+    mockResults.mockImplementation(async function* () {
+      yield succeededRow("req-1", "hi");
+    });
+    // Inngest is down for this attempt.
+    mockSend.mockRejectedValueOnce(new Error("inngest unavailable"));
+
+    // WHY: because the send runs BEFORE the CAS-claim, a send failure must abort
+    // the row while it is still 'submitted'. Under the old ordering the row was
+    // already 'completed' and the event was gone — the next run's CAS returned 0
+    // and never retried it. Here the row stays claimable so a retry re-sends
+    // (deduped by id) and only then marks it terminal.
+    await expect(reconcileSubmittedBatches({ db: db as never })).rejects.toThrow();
+
+    expect(requests.rows[0]!.status).toBe("submitted");
+    expect(mockLogAndIncrement).not.toHaveBeenCalled();
+  });
+
+  it("does not re-send the event for a row a prior run already completed (gate returns before send)", async () => {
+    const jobs = new InMemoryTable([
+      { id: "job-1", anthropic_batch_id: "batch-1", purpose: "memory_extraction", request_count: 1, status: "submitted", submitted_at: "2026-07-01T00:00:00Z" },
+    ]);
+    const requests = new InMemoryTable([
+      {
+        id: "req-1", tenant_id: "t-1", purpose: "memory_extraction", custom_id: "req-1",
+        caller_metadata: null, status: "completed", batch_job_id: "job-1",
+        result_text: "already-processed", cost_cents: 7,
+      },
+    ]);
+    const db = makeBatchDb({ ai_batch_jobs: jobs, ai_batch_requests: requests });
+    mockResults.mockImplementation(async function* () {
+      yield succeededRow("req-1", "a re-stream that must NOT re-emit");
+    });
+
+    await reconcileSubmittedBatches({ db: db as never });
+
+    // The status gate returns before the send, so no event fires on the retry.
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockLogAndIncrement).not.toHaveBeenCalled();
+    expect(requests.rows[0]!.result_text).toBe("already-processed");
+  });
+});

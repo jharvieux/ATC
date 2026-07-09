@@ -61,19 +61,36 @@ function encodeBody(body: BodyInit | null | undefined): Buffer | undefined {
 }
 
 function decompressBody(buf: Buffer, contentEncoding: string): Buffer {
+  // maxOutputLength caps the DECOMPRESSED size so a small "gzip-of-zeros" bomb
+  // can't materialize multi-GB before the post-decompress length check. zlib
+  // throws RangeError(ERR_BUFFER_TOO_LARGE) the moment output would exceed the
+  // cap instead of allocating the whole buffer first; fetchPinnedHop maps that
+  // code to ResponseTooLargeError.
+  const opts = { maxOutputLength: MAX_RESPONSE_BYTES };
   switch (contentEncoding.trim().toLowerCase()) {
     case "gzip":
     case "x-gzip":
-      return gunzipSync(buf);
+      return gunzipSync(buf, opts);
     case "deflate":
-      return inflateSync(buf);
+      return inflateSync(buf, opts);
     case "br":
-      return brotliDecompressSync(buf);
+      return brotliDecompressSync(buf, opts);
     case "identity":
       return buf;
     default:
       throw new Error(`fetchGuarded: unsupported content-encoding "${contentEncoding}"`);
   }
+}
+
+function stripHeaders(
+  headers: Record<string, string> | undefined,
+  names: string[],
+): Record<string, string> | undefined {
+  if (!headers) return headers;
+  const drop = new Set(names.map((n) => n.toLowerCase()));
+  return Object.fromEntries(
+    Object.entries(headers).filter(([k]) => !drop.has(k.toLowerCase())),
+  );
 }
 
 export interface SsrfCheck {
@@ -189,6 +206,13 @@ function fetchPinnedHop(
           try {
             body = decompressBody(body, contentEncoding);
           } catch (err) {
+            // A gzip/br bomb trips zlib's maxOutputLength guard before the
+            // buffer is fully allocated — classify it as too-large, not a
+            // generic decode failure.
+            if ((err as NodeJS.ErrnoException)?.code === "ERR_BUFFER_TOO_LARGE") {
+              reject(new ResponseTooLargeError(MAX_RESPONSE_BYTES));
+              return;
+            }
             reject(err instanceof Error ? err : new Error(String(err)));
             return;
           }
@@ -230,24 +254,46 @@ export async function fetchGuarded(
   const flatHeaders = headers instanceof Headers
     ? Object.fromEntries(headers.entries())
     : (headers as Record<string, string> | undefined);
-  const bodyBuffer = encodeBody(body);
 
+  // These evolve across hops per standard fetch redirect security semantics.
   let current = url;
+  let currentMethod = method as string | undefined;
+  let currentHeaders = flatHeaders ? { ...flatHeaders } : undefined;
+  let currentBody = encodeBody(body);
+
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const check = await validateOutboundUrlResolved(current);
     if (!check.allowed) throw new SsrfBlockedError(check.reason ?? "blocked");
     const hopInit: Parameters<typeof fetchPinnedHop>[3] = { timeoutMs };
-    if (method) hopInit.method = method as string;
-    if (flatHeaders) hopInit.headers = flatHeaders;
-    if (bodyBuffer) hopInit.body = bodyBuffer;
+    if (currentMethod) hopInit.method = currentMethod;
+    if (currentHeaders) hopInit.headers = currentHeaders;
+    if (currentBody) hopInit.body = currentBody;
     const res = await fetchPinnedHop(current, check.pinnedIp!, check.pinnedFamily!, hopInit);
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) return res;
-      current = new URL(loc, current).toString();
-      continue;
+    if (res.status < 300 || res.status >= 400) return res;
+
+    const loc = res.headers.get("location");
+    if (!loc) return res;
+    const next = new URL(loc, current);
+    const crossOrigin = next.origin !== new URL(current).origin;
+
+    // Standard fetch redirect security semantics:
+    //  - 301/302/303 downgrade the method to GET and drop the request body
+    //    (any origin) — a POST that lands on a GET target must not resend its body.
+    //  - a cross-origin hop drops the body and strips Authorization so a request
+    //    payload / bearer token never leaks to a host the caller never authenticated to.
+    //  - only a same-origin 307/308 preserves the original method + body.
+    const downgrade = res.status === 301 || res.status === 302 || res.status === 303;
+    if (downgrade) currentMethod = "GET";
+    if (downgrade || crossOrigin) {
+      currentBody = undefined;
+      // A stale content-length/content-type without a body would hang the peer
+      // (or misdescribe the request); drop them alongside the body.
+      currentHeaders = stripHeaders(currentHeaders, ["content-length", "content-type"]);
     }
-    return res;
+    if (crossOrigin) {
+      currentHeaders = stripHeaders(currentHeaders, ["authorization"]);
+    }
+    current = next.toString();
   }
   throw new SsrfBlockedError("too_many_redirects");
 }
