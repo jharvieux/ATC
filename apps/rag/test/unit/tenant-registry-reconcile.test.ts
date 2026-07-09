@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCrossOriginRedirect } from "@/inngest/tenant-registry-reconcile";
+import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
 
 // WHY: the reconcile fetches main's admin API with a Bearer token. If
 // MAIN_APP_URL points at a host that redirects (apex→www, or the Vercel

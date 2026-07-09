@@ -11,7 +11,7 @@
 import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import type { TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
+import { hmacHexSign, type TenantEvent } from "@atc/contracts";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -73,15 +73,9 @@ export async function runRagSyncRetry(): Promise<{ retried: number; succeeded?: 
           } satisfies TenantEvent);
 
       const body = JSON.stringify(event);
-      const enc = new TextEncoder();
-      const key = await crypto.subtle.importKey(
-        "raw", enc.encode(secret),
-        { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-      );
-      const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-      const sigHex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const sigHex = await hmacHexSign(secret, body);
 
-      const res = await fetch(`${ragUrl}${path}`, {
+      const res = await fetch(`${ragUrl.replace(/\/+$/, "")}${path}`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-webhook-signature": sigHex },
         body,

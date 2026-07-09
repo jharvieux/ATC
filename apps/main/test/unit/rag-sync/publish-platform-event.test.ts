@@ -14,6 +14,17 @@
 // behaviour worth testing is the allowlist filter.
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  insert: vi.fn(() => ({ data: null, error: null })),
+  from: vi.fn(),
+}));
+mocks.from.mockImplementation(() => ({ insert: mocks.insert }));
+
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({ from: mocks.from }),
+}));
+
 import { isSyncEligibleKey, publishPlatformEvent } from "../../../src/lib/rag-sync/publish-platform-event";
 
 describe("isSyncEligibleKey", () => {
@@ -48,6 +59,8 @@ describe("publishPlatformEvent — allowlist filter", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.from.mockClear();
+    mocks.insert.mockClear();
   });
 
   afterEach(() => {
@@ -116,13 +129,44 @@ describe("publishPlatformEvent — allowlist filter", () => {
     expect(body.payload.changes).toHaveLength(2);
   });
 
-  it("does nothing if RAG_SERVICE_URL is not set", async () => {
+  it("queues eligible keys to pending_rag_sync when RAG_SERVICE_URL is not set (#1595)", async () => {
     delete process.env.RAG_SERVICE_URL;
     await publishPlatformEvent({
       event_type: "platform_settings.updated",
       source_revision: 12345,
-      payload: { changes: [{ key: "feedback_adjustment_limit", value: 0.1 }] },
+      payload: {
+        changes: [
+          { key: "feedback_adjustment_limit", value: 0.1 }, // eligible → queued
+          { key: "supervisor_slur_deny_list", value: ["x"] }, // ineligible → filtered out
+        ],
+      },
     });
+    // Missing config must NOT silently drop the event (the old behaviour) — it
+    // queues for the retry cron, exactly like publishTenantEvent. tenant_id is
+    // NULL for platform-scope events; only the eligible key survives filtering.
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.from).toHaveBeenCalledWith("pending_rag_sync");
+    expect(mocks.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: null,
+        event_type: "platform_settings.updated",
+        source_revision: 12345,
+        last_error: "RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set",
+        // Only the eligible key survives filtering into the queued payload.
+        payload: { changes: [{ key: "feedback_adjustment_limit", value: 0.1 }] },
+      }),
+    );
+  });
+
+  it("short-circuits with no queue when every change is non-eligible and config is missing", async () => {
+    delete process.env.RAG_SERVICE_URL;
+    await publishPlatformEvent({
+      event_type: "platform_settings.updated",
+      source_revision: 12345,
+      payload: { changes: [{ key: "supervisor_slur_deny_list", value: ["x"] }] },
+    });
+    // Nothing eligible → nothing to sync → no fetch and no queue row.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });

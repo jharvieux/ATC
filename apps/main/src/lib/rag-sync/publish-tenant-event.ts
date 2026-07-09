@@ -11,40 +11,9 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { hmacHexSign, type TenantEvent, type TenantEventType, type TenantEventPayload } from "@atc/contracts";
 
-export type TenantEventType =
-  | "tenant.created"
-  | "tenant.status_changed"
-  | "tenant.terminated"
-  | "tenant.metadata_updated";
-
-export type TenantEventPayload = {
-  status: string;
-  tenant_type: string;
-  display_name: string;
-};
-
-export type TenantEvent = {
-  event_type: TenantEventType;
-  tenant_id: string;
-  source_revision: number;
-  payload: TenantEventPayload;
-};
-
-async function hmacHex(secret: string, body: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+export type { TenantEvent, TenantEventType, TenantEventPayload };
 
 const RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
@@ -99,9 +68,9 @@ export async function publishTenantEvent(event: TenantEvent): Promise<void> {
     return;
   }
 
-  const url = `${ragUrl}/api/tenant-events`;
+  const url = `${ragUrl.replace(/\/+$/, "")}/api/tenant-events`;
   const body = JSON.stringify(event);
-  const signature = await hmacHex(secret, body);
+  const signature = await hmacHexSign(secret, body);
 
   let lastError: string | undefined;
 

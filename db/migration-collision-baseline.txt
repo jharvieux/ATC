@@ -8,5 +8,3 @@
 #
 # The gate fails on any NEW same-app duplicate or branch-vs-dev collision.
 # Fix the underlying migration instead of growing this file.
-
-rag:0014:0014_composite_weights.sql,0014_platform_settings_sync.sql # PRs #105/#108, predates the gate — see #1664

@@ -6,5 +6,6 @@
 
 export * from "./approve";
 export * from "./ingest";
+export * from "./rag-events";
 export * from "./retrieve";
 export * from "./safe-url";

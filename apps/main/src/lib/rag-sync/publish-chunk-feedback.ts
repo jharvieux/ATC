@@ -12,20 +12,7 @@
 
 import "server-only";
 
-async function hmacHex(secret: string, body: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+import { hmacHexSign } from "@atc/contracts";
 
 export interface PublishChunkFeedbackInput {
   message_id: string | null;
@@ -60,7 +47,7 @@ export async function publishChunkFeedback(
   });
 
   try {
-    const signature = await hmacHex(secret, body);
+    const signature = await hmacHexSign(secret, body);
     const res = await fetch(`${ragUrl.replace(/\/+$/, "")}/api/feedback`, {
       method: "POST",
       headers: {
