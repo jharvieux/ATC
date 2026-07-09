@@ -129,6 +129,11 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       if ("needs_review" in result) {
         return Response.json({ error: "still_needs_review", reason: result.reason }, { status: 409 });
       }
+      // #1576 — another accept (double-click / second agent) holds the CAS
+      // claim; conflict rather than a fresh promote so we never double-write.
+      if ("error" in result && result.error === "promotion_in_progress") {
+        return Response.json({ error: "promotion_in_progress" }, { status: 409 });
+      }
       return Response.json({ error: ("error" in result ? result.error : "promote_failed") }, { status: 500 });
     }
 
