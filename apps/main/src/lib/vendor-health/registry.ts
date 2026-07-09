@@ -51,6 +51,45 @@ export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
 }
 
 // ---------------------------------------------------------------------------
+// #1646 — cold-instance read-through. vendorHealthStatus() above only ever
+// sees THIS instance's own recordVendorSuccess/Failure calls, so an instance
+// that never itself observed a failure reports "healthy" even while the
+// durable `vendor_health` row says otherwise — the §26.9 chat fallback then
+// only fires on the instance(s) that happened to see the failure directly,
+// not fleet-wide. On a cache miss, read the durable row once and cache it
+// for CACHE_TTL_MS (30s) so the hot path adds at most one DB round-trip per
+// vendor per 30s per instance; a warm cache (from either path) never re-hits
+// the DB. Fail-open on a durable read error: return "healthy" (today's
+// cache-miss default) WITHOUT caching the error, so the next call retries.
+// ---------------------------------------------------------------------------
+export async function resolveVendorHealthStatus(
+  db: import("@supabase/supabase-js").SupabaseClient,
+  name: VendorName,
+): Promise<VendorHealthStatus> {
+  const cached = cacheGet(name);
+  if (cached) return cached.status;
+
+  const { data, error } = await db
+    .from("vendor_health")
+    .select("status, consecutive_failures, last_checked_at, last_error, status_changed_at")
+    .eq("vendor", name)
+    .maybeSingle();
+  if (error) return "healthy";
+
+  const state: VendorHealthState = data
+    ? {
+        status: data.status as VendorHealthStatus,
+        consecutive_failures: data.consecutive_failures,
+        last_checked_at: data.last_checked_at,
+        last_error: data.last_error,
+        status_changed_at: data.status_changed_at,
+      }
+    : { status: "healthy", consecutive_failures: 0, last_checked_at: null, last_error: null };
+  cacheSet(name, state);
+  return state.status;
+}
+
+// ---------------------------------------------------------------------------
 // Real-traffic path (#1010): recordVendorSuccess/Failure are called inline
 // from AI/email wrappers on every live vendor call. They write ONLY to this
 // per-instance state + cache — never the durable table — keeping the hot

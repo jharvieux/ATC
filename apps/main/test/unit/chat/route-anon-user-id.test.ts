@@ -36,7 +36,7 @@ vi.mock("@/lib/ai/stream-wrapper", () => ({ instrumentedClaudeStream: vi.fn() })
 vi.mock("@/lib/ai/sentence-buffer", () => ({ bufferToSentences: vi.fn() }));
 vi.mock("@/lib/supervisor/per-sentence-check", () => ({ checkSentence: vi.fn() }));
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/lib/vendor-health/registry", () => ({ vendorHealthStatus: vi.fn() }));
+vi.mock("@/lib/vendor-health/registry", () => ({ resolveVendorHealthStatus: vi.fn().mockResolvedValue("healthy") }));
 vi.mock("@/lib/chat/anon-session-cookie", () => ({
   ANON_SESSION_COOKIE: "_atc_anon",
   buildAnonCookieHeader: vi.fn(),
