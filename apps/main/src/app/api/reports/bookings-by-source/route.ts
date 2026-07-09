@@ -44,6 +44,7 @@ export async function GET(req: Request): Promise<Response> {
         .not("status", "in", "(cancelled,draft)")
         .gte("created_at", filters.start)
         .lte("created_at", `${filters.end}T23:59:59.999Z`)
+        .order("id", { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) return dbErrorResponse(error);
       const batch = (page ?? []) as Row[];

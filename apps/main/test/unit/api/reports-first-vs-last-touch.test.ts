@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   bookingPages: [] as Array<Array<Record<string, unknown>>>,
+  order: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
@@ -39,6 +40,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
           not: () => chain,
           gte: () => chain,
           lte: () => chain,
+          order: (...args: unknown[]) => {
+            mocks.order(...args);
+            return chain;
+          },
           range: () => {
             const page = mocks.bookingPages[pageIndex] ?? [];
             pageIndex += 1;
@@ -81,5 +86,8 @@ describe("GET /api/reports/first-vs-last-touch — pair counts survive >1000 row
 
     const pair = body.items.find((i) => i.first === "social" && i.last === "search");
     expect(pair?.count).toBe(1300);
+    // #1765 — every page must request a stable sort, or LIMIT/OFFSET paging
+    // over concurrently-inserted rows can skip or double-count across pages.
+    expect(mocks.order).toHaveBeenCalledWith("id", { ascending: true });
   });
 });

@@ -72,9 +72,10 @@ export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
 // only fires on the instance(s) that happened to see the failure directly,
 // not fleet-wide. On a cache miss, read the durable row once and cache it
 // for CACHE_TTL_MS (30s) so the hot path adds at most one DB round-trip per
-// vendor per 30s per instance; a warm cache (from either path) never re-hits
-// the DB. Fail-open on a durable read error: return "healthy" (today's
-// cache-miss default) WITHOUT caching the error, so the next call retries.
+// vendor per 30s per instance; a warm durableCache entry short-circuits this
+// function entirely, without touching the DB. Fail-open on a durable read
+// error: return "healthy" (today's cache-miss default) WITHOUT caching the
+// error, so the next call retries.
 // ---------------------------------------------------------------------------
 export async function resolveVendorHealthStatus(
   db: SupabaseClient,

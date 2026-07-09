@@ -145,6 +145,7 @@ async function getUsersWithImminentBookings(
       .gte("sailing_date", todayIso)
       .lte("sailing_date", windowEndIso)
       .not("user_id", "is", null)
+      .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) {
       console.error("[dob-reprompt-cron] imminent bookings fetch error", { error });

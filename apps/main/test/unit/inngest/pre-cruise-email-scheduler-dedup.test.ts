@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
     group_booking_id: string;
     groups: { sailing_date: string };
   }>> | null,
+  order: vi.fn(),
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -60,6 +61,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
               const chain = {
                 eq: () => chain,
                 not: () => chain,
+                order: (...args: unknown[]) => {
+                  mocks.order(...args);
+                  return chain;
+                },
                 // #1745 — scanAndEmit now pages with .range() instead of a
                 // single unbounded select. When mocks.bookingPages is set,
                 // serve it in order (one page per call) so the fixture
@@ -194,5 +199,8 @@ describe("pre-cruise-email-scheduler — bookings scan survives >1000 rows (#174
 
     expect(mocks.sentEvents).toHaveLength(1);
     expect(mocks.sentEvents[0]?.data).toMatchObject({ booking_id: "booking-past-cap" });
+    // #1765 — every page must request a stable sort, or LIMIT/OFFSET paging
+    // over concurrently-inserted rows can skip or double-count across pages.
+    expect(mocks.order).toHaveBeenCalledWith("id", { ascending: true });
   });
 });

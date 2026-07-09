@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   // Rows served by the paginated bookings query, split into pages in
   // insertion order — one page consumed per .range() call.
   bookingPages: [] as Array<Array<Record<string, unknown>>>,
+  order: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
@@ -41,6 +42,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
           not: () => chain,
           gte: () => chain,
           lte: () => chain,
+          order: (...args: unknown[]) => {
+            mocks.order(...args);
+            return chain;
+          },
           range: () => {
             const page = mocks.bookingPages[pageIndex] ?? [];
             pageIndex += 1;
@@ -89,5 +94,8 @@ describe("GET /api/reports/bookings-by-source — rollup survives >1000 rows (#1
     const emailBucket = body.items.find((i) => i.channel === "email");
     expect(emailBucket?.bookings).toBe(1200);
     expect(emailBucket?.gross_commission_cents).toBe(1200 * 100);
+    // #1765 — every page must request a stable sort, or LIMIT/OFFSET paging
+    // over concurrently-inserted rows can skip or double-count across pages.
+    expect(mocks.order).toHaveBeenCalledWith("id", { ascending: true });
   });
 });

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   updateCalls: [] as string[],
   // bookings rows served per .range() page, in insertion order.
   bookingPages: [] as Array<Array<{ user_id: string | null }>>,
+  order: vi.fn(),
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -72,6 +73,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
           gte: () => chain,
           lte: () => chain,
           not: () => chain,
+          order: (...args: unknown[]) => {
+            mocks.order(...args);
+            return chain;
+          },
           range: () => {
             const page = mocks.bookingPages[bookingPageIndex] ?? [];
             bookingPageIndex += 1;
@@ -111,5 +116,8 @@ describe("dob-estimate-reprompt-eligible — imminent-bookings scan survives >10
     expect(result.skipped_imminent).toBe(1);
     expect(result.flagged).toBe(0);
     expect(mocks.updateCalls).toHaveLength(0);
+    // #1765 — every page must request a stable sort, or LIMIT/OFFSET paging
+    // over concurrently-inserted rows can skip or double-count across pages.
+    expect(mocks.order).toHaveBeenCalledWith("id", { ascending: true });
   });
 });

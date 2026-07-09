@@ -77,6 +77,7 @@ async function scanAndEmit(args: {
       .select("id, tenant_id, group_booking_id, groups(sailing_date)")
       .eq("status", "confirmed")
       .not("group_booking_id", "is", null)
+      .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) {
       console.error(`[pre-cruise-scheduler:${via}] query error`, error.message);
