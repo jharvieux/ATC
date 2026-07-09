@@ -228,6 +228,10 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.host_booking_fee_configs TO servi
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.import_queue TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.import_queue TO service_role;
 
+-- TABLE: public.inbound_emails
+GRANT SELECT ON public.inbound_emails TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.inbound_emails TO service_role;
+
 -- TABLE: public.invitations
 GRANT INSERT, SELECT, UPDATE ON public.invitations TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.invitations TO service_role;
