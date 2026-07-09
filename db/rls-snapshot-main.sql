@@ -65,6 +65,7 @@
 -- public.host_adapters (rls_enabled)
 -- public.host_booking_fee_configs (rls_enabled)
 -- public.import_queue (rls_enabled)
+-- public.inbound_emails (rls_enabled)
 -- public.invitations (rls_enabled)
 -- public.legal_consents (rls_enabled)
 -- public.legal_documents (rls_enabled)
@@ -868,6 +869,20 @@ CREATE POLICY "import_queue_update" ON public.import_queue
   FOR UPDATE TO authenticated
   USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.inbound_emails
+CREATE POLICY "inbound_emails_delete_service" ON public.inbound_emails
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "inbound_emails_insert_service" ON public.inbound_emails
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "inbound_emails_select" ON public.inbound_emails
+  FOR SELECT TO PUBLIC
+  USING ((( SELECT auth.uid() AS uid)) IS NOT NULL AND tenant_id IS NOT NULL AND auth_user_in_tenant(tenant_id));
+CREATE POLICY "inbound_emails_update_service" ON public.inbound_emails
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.invitations
 CREATE POLICY "invitations_delete" ON public.invitations
