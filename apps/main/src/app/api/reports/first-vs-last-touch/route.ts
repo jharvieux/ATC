@@ -22,22 +22,35 @@ export async function GET(req: Request): Promise<Response> {
     const filters = parseReportFilters(new URL(req.url));
     if ("error" in filters) return Response.json({ error: filters.error }, { status: 400 });
 
-    const { data, error } = await svc
-      .from("bookings")
-      .select("id, conversion_touch_channel, primary_contact_id, contacts:primary_contact_id(first_touch_channel)")
-      .eq("tenant_id", ctx.tenant_id)
-      .not("status", "in", "(cancelled,draft)")
-      .gte("created_at", filters.start)
-      .lte("created_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return dbErrorResponse(error);
-
     type Row = {
       conversion_touch_channel: string | null;
       contacts: { first_touch_channel: string | null } | { first_touch_channel: string | null }[] | null;
     };
 
+    // #1745 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+    // regardless of a requested .limit(), which would silently truncate the
+    // pair counts below. Page in 1000-row windows (matches
+    // apps/rag/src/lib/embeddings/batch/flush.ts, #808) so the aggregation
+    // always covers every matching booking.
+    const PAGE = 1000;
+    const data: Row[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await svc
+        .from("bookings")
+        .select("id, conversion_touch_channel, primary_contact_id, contacts:primary_contact_id(first_touch_channel)")
+        .eq("tenant_id", ctx.tenant_id)
+        .not("status", "in", "(cancelled,draft)")
+        .gte("created_at", filters.start)
+        .lte("created_at", `${filters.end}T23:59:59.999Z`)
+        .range(from, from + PAGE - 1);
+      if (error) return dbErrorResponse(error);
+      const batch = (page ?? []) as Row[];
+      data.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+
     const pairs = new Map<string, { first: string | null; last: string | null; count: number }>();
-    for (const row of (data ?? []) as Row[]) {
+    for (const row of data) {
       const c = Array.isArray(row.contacts) ? row.contacts[0] ?? null : row.contacts;
       const first = c?.first_touch_channel ?? null;
       const last = row.conversion_touch_channel;

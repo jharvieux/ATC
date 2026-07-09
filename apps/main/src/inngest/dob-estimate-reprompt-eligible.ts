@@ -129,22 +129,32 @@ async function getUsersWithImminentBookings(
   //
   // Safe approximation for the cron: query bookings whose sailing_date is
   // in [today, today + window] and whose user_id is set.
-  const { data, error } = await db
-    .from("bookings")
-    .select("user_id")
-    .gte("sailing_date", todayIso)
-    .lte("sailing_date", windowEndIso)
-    .not("user_id", "is", null);
-
-  if (error) {
-    console.error("[dob-reprompt-cron] imminent bookings fetch error", { error });
-    return new Set();
+  //
+  // #1745 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+  // regardless of a requested .limit(), which would silently drop some
+  // imminent-booking users from this set — those users would then wrongly
+  // stay eligible for a DOB re-prompt the §20.5 submit gate already covers.
+  // Page in 1000-row windows (matches apps/rag/src/lib/embeddings/batch/
+  // flush.ts, #808) so every imminent booking is scanned.
+  const PAGE = 1000;
+  const userIds: Array<string | null> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error } = await db
+      .from("bookings")
+      .select("user_id")
+      .gte("sailing_date", todayIso)
+      .lte("sailing_date", windowEndIso)
+      .not("user_id", "is", null)
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error("[dob-reprompt-cron] imminent bookings fetch error", { error });
+      return new Set();
+    }
+    const batch = (page ?? []) as Array<{ user_id: string | null }>;
+    userIds.push(...batch.map((r) => r.user_id));
+    if (batch.length < PAGE) break;
   }
-  return new Set(
-    (data ?? [])
-      .map((r: { user_id: string | null }) => r.user_id)
-      .filter(Boolean) as string[],
-  );
+  return new Set(userIds.filter(Boolean) as string[]);
 }
 
 async function getActiveUserIds(

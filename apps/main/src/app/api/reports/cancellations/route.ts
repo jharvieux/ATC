@@ -32,15 +32,6 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: `invalid_group_by:${groupBy}` }, { status: 400 });
     }
 
-    const { data, error } = await svc
-      .from("bookings")
-      .select("id, cancellation_reason_category, conversion_touch_channel, cruise_line, sailing_date, commissions!inner(gross_commission_cents, received_commission_cents, clawback_amount_cents)")
-      .eq("tenant_id", ctx.tenant_id)
-      .eq("status", "cancelled")
-      .gte("cancelled_at", filters.start)
-      .lte("cancelled_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return dbErrorResponse(error);
-
     type Row = {
       cancellation_reason_category: string | null;
       conversion_touch_channel: string | null;
@@ -52,6 +43,28 @@ export async function GET(req: Request): Promise<Response> {
         | null;
     };
 
+    // #1745 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+    // regardless of a requested .limit(), which would silently truncate the
+    // lost-revenue totals below. Page in 1000-row windows (matches
+    // apps/rag/src/lib/embeddings/batch/flush.ts, #808) so the aggregation
+    // always covers every matching cancellation.
+    const PAGE = 1000;
+    const data: Row[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await svc
+        .from("bookings")
+        .select("id, cancellation_reason_category, conversion_touch_channel, cruise_line, sailing_date, commissions!inner(gross_commission_cents, received_commission_cents, clawback_amount_cents)")
+        .eq("tenant_id", ctx.tenant_id)
+        .eq("status", "cancelled")
+        .gte("cancelled_at", filters.start)
+        .lte("cancelled_at", `${filters.end}T23:59:59.999Z`)
+        .range(from, from + PAGE - 1);
+      if (error) return dbErrorResponse(error);
+      const batch = (page ?? []) as Row[];
+      data.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+
     const buckets = new Map<string, {
       category: string;
       secondary: string | null;
@@ -60,7 +73,7 @@ export async function GET(req: Request): Promise<Response> {
       clawback_cents: number;
       net_impact_cents: number;
     }>();
-    for (const row of (data ?? []) as Row[]) {
+    for (const row of data) {
       const cm = Array.isArray(row.commissions) ? row.commissions[0] ?? null : row.commissions;
       const lostExpected = cm && (cm.received_commission_cents ?? 0) === 0 ? cm.gross_commission_cents : 0;
       const clawback = cm?.clawback_amount_cents ?? 0;

@@ -22,21 +22,34 @@ export async function GET(req: Request): Promise<Response> {
     const filters = parseReportFilters(new URL(req.url));
     if ("error" in filters) return Response.json({ error: filters.error }, { status: 400 });
 
-    const { data, error } = await svc
-      .from("bookings")
-      .select("id, conversion_touch_channel, conversion_touch_utm_source, conversion_touch_utm_campaign, commissions!inner(gross_commission_cents, net_commission_cents)")
-      .eq("tenant_id", ctx.tenant_id)
-      .not("status", "in", "(cancelled,draft)")
-      .gte("created_at", filters.start)
-      .lte("created_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return dbErrorResponse(error);
-
     type Row = {
       conversion_touch_channel: string | null;
       conversion_touch_utm_source: string | null;
       conversion_touch_utm_campaign: string | null;
       commissions: { gross_commission_cents: number; net_commission_cents: number } | { gross_commission_cents: number; net_commission_cents: number }[] | null;
     };
+
+    // #1745 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+    // regardless of a requested .limit(), which would silently truncate the
+    // revenue/commission totals below. Page in 1000-row windows (matches
+    // apps/rag/src/lib/embeddings/batch/flush.ts, #808) so the aggregation
+    // always covers every matching booking.
+    const PAGE = 1000;
+    const data: Row[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await svc
+        .from("bookings")
+        .select("id, conversion_touch_channel, conversion_touch_utm_source, conversion_touch_utm_campaign, commissions!inner(gross_commission_cents, net_commission_cents)")
+        .eq("tenant_id", ctx.tenant_id)
+        .not("status", "in", "(cancelled,draft)")
+        .gte("created_at", filters.start)
+        .lte("created_at", `${filters.end}T23:59:59.999Z`)
+        .range(from, from + PAGE - 1);
+      if (error) return dbErrorResponse(error);
+      const batch = (page ?? []) as Row[];
+      data.push(...batch);
+      if (batch.length < PAGE) break;
+    }
 
     const buckets = new Map<string, {
       channel: string | null;
@@ -46,7 +59,7 @@ export async function GET(req: Request): Promise<Response> {
       gross_commission_cents: number;
       net_commission_cents: number;
     }>();
-    for (const row of (data ?? []) as Row[]) {
+    for (const row of data) {
       const c = Array.isArray(row.commissions) ? row.commissions[0] ?? null : row.commissions;
       const key = `${row.conversion_touch_channel ?? ""}|${row.conversion_touch_utm_source ?? ""}|${row.conversion_touch_utm_campaign ?? ""}`;
       const b = buckets.get(key) ?? {
