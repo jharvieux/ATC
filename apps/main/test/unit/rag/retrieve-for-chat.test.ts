@@ -10,9 +10,10 @@
 // resetModules per test gives each case a fresh in-process throttle map.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { EntitySet } from "@/lib/rag/entity-extraction";
 
 const mocks = vi.hoisted(() => {
-  const emptyEntities = {
+  const emptyEntities: EntitySet = {
     destinations: [], departure_ports: [], cruise_lines: [], ships: [],
     travel_dates: { earliest: null, latest: null },
     passenger_composition: "", intent: "research", categories_hint: [],
