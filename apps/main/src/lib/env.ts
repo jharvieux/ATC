@@ -385,7 +385,9 @@ const envSchema = z.object({
   SENTRY_DSN:               z.string().optional(),
   SENTRY_ENVIRONMENT:       z.string().optional(),
   LOG_LEVEL:                z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
-  AUDIT_LOG_RETENTION_YEARS: z.coerce.number().int().positive().optional().default(7),
+  // §26.5 — audit_log purge retention window; consumed by
+  // audit-log-retention-purge.ts. Default 2555 days = 7 years (SOC 2 / IRS norm).
+  AUDIT_LOG_RETENTION_DAYS: z.coerce.number().int().positive().optional().default(2555),
   // Operator alert routing — moved from Slack-webhook to Resend email in
   // PR #117. The email recipient lives at OPERATOR_ALERT_EMAIL (declared
   // alongside the rest of the Resend block above).

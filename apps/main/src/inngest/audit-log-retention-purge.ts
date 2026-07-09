@@ -17,8 +17,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
-
-const DEFAULT_RETENTION_DAYS = 7 * 365; // 7 years; leap years rounded down
+import { env } from "@/lib/env";
 
 export const auditLogRetentionPurge = inngest.createFunction(
   {
@@ -33,8 +32,7 @@ export const auditLogRetentionPurge = inngest.createFunction(
       return { skipped_for_staging: true };
     }
 
-    const retentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? DEFAULT_RETENTION_DAYS);
-    const days = Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : DEFAULT_RETENTION_DAYS;
+    const days = env().AUDIT_LOG_RETENTION_DAYS;
     const cutoffIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     const { count, error } = await svc
