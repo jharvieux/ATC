@@ -1,5 +1,5 @@
 ---
-description: Haiku-triaged issue sweep — categorize, prioritize, and group open issues, present a top-20 execution plan for operator approval, then execute batches with per-batch model subagents and auto-merge.
+description: Haiku-triaged issue sweep — categorize, prioritize, and group ALL open executable issues, present the full execution plan for operator approval, then execute batches with per-batch model subagents and auto-merge.
 ---
 
 # /issue-sweep — triage, plan, execute
@@ -84,12 +84,12 @@ Batch `state` walks `queued → executing → pr-open → ci-wait → audited �
 - Batch model = highest tier in the batch (haiku < sonnet < opus). Batch priority = highest priority in it.
 - Issues inside a batch are worked **serially by one agent**; distinct batches run in parallel.
 - Treat Haiku's file predictions as hints: executors confirm actual scope before coding, and if two "independent" batches turn out to collide, the supervisor serializes them at merge time anyway.
-- Scale batch count to plan size: aim for ~1 batch per 4–5 issues, so a standard top-20 plan lands at ≤6 batches (coarsen by subsystem if over). For an operator-expanded sweep (30+ issues), more batches are fine — keep each one subsystem-coherent and ≤6 issues so its single PR stays reviewable. Coherence beats count; every extra batch adds a merge-train slot.
+- Scale batch count to plan size: aim for ~1 batch per 4–5 issues; keep each batch subsystem-coherent and ≤6 issues so its single PR stays reviewable. Coherence beats count; every extra batch adds a merge-train slot.
 
 ## Phase 2 — Plan gate (STOP here)
 
-- Rank all executable issues by priority (P1 first), then oldest first. **Cap the plan at the top 20 issues**; trim batches accordingly (a batch may be partially included — note it).
-- Present a table: `Batch | Issues | Priority | Model | Subsystem / key files | Rationale`. Below it: the ⚠ supervised items, the excluded items with reasons, and a one-line count of below-cutoff issues.
+- Rank all executable issues by priority (P1 first), then oldest first. **The plan covers ALL executable issues — no numeric cap** (operator-removed 2026-07-09; the plan gate itself is the size control — the operator trims with "top N" / "drop #X" if the sweep should be smaller).
+- Present a table: `Batch | Issues | Priority | Model | Subsystem / key files | Rationale`. Below it: the ⚠ supervised items and the excluded items with reasons.
 - Write the ledger now: `phase: plan-gate`, all batches `queued`, `approval: null`.
 - **Stop and wait for the operator.** Accept plain-text edits: "go", "top 10", "drop #1580", "move #1591 to opus", "include #1602" (pulls in a supervised item — operator's call makes it fully autonomous). Re-show the adjusted plan only if the edits were non-trivial.
 - **Approval is ONLY an operator message replying to the plan.** A replayed `/issue-sweep` invocation, a task notification, a hook message, a reconnect, or silence is NEVER approval. Record the operator's verbatim reply in the ledger's `approval` field before starting Phase 3 — if `approval` is null, execution must not start. If re-invoked at the gate by anything other than an operator message, state that you are still waiting and stop again.
@@ -115,6 +115,14 @@ Supervisor-authored paraphrases drift: in the 2026-07-09 sweep one prompt reword
 > 5. **Do not write to `MEMORY.md` or `MEMORY-INDEX.md`.** Concurrent executors independently computing "highest D-number + 1" collide (#1661). If the batch produced a decision worth logging, return it in the JSON summary's `memory_entry` (`{title, decision, why, rejected, artifacts}` — same fields as `/memory-entry`); the supervisor is the sole writer, serially, at finalization.
 > 6. **Worktree discipline.** You are in an isolated worktree — every file operation and shell command must target its ABSOLUTE path (`.claude/worktrees/agent-<id>/…`). Never operate on the repo's primary checkout, and treat ANY casing variant of the primary path as the primary checkout (macOS's case-insensitive filesystem aliases them — three 2026-07-09 executors silently edited the shared tree via a lowercase path while believing they were isolated). Before committing: `git status` in your worktree must show your changes, and `git -C <primary checkout> status --porcelain` must be clean of anything you touched.
 
+### In-flight tool-fix dependencies (self-gate, don't serialize)
+
+When migration work depends on a tooling fix that is ITSELF in-flight in the same sweep (e.g. the 2026-07-09 `new-migration.sh` version-floor fix, which every migration batch needed), don't hold every dependent batch until it merges. Dispatch them with a self-gate in the prompt: do all non-dependent work first; immediately before using the tool, `git fetch origin <base> && git merge origin/<base>` to pick up the fix; verify the tool's output (e.g. a generated version sorts strictly after every existing migration); if the fix hasn't landed, STOP that item and report it skipped — never hand-work around the broken tool. Blocked items re-dispatch cheaply after the fix merges, carrying the first executor's analysis forward in the new prompt.
+
+### Mid-sweep supervised one-liners
+
+When a batch's root cause lands in a supervised path the operator didn't pre-approve (e.g. a one-line CI-workflow fix, a missing secret wiring), don't park it silently until wrap-up: ask the operator ONE direct question naming the exact change and its blast radius, and on approval dispatch a dedicated fix executor scoped to just that change. Record the approval verbatim in the ledger. Unanswered = parked with the question restated at wrap-up.
+
 ### Batch-specific mechanics
 
 - Work the batch's issues serially on one branch `feature/sweep-<subsystem>-<lowest-issue-number>` off `dev`.
@@ -138,6 +146,8 @@ For each executor PR, in plan-priority order:
 **Merge-train discipline (#1671):** with several batch PRs queued, don't `gh api .../update-branch` all of them after every merge — that's the waste #1671 found (one PR got 7 merge commits for 1 real commit). Process the queue in strict sequence: merge PR A, THEN update-branch PR B, THEN merge B, THEN update-branch PR C, etc. — never update-branch a PR before it's actually next in line. A queued PR sitting `BEHIND` costs nothing. Full mechanics in `docs/runbooks/pr-workflow.md` ("Merge trains").
 
 **Migration PRs order the train, not plan priority.** The shared test DB's migration ledger is owned by whichever branch most recently applied its migration; every sibling migration PR fails `rls-snapshot-diff` at the apply step until the owner merges and the siblings update-branch. The failure names the owner — `Remote migration versions not found: <version>` — so reorder the train to merge that PR first. Retrying or debugging the siblings is wasted work.
+
+**Diagnose ledger contention by querying, not guessing.** With several unmerged migration branches, don't infer the orphan set from which CI runs happened — read the actual ledger: `SELECT version FROM supabase_migrations.schema_migrations` against the test DB (`SUPABASE_TEST_DB_URL` from `.env.local`, consumed without echoing) and diff against the base branch's migrations directory. It's usually smaller than feared — an apply step that FAILS on someone else's orphan never records its own version, so three concurrent appliers typically leave one true orphan, resolved by merging its owner first. If the owner PR isn't merge-ready, hold the train for its fix round rather than repairing; repair the ledger only per `docs/runbooks/migrations.md` rule 4, and only after confirming every migration that will re-apply is idempotent (CREATE OR REPLACE / IF NOT EXISTS — a bare ADD COLUMN or ADD CONSTRAINT will fail a re-apply and needs its objects dropped as part of the repair).
 
 **Marker staleness after update-branch — the condition is file overlap, not conflicts.** The diff hash is computed from the PR's three-dot diff, so an update-branch merge commit stales the markers exactly when the commits merged into the base touch files in the PR's diff — even with zero new commits on the branch. After every update-branch, run `scripts/post-audit-comment.sh --check <pr>`. If a marker is stale from overlap alone, run a **rebind re-audit**, not a full one: both agents on Sonnet, prompt scoped to (a) confirm no new non-merge commits since the audited hash, (b) diff-of-diffs on the overlapping files, checking for semantic interaction with the merged changes, (c) post a fresh marker. Reserve full re-audits for diffs that gained real commits. (Used successfully 2× in the 2026-07-09 sweep.)
 
