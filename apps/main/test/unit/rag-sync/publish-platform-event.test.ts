@@ -152,10 +152,10 @@ describe("publishPlatformEvent — allowlist filter", () => {
         event_type: "platform_settings.updated",
         source_revision: 12345,
         last_error: "RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set",
+        // Only the eligible key survives filtering into the queued payload.
+        payload: { changes: [{ key: "feedback_adjustment_limit", value: 0.1 }] },
       }),
     );
-    const inserted = mocks.insert.mock.calls[0]![0] as { payload: { changes: Array<{ key: string }> } };
-    expect(inserted.payload.changes.map((c) => c.key)).toEqual(["feedback_adjustment_limit"]);
   });
 
   it("short-circuits with no queue when every change is non-eligible and config is missing", async () => {
