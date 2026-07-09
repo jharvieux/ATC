@@ -20,7 +20,9 @@
 //     (env default when the tenant hasn't customized it), forced to 0 for a
 //     confirmed quote because a locked price allows no variance.
 
-export type QuoteKind = "confirmed" | "estimate";
+import type { QuoteKind } from "./kind-resolver";
+
+export type { QuoteKind };
 
 export interface KindVarianceInput {
   price_kind: QuoteKind | null;

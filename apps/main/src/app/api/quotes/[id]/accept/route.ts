@@ -85,11 +85,17 @@ export async function POST(
     // #1699 derivation (kind + variance) is the single source both this route
     // and the downloadable-PDF path use — an expired-lock early-return pays one
     // extra indexed read, which is negligible.
-    const { data: settingsData } = await db
+    const { data: settingsData, error: settingsErr } = await db
       .from("tenant_settings")
       .select("quote_variance_cents")
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
+    if (settingsErr) {
+      console.warn(
+        `[quotes/accept] tenant_settings lookup failed for tenant ${ctx.tenant_id}, falling back to env default:`,
+        settingsErr.message,
+      );
+    }
     const settingsVariance = (settingsData as { quote_variance_cents?: number } | null)?.quote_variance_cents;
     const { kind, variance_cents: varianceCents } = deriveKindAndVariance({
       price_kind: quote.price_kind,

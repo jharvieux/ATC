@@ -148,11 +148,17 @@ export async function buildRenderInputFromQuote(
   // tenant's configured threshold; unlike the tenant/host/options reads above
   // this one doesn't fail-loud — a settings blip falls back to the env default
   // (the same fallback the accept route uses) rather than 500-ing a PDF.
-  const { data: settingsData } = await args.adminDb
+  const { data: settingsData, error: settingsErr } = await args.adminDb
     .from("tenant_settings")
     .select("quote_variance_cents")
     .eq("tenant_id", args.ctx.tenant_id)
     .maybeSingle();
+  if (settingsErr) {
+    console.warn(
+      `[quotes/build-render-input] tenant_settings lookup failed for tenant ${args.ctx.tenant_id}, falling back to env default:`,
+      settingsErr.message,
+    );
+  }
   const settingsVariance = (settingsData as { quote_variance_cents?: number } | null)?.quote_variance_cents;
   const { kind, variance_cents } = deriveKindAndVariance({
     price_kind: args.quote.price_kind,
