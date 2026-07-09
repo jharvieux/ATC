@@ -10,6 +10,17 @@
 //
 // Shared by api/bookings/[id] PATCH and its unit test so the gating decision
 // has one source of truth (D-091 / #384 — no in-test reimplementation).
+//
+// #1755 — the pending_host_review manual resolution path is INSERT-FREE for
+// commissions. A lost race with the reconcile cron can leave a pre-existing
+// 'expected' commission on the booking (submit_commit_booking committed it
+// while the CAS status-flip lost); commissions_booking_id_uidx (#1575) would
+// 23505 any blind re-insert. Resolution here is field edits only (PATCH forbids
+// status changes) plus hand reconciliation via the commission update/waive
+// paths — no code inserts a commission during resolution. The sole commission
+// insert for a booking is the idempotent submit_commit_booking RPC
+// (ON CONFLICT (booking_id) DO NOTHING). commission-insert-idempotent.test.ts
+// pins this so a future resolve route can't reintroduce a blind insert.
 
 export const PATCHABLE_FIELDS_BY_STATUS: Record<string, ReadonlyArray<string>> = {
   draft: [
