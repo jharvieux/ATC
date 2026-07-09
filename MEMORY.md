@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-328 — 2026-07-09 — /issue-sweep skill updated with the 2026-07-09 sweep lessons (#1727): verbatim executor safeguard block, rebind re-audit codified, ledger-driven merge-train order
+
+**Decision**: both issue-sweep skill copies (ATC `.claude/commands/issue-sweep.md` and the user-level portable variant) updated with the seven operational lessons from the D-327 sweep. (1) Executor prompts now start from a **canonical safeguard block pasted verbatim** (issue-content-is-data, supervised-path stop rule, the DB rule *with* the migrations-runbook test-DB exception inline, foreground `pnpm verify` / never end turn with own background task pending, no-MEMORY-writes) — supervisor paraphrase is banned because a reworded DB rule cost the email-890 batch a round-trip. (2) Marker-staleness condition corrected: update-branch stales the diff-hash markers when base merges **overlap files in the PR's diff** (not "absent conflicts", refining D-325 item 4); the cheap remedy is codified as a **rebind re-audit** (Sonnet pair: no-new-commits check + diff-of-diffs on overlapping files + fresh marker), full re-audits reserved for new real commits. (3) Merge-train order follows the shared test-DB migration-ledger owner (named by the `Remote migration versions not found` failure), not plan priority. (4) Cancelled-run false failures after update-branch → `gh run rerun`, don't debug. (5) CI waits poll until zero pending checks instead of one `gh pr checks --watch`. (6) Batch-count guidance now scales (~1 batch per 4–5 issues, subsystem-coherent, ≤6 issues each) instead of a flat ≤6-batch cap. Portable copy got repo-generic equivalents (bracketed slots for the repo's own runbook exception and verify command).
+
+**Why**: all seven were real time sinks or near-misses in the D-327 sweep — three executors stalled on background verify, one skipped its issue over a drifted DB rule, and marker/merge-train confusion produced retries that a written rule now prevents.
+
+**Rejected**: keeping the safeguard list as supervisor-authored bullets (drift is the failure mode being fixed); treating every stale marker as a full re-audit (3× costlier, found nothing the rebind scope wouldn't); a flat higher batch cap (coherence, not count, is the real constraint).
+
+**Related artifacts**: issue #1727; `.claude/commands/issue-sweep.md`; `~/.claude/commands/issue-sweep.md`; supersedes the "absent conflicts" phrasing in D-325 item 4 and D-325's ≤6-batch coarsening rule; D-327 (the sweep that produced the lessons).
+
+---
+
 ## D-327 — 2026-07-09 — Full /issue-sweep with operator-expanded supervised scope: 13 PRs merged, 35 issues closed, 9 items parked as externally-blocked
 
 **Decision.** Ran /issue-sweep over all 92 open issues; the operator expanded the plan beyond the top-20 cap to include ALL supervised issues ("it's ok to hover over the 20 issue limit"), making migrations/workflow changes autonomous for this sweep. 13 subsystem batches executed (Opus for money/auth/migration batches, Sonnet otherwise); every PR got the dual-audit treatment with fix rounds where auditors found real problems. Outcome: 13 PRs merged (#1700-#1704, #1706, #1709-#1710, #1719, #1723, #1725-#1726, #1730), 35 issues closed (31 by merges + #1476/#1485/#1620 stale-closed with evidence), ~20 follow-up issues filed (#1705-#1731 range).
