@@ -8,10 +8,12 @@
 // which deliberately iterates all of a user's tenant rows), so the
 // user_data_export_requests table has no tenant_id column and adding a
 // `.eq("tenant_id", …)` filter would break the statutory cross-tenant contract.
-// The isolation layers here are: (1) app-layer — the verified auth_user_id from
-// authenticateUser() scopes every read/write; (2) DB-layer — the RLS policy
-// `auth_user_id = auth.uid()` on user_data_export_requests. A user can only ever
-// see or create their own export requests.
+// Isolation here is app-layer only under service role: this route uses
+// createServiceRoleClient(), which BYPASSES RLS (auth.uid() is NULL), so the
+// verified auth_user_id from authenticateUser() scoping every read/write is the
+// SOLE enforced layer (#1703 audit). The `auth_user_id = auth.uid()` RLS policy
+// on user_data_export_requests is defense-in-depth for any non-service-role
+// path only — it does not apply to this handler.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";

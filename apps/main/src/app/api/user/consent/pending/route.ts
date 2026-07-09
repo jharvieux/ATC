@@ -15,6 +15,10 @@ export async function GET(req: Request): Promise<Response> {
   }
   const authUserId = authed.authUserId;
 
+  // Isolation (#1703 audit): this handler uses createServiceRoleClient(), which
+  // BYPASSES RLS (auth.uid() is NULL), so the verified auth_user_id .eq() filter
+  // below is the SOLE enforced isolation layer. Any `auth_user_id = auth.uid()`
+  // RLS policy is defense-in-depth for non-service-role paths only.
   const db = createServiceRoleClient();
   const { data: rows, error } = await db
     .from("user_consent_pending")

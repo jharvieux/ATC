@@ -19,13 +19,10 @@ vi.mock("@/inngest/client", () => ({
   inngest: { send: vi.fn().mockResolvedValue(undefined) },
 }));
 
-// Capture audit-log writes so we can assert the undo snapshot derives its
-// message count via conversations (not a nonexistent messages column).
-const hoisted = vi.hoisted(() => ({ auditCalls: [] as Record<string, unknown>[] }));
+// Stub audit writes so softCommitTransfer's writeAuditLog doesn't hit the real
+// writer during the test.
 vi.mock("@/lib/audit/write", () => ({
-  writeAuditLog: vi.fn(async (row: Record<string, unknown>) => {
-    hoisted.auditCalls.push(row);
-  }),
+  writeAuditLog: vi.fn(async () => {}),
 }));
 
 const TENANT_ID = "tenant-test-uuid";
@@ -48,39 +45,14 @@ type QueryResult = { data: unknown; error: unknown };
 // A chainable, thenable Supabase-query stub. Every filter/select method
 // (eq/is/not/in/order/select) returns the same chain; awaiting it resolves
 // `awaitResult`, and `.maybeSingle()` resolves `singleResult` (falling back
-// to `awaitResult`). This models the real fluent builder closely enough to
-// exercise CAS `.select("id")` and `.in("conversation_id", …)` shapes.
+// to `awaitResult`). Models softCommitTransfer's session/conversation writes
+// and assertNotInDeferredWindow's conversation → session lookup.
 function buildTransferMockDb(opts: {
   session: MockSessionRow;
   sessionUpdates?: (patch: Record<string, unknown>) => void;
-  conversationUpdates?: (patch: Record<string, unknown>) => void;
   convAnonSessionId?: string | null;
-  // Rows returned by the undo CAS `.select("id")`; `[]` models "finalize won
-  // the race" between the pre-check read and the CAS clear.
-  sessionCasRows?: { id: string }[];
-  // If set, the CAS UPDATE resolves this error (non-ROW_COUNT_MISMATCH) so we
-  // can assert undoTransfer re-throws genuine DB failures.
-  sessionCasError?: { message: string; code?: string };
-  // Rows the conversations audit-snapshot query returns; `[]` means the
-  // session has no conversations, so messages must never be queried.
-  convIdRows?: { id: string }[];
-  // created_at rows the audit-snapshot message query returns.
-  messageRows?: { created_at: string }[];
-  // Invoked whenever the messages table is SELECTed (to assert it is skipped
-  // when there are no conversations).
-  onMessagesSelect?: () => void;
 }): SupabaseClient {
-  const {
-    session,
-    sessionUpdates,
-    conversationUpdates,
-    convAnonSessionId = ANON_SESSION_ID,
-    sessionCasRows,
-    sessionCasError,
-    convIdRows = [{ id: CONV_ID }],
-    messageRows = [],
-    onMessagesSelect,
-  } = opts;
+  const { session, sessionUpdates, convAnonSessionId = ANON_SESSION_ID } = opts;
   const currentSession = { ...session };
 
   function chain(
@@ -111,13 +83,7 @@ function buildTransferMockDb(opts: {
           update: (patch: Record<string, unknown>) => {
             Object.assign(currentSession, patch);
             sessionUpdates?.(patch);
-            // The undo/finalize CAS chains `.select("id")`; awaiting returns
-            // the affected rows so safeAwaitRowCount can assert the count.
-            return chain(() =>
-              sessionCasError
-                ? { data: null, error: sessionCasError }
-                : { data: sessionCasRows ?? [{ id: currentSession.id }], error: null },
-            );
+            return chain(() => ({ data: null, error: null }));
           },
         };
       }
@@ -125,21 +91,10 @@ function buildTransferMockDb(opts: {
         return {
           select: () =>
             chain(
-              () => ({ data: convIdRows, error: null }),
+              () => ({ data: [], error: null }),
               () => ({ data: { anonymous_session_id: convAnonSessionId }, error: null }),
             ),
-          update: (patch: Record<string, unknown>) => {
-            conversationUpdates?.(patch);
-            return chain(() => ({ data: null, error: null }));
-          },
-        };
-      }
-      if (table === "messages") {
-        return {
-          select: () => {
-            onMessagesSelect?.();
-            return chain(() => ({ data: messageRows, error: null }));
-          },
+          update: () => chain(() => ({ data: null, error: null })),
         };
       }
       return {

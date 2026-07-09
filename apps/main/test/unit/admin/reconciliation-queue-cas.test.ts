@@ -129,7 +129,7 @@ describe("POST /api/admin/reconciliation/queue — publicMessage egress (#1674)"
     expect(json.error).toBe("Item has already been reviewed");
   });
 
-  it("returns a sanitized 500 (not raw detail) when the fetch errors", async () => {
+  it("collapses a fetch error to a 404 (Queue item not found) with no raw detail leak", async () => {
     mocks.fetchResult = { data: null, error: { message: "relation does not exist", code: "42P01" } };
     const res = await postAction({ id: "q-1", action: "accepted" });
     expect(res.status).toBe(404);
