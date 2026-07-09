@@ -10,9 +10,15 @@ type Row = { role: string; content: string | null };
 function makeDb(rows: Row[] | null, err: { message: string } | null = null) {
   // Records every .eq() call so tests can assert the tenant_id filter
   // is wired into the actual query (D-091 two-layer-isolation doctrine).
+  // Also records the .order()/.limit() args so #1587 tests can assert the
+  // query is bounded and ordered newest-first (not just trimmed in JS).
   const eqCalls: Array<{ col: string; val: string }> = [];
+  const orderCalls: Array<{ col: string; ascending: boolean }> = [];
+  const limitCalls: number[] = [];
   const client = {
     eqCalls,
+    orderCalls,
+    limitCalls,
     from(_table: string) {
       void _table;
       return {
@@ -27,10 +33,22 @@ function makeDb(rows: Row[] | null, err: { message: string } | null = null) {
               void _inCol;
               void _vals;
               return {
-                order: async (_orderCol: string, _opts: { ascending: boolean }) => {
-                  void _orderCol;
-                  void _opts;
-                  return { data: rows, error: err };
+                order: (orderCol: string, opts: { ascending: boolean }) => {
+                  orderCalls.push({ col: orderCol, ascending: opts.ascending });
+                  return {
+                    limit: async (n: number) => {
+                      limitCalls.push(n);
+                      // Fixtures are written chronologically (oldest first)
+                      // for readability. Simulate what a real
+                      // `.order(desc).limit(n)` query returns: the newest
+                      // n rows, in descending (newest-first) order — which
+                      // is what loadConversationHistory then reverses back.
+                      if (rows === null) return { data: null, error: err };
+                      const newestChronological = rows.slice(Math.max(0, rows.length - n));
+                      const descending = newestChronological.slice().reverse();
+                      return { data: descending, error: err };
+                    },
+                  };
                 },
               };
             },
@@ -173,6 +191,40 @@ describe("loadConversationHistory", () => {
         { col: "conversation_id", val: "conv-99" },
       ]),
     );
+  });
+
+  // #1587 — the query must carry an explicit bound and order newest-first
+  // at the DB layer, not just trim in JS after an unbounded fetch.
+  it("orders newest-first and caps rows with an explicit .limit()", async () => {
+    const db = makeDb([{ role: "user", content: "x" }]);
+    await loadConversationHistory(db, "t-1", "conv-1");
+    expect(db.orderCalls).toEqual([{ col: "created_at", ascending: false }]);
+    expect(db.limitCalls).toEqual([60]);
+  });
+
+  // #1587 — with ascending order and no limit, a thread longer than the
+  // server's max-rows got silently truncated from the front, dropping the
+  // newest messages (the ones that matter most). Asserts the fetched rows
+  // are still returned in chronological order with the newest message
+  // last, i.e. the row cap keeps the newest turns, not the oldest.
+  it("keeps the newest messages when the thread exceeds the row limit", async () => {
+    const longThread: Row[] = [];
+    for (let i = 0; i < 80; i++) {
+      longThread.push({ role: i % 2 === 0 ? "user" : "assistant", content: `turn-${i}` });
+    }
+    const db = makeDb(longThread);
+    const out = await loadConversationHistory(db, "t-1", "conv-1", { maxChars: 1_000_000 });
+    // Only the newest 60 of 80 turns survive the row cap.
+    expect(out.length).toBe(60);
+    // Newest turn (turn-79) must be present and last — not dropped in
+    // favor of earlier turns, which is what the old ascending+no-limit
+    // query would have done once truncated server-side.
+    expect(out[out.length - 1]!.content).toBe("turn-79");
+    expect(out[0]!.content).toBe("turn-20");
+    // Still in chronological order.
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]!.content > out[i - 1]!.content).toBe(true);
+    }
   });
 });
 

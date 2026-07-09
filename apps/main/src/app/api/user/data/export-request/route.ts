@@ -1,31 +1,31 @@
 // §17.9 — CCPA data export request.
 // POST: creates an export job for the authenticated user.
 // Rate-limited: 1 request per 30 days.
+//
+// Isolation model (#1591): unlike delete/undo, this route is NOT tenant-scoped
+// by design. A CCPA export is the user's COMPLETE data across every tenant they
+// belong to (see collectUserDbExport in inngest/user-data-export-build.ts,
+// which deliberately iterates all of a user's tenant rows), so the
+// user_data_export_requests table has no tenant_id column and adding a
+// `.eq("tenant_id", …)` filter would break the statutory cross-tenant contract.
+// Isolation here is app-layer only under service role: this route uses
+// createServiceRoleClient(), which BYPASSES RLS (auth.uid() is NULL), so the
+// verified auth_user_id from authenticateUser() scoping every read/write is the
+// SOLE enforced layer (#1703 audit). The `auth_user_id = auth.uid()` RLS policy
+// on user_data_export_requests is defense-in-depth for any non-service-role
+// path only — it does not apply to this handler.
 
-import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { authenticateUser } from "@/lib/auth/authenticate-user";
 
 export async function POST(req: Request): Promise<Response> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const authed = await authenticateUser(req);
+  if (!authed) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
-  const accessToken = authHeader.slice("Bearer ".length);
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(url, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const authUserId = authData.user.id;
+  const authUserId = authed.authUserId;
 
   const db = createServiceRoleClient();
 
@@ -53,7 +53,12 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (insertErr || !row) {
-    return dbErrorResponse(insertErr);
+    // #1591 — a null `row` with a null `insertErr` (insert reported success but
+    // returned nothing) previously logged an empty db-error, making it
+    // undiagnosable. Synthesize an error so the log line names the cause.
+    return dbErrorResponse(
+      insertErr ?? new Error("export-request: insert returned no row"),
+    );
   }
 
   const exportRequestId = (row as { id: string }).id;
