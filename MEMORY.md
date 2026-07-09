@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-327 — 2026-07-09 — Full /issue-sweep with operator-expanded supervised scope: 13 PRs merged, 35 issues closed, 9 items parked as externally-blocked
+
+**Decision.** Ran /issue-sweep over all 92 open issues; the operator expanded the plan beyond the top-20 cap to include ALL supervised issues ("it's ok to hover over the 20 issue limit"), making migrations/workflow changes autonomous for this sweep. 13 subsystem batches executed (Opus for money/auth/migration batches, Sonnet otherwise); every PR got the dual-audit treatment with fix rounds where auditors found real problems. Outcome: 13 PRs merged (#1700-#1704, #1706, #1709-#1710, #1719, #1723, #1725-#1726, #1730), 35 issues closed (31 by merges + #1476/#1485/#1620 stale-closed with evidence), ~20 follow-up issues filed (#1705-#1731 range).
+
+**Why.** The backlog held four P1 real-money bugs (#1576-#1579) plus a large supervised tail (migrations, guards, RAG) that only an operator expansion could unblock; per-issue sessions would have cost far more supervision.
+
+**Rejected.**
+- Executing the phase-2 set (#1257-#1262), #1286, #1358, #895, #1686 — parked: blocked on attorney copy, live Stripe keys, secret values, go-live decisions, or live-environment work no agent can produce. EPIC #444's deferral stands.
+- Guessing #1247's tiered-fee semantics (spec Q1-Q5 unanswered), #1585's trusted-header auth change (needs dedicated PR + security review), #1611's re-delivery (recorded Option B conflicts with non-reproducible AI content — re-scope options posted on the issue), #1609's Inngest replacement (spec §8.7 mandates the current design).
+- Bypassing the audit gate when update-branch staled markers: instead used cheap Sonnet "rebind re-audits" (verify no new commits + diff-of-diffs, repost marker) — used 3x, found 0 regressions, and the final round caught 1 real cross-PR interaction (#1725's inbound.ts tripping #1730's widened secret guard).
+
+**Operational lessons** → issue #1727 (skill update): canonical executor safeguard block (the test-DB exception drifted between prompts and cost a batch item a round-trip), foreground-verify rule (3 executors idled on background verify), merge-train order is dictated by the shared test-DB ledger owner not plan priority, cancelled-run false failures after update-branch, until-loop over `gh pr checks --watch`.
+
+**Related artifacts.** Sweep PRs above; operator-action backlog in SESSION.md (prod migration apply incl. RAG psql + manual RAG deploy, Supabase leaked-password toggle + SUPABASE_ACCESS_TOKEN secret, Resend inbound MX/webhook provisioning per #1725, spec decisions #1609/#1247, #1611 re-scope); follow-ups #1705, #1707-#1708, #1711-#1718, #1720-#1722, #1724, #1727-#1731.
+
+---
+
 ## D-326 — 2026-07-09 — #1575 double-payout UNIQUE constraints: dropped the suggested predicate, split remediation three ways (logged per #1673)
 
 **Decision**: migration `20260721000000_unique_constraints_double_payout.sql` (PR #1630, closes #1575) deviates from the issue's suggested design in two ways, logged here retrospectively because #1673 flagged that no MEMORY entry existed. (1) The `commissions (booking_id)` UNIQUE index is a **plain, non-partial** index — #1575 suggested `WHERE status <> 'reversed'`, but `commission_status` has no `'reversed'` value (its domain is expected|invoiced|received|partial|overdue|disputed|waived) and no flow ever creates a second commission row for a booking (both writers insert status='expected'; the clawback path updates in place), so the predicate would add nothing and only weaken the guarantee. (2) The migration is **expand-only** and deliberately does NOT dedup pre-existing prod rows; remediation is split three ways — **#1632** (operator dedup of pre-existing prod duplicates against the payout ledger, before the gated prod apply), **#1576** (import-path idempotency so imports stop minting duplicates), **#1577** (submit-path rollback so a crashed submit can't double-book). Data reconciliation — especially money — is operator work distinct from the schema change, so the schema PR merges to dev and passes CI (clean test DB) independently.
