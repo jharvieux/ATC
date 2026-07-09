@@ -59,6 +59,7 @@ const SECTIONS: HubSection[] = [
       { href: "/admin/resources",            label: "Cost & Resource Monitoring", desc: "30-day cost trends, per-model AI breakdown, tenant threshold table, pricing catalog.", requiredRoles: ["superadmin", "finance", "support"] },
       { href: "/admin/vendor-status",        label: "Vendor Status",              desc: "Live snapshot of vendor health (AI, email, weather, payment processors).", requiredRoles: ["superadmin", "support"] },
       { href: "/admin/email-samples",        label: "Email Samples",              desc: "Preview and test-send any platform email template via Resend.", requiredRoles: ["superadmin", "support", "reviewer"] },
+      { href: "/admin/inbound-emails",       label: "Inbound Emails",             desc: "Triage customer replies sent to persona addresses — resolved, forwarded, and unresolved.", requiredRoles: ["superadmin", "support", "reviewer"] },
       { href: "/admin/integrations/weather", label: "Weather Integration",        desc: "Inspect and manage the Open-Meteo weather integration.", requiredRoles: ["superadmin"] },
     ],
   },
