@@ -9,7 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { escapeIlikeOrTerm } from "@/lib/db/postgrest-filter";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const QuerySchema = z.object({
@@ -129,7 +129,7 @@ export async function GET(req: Request): Promise<Response> {
       total_amount:
         b.total_amount_cents === null
           ? null
-          : fromCents(BigInt(b.total_amount_cents) as Cents),
+          : fromCents(BigInt(b.total_amount_cents)),
       currency: b.currency,
       is_test: b.is_sandbox ?? false,
       primary_contact: b.primary_contact_id
