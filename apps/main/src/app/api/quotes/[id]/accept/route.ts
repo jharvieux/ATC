@@ -23,6 +23,7 @@ import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { deriveKindAndVariance } from "@/lib/quotes/kind-variance";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface QuoteRow {
@@ -79,7 +80,21 @@ export async function POST(
       return Response.json({ error: "quote_not_in_sent_or_viewed_status" }, { status: 409 });
     }
 
-    const kind = quote.price_kind ?? "estimate";
+    // Variance threshold from tenant_settings (or env default for tenants
+    // that haven't customized it). Read before the expiry check so the shared
+    // #1699 derivation (kind + variance) is the single source both this route
+    // and the downloadable-PDF path use — an expired-lock early-return pays one
+    // extra indexed read, which is negligible.
+    const { data: settingsData } = await db
+      .from("tenant_settings")
+      .select("quote_variance_cents")
+      .eq("tenant_id", ctx.tenant_id)
+      .maybeSingle();
+    const settingsVariance = (settingsData as { quote_variance_cents?: number } | null)?.quote_variance_cents;
+    const { kind, variance_cents: varianceCents } = deriveKindAndVariance({
+      price_kind: quote.price_kind,
+      tenant_variance_cents: settingsVariance,
+    });
 
     // D-091 Round-3 #47 — enforce price-lock expiry for CONFIRMED quotes.
     // Confirmed quotes carry a locked price that's only valid until
@@ -102,18 +117,6 @@ export async function POST(
         );
       }
     }
-
-    // Variance threshold from tenant_settings (or env default for tenants
-    // that haven't customized it).
-    const { data: settingsData } = await db
-      .from("tenant_settings")
-      .select("quote_variance_cents")
-      .eq("tenant_id", ctx.tenant_id)
-      .maybeSingle();
-    const settingsVariance = (settingsData as { quote_variance_cents?: number } | null)?.quote_variance_cents;
-    const varianceCents = kind === "confirmed"
-      ? 0
-      : (settingsVariance ?? Number(process.env.QUOTE_DEFAULT_VARIANCE_CENTS ?? 5000));
 
     // Tenant + host agency display info for the PDF render.
     const { data: tenantData } = await adminDb

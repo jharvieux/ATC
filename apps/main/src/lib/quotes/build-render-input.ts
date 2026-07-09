@@ -12,19 +12,22 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import type { QuoteRenderInput } from "./render-pdf";
 import { selectRepresentativeOption } from "./representative-option";
+import { deriveKindAndVariance, type QuoteKind } from "./kind-variance";
 
 // §38 — the quotes row is a container now; trip detail + per-option
 // financials live on quote_options. The loader pulls only container/pricing
 // fields; buildRenderInputFromQuote reads the representative option for trip
-// detail.
+// detail. #1699: price_kind is the authoritative source for the rendered
+// kind (see kind-variance.ts) — not a locked_price_cents heuristic.
 const QUOTE_COLUMNS =
-  "id, status, customer_access_token, " +
+  "id, status, customer_access_token, price_kind, " +
   "locked_price_cents, estimate_price_cents, price_lock_expires_at, priced_at";
 
 export interface QuoteRow {
   id: string;
   status: string;
   customer_access_token: string | null;
+  price_kind: QuoteKind | null;
   locked_price_cents: number | null;
   estimate_price_cents: number | null;
   price_lock_expires_at: string | null;
@@ -140,14 +143,28 @@ export async function buildRenderInputFromQuote(
     (optionRows ?? []) as RenderOptionRow[],
   );
 
+  // #1699 — kind + variance are derived by the shared source of truth so the
+  // downloadable PDF matches the accept-time snapshot. Variance comes from the
+  // tenant's configured threshold; unlike the tenant/host/options reads above
+  // this one doesn't fail-loud — a settings blip falls back to the env default
+  // (the same fallback the accept route uses) rather than 500-ing a PDF.
+  const { data: settingsData } = await args.adminDb
+    .from("tenant_settings")
+    .select("quote_variance_cents")
+    .eq("tenant_id", args.ctx.tenant_id)
+    .maybeSingle();
+  const settingsVariance = (settingsData as { quote_variance_cents?: number } | null)?.quote_variance_cents;
+  const { kind, variance_cents } = deriveKindAndVariance({
+    price_kind: args.quote.price_kind,
+    tenant_variance_cents: settingsVariance,
+  });
+
   const now = new Date().toISOString();
   const totalCents =
     args.quote.locked_price_cents ??
     args.quote.estimate_price_cents ??
     option?.total_amount_cents ??
     0;
-  const kind: "confirmed" | "estimate" =
-    args.quote.locked_price_cents != null ? "confirmed" : "estimate";
 
   const input: QuoteRenderInput = {
     quote_id: args.quote.id,
@@ -166,7 +183,7 @@ export async function buildRenderInputFromQuote(
     line_items: [{ label: "Total", amount_cents: totalCents }],
     total_cents: totalCents,
     currency: "USD",
-    variance_cents: Number(process.env.QUOTE_DEFAULT_VARIANCE_CENTS ?? 5000),
+    variance_cents,
     priced_at: args.quote.priced_at ?? now,
     price_lock_expires_at: args.quote.price_lock_expires_at,
     validity_days: Number(process.env.QUOTE_ESTIMATE_VALIDITY_DAYS ?? 7),
