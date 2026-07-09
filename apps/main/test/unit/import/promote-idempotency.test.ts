@@ -34,6 +34,9 @@ vi.mock("@/lib/import/resolve-commission-rate", () => ({
 }));
 
 import { promoteImport } from "@/lib/import/promote";
+import { writeAuditLog } from "@/lib/audit/write";
+
+const writeAuditLogMock = vi.mocked(writeAuditLog);
 
 const TENANT_ID = "tenant-1";
 const ROW_ID = "row-1";
@@ -164,7 +167,7 @@ describe("promoteImport — resolved inputs are forwarded into the atomic RPC (#
     });
     const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
 
-    expect(result).toEqual({ ok: true, contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" });
+    expect(result).toEqual({ ok: true, status: "promoted", contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" });
     expect(rpcCalls).toHaveLength(1);
     const p = rpcCalls[0]!.params;
     expect(p.p_is_booking).toBe(true);
@@ -187,7 +190,7 @@ describe("promoteImport — resolved inputs are forwarded into the atomic RPC (#
     const { svc, rpcCalls } = makeSvc({ queueRow: leadRow(), rpc: { status: "promoted", contact_id: "c-9" } });
     const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
 
-    expect(result).toEqual({ ok: true, contact_id: "c-9" });
+    expect(result).toEqual({ ok: true, status: "promoted", contact_id: "c-9" });
     const p = rpcCalls[0]!.params;
     expect(p.p_is_booking).toBe(false);
     expect(p.p_contact_email).toBe("ada@example.com");
@@ -206,7 +209,7 @@ describe("promoteImport — RPC result mapping (#1712)", () => {
       rpc: { status: "already_accepted", contact_id: "c-done", booking_id: "b-done" },
     });
     const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u2" });
-    expect(result).toEqual({ ok: true, contact_id: "c-done", booking_id: "b-done" });
+    expect(result).toEqual({ ok: true, status: "already_accepted", contact_id: "c-done", booking_id: "b-done" });
   });
 
   it("conflict → not_promotable_status:<live status>", async () => {
@@ -219,5 +222,38 @@ describe("promoteImport — RPC result mapping (#1712)", () => {
     const { svc } = makeSvc({ queueRow: leadRow(), rpc: { error: "deadlock detected" } });
     const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
     expect(result).toEqual({ ok: false, error: "promote_import_rpc_failed: deadlock detected" });
+  });
+
+  it("unknown status → fail-loud bad-status error (contract drift), not silent undefined", async () => {
+    // WHY: if the RPC's jsonb status contract drifts, the switch must not fall
+    // through to undefined and mislead the caller into a false success. It must
+    // surface the offending status so the drift is diagnosable.
+    const { svc } = makeSvc({
+      queueRow: leadRow(),
+      rpc: { status: "promoting_v2" } as unknown as RpcResult,
+    });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, error: "promote_import_rpc_bad_status:promoting_v2" });
+  });
+});
+
+describe("promoteImport — audit log fires once per fresh promote (#1712 retry-safety)", () => {
+  it("promoted → writes exactly one import.accepted audit row", async () => {
+    const { svc } = makeSvc({ queueRow: leadRow(), rpc: { status: "promoted", contact_id: "c-9" } });
+    await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(writeAuditLogMock).toHaveBeenCalledTimes(1);
+    expect(writeAuditLogMock.mock.calls[0]![0]).toMatchObject({ action: "import.accepted", resource_id: ROW_ID });
+  });
+
+  it("already_accepted → does NOT write the audit row (whole-step Inngest retry must not duplicate it)", async () => {
+    // WHY: writeAuditLog is a separate step from the atomic RPC. A whole-step
+    // retry re-invokes promoteImport; the RPC returns already_accepted, so the
+    // audit write must be suppressed or the audit row duplicates on every retry.
+    const { svc } = makeSvc({
+      queueRow: bookingRow("accepted", { promoted_contact_id: "c-done", promoted_booking_id: "b-done" }),
+      rpc: { status: "already_accepted", contact_id: "c-done", booking_id: "b-done" },
+    });
+    await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u2" });
+    expect(writeAuditLogMock).not.toHaveBeenCalled();
   });
 });

@@ -42,7 +42,7 @@ type Svc = ReturnType<typeof import("@/lib/db/service-role-client").createServic
   Pick<SupabaseClient, "from" | "rpc">;
 
 export type PromoteResult =
-  | { ok: true; contact_id: string; booking_id?: string; commission_id?: string }
+  | { ok: true; status: "promoted" | "already_accepted"; contact_id: string; booking_id?: string; commission_id?: string }
   | { ok: false; needs_review: true; reason: "commission_rate_missing" | "unsupported_document_type" }
   | { ok: false; error: string };
 
@@ -130,7 +130,10 @@ async function promoteLeadOrIntake(
     contact_notes: buildLeadNotes(fields),
   });
 
-  if (result.ok) {
+  // Only on a fresh promote — an already_accepted result means a prior run
+  // (or a whole-step Inngest retry) already wrote this audit row; writing again
+  // would duplicate it.
+  if (result.ok && result.status === "promoted") {
     await writeAuditLog({
       tenant_id: row.tenant_id,
       actor_user_id: acceptingUserId ?? null,
@@ -228,7 +231,9 @@ async function promoteBooking(
     commission_rate_source: rate.source,
   });
 
-  if (result.ok) {
+  // See promoteLeadOrIntake — gate on a fresh promote so an already_accepted
+  // (idempotent replay / whole-step retry) doesn't duplicate the audit row.
+  if (result.ok && result.status === "promoted") {
     await writeAuditLog({
       tenant_id: row.tenant_id,
       actor_user_id: acceptingUserId ?? null,
@@ -324,6 +329,7 @@ async function invokePromoteRpc(
       return res.contact_id
         ? {
             ok: true,
+            status: "promoted",
             contact_id: res.contact_id,
             ...(res.booking_id ? { booking_id: res.booking_id } : {}),
             ...(res.commission_id ? { commission_id: res.commission_id } : {}),
@@ -332,12 +338,16 @@ async function invokePromoteRpc(
     case "already_accepted":
       // Idempotent: a prior promotion already finished. Return its records.
       return res.contact_id
-        ? { ok: true, contact_id: res.contact_id, ...(res.booking_id ? { booking_id: res.booking_id } : {}) }
+        ? { ok: true, status: "already_accepted", contact_id: res.contact_id, ...(res.booking_id ? { booking_id: res.booking_id } : {}) }
         : { ok: false, error: "already_accepted_without_promoted_contact" };
     case "conflict":
       return { ok: false, error: `not_promotable_status:${res.row_status ?? "unknown"}` };
     case "not_found":
       return { ok: false, error: "queue_row_not_found" };
+    default:
+      // Contract drift: the RPC returned a status this mapping doesn't know.
+      // Fail loud rather than silently resolving undefined.
+      return { ok: false, error: `promote_import_rpc_bad_status:${String(res.status)}` };
   }
 }
 

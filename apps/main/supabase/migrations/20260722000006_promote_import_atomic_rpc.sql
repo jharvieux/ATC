@@ -301,3 +301,12 @@ COMMENT ON FUNCTION public.promote_import(
 ) IS
   '#1712 (#1711): atomically promotes an import_queue row — claim (FOR UPDATE), dedup/insert contact, insert booking+commission (booking path), write contact_imports, finalize to accepted — in one transaction. Returns jsonb {status: promoted|already_accepted|conflict|not_found, contact_id, booking_id, commission_id}. Eliminates the insert/checkpoint crash window that could orphan duplicate contacts/bookings.';
 
+-- #1712 heal-at-cutover: this PR removes the last writer of status 'promoting'
+-- (and the old unclaim path), so any row stranded in 'promoting' from the
+-- pre-RPC flow would be permanently un-promotable — the RPC only claims from
+-- pending_review/pending_validation and returns 'conflict' (→ 500 forever) for
+-- anything else. Reset stranded rows back to pending_review so they re-enter the
+-- claimable set. NOTE: removing 'promoting' from import_queue_status_check itself
+-- is deferred to the contract migration in #1754.
+UPDATE public.import_queue SET status = 'pending_review' WHERE status = 'promoting';
+

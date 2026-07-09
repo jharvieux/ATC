@@ -17,7 +17,7 @@ import type { PromoteResult } from "@/lib/import/promote";
 
 const h = vi.hoisted(() => ({
   loadRow: null as Record<string, unknown> | null,
-  promoteResult: { ok: true, contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" } as PromoteResult,
+  promoteResult: { ok: true, status: "promoted", contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" } as PromoteResult,
   promoteImport: vi.fn(),
 }));
 
@@ -70,7 +70,7 @@ beforeEach(() => {
     raw_extracted_fields: {},
     document_type: "booking_confirmation",
   };
-  h.promoteResult = { ok: true, contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" };
+  h.promoteResult = { ok: true, status: "promoted", contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" };
   h.promoteImport.mockImplementation(async () => h.promoteResult);
 });
 
@@ -80,7 +80,7 @@ describe("POST /api/imports/review/[id]/accept — promoter-result mapping (#157
     // returns the existing contact/booking, so promoteImport returns ok. The
     // handler must pass that straight through as 200 — a 409/500 here would be a
     // false failure for a promotion that actually succeeded.
-    h.promoteResult = { ok: true, contact_id: "c-1", booking_id: "b-1" };
+    h.promoteResult = { ok: true, status: "already_accepted", contact_id: "c-1", booking_id: "b-1" };
     const res = await call();
     expect(res.status).toBe(200);
     expect((await res.json()) as Record<string, unknown>).toEqual({
