@@ -35,8 +35,8 @@ export type PromoteResult =
 
 // #1576 — the resting states a row may be CAS-claimed FROM: the review-queue
 // accept route arrives at 'pending_review', the pipeline auto-accept path at
-// 'pending_validation'. Exported for the claim test.
-export const PROMOTE_CLAIMABLE_STATUSES = ["pending_review", "pending_validation"] as const;
+// 'pending_validation'.
+const PROMOTE_CLAIMABLE_STATUSES = ["pending_review", "pending_validation"] as const;
 
 const PROMOTABLE_DOCUMENT_TYPES = new Set(["lead_notification", "intake_form", "booking_confirmation"]);
 
@@ -448,6 +448,9 @@ async function insertImportedBooking(
       duration_nights: fields.duration_nights,
       departure_port: fields.departure_port,
       cabin_category: fields.cabin_category,
+      // Invariant: *_cents fields hold the amount in `currency`'s own ISO-4217 minor unit
+      // (Stripe convention) — never ×100-scaled. formatCents() derives the divisor from the
+      // paired currency, so zero-decimal codes (JPY) must not be re-scaled here (#1658).
       total_amount_cents: fields.total_amount_cents,
       commissionable_fare_cents: fields.total_amount_cents, // §34: defaults to total if no breakout
       currency: fields.currency ?? "USD",
@@ -505,6 +508,8 @@ async function ensureCommission(
 
   // §34.7.4: platform_split_rate is NULL for BYO; default 0 here. Sub-host
   // imports are not permitted in v1 per §34.9, so 0 holds the invariant.
+  // Same money invariant as the booking insert: every *_cents value below is in
+  // `currency`'s ISO-4217 minor unit, not ×100-scaled — don't reintroduce scaling (#1658).
   const commissionable = fields.total_amount_cents ?? 0;
   const gross = Math.round(commissionable * rate.rate);
 

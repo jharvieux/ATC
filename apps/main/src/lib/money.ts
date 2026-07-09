@@ -88,23 +88,11 @@ export function fromCents(cents: Cents | bigint): string {
 }
 
 /**
- * Format an integer amount in a currency's MINOR units for display.
- * The canonical display formatter — all /100 patterns must use this.
- *
- * The stored integer is scaled by the currency's own ISO-4217 minor-unit
- * exponent, NOT a hardcoded 100. USD/EUR/GBP have 2 decimals (÷100), but
- * zero-decimal currencies (JPY, KRW, VND) have 0 (÷1) and three-decimal ones
- * (KWD, BHD, OMR) have 3 (÷1000). Dividing every currency by 100 rendered
- * zero-decimal amounts 100× too small (#1658). The exponent comes from Intl's
- * own CLDR data via resolvedOptions() — the same source it formats with — so
- * the scale factor and the rendered precision can never disagree.
- *
- * Falls back to "CODE amount" (2-decimal) for currency codes Intl rejects.
- * Returns "—" for null/undefined input.
- *
- * @param minorUnits - the amount in the currency's smallest unit (e.g. cents)
- * @param currency - ISO 4217 code (e.g., "USD"), defaults to "USD"
- * @returns formatted string with currency symbol (e.g., "$123.45", "¥100")
+ * Canonical display formatter for an integer amount in a currency's MINOR units —
+ * all /100 patterns must route here. The divisor is the currency's own ISO-4217
+ * exponent from Intl's CLDR data (so scale and rendered precision can't disagree),
+ * NOT a hardcoded 100 — a flat ÷100 rendered zero-decimal currencies 100× too small (#1658).
+ * Falls back to "CODE amount" for codes Intl rejects; returns "—" for null/undefined.
  */
 export function formatCents(minorUnits: number | null | undefined, currency: string = "USD"): string {
   if (minorUnits == null) return "—";
