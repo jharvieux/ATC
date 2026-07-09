@@ -52,7 +52,10 @@ export interface FlushResult {
  * Anthropic Message Batches max 100,000 requests per batch, 256 MB.
  * We slice at 50 requests/batch for now — keeps payload size very
  * conservative and means a partial-batch failure costs less. Tune
- * upward once we see real volume.
+ * upward once we see real volume. #1743: reconcile.ts's job rollup is now a
+ * DB-side SUM RPC with no PostgREST row cap, so raising this past ~1000 no
+ * longer risks a silent rollup undercount the way the old .select().limit()
+ * aggregate did.
  */
 const MAX_REQUESTS_PER_BATCH = 50;
 
