@@ -69,8 +69,9 @@ vi.mock("@/lib/db/service-role-client", () => ({
       if (table === "payout_records") {
         return { insert: mocks.payoutInsert };
       }
-      // platform_revenue — passed to safeAwait (mocked)
-      return { insert: () => ({}) };
+      // platform_revenue — passed to safeAwait (mocked). #1578: the revenue
+      // write is now an idempotent upsert, so the mock exposes .upsert too.
+      return { insert: () => ({}), upsert: () => ({}) };
     },
   }),
 }));

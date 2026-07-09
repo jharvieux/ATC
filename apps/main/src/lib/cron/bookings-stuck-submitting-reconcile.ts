@@ -1,5 +1,5 @@
-// §14.4 follow-up (D-091 R3 #50/#51) — reconcile bookings stuck in
-// 'submitting' state. Runs every 5 minutes via Vercel cron
+// §14.4 follow-up (D-091 R3 #50/#51; hardened #1577) — reconcile bookings stuck
+// in 'submitting' state. Runs every 5 minutes via Vercel cron
 // (/api/cron/bookings-stuck-submitting-reconcile).
 //
 // Background: PR #281 introduced a CAS lock `draft → submitting`
@@ -9,9 +9,14 @@
 // outcomes, the row stays in 'submitting' indefinitely — every retry
 // gets 409 from the CAS lock and the booking never moves forward.
 //
-// Any booking in 'submitting' for more than STUCK_THRESHOLD_MINUTES is
-// reverted to 'draft' so the user (or a retry) can submit again. A
-// status-CAS update guards against racing with a still-running submit.
+// #1577 — this cron MUST NOT revert stuck rows to 'draft'. A row stuck in
+// 'submitting' is ambiguous: the process could have died BEFORE the host
+// adapter call (no live booking) OR AFTER it succeeded (a real cruise-line
+// booking now exists). Reverting to 'draft' lets the agent resubmit and
+// double-book at the host. Instead route every stuck row to
+// 'pending_host_review' (reason 'host_state_unknown') for manual/adapter
+// reconciliation. A status-CAS guards against racing with a still-running
+// submit or a completion (submitted / pending_host_review) that landed first.
 //
 // Bound (STUCK_THRESHOLD_MINUTES = 5) is intentionally short: a normal
 // host-adapter submit takes seconds; anything >5min is the route process
@@ -25,11 +30,11 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 const STUCK_THRESHOLD_MINUTES = 5;
 
 export async function runBookingsStuckSubmittingReconcile(): Promise<{
-  reverted: number;
+  flagged: number;
   total_stuck: number;
 }> {
   if (process.env.BOOKING_CRONS_DISABLED === "true") {
-    return { reverted: 0, total_stuck: 0 };
+    return { flagged: 0, total_stuck: 0 };
   }
   const db = createServiceRoleClient();
   const cutoffIso = new Date(Date.now() - STUCK_THRESHOLD_MINUTES * 60 * 1000).toISOString();
@@ -45,12 +50,12 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
   }
 
   const stuck = stuckRows ?? [];
-  if (stuck.length === 0) return { reverted: 0, total_stuck: 0 };
+  if (stuck.length === 0) return { flagged: 0, total_stuck: 0 };
 
-  // CAS revert: only roll back if the row is STILL in 'submitting'. A
-  // legitimate completion (status='submitted' or 'pending_host_review')
-  // that landed between the select and the update will safely not match.
-  let reverted = 0;
+  // CAS flag: only move the row if it is STILL in 'submitting'. A legitimate
+  // completion (status='submitted' or 'pending_host_review') that landed
+  // between the select and the update will safely not match.
+  let flagged = 0;
   for (const row of stuck as Array<{ id: string; tenant_id: string }>) {
     // safeAwait unwraps { data, error } and throws on truthy error. For
     // a CAS update with .select("id"), the returned value is the
@@ -58,19 +63,23 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
     const updated = (await safeAwait(
       db
         .from("bookings")
-        .update({ status: "draft", updated_at: new Date().toISOString() })
+        .update({
+          status: "pending_host_review",
+          review_reason: "host_state_unknown",
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", row.id)
         .eq("status", "submitting")
         .select("id"),
-      "bookings.update.revert_stuck_submitting",
+      "bookings.update.flag_stuck_submitting",
     )) as Array<{ id: string }> | null;
     if (updated && updated.length > 0) {
-      reverted++;
+      flagged++;
       console.info(
-        `[bookings-stuck-submitting-reconcile] reverted booking ${row.id} (tenant ${row.tenant_id}) from submitting → draft`,
+        `[bookings-stuck-submitting-reconcile] flagged booking ${row.id} (tenant ${row.tenant_id}) submitting → pending_host_review (host_state_unknown)`,
       );
     }
   }
 
-  return { reverted, total_stuck: stuck.length };
+  return { flagged, total_stuck: stuck.length };
 }

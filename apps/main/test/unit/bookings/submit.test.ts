@@ -308,6 +308,18 @@ describe("POST /api/bookings/[id]/submit — DOB gate (§20.5)", () => {
     expect(body.error).toBe("estimated_dob_unresolved");
     expect(body.affected_passengers).toEqual(["Alice Smith", "Bob Smith"]);
   });
+
+  it("#1577 — releases the CAS lock on the DOB early exit (pre-host, safe to revert)", async () => {
+    mocks.assertNoEstimatedDOBs.mockRejectedValue(new DOBEstimateUnresolvedError(["Alice Smith"]));
+    await POST(makeReq(), PARAMS);
+    // The lock must be released so the agent can resubmit after fixing DOBs.
+    expect(mocks.safeAwait).toHaveBeenCalledWith(
+      expect.anything(),
+      "bookings.update.revert_lock_on_dob_gate",
+    );
+    // No host call happened on this path.
+    expect(mocks.submitBooking).not.toHaveBeenCalled();
+  });
 });
 
 // ── Tenant lookup ─────────────────────────────────────────────────────────
@@ -319,6 +331,16 @@ describe("POST /api/bookings/[id]/submit — tenant lookup (fail-closed)", () =>
     expect(res.status).toBe(500);
     const body = await res.json() as { error: string };
     expect(body.error).toBe("db_error");
+  });
+
+  it("#1577 — releases the CAS lock on the tenant-lookup early exit (pre-host)", async () => {
+    mocks.tenantRow.mockResolvedValue({ data: null, error: { message: "no row" } });
+    await POST(makeReq(), PARAMS);
+    expect(mocks.safeAwait).toHaveBeenCalledWith(
+      expect.anything(),
+      "bookings.update.revert_lock_on_tenant_lookup",
+    );
+    expect(mocks.submitBooking).not.toHaveBeenCalled();
   });
 });
 
@@ -398,6 +420,46 @@ describe("POST /api/bookings/[id]/submit — commission record", () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
     expect((await res.json() as { error: string }).error).toBe("db_error");
+  });
+
+  it("#1577 — persists provider_booking_ref BEFORE the commissions insert", async () => {
+    // A failing commissions insert must not erase the fact that the host
+    // booking already succeeded: the ref persists in its own write first.
+    mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await POST(makeReq(), PARAMS);
+    expect(mocks.safeAwait).toHaveBeenCalledWith(
+      expect.anything(),
+      "bookings.update.persist_host_ref",
+    );
+  });
+
+  it("#1577 — on commission-insert failure the booking goes to pending_host_review, not stuck in submitting", async () => {
+    // The host record is real (ref persisted), so the row must be routed to
+    // manual review — never left in 'submitting' (sweep/retry would re-book)
+    // and never reverted to 'draft'.
+    mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "boom" } });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(500);
+    expect(mocks.safeAwait).toHaveBeenCalledWith(
+      expect.anything(),
+      "bookings.update.commission_write_failed",
+    );
+  });
+});
+
+// ── Unexpected-error catch-all (#1577) ─────────────────────────────────────
+
+describe("POST /api/bookings/[id]/submit — unexpected error", () => {
+  it("returns 500 (not a misleading 401) with a ref and no raw message leak", async () => {
+    // A non-DOB throw from inside the handler is a server fault. It must not
+    // be reported as 401, and the raw error text must not be echoed.
+    mocks.assertNoEstimatedDOBs.mockRejectedValue(new Error("internal secret detail xyz"));
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string; ref: string };
+    expect(body.error).toBe("booking_submit_failed");
+    expect(typeof body.ref).toBe("string");
+    expect(JSON.stringify(body)).not.toContain("internal secret detail xyz");
   });
 });
 

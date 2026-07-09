@@ -79,6 +79,28 @@ function resolveHostFeeCents(
   return { cents, ruleRef: fee.id };
 }
 
+// #1577 — release the draft→submitting CAS lock by reverting to 'draft'. Only
+// safe on PRE-host-call exits (DOB gate, tenant lookup): once the host adapter
+// has been called we must NOT revert to a re-submittable state (see the sweep
+// and the commission-write-failed path, which route to pending_host_review).
+// The .eq("status","submitting") guard makes this a no-op if a concurrent path
+// already moved the row on.
+async function revertSubmitLock(
+  db: ReturnType<typeof tenantClient>,
+  bookingId: string,
+  label: string,
+): Promise<void> {
+  await safeAwait(
+    db
+      // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
+      .from("bookings")
+      .update({ status: "draft", updated_at: new Date().toISOString() })
+      .eq("id", bookingId)
+      .eq("status", "submitting"),
+    label,
+  );
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -141,11 +163,13 @@ async function submitBooking(
     // both reaching the host adapter call.
     // Transition draft → submitting atomically; if 0 rows match, another
     // submit holds the lock. Returns 409 so the client can retry later.
-    // On host-call success the lock transitions to 'submitted' below; on
-    // host-call failure we revert to 'draft' so a retry can pick it up.
-    // The bookings-stuck-submitting-reconcile cron (Vercel, runs every 5min)
-    // sweeps stuck 'submitting' rows older than STUCK_THRESHOLD_MINUTES back
-    // to draft if the process dies mid-flight (see lib/cron/bookings-stuck-submitting-reconcile.ts).
+    // On host-call success the ref is persisted immediately (below) and the
+    // lock transitions to 'submitted'; on host-call failure we revert to
+    // 'draft' so a retry can pick it up. If the process dies mid-flight the
+    // bookings-stuck-submitting-reconcile cron (Vercel, every 5min) routes the
+    // stuck row to 'pending_host_review' (reason 'host_state_unknown') — NEVER
+    // back to 'draft' — because it cannot prove no live host booking exists, and
+    // a resubmit would double-book (#1577). See lib/cron/bookings-stuck-submitting-reconcile.ts.
     const { data: lockRows } = await db
       .from("bookings")
       .update({ status: "submitting", updated_at: new Date().toISOString() })
@@ -165,6 +189,9 @@ async function submitBooking(
       await assertNoEstimatedDOBs(bookingId);
     } catch (err) {
       if (err instanceof DOBEstimateUnresolvedError) {
+        // Pre-host early exit — release the lock so the agent can resubmit
+        // after resolving DOBs (#1577); no host call has happened yet.
+        await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_dob_gate");
         return Response.json({
           error: "estimated_dob_unresolved",
           affected_passengers: err.affectedPassengers,
@@ -185,6 +212,8 @@ async function submitBooking(
       .single();
 
     if (tenantErr || !tenantData) {
+      // Pre-host early exit — release the lock (#1577); no host call yet.
+      await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_tenant_lookup");
       if (tenantErr) return dbErrorResponse(tenantErr);
       return Response.json({ error: "tenant_lookup_failed" }, { status: 500 });
     }
@@ -465,23 +494,35 @@ async function submitBooking(
     const submitResult = await adapter.submitBooking(submitReq, hostCtx);
 
     if (!submitResult.ok) {
-      // D-091 R3 #51 — revert the CAS lock so a retry can pick this up.
-      // Previously this path left the booking in 'submitting' indefinitely
-      // and any subsequent attempt got the 409 above.
-      await safeAwait(
-        db
-          .from("bookings")
-          .update({ status: "draft", updated_at: new Date().toISOString() })
-          .eq("id", bookingId)
-          .eq("status", "submitting"),
-        "bookings.update.revert_lock_on_host_failure",
-      );
+      // D-091 R3 #51 — revert the CAS lock so a retry can pick this up. The host
+      // call reported failure, so no live booking exists → reverting to 'draft'
+      // is safe. Previously this path left the booking in 'submitting'
+      // indefinitely and any subsequent attempt got the 409 above.
+      await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_host_failure");
       const ref = crypto.randomUUID();
       console.error("[bookings/submit] ref=%s host_adapter_error", ref, submitResult.error);
       return Response.json({ error: "host_adapter_error", code: submitResult.error.code, ref }, { status: 502 });
     }
 
     const { provider_booking_ref } = submitResult.value;
+
+    // #1577 — the host booking is now REAL. Persist provider_booking_ref in its
+    // own update immediately, BEFORE the commissions insert, so a crash after
+    // this point leaves the ref on the row. That is what lets the reconcile
+    // cron route the stuck row to review instead of reverting it to a
+    // resubmittable state (which would produce a SECOND live cruise-line booking).
+    await safeAwait(
+      db
+        // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
+        .from("bookings")
+        .update({
+          provider_booking_ref,
+          host_adapter: adapter.adapterId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", bookingId),
+      "bookings.update.persist_host_ref",
+    );
 
     // §15.12 sandbox: commissions are NOT created in sandbox mode. The booking
     // still transitions to 'submitted' so the tenant can exercise the rest of
@@ -507,6 +548,22 @@ async function submitBooking(
       });
 
       if (commissionError) {
+        // #1577 — the host booking succeeded and the ref is persisted, so we must
+        // NOT leave the row in 'submitting' (the sweep/retry would re-book) nor
+        // revert to 'draft'. Route to manual review; the host record is real and
+        // the commission just needs to be reconciled by hand.
+        await safeAwait(
+          db
+            // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
+            .from("bookings")
+            .update({
+              status: "pending_host_review",
+              review_reason: "commission_write_failed",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", bookingId),
+          "bookings.update.commission_write_failed",
+        );
         return dbErrorResponse(commissionError);
       }
     }
@@ -557,7 +614,13 @@ async function submitBooking(
 
     return Response.json({ ok: true, provider_booking_ref, status: "submitted" });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unauthorized";
-    return Response.json({ error: message }, { status: 401 });
+    // #1577 — an unexpected throw here is a server fault, not an auth failure:
+    // return 500 (was a misleading 401) and do NOT echo the raw error message.
+    // We deliberately do NOT revert the lock: the throw may have landed after
+    // the host adapter call, so the row could carry a real host booking. The
+    // reconcile cron routes any stuck 'submitting' row to pending_host_review.
+    const ref = crypto.randomUUID();
+    console.error("[bookings/submit] ref=%s unhandled_error", ref, err);
+    return Response.json({ error: "booking_submit_failed", ref }, { status: 500 });
   }
 }
