@@ -26,6 +26,27 @@ export async function sendGroupInvitationEmail(args: {
   group: GroupInvitationGroup;
   tenantId: string;
 }): Promise<void> {
+  // Hoisted so the fail-silent catch (#1707) can name the invitee in the
+  // email_log row, and so the claim (#1716) can be reverted from either the
+  // failed-send branch or the catch.
+  let inviteeEmail: string | null = null;
+  let claimed = false;
+
+  // #1716 — revert the pre-send stamp (claim) so a send that didn't go out
+  // doesn't suppress the cadence's next reminder. Raw destructure (not
+  // safeAwait) so it can never throw back into the caller's request.
+  const revertClaim = async (): Promise<void> => {
+    claimed = false;
+    const { error } = await args.svc
+      // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
+      .from("invitations")
+      .update({ last_email_sent_at: null })
+      .eq("id", args.invitationId);
+    if (error) {
+      console.warn(`[group-invitation] claim revert failed for inv=${args.invitationId}: ${error.message}`);
+    }
+  };
+
   try {
     const [
     { data: inv },
@@ -44,6 +65,7 @@ export async function sendGroupInvitationEmail(args: {
   ]);
 
   if (!inv || !tenant) return;
+  inviteeEmail = inv.invitee_email;
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
   const { generateToken: genToken } = await import("@/lib/groups/invitation-token");
@@ -105,6 +127,23 @@ export async function sendGroupInvitationEmail(args: {
         invite_url: inviteUrl,
       }));
 
+  // #1716 — claim-before-send (D-091 #21). Stamp last_email_sent_at BEFORE the
+  // send. Previously the stamp landed only AFTER sendEmail returned "sent", so a
+  // crash in that gap left the stamp NULL and the next 08:00 UTC cadence run
+  // sent one duplicate (group-reminder-cadence.ts reads a NULL stamp as "never
+  // emailed" and skips its interval guard). Stamping first closes that window;
+  // revertClaim() below clears it if the send doesn't actually go out, so a
+  // suppressed/rate-limited/failed send (or a pre-send throw) still lets the
+  // cadence retry — a send that never happened must not suppress a legitimate
+  // reminder. Reverting to NULL is safe: this helper only runs on freshly
+  // created invitation rows, where the stamp starts NULL.
+  await safeAwait(
+    // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
+    args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId),
+    "invitations.update.last_email_sent_at.claim",
+  );
+  claimed = true;
+
   // Route through the shared send helper so suppression, rate-limiting,
   // tenant from-address resolution (§16.4), and the email_log write all
   // apply consistently. HTML is rendered above; sendEmail expects it pre-built.
@@ -132,28 +171,18 @@ export async function sendGroupInvitationEmail(args: {
   });
 
   if (result.status === "sent") {
-    // #1584 — this initial send counts as the first reminder for cadence
-    // purposes. Without this stamp, group-reminder-cadence.ts treats a null
-    // last_email_sent_at as "never emailed" and skips its interval check, so
-    // every new invitee got a near-duplicate GroupReminder the very next
-    // 08:00 UTC run regardless of how far out the sailing is.
-    // Crash-window trade-off (#1716): the email is already sent above; if the
-    // process dies before this stamp lands, last_email_sent_at stays null and
-    // the next cadence run can send at most ONE duplicate — bounded by the
-    // email_log 3-per-24h guard. Accepted over a pre-send stamp (which would
-    // suppress legitimate reminders on a send that never went out).
-    await safeAwait(
-      // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
-      args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId),
-      "invitations.update.last_email_sent_at",
-    );
+    // Claim stands — the initial send counts as the first reminder for cadence
+    // purposes (#1584), already stamped above.
+    claimed = false;
   } else if (result.status === "failed") {
     // Something broke (key missing/malformed, Resend 5xx) — actionable.
+    await revertClaim();
     console.error(
       `[group-invitation] send failed for inv=${args.invitationId}: ${result.reason ?? "unknown"}`,
     );
   } else {
     // suppressed / rate_limited — expected, not an error.
+    await revertClaim();
     console.warn(
       `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
     );
@@ -162,5 +191,33 @@ export async function sendGroupInvitationEmail(args: {
     console.error(
       `[group-invitation] send failed for inv=${args.invitationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
+    // #1716 — if we already claimed (crash/throw between the stamp and a
+    // delivered send), clear it so the cadence retries this invitee.
+    if (claimed) await revertClaim();
+    // #1707 — a failure BEFORE sendEmail (the invitations/tenants/branding
+    // reads, template resolution, token generation, React rendering) used to
+    // leave only this console.error — no per-tenant queryable record that the
+    // invite never went out (operators don't watch app logs per tenant). Write
+    // a best-effort email_log row (status 'rejected', the same terminal status
+    // sendEmail writes on a vendor failure) so the failure is observable. Stays
+    // fail-silent: its own error is swallowed, never rethrown into the caller.
+    try {
+      const { error: logErr } = await args.svc.from("email_log").insert({
+        tenant_id: args.tenantId,
+        to_email: inviteeEmail ?? `unknown:invitation:${args.invitationId}`,
+        from_email: "(unresolved-pre-send-failure)",
+        subject: "Group invitation (send failed before dispatch)",
+        template_id: "group_invitation",
+        email_category: "group_invitation",
+        status: "rejected",
+        related_group_id: args.group.id,
+        bounce_reason: err instanceof Error ? err.message : String(err),
+      });
+      if (logErr) {
+        console.error(`[group-invitation] email_log write failed for inv=${args.invitationId}: ${logErr.message}`);
+      }
+    } catch (logThrow) {
+      console.error(`[group-invitation] email_log write threw for inv=${args.invitationId}: ${logThrow instanceof Error ? logThrow.message : String(logThrow)}`);
+    }
   }
 }
