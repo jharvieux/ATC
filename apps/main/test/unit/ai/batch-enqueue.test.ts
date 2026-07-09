@@ -129,6 +129,26 @@ describe("enqueueBatchRequest", () => {
     ).rejects.toThrow(/tenant FK violation/);
   });
 
+  it("enqueues persona_addendum_rescreen — the purpose broken by the #1695 CHECK gap", async () => {
+    // The nightly rescreen producer enqueues this purpose. Before #1695 the DB
+    // CHECK rejected it (23514); this asserts the app path carries the value
+    // through to the insert payload so the widened CHECK actually gets exercised.
+    const db = makeDb();
+    await enqueueBatchRequest({
+      tenant_id: TENANT,
+      purpose: "persona_addendum_rescreen",
+      request_params: {
+        model: "claude-haiku-4-5",
+        max_tokens: 256,
+        messages: [{ role: "user", content: "rescreen" }],
+      },
+      caller_metadata: { addendum_id: "add-1" },
+      db: db.client as never,
+    });
+    const insertPayload = db.calls.find((c) => c.op === "insert")?.payload as { purpose: string };
+    expect(insertPayload.purpose).toBe("persona_addendum_rescreen");
+  });
+
   it("allows omitting caller_metadata", async () => {
     const db = makeDb();
     await enqueueBatchRequest({
