@@ -59,7 +59,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     // name — one FK (invitation_id → invitations), so unambiguous.
     let baseQuery = svc
       .from("forum_messages")
-      .select("id, content, status, user_id, invitation_id, parent_message_id, created_at, invitations(invitee_name, visibility_choice)")
+      .select("id, content, status, user_id, invitation_id, parent_message_id, created_at, invitations(invitee_name, visibility_choice)", { count: "exact" })
       .eq("thread_id", threadId)
       .eq("forum_id", forumId)
       .eq("tenant_id", ctx.tenant_id);
@@ -68,8 +68,22 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       baseQuery = baseQuery.eq("status", "visible");
     }
 
-    const { data: messages, error } = await baseQuery.order("created_at", { ascending: true });
+    // #1588: a lively thread can outgrow PostgREST's unbounded max-rows cap,
+    // which would silently drop the OLDEST messages under the prior
+    // ascending, unbounded order. Page from newest-first instead (so the
+    // default page is always the most recent `limit` messages, never a
+    // silently-truncated prefix), then reverse to the ascending order the
+    // client renders in.
+    const url = new URL(req.url);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 200), 500);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+
+    const { data: messages, error, count } = await baseQuery
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
     if (error) return dbErrorResponse(error);
+
+    const orderedMessages = (messages ?? []).slice().reverse();
 
     type MessageRow = {
       id: string; content: string; status: string; user_id: string | null;
@@ -78,14 +92,14 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
         | { invitee_name: string | null; visibility_choice: "no_opinion" | "be_anonymous" | "show_me_anyway" }[] | null;
     };
 
-    const withAuthorName = ((messages ?? []) as MessageRow[]).map(({ invitations, ...m }) => {
+    const withAuthorName = (orderedMessages as MessageRow[]).map(({ invitations, ...m }) => {
       if (!m.invitation_id) return { ...m, author_name: null };
       const inv = toOne(invitations);
       const anonymous = effectiveVisibility(visibilityDefault, inv?.visibility_choice ?? "no_opinion") === "hidden";
       return { ...m, author_name: anonymous ? "Anonymous" : deriveDisplayName(inv?.invitee_name ?? null) };
     });
 
-    return Response.json({ messages: withAuthorName, is_coordinator: isCoordinator });
+    return Response.json({ messages: withAuthorName, is_coordinator: isCoordinator, total: count ?? 0, limit, offset });
   } catch (err) {
     return respondToAuthError(err);
   }

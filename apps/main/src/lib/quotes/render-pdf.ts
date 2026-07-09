@@ -49,7 +49,11 @@ export interface QuoteRenderResult {
   content_hash: string;
 }
 
-const ESTIMATE_FOOTER_TEMPLATE = (varianceUsd: string): string =>
+// #1596: exported so render-quote-pdf.tsx (the binary renderer) consumes
+// the SAME footer copy instead of a hand-maintained duplicate — the two
+// renderers drifting on legally-significant disclosure text is exactly
+// the bug this fixes.
+export const ESTIMATE_FOOTER_TEMPLATE = (varianceUsd: string): string =>
   `This is an ESTIMATE — the final price at booking may differ. By accepting,
 you authorize us to submit the booking at the actual price PROVIDED the price
 is within ${varianceUsd} of the estimate above. If the actual price falls
@@ -57,7 +61,7 @@ OUTSIDE this variance, we will pause the booking and ask you to reconfirm
 at the new price before submitting. Estimate quotes are valid for the period
 shown; after that they automatically expire and a fresh quote is required.`;
 
-const CONFIRMED_FOOTER_TEMPLATE = (host: string, lockEnd: string): string =>
+export const CONFIRMED_FOOTER_TEMPLATE = (host: string, lockEnd: string): string =>
   `This is a CONFIRMED quote. ${host} has price-locked this fare through
 ${lockEnd}. Acceptance submits the booking at the locked price.`;
 
@@ -123,7 +127,10 @@ ${itemRows}
   };
 }
 
-function formatDate(ts: string): string {
+// #1596: exported — the single source for both renderers (see
+// render-quote-pdf.tsx), so the HTML snapshot and the binary PDF can't
+// format the same timestamp two different ways.
+export function formatDate(ts: string): string {
   try {
     return new Date(ts).toISOString().slice(0, 10);
   } catch {
@@ -131,7 +138,7 @@ function formatDate(ts: string): string {
   }
 }
 
-function formatTs(ts: string | null): string {
+export function formatTs(ts: string | null): string {
   if (!ts) return "—";
   try {
     return new Date(ts).toISOString().replace("T", " ").slice(0, 16) + " UTC";

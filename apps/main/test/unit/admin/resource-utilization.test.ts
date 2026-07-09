@@ -291,6 +291,72 @@ describe("buildDailyArray with apify rows", () => {
   });
 });
 
+// #1588 — the GET handler used to run a single unbounded select over
+// ai_call_log, which PostgREST silently truncates at its max-rows default
+// once a tenant's 30-day call volume passes it: the cost dashboard would
+// then quietly UNDER-report spend with no error and no signal to the
+// operator. fetchAiCallLogRows pages explicitly so every row is counted.
+describe("fetchAiCallLogRows", () => {
+  const row = (i: number) => ({
+    created_at: "2024-03-15T00:00:00Z",
+    vendor: "anthropic",
+    model: "claude",
+    input_tokens: i,
+    output_tokens: i,
+    cost_estimate_cents: 1,
+  });
+
+  it("returns everything from a single page under the page size (the common case)", async () => {
+    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const fetchPage = vi.fn().mockResolvedValue({ data: [row(1), row(2)], error: null });
+
+    const rows = await fetchAiCallLogRows(fetchPage, 1000);
+
+    expect(rows).toHaveLength(2);
+    expect(fetchPage).toHaveBeenCalledTimes(1); // stops after a short page — no wasted round-trip
+  });
+
+  it("pages through multiple full pages and stops on the first short page — this is the bug fix: a naive single select would have silently dropped page 2+", async () => {
+    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const pageSize = 2;
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null }) // full page — must keep going
+      .mockResolvedValueOnce({ data: [row(3), row(4)], error: null }) // full page — must keep going
+      .mockResolvedValueOnce({ data: [row(5)], error: null }); // short page — must stop
+
+    const rows = await fetchAiCallLogRows(fetchPage, pageSize);
+
+    expect(rows).toHaveLength(5);
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+    expect(fetchPage).toHaveBeenNthCalledWith(1, 0, pageSize);
+    expect(fetchPage).toHaveBeenNthCalledWith(2, 2, pageSize);
+    expect(fetchPage).toHaveBeenNthCalledWith(3, 4, pageSize);
+  });
+
+  it("stops after an exactly-page-size-sized final page returns empty, rather than looping forever", async () => {
+    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const pageSize = 2;
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null })
+      .mockResolvedValueOnce({ data: [], error: null });
+
+    const rows = await fetchAiCallLogRows(fetchPage, pageSize);
+
+    expect(rows).toHaveLength(2);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails loud on a mid-pagination DB error instead of returning a partial, silently-wrong result", async () => {
+    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const pageSize = 2;
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: "connection reset" } });
+
+    await expect(fetchAiCallLogRows(fetchPage, pageSize)).rejects.toThrow(/ai_call_log read failed/);
+  });
+});
+
 // ── Part 2: PUT handler ───────────────────────────────────────────────────────
 
 vi.mock("@/lib/auth/assert-platform-admin", async () => {

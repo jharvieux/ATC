@@ -35,29 +35,42 @@ import { GET } from "@/app/api/quotes/route";
 
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 
-type Result = { data: Array<Record<string, unknown>> | null; error: { message: string } | null };
+type Result = { data: Array<Record<string, unknown>> | null; error: { message: string } | null; count?: number };
 
 // Mock tenantClient: routes .from(table) to the supplied result and records
 // which tables were queried, so the empty-quotes short-circuit can be verified.
 function makeDb(quotes: Result, options: Result) {
   const tablesQueried: string[] = [];
+  const rangeCalls: Array<[number, number]> = [];
   const db = {
     from(table: string) {
       tablesQueried.push(table);
       const result = table === "quotes" ? quotes : options;
+      // The quotes query chains .order().range(); the quote_options query
+      // terminates at .order(). This object satisfies both: it's a
+      // thenable (so `await ...order(...)` resolves directly) and also
+      // exposes .range() for the paginated quotes call (#1588).
+      const terminal = {
+        range: (from: number, to: number) => {
+          rangeCalls.push([from, to]);
+          return Promise.resolve(result);
+        },
+        then: (resolve: (v: Result) => void, reject: (e: unknown) => void) =>
+          Promise.resolve(result).then(resolve, reject),
+      };
       const chain = {
         select: () => chain,
         in: () => chain,
-        order: () => Promise.resolve(result),
+        order: () => terminal,
       };
       return chain;
     },
   };
-  return { db, tablesQueried };
+  return { db, tablesQueried, rangeCalls };
 }
 
-function req(): Request {
-  return new Request("https://tenant.example.com/api/quotes");
+function req(query = ""): Request {
+  return new Request(`https://tenant.example.com/api/quotes${query}`);
 }
 
 beforeEach(() => {
@@ -168,5 +181,41 @@ describe("GET /api/quotes — representative-option grouping + flatten", () => {
     );
     const res = await GET(req());
     expect(res.status).toBe(401);
+  });
+
+  // #1588 — PostgREST silently truncates unbounded selects at its max-rows
+  // default, so a tenant with more quotes than that cap would lose rows off
+  // the end with no signal. Pin that the route now issues an explicit
+  // .range() (never an unbounded select) and honors caller-supplied
+  // limit/offset, echoing them back with `total` so a client can tell it's
+  // seeing a partial page rather than everything.
+  it("honors limit/offset query params via .range() and echoes total/limit/offset", async () => {
+    const { db, rangeCalls } = makeDb(
+      { data: [{ id: "q1", status: "draft", created_at: "2026-06-02T00:00:00Z" }], error: null, count: 137 },
+      { data: [], error: null },
+    );
+    mocks.tenantClient.mockReturnValue(db);
+
+    const res = await GET(req("?limit=20&offset=40"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { total: number; limit: number; offset: number };
+
+    expect(rangeCalls).toEqual([[40, 59]]); // offset, offset + limit - 1
+    expect(body.total).toBe(137);
+    expect(body.limit).toBe(20);
+    expect(body.offset).toBe(40);
+  });
+
+  it("clamps an oversized limit to the MAX_LIMIT cap rather than trusting the caller", async () => {
+    const { db, rangeCalls } = makeDb(
+      { data: [], error: null, count: 0 },
+      { data: [], error: null },
+    );
+    mocks.tenantClient.mockReturnValue(db);
+
+    const res = await GET(req("?limit=100000"));
+    const body = (await res.json()) as { limit: number };
+    expect(body.limit).toBe(200);
+    expect(rangeCalls).toEqual([[0, 199]]);
   });
 });

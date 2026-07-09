@@ -193,14 +193,21 @@ export async function GET(req: Request): Promise<Response> {
 
     const svc = createServiceRoleClient();
 
-    const { data, error } = await svc
+    // #1588: explicit bound — same limit/offset shape as GET /api/crm/contacts
+    // — instead of an unlimited select PostgREST would silently truncate.
+    const url = new URL(req.url);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+
+    const { data, error, count } = await svc
       .from("groups")
-      .select("id,status,cruise_line,ship_name,sailing_date,departure_port,hero_image_url,created_at,cruise_line_id,cruise_lines(display_name)")
+      .select("id,status,cruise_line,ship_name,sailing_date,departure_port,hero_image_url,created_at,cruise_line_id,cruise_lines(display_name)", { count: "exact" })
       .eq("tenant_id", ctx.tenant_id)
-      .order("sailing_date", { ascending: true });
+      .order("sailing_date", { ascending: true })
+      .range(offset, offset + limit - 1);
 
     if (error) return dbErrorResponse(error);
-    return Response.json({ groups: data });
+    return Response.json({ groups: data, total: count ?? 0, limit, offset });
   } catch (err) {
     return respondToAuthError(err);
   }

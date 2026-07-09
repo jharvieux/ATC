@@ -66,19 +66,31 @@ interface QuoteListOption {
   total_amount_cents: number | null;
 }
 
+// #1588: PostgREST caps unbounded selects at its max-rows default, which
+// silently drops page N+1 rather than erroring — an explicit limit/offset
+// (same pattern as GET /api/crm/contacts) makes the truncation visible
+// (via `total`) instead of invisible.
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
 export async function GET(req: Request): Promise<Response> {
   try {
     const { ctx } = await assertPermission(req, { resource: "quotes", action: "read" });
     const db = tenantClient(ctx);
 
-    const { data: quoteRows, error: quotesErr } = await db
+    const url = new URL(req.url);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT), MAX_LIMIT);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+
+    const { data: quoteRows, error: quotesErr, count } = await db
       .from("quotes")
-      .select("id, status, created_at")
-      .order("created_at", { ascending: false });
+      .select("id, status, created_at", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
     if (quotesErr) return dbErrorResponse(quotesErr);
 
     const quotes = (quoteRows ?? []) as Array<{ id: string; status: string; created_at: string }>;
-    if (quotes.length === 0) return Response.json({ quotes: [] });
+    if (quotes.length === 0) return Response.json({ quotes: [], total: count ?? 0, limit, offset });
 
     const { data: optionRows, error: optionsErr } = await db
       .from("quote_options")
@@ -109,7 +121,7 @@ export async function GET(req: Request): Promise<Response> {
       };
     });
 
-    return Response.json({ quotes: items });
+    return Response.json({ quotes: items, total: count ?? 0, limit, offset });
   } catch (err) {
     return respondToAuthError(err);
   }

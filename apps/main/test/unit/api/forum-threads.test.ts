@@ -75,7 +75,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
               eq: () => ({
                 is: () => ({
                   order: () => ({
-                    order: mocks.threadsQuery,
+                    // #1588: second .order() is followed by .range() now
+                    // (bounded pagination) rather than terminating itself.
+                    order: () => ({
+                      range: (...args: unknown[]) => mocks.threadsQuery(...args),
+                    }),
                   }),
                 }),
               }),
@@ -90,10 +94,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "forum_messages") {
         // Self-referential chain: .eq() records calls so tests can assert the
-        // status="visible" filter is applied for non-coordinators; .order() is terminal.
+        // status="visible" filter is applied for non-coordinators; .order()
+        // is followed by .range() (#1588 — bounded pagination), which is terminal.
         const msgChain: Record<string, unknown> = {};
         msgChain.eq = (col: string, val: unknown) => { mocks.messagesEqSpy(col, val); return msgChain; };
-        msgChain.order = mocks.messagesQuery;
+        msgChain.order = () => ({ range: (...args: unknown[]) => mocks.messagesQuery(...args) });
         return { select: () => msgChain };
       }
       return {};
@@ -197,6 +202,27 @@ describe("GET /api/forums/[forumId]/threads", () => {
     const body: { threads: unknown[] } = await res.json();
     expect(body.threads).toHaveLength(1);
     expect(body.threads[0]).toMatchObject({ title: "Packing tips" });
+  });
+
+  // #1588 — an unbounded select silently loses threads past PostgREST's
+  // max-rows cap; pin that the route now issues a bounded .range() and
+  // echoes total/limit/offset so a busy forum's thread list can't silently
+  // truncate without the client knowing there's more.
+  it("honors limit/offset query params and echoes total/limit/offset", async () => {
+    const thread = { id: THREAD_ID, title: "Packing tips", is_locked: false, is_pinned: false, is_announcement: false, created_at: "2026-01-01T00:00:00Z" };
+    mocks.threadsQuery.mockResolvedValue({ data: [thread], error: null, count: 250 });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/route");
+    const res = await GET(makeReq(`/api/forums/${FORUM_ID}/threads?limit=10&offset=20`), {
+      params: Promise.resolve({ forumId: FORUM_ID }),
+    });
+
+    expect(res.status).toBe(200);
+    const body: { total: number; limit: number; offset: number } = await res.json();
+    expect(mocks.threadsQuery).toHaveBeenCalledWith(20, 29); // offset, offset + limit - 1
+    expect(body.total).toBe(250);
+    expect(body.limit).toBe(10);
+    expect(body.offset).toBe(20);
   });
 
   it("returns 404 when forum not found", async () => {

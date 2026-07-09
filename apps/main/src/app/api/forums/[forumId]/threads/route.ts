@@ -30,17 +30,25 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     if (fErr) return dbErrorResponse(fErr);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
-    const { data: threads, error } = await svc
+    // #1588: explicit bound — PostgREST silently truncates an unlimited
+    // select at its max-rows default, so a busy forum would lose threads
+    // off the end with no signal. Same limit/offset shape as GET /api/crm/contacts.
+    const url = new URL(req.url);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+
+    const { data: threads, error, count } = await svc
       .from("forum_threads")
-      .select("id, title, is_locked, is_pinned, is_announcement, created_at, created_by_user_id")
+      .select("id, title, is_locked, is_pinned, is_announcement, created_at, created_by_user_id", { count: "exact" })
       .eq("forum_id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .is("deleted_at", null)
       .order("is_pinned", { ascending: false })
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (error) return dbErrorResponse(error);
-    return Response.json({ threads: threads ?? [] });
+    return Response.json({ threads: threads ?? [], total: count ?? 0, limit, offset });
   } catch (err) {
     return respondToAuthError(err);
   }
