@@ -26,6 +26,16 @@ const mocks = vi.hoisted(() => ({
   // the T-1 default target) so the ±windowHours match fires for the
   // scheduler under test.
   sailingHoursFromNow: 168,
+  // #1745 — bookings rows returned per .range() page, in insertion order.
+  // null (default) falls back to the single legacy fixture booking below;
+  // the pagination test overrides this with >1000 rows across two pages.
+  bookingPages: null as Array<Array<{
+    id: string;
+    tenant_id: string;
+    group_booking_id: string;
+    groups: { sailing_date: string };
+  }>> | null,
+  order: vi.fn(),
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -38,45 +48,68 @@ vi.mock("@/inngest/client", () => ({
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({
-    from(table: string) {
-      if (table === "bookings") {
+  createServiceRoleClient: () => {
+    // #1745 — one client instance per scanAndEmit() call, but .from("bookings")
+    // is invoked once PER .range() page in the pagination loop below — pageIndex
+    // must live at the client level, not be reset on every .from() call.
+    let pageIndex = 0;
+    return {
+      from(table: string) {
+        if (table === "bookings") {
+          return {
+            select() {
+              const chain = {
+                eq: () => chain,
+                not: () => chain,
+                order: (...args: unknown[]) => {
+                  mocks.order(...args);
+                  return chain;
+                },
+                // #1745 — scanAndEmit now pages with .range() instead of a
+                // single unbounded select. When mocks.bookingPages is set,
+                // serve it in order (one page per call) so the fixture
+                // below can prove the fan-out loop actually issues a
+                // second .range() call; otherwise fall back to the single
+                // legacy fixture booking on page 0 and an empty page after.
+                range: () => {
+                  if (mocks.bookingPages) {
+                    const page = mocks.bookingPages[pageIndex] ?? [];
+                    pageIndex += 1;
+                    return Promise.resolve({ data: page, error: null });
+                  }
+                  const page = pageIndex === 0
+                    ? [{
+                        id: "booking-1",
+                        tenant_id: "t1",
+                        group_booking_id: "g1",
+                        groups: {
+                          sailing_date: new Date(
+                            Date.now() + mocks.sailingHoursFromNow * 60 * 60 * 1000,
+                          ).toISOString(),
+                        },
+                      }]
+                    : [];
+                  pageIndex += 1;
+                  return Promise.resolve({ data: page, error: null });
+                },
+              };
+              return chain;
+            },
+          };
+        }
+        // pre_cruise_email_content
         return {
           select() {
             const chain = {
               eq: () => chain,
-              not: () => Promise.resolve({
-                data: [
-                  {
-                    id: "booking-1",
-                    tenant_id: "t1",
-                    group_booking_id: "g1",
-                    groups: {
-                      sailing_date: new Date(
-                        Date.now() + mocks.sailingHoursFromNow * 60 * 60 * 1000,
-                      ).toISOString(),
-                    },
-                  },
-                ],
-                error: null,
-              }),
+              maybeSingle: async () => ({ data: mocks.contentRow, error: null }),
             };
             return chain;
           },
         };
-      }
-      // pre_cruise_email_content
-      return {
-        select() {
-          const chain = {
-            eq: () => chain,
-            maybeSingle: async () => ({ data: mocks.contentRow, error: null }),
-          };
-          return chain;
-        },
-      };
-    },
-  }),
+      },
+    };
+  },
 }));
 
 import {
@@ -88,6 +121,7 @@ beforeEach(() => {
   mocks.contentRow = null;
   mocks.sentEvents = [];
   mocks.sailingHoursFromNow = 168;
+  mocks.bookingPages = null;
 });
 
 describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
@@ -135,5 +169,38 @@ describe("preCruiseEmailSchedulerT1 — #1582 sent_at dedup", () => {
     mocks.contentRow = null;
     await (preCruiseEmailSchedulerT1 as unknown as () => Promise<unknown>)();
     expect(mocks.sentEvents).toHaveLength(1);
+  });
+});
+
+// #1745 — the bookings scan used to be a single unbounded .select(), which
+// PostgREST's ~1000-row db-max-rows cap would silently truncate: some
+// confirmed group bookings past row 1000 would never be scanned, and those
+// customers would never get a pre-cruise email with no error surfaced
+// anywhere. This proves the fan-out now pages past that cap.
+describe("pre-cruise-email-scheduler — bookings scan survives >1000 rows (#1745)", () => {
+  it("fans out precruise/email.due for a booking on the SECOND .range() page, not just the first 1000", async () => {
+    const PAGE = 1000;
+    const dueSailing = new Date(Date.now() + 168 * 60 * 60 * 1000).toISOString();
+    // Page 1: 1000 bookings whose sailing_date is far outside any phase
+    // window (so they don't themselves trigger an event — keeps the
+    // assertion below unambiguous). Page 2: one booking that IS due.
+    const page1 = Array.from({ length: PAGE }, (_, i) => ({
+      id: `filler-${i}`,
+      tenant_id: "t1",
+      group_booking_id: `g-filler-${i}`,
+      groups: { sailing_date: new Date(Date.now() + 5000 * 60 * 60 * 1000).toISOString() },
+    }));
+    const page2 = [
+      { id: "booking-past-cap", tenant_id: "t1", group_booking_id: "g-past-cap", groups: { sailing_date: dueSailing } },
+    ];
+    mocks.bookingPages = [page1, page2];
+
+    await (preCruiseEmailSchedulerMultiphase as unknown as () => Promise<unknown>)();
+
+    expect(mocks.sentEvents).toHaveLength(1);
+    expect(mocks.sentEvents[0]?.data).toMatchObject({ booking_id: "booking-past-cap" });
+    // #1765 — every page must request a stable sort, or LIMIT/OFFSET paging
+    // over concurrently-inserted rows can skip or double-count across pages.
+    expect(mocks.order).toHaveBeenCalledWith("id", { ascending: true });
   });
 });
