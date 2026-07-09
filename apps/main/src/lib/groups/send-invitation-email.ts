@@ -32,19 +32,52 @@ export async function sendGroupInvitationEmail(args: {
   let inviteeEmail: string | null = null;
   let claimed = false;
 
+  // #1707 — best-effort email_log "rejected" row so a send that never dispatched
+  // (or a stamp that got stuck) is queryable per-tenant, not just a console line.
+  // Fully fail-silent: its own error is swallowed, never rethrown into the caller.
+  const writeRejectedEmailLog = async (subject: string, bounceReason: string): Promise<void> => {
+    try {
+      const { error: logErr } = await args.svc.from("email_log").insert({
+        tenant_id: args.tenantId,
+        to_email: inviteeEmail ?? `unknown:invitation:${args.invitationId}`,
+        from_email: "(unresolved-pre-send-failure)",
+        subject,
+        template_id: "group_invitation",
+        email_category: "group_invitation",
+        status: "rejected",
+        related_group_id: args.group.id,
+        bounce_reason: bounceReason,
+      });
+      if (logErr) {
+        console.error(`[group-invitation] email_log write failed for inv=${args.invitationId}: ${logErr.message}`);
+      }
+    } catch (logThrow) {
+      console.error(`[group-invitation] email_log write threw for inv=${args.invitationId}: ${logThrow instanceof Error ? logThrow.message : String(logThrow)}`);
+    }
+  };
+
   // #1716 — revert the pre-send stamp (claim) so a send that didn't go out
   // doesn't suppress the cadence's next reminder. Raw destructure (not
   // safeAwait) so it can never throw back into the caller's request.
   const revertClaim = async (): Promise<void> => {
-    claimed = false;
     const { error } = await args.svc
       // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
       .from("invitations")
       .update({ last_email_sent_at: null })
       .eq("id", args.invitationId);
     if (error) {
+      // Revert failed — the stamp is stuck non-null and will suppress this
+      // invitee's next cadence reminder. Clear the in-memory flag ONLY on
+      // success, and surface the stuck stamp the same way #1707 surfaces a
+      // pre-send failure: a queryable email_log row operators can see.
       console.warn(`[group-invitation] claim revert failed for inv=${args.invitationId}: ${error.message}`);
+      await writeRejectedEmailLog(
+        "Group invitation (claim revert failed — stamp stuck)",
+        `claim revert failed: ${error.message}`,
+      );
+      return;
     }
+    claimed = false;
   };
 
   try {
@@ -137,11 +170,20 @@ export async function sendGroupInvitationEmail(args: {
   // cadence retry — a send that never happened must not suppress a legitimate
   // reminder. Reverting to NULL is safe: this helper only runs on freshly
   // created invitation rows, where the stamp starts NULL.
-  await safeAwait(
+  //
+  // CAS guard (D-091 #21): the stamp only lands where last_email_sent_at IS
+  // NULL. If a concurrent send or a cadence run already claimed this row, the
+  // update matches zero rows — treat that as claim-lost and skip the send so we
+  // never duplicate the winner's email.
+  const claimRows = await safeAwait(
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
-    args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId),
+    args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).is("last_email_sent_at", null).select("id"),
     "invitations.update.last_email_sent_at.claim",
   );
+  if (!claimRows || (claimRows as unknown[]).length === 0) {
+    console.warn(`[group-invitation] claim lost for inv=${args.invitationId}; another send already stamped it — skipping`);
+    return;
+  }
   claimed = true;
 
   // Route through the shared send helper so suppression, rate-limiting,
@@ -171,8 +213,9 @@ export async function sendGroupInvitationEmail(args: {
   });
 
   if (result.status === "sent") {
-    // Claim stands — the initial send counts as the first reminder for cadence
-    // purposes (#1584), already stamped above.
+    // Send delivered — the DB stamp stays (it counts as the first reminder for
+    // cadence purposes, #1584). Clearing the in-memory flag only stops the catch
+    // block below from reverting a stamp that legitimately stands.
     claimed = false;
   } else if (result.status === "failed") {
     // Something broke (key missing/malformed, Resend 5xx) — actionable.
@@ -199,25 +242,10 @@ export async function sendGroupInvitationEmail(args: {
     // leave only this console.error — no per-tenant queryable record that the
     // invite never went out (operators don't watch app logs per tenant). Write
     // a best-effort email_log row (status 'rejected', the same terminal status
-    // sendEmail writes on a vendor failure) so the failure is observable. Stays
-    // fail-silent: its own error is swallowed, never rethrown into the caller.
-    try {
-      const { error: logErr } = await args.svc.from("email_log").insert({
-        tenant_id: args.tenantId,
-        to_email: inviteeEmail ?? `unknown:invitation:${args.invitationId}`,
-        from_email: "(unresolved-pre-send-failure)",
-        subject: "Group invitation (send failed before dispatch)",
-        template_id: "group_invitation",
-        email_category: "group_invitation",
-        status: "rejected",
-        related_group_id: args.group.id,
-        bounce_reason: err instanceof Error ? err.message : String(err),
-      });
-      if (logErr) {
-        console.error(`[group-invitation] email_log write failed for inv=${args.invitationId}: ${logErr.message}`);
-      }
-    } catch (logThrow) {
-      console.error(`[group-invitation] email_log write threw for inv=${args.invitationId}: ${logThrow instanceof Error ? logThrow.message : String(logThrow)}`);
-    }
+    // sendEmail writes on a vendor failure) so the failure is observable.
+    await writeRejectedEmailLog(
+      "Group invitation (send failed before dispatch)",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }

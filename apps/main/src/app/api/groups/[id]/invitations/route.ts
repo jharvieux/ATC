@@ -126,9 +126,9 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       // cap. Accepted as low-severity: the actor is an authenticated
       // coordinator, the race requires two invites to the SAME group within one
       // request window, and the blast radius is a handful of invitees over 50.
-      // A fully-atomic fix needs a DB advisory-lock trigger/RPC (a migration);
-      // deferred here because the migration-version guard (#1717) currently
-      // blocks new migration files. Tracked on #1680.
+      // The TOCTOU cap fix is deliberately deferred to #1680 — it needs its own
+      // advisory-lock/RPC design (a DB-side atomic reserve), not something to
+      // bolt on here. Tracked on #1680.
       const { count: activeCount, error: countErr } = await svc
         // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
         .from("invitations")

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 
 interface CruiseLine {
   id: string;
@@ -143,8 +144,8 @@ export function CreateGroupClient(): React.ReactElement {
     }
 
     const validInvitees = invitees.filter((r) => r.email.trim().length > 0);
-    if (validInvitees.length > 50) {
-      setError("Maximum 50 invitees per group.");
+    if (validInvitees.length > MAX_INVITEES_PER_GROUP) {
+      setError(`Maximum ${MAX_INVITEES_PER_GROUP} invitees per group.`);
       return;
     }
 
@@ -296,7 +297,7 @@ export function CreateGroupClient(): React.ReactElement {
       {/* Invitees */}
       <section className="flex flex-col gap-3">
         <h3 className="text-[15px] font-semibold">Invitees</h3>
-        <p className="text-[13px] text-muted-foreground">Add up to 50 email addresses. Invitations are sent after the group is created.</p>
+        <p className="text-[13px] text-muted-foreground">Add up to {MAX_INVITEES_PER_GROUP} email addresses. Invitations are sent after the group is created.</p>
 
         {invitees.map((row, idx) => (
           <div key={idx} className="flex gap-2 items-start">
@@ -331,7 +332,7 @@ export function CreateGroupClient(): React.ReactElement {
           </div>
         ))}
 
-        {invitees.length < 50 && (
+        {invitees.length < MAX_INVITEES_PER_GROUP && (
           <Button type="button" variant="outline" onClick={addInvitee} className="self-start">
             + Add invitee
           </Button>

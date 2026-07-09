@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   inviteInsertQuery: vi.fn(),
   inviteEmailSingleQuery: vi.fn(),
   inviteRsvpSelectQuery: vi.fn(),
+  inviteClaimQuery: vi.fn(),
   tenantQuery: vi.fn(),
   brandingQuery: vi.fn(),
   sendEmail: vi.fn(),
@@ -101,10 +102,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
             select: () => mocks.inviteInsertQuery(data),
           }),
           update: () => ({
+            // claim CAS inside sendGroupInvitationEmail — .is("last_email_sent_at", null).select("id")
+            is: () => ({ select: () => mocks.inviteClaimQuery() }),
             eq: () => ({
-              eq: () => ({
-                is: () => mocks.updateQuery(),
-              }),
+              // revoke action — .eq("id").eq("group_id").is("token_revoked_at", null)
+              eq: () => ({ is: () => mocks.updateQuery() }),
+              // claim revert inside sendGroupInvitationEmail — .eq("id") awaited directly
+              then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
             }),
           }),
         };
@@ -287,6 +291,8 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
       error: null,
     });
     mocks.inviteRsvpSelectQuery.mockResolvedValue({ data: [], error: null });
+    // claim CAS wins by default (one row stamped) so the send proceeds.
+    mocks.inviteClaimQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
     mocks.tenantQuery.mockResolvedValue({
       data: {
         id: TENANT_ID,

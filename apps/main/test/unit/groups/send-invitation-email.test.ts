@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   brandingMaybeSingle: vi.fn(),
   allInvitations: vi.fn(),
   updateEq: vi.fn(),
+  claimResult: vi.fn(),
+  revertResult: vi.fn(),
   emailLogInsert: vi.fn(),
   resolveEmailContent: vi.fn(),
   renderOverrideBodyInLayout: vi.fn(),
@@ -73,7 +75,12 @@ function buildSvc() {
           }),
           update: (payload: unknown) => {
             mocks.updateEq(payload);
-            return { eq: () => Promise.resolve({ data: null, error: null }) };
+            return {
+              // revert path: .update({ last_email_sent_at: null }).eq("id", ...)
+              eq: () => Promise.resolve(mocks.revertResult()),
+              // claim CAS path: .update({...}).is("last_email_sent_at", null).select("id")
+              is: () => ({ select: () => Promise.resolve(mocks.claimResult()) }),
+            };
           },
         };
       }
@@ -123,9 +130,14 @@ beforeEach(() => {
   mocks.signUnsubscribeToken.mockResolvedValue("unsub-tok");
   mocks.generateToken.mockResolvedValue("tok-abc");
   mocks.emailLogInsert.mockReturnValue({ data: null, error: null });
-  mocks.safeAwait.mockImplementation(async (p: Promise<unknown>) => {
-    await p;
-    return null;
+  // Default: claim wins (one row stamped), revert succeeds.
+  mocks.claimResult.mockReturnValue({ data: [{ id: "inv-1" }], error: null });
+  mocks.revertResult.mockReturnValue({ data: null, error: null });
+  // Real safeAwait unwraps { data } — mirror that so the claim CAS row array
+  // flows back to the caller (the mock query resolves { data, error }).
+  mocks.safeAwait.mockImplementation(async (p: Promise<{ data: unknown } | null>) => {
+    const r = await p;
+    return r?.data ?? null;
   });
 });
 
@@ -176,6 +188,25 @@ describe("sendGroupInvitationEmail — claim-before-send stamping (#1584 / #1716
     });
 
     expect(lastUpdatePayload()).toEqual({ last_email_sent_at: null });
+  });
+
+  it("skips the send when the claim is lost (zero rows) — a concurrent send/cadence already stamped", async () => {
+    // CAS guard matched no row: last_email_sent_at was already non-null.
+    mocks.claimResult.mockReturnValue({ data: [], error: null });
+
+    await sendGroupInvitationEmail({
+      svc: buildSvc() as never,
+      invitationId: "inv-1",
+      group: GROUP,
+      tenantId: "t-1",
+    });
+
+    // No send — we must not duplicate the winner's email...
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    // ...and we must NOT revert the stamp that the winner legitimately set.
+    expect(mocks.updateEq).not.toHaveBeenCalledWith(
+      expect.objectContaining({ last_email_sent_at: null }),
+    );
   });
 });
 
@@ -242,6 +273,29 @@ describe("sendGroupInvitationEmail — pre-send failure observability (#1707)", 
     // ...and the failure is operator-visible.
     expect(mocks.emailLogInsert).toHaveBeenCalledWith(
       expect.objectContaining({ status: "rejected", bounce_reason: "send transport boom" }),
+    );
+  });
+
+  it("writes an email_log row when the claim revert itself fails — a stuck stamp must be operator-visible", async () => {
+    // Send doesn't go out (failed), so revertClaim runs; the revert UPDATE errors,
+    // leaving last_email_sent_at stuck non-null — that would silently suppress the
+    // next cadence reminder, so it must surface as a queryable rejected row.
+    mocks.sendEmail.mockResolvedValue({ status: "failed", reason: "resend_5xx" });
+    mocks.revertResult.mockReturnValue({ data: null, error: { message: "revert db down" } });
+
+    await sendGroupInvitationEmail({
+      svc: buildSvc() as never,
+      invitationId: "inv-1",
+      group: GROUP,
+      tenantId: "t-1",
+    });
+
+    expect(mocks.emailLogInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "rejected",
+        related_group_id: "g-1",
+        bounce_reason: expect.stringContaining("revert"),
+      }),
     );
   });
 });
