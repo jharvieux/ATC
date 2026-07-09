@@ -276,11 +276,15 @@ export async function fetchGuarded(
     const next = new URL(loc, current);
     const crossOrigin = next.origin !== new URL(current).origin;
 
-    // Standard fetch redirect security semantics:
+    // Conservative-by-design redirect handling (deliberately stricter than the
+    // WHATWG fetch spec, not a reimplementation of it — real fetch preserves
+    // the body on a 307/308 even cross-origin; this guard drops it on ANY
+    // cross-origin hop regardless of status):
     //  - 301/302/303 downgrade the method to GET and drop the request body
     //    (any origin) — a POST that lands on a GET target must not resend its body.
-    //  - a cross-origin hop drops the body and strips Authorization so a request
-    //    payload / bearer token never leaks to a host the caller never authenticated to.
+    //  - a cross-origin hop drops the body and strips credential-bearing headers
+    //    (#1720: authorization, cookie, proxy-authorization) so a request
+    //    payload / credential never leaks to a host the caller never authenticated to.
     //  - only a same-origin 307/308 preserves the original method + body.
     const downgrade = res.status === 301 || res.status === 302 || res.status === 303;
     if (downgrade) currentMethod = "GET";
@@ -291,7 +295,7 @@ export async function fetchGuarded(
       currentHeaders = stripHeaders(currentHeaders, ["content-length", "content-type"]);
     }
     if (crossOrigin) {
-      currentHeaders = stripHeaders(currentHeaders, ["authorization"]);
+      currentHeaders = stripHeaders(currentHeaders, ["authorization", "cookie", "proxy-authorization"]);
     }
     current = next.toString();
   }

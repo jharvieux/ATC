@@ -34,6 +34,9 @@ export interface CachedTenantSnapshot {
 }
 
 const TTL_MS = 30_000;
+// #1678 — keyed per TENANT (same reasoning as resolve-tenant.ts's slug/domain/id
+// caches): tenant count is orders of magnitude below 1000 for this B2B
+// platform, so the default bound is fine as-is.
 const cache = new BoundedTtlCache<string, CachedTenantSnapshot>({ defaultTtlMs: TTL_MS });
 
 const VALID_TIER_CODES = new Set<TenantRevenueSnapshot["tier_code"]>([
