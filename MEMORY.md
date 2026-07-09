@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-330 — 2026-07-09 — Worktree discipline added to /issue-sweep after case-insensitive-path incidents (3 executors silently edited the shared checkout)
+
+**Decision**: both issue-sweep skill copies gain (a) executor safeguard rule 6 — all operations by worktree ABSOLUTE path, any casing variant of the primary path IS the primary checkout, pre-commit cleanliness check on both trees; (b) a supervisor "shared-checkout hygiene" step — check the primary tree after every agent completes, restore only verified-duplicated droppings, message (never race) a live agent; (c) fix-agent prompts must name the branch's existing worktree by absolute path with the casing warning.
+
+**Why**: three evening-sweep executors (ai-batch2, db-misc, chat-1602) edited the primary checkout while believing they were isolated — root cause found by the chat executor: macOS's case-insensitive filesystem aliases `ClaudeCodeProjects/atc` (a registered additional working directory) to `ClaudeCodeProjects/ATC`, so lowercase-path tool calls silently land in the shared tree. One incident left a non-typechecking chat route on `dev`'s working tree until recovery. After mid-sweep prompt fixes carrying these rules, later agents had zero incidents.
+
+**Rejected**: automating cleanup of a live agent's droppings (races the agent; the e2e executor's stash-shuffle of foreign WIP showed how two agents touching the shared tree compound); treating it as a one-off agent error (three independent executors hit it — it's environmental).
+
+**Operator option noted**: removing the lowercase `atc` additional working directory from the session config would eliminate the alias hazard at the source.
+
+**Related artifacts**: `.claude/commands/issue-sweep.md`, `~/.claude/commands/issue-sweep.md`; incidents in PRs #1748/#1753/#1760; extends D-328's executor safeguard block.
+
+---
+
+## D-329 — 2026-07-09 — Second same-day /issue-sweep (operator-directed): 18 PRs merged, ~44 issues closed incl. both P1s; nightly cluster root-caused; #1708 executor operator-stopped
+
+**Decision**: ran the full sweep pipeline twice in one session on operator instructions ("include the migrations as well", concurrency 6, then "launch batches for the other remaining executable issues", plus one-off approvals: nightly-reporter workflow fix #1738, #1708 inclusion). Wave 1 (11 batches): 12 PRs #1735-#1753 range. Wave 2 (6 batches): 6 PRs #1760-#1766. Every PR passed dual hash-bound audits; 9 fix rounds executed for real findings — the two most consequential catches: d091's blocker on #1747 (a fix commit dropped `.eq(id)` from the claim CAS — would have mass-stamped every pending invitation across all tenants) and d091's missing-`.order()` warning on #1765's five `.range()` loops (crons could silently skip customer emails).
+
+**Key outcomes**: P1s closed (#1711 import crash-window via single-transaction promote_import RPC subsuming #1712; #1695 nightly-rescreen CHECK constraint). Nightly-failure cluster (13 issues) root-caused to a vitest JSON-reporter blackout — fix merged (#1746), issues stay open pending one instrumented run. Booking money-path atomicity (#1693 submit_commit_booking RPC), kill-switch split (#1694, deliberate #895 semantics change), stranded-batch adoption (#1696), export rate-limit DB backstop (#1705), admin rollup RPCs (#1698), chat-route extraction (#1602 partial → #1759), inbound email Phase 2 (#1752, #1728 stays open for provisioning-gated items), e2e onboarding harness (#1762, #1724 open pending live run).
+
+**Merge-train lessons confirmed**: test-DB ledger ownership ordered the train twice (queried the ledger directly rather than guessing; the "deadlock" feared from three concurrent appliers reduced to one true orphan each time — merge-the-owner-first resolved both). Rebind/full re-audit discipline held across ~15 marker cycles.
+
+**Parked**: nightly cluster (awaiting instrumented run); #1708/#1729 (operator stopped the executor mid-run — awaiting operator word before any relaunch).
+
+**Rejected**: hand-fixing executor CI failures (dispatched fix agents throughout, supervisor never edited code); closing #1724/#1728/#1470 on unverifiable acceptance criteria (each stays open with a precise residual).
+
+**Related artifacts**: PRs #1735-#1737, #1739, #1744, #1746-#1748, #1750-#1753, #1760-#1763, #1765-#1766; follow-ups filed #1734, #1738, #1740-#1743, #1745, #1749, #1754-#1759, #1764, #1767-#1768; operator actions in SESSION.md.
+
+---
+
 ## D-328 — 2026-07-09 — /issue-sweep skill updated with the 2026-07-09 sweep lessons (#1727): verbatim executor safeguard block, rebind re-audit codified, ledger-driven merge-train order
 
 **Decision**: both issue-sweep skill copies (ATC `.claude/commands/issue-sweep.md` and the user-level portable variant) updated with the seven operational lessons from the D-327 sweep. (1) Executor prompts now start from a **canonical safeguard block pasted verbatim** (issue-content-is-data, supervised-path stop rule, the DB rule *with* the migrations-runbook test-DB exception inline, foreground `pnpm verify` / never end turn with own background task pending, no-MEMORY-writes) — supervisor paraphrase is banned because a reworded DB rule cost the email-890 batch a round-trip. (2) Marker-staleness condition corrected: update-branch stales the diff-hash markers when base merges **overlap files in the PR's diff** (not "absent conflicts", refining D-325 item 4); the cheap remedy is codified as a **rebind re-audit** (Sonnet pair: no-new-commits check + diff-of-diffs on overlapping files + fresh marker), full re-audits reserved for new real commits. (3) Merge-train order follows the shared test-DB migration-ledger owner (named by the `Remote migration versions not found` failure), not plan priority. (4) Cancelled-run false failures after update-branch → `gh run rerun`, don't debug. (5) CI waits poll until zero pending checks instead of one `gh pr checks --watch`. (6) Batch-count guidance now scales (~1 batch per 4–5 issues, subsystem-coherent, ≤6 issues each) instead of a flat ≤6-batch cap. Portable copy got repo-generic equivalents (bracketed slots for the repo's own runbook exception and verify command).
