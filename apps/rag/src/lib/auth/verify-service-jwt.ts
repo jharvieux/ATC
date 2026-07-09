@@ -18,7 +18,8 @@
 //   7. Any other error                         → internal          500
 
 import { importSPKI, jwtVerify, type JWTPayload } from "jose";
-import { createClient } from "@supabase/supabase-js";
+import type { ServiceJwtClaims } from "@atc/contracts";
+import { getRagDb } from "@/lib/db/supabase";
 import { getRedis } from "@/lib/redis/client";
 
 export type ServiceCallerContext = {
@@ -41,13 +42,10 @@ export class ServiceAuthError extends Error {
   }
 }
 
-type ServiceJwtPayload = JWTPayload & {
-  tenant_id?: string;
-  user_id?: string | null;
-  service_identifier?: string | null;
-  persona_id?: string | null;
-  scope?: string;
-};
+// Untrusted, jose-decoded token: every claim is optional until validated below.
+// Partial<ServiceJwtClaims> ties the field names/types to the shared contract
+// without asserting presence — the fail-closed checks stay exactly as strong.
+type ServiceJwtPayload = JWTPayload & Partial<ServiceJwtClaims>;
 
 // Cache parsed public keys by key ID to avoid re-importing on every request.
 const keyCache = new Map<string, CryptoKey>();
@@ -168,11 +166,7 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
   // Step 5: Lookup tenant in shadow table
   if (!payload.tenant_id) throw new ServiceAuthError("tenant_unknown", 403, "missing tenant_id claim");
 
-  const supabase = createClient(
-    process.env.SUPABASE_RAG_URL!,
-    process.env.SUPABASE_RAG_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const supabase = getRagDb();
 
   const { data: shadowRow, error } = await supabase
     .from("tenant_registry_shadow")

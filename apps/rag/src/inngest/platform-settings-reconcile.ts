@@ -11,11 +11,10 @@
 // allowlist filter — only keys the rag side actually consumes are mirrored.
 // Anything else is silently skipped (deny-list etc. stays on main only).
 //
-// Service-role import permitted: background job, no user session.
-// This file is in the no-direct-service-role-import allowlist.
+// Background job, no user session — the service-role DB env lives in getRagDb().
 
-import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { getRagDb } from "@/lib/db/supabase";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
 
@@ -86,11 +85,7 @@ export const platformSettingsReconcile = inngest.createFunction(
     }
     const { settings: mainSettings }: { settings: MainSetting[] } = await res.json();
 
-    const db = createClient(
-      process.env.SUPABASE_RAG_URL!,
-      process.env.SUPABASE_RAG_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const db = getRagDb();
 
     const { data: shadowRows, error } = await db
       .from("platform_settings")

@@ -19,19 +19,13 @@
 import "server-only";
 import { SignJWT, importPKCS8 } from "jose";
 import { randomUUID } from "node:crypto";
+import type { ServiceJwtClaims } from "@atc/contracts";
 
-export interface SignServiceJwtOptions {
-  tenant_id: string;
-  scope: "read" | "write";
-  // Identifies the calling service so the receiver can apply per-service
-  // authorization (e.g. platform-admin endpoints check for "platform-admin").
-  service_identifier?: string;
-  user_id?: string | null;
-  persona_id?: string | null;
-  // Override the default TTL (env: SERVICE_JWT_TTL_SECONDS) if a particular
-  // call needs a shorter or longer window.
+// The claim shape is the shared @atc/contracts/ServiceJwtClaims; signing adds
+// only the optional TTL override (env: SERVICE_JWT_TTL_SECONDS).
+export type SignServiceJwtOptions = ServiceJwtClaims & {
   ttl_seconds?: number;
-}
+};
 
 // Cached signing key — re-importing PKCS8 on every call is wasteful.
 let cachedKey: { kid: string; key: CryptoKey } | null = null;

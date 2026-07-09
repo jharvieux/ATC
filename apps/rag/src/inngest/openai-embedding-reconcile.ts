@@ -8,17 +8,10 @@
 // Idempotent: rows already in status='done' or 'failed' are skipped. Re-
 // runs are safe.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { getRagDb } from "@/lib/db/supabase";
 import { reconcileEmbeddingBatches } from "@/lib/embeddings/batch/reconcile";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("RAG Supabase env not set for openai-embedding-reconcile");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 export const openaiEmbeddingReconcile = inngest.createFunction(
   {
@@ -32,7 +25,7 @@ export const openaiEmbeddingReconcile = inngest.createFunction(
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
     if (!isEmbeddingBatchEnabled()) return { skipped: "batch_disabled" };
 
-    const db = ragDb();
+    const db = getRagDb();
     const result = await reconcileEmbeddingBatches({ db });
     return { ok: true, ...result };
   },

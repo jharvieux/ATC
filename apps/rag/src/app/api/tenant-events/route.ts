@@ -6,7 +6,7 @@
 // RAG_WEBHOOK_SECRET.
 export const dynamic = "force-dynamic";
 
-import { createClient } from "@supabase/supabase-js";
+import { getRagDb } from "@/lib/db/supabase";
 import { TenantEventSchema, verifyWebhookSignature, type TenantEvent } from "@atc/contracts";
 
 export async function POST(req: Request): Promise<Response> {
@@ -33,11 +33,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const db = createClient(
-    process.env.SUPABASE_RAG_URL!,
-    process.env.SUPABASE_RAG_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const db = getRagDb();
 
   // Check existing row
   const { data: existing } = await db

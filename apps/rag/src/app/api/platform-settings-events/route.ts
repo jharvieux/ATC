@@ -10,7 +10,7 @@
 // RAG_WEBHOOK_SECRET keeps it independent of the per-tenant JWT path.
 export const dynamic = "force-dynamic";
 
-import { createClient } from "@supabase/supabase-js";
+import { getRagDb } from "@/lib/db/supabase";
 import { PlatformEventSchema, verifyWebhookSignature, type PlatformEvent } from "@atc/contracts";
 
 export async function POST(req: Request): Promise<Response> {
@@ -36,11 +36,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const db = createClient(
-    process.env.SUPABASE_RAG_URL!,
-    process.env.SUPABASE_RAG_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const db = getRagDb();
 
   // Apply each change independently. A stale source_revision on a key skips
   // THAT key only — other keys in the same event still apply if fresher.

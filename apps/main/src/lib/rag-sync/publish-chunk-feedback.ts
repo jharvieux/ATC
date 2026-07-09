@@ -9,6 +9,14 @@
 // Best-effort: any failure here is logged but does NOT fail the parent
 // feedback write. The §6.10 ranking gracefully degrades when feedback
 // data is missing (treats the chunk as un-rated).
+//
+// #1708 decision — deliberately NOT queued to pending_rag_sync on failure
+// (unlike tenant/platform-settings events). Chunk feedback is high-volume,
+// individually low-value, statistical signal: a dropped event nudges one
+// chunk's rolling counter, and the receiver is already replay-protected, so a
+// durable retry queue + drain cron would add cost and dedup surface for no
+// meaningful ranking gain. Correctness-critical replicas (tenant status,
+// platform settings) keep their queue; this stays documented best-effort.
 
 import "server-only";
 

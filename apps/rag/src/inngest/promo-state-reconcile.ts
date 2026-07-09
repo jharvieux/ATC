@@ -8,17 +8,8 @@
 // Hourly cron. Idempotent — recomputes from absolute time, not from a
 // state machine. Resumes correctly after any outage length.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error("RAG Supabase env not set for promo-state-reconcile");
-  }
-  return createClient(url, key, { auth: { persistSession: false } });
-}
+import { getRagDb } from "@/lib/db/supabase";
 
 export const promoStateReconcile = inngest.createFunction(
   {
@@ -28,7 +19,7 @@ export const promoStateReconcile = inngest.createFunction(
   async () => {
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
 
-    const db = ragDb();
+    const db = getRagDb();
     const { data, error } = await db.rpc("reconcile_promo_status");
     if (error) {
       console.error("[promo-state-reconcile] rpc failed:", error.message);

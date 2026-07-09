@@ -12,15 +12,8 @@
 // The aggregate row groups by (tenant_id, day, outcome) and counts +
 // avg-latencies. Deliberately coarse — keeps long-term storage cheap.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("RAG Supabase env not set for retrieval-log-aggregate");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
+import { getRagDb } from "@/lib/db/supabase";
 
 const RETENTION_DAYS = 90;
 
@@ -32,7 +25,7 @@ export const retrievalLogAggregate = inngest.createFunction(
   async () => {
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
 
-    const db = ragDb();
+    const db = getRagDb();
     const cutoffIso = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString();
 
     // Step 1 — produce daily aggregates for rows older than 90 days that

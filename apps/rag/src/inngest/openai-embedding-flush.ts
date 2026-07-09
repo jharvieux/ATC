@@ -9,17 +9,10 @@
 // Skipped when OPENAI_EMBEDDING_BATCH_ENABLED is set to "false" — leaves
 // pending rows in place so we can recover by flipping the flag back on.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { getRagDb } from "@/lib/db/supabase";
 import { flushPendingEmbeddings } from "@/lib/embeddings/batch/flush";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("RAG Supabase env not set for openai-embedding-flush");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 export const openaiEmbeddingFlush = inngest.createFunction(
   {
@@ -31,7 +24,7 @@ export const openaiEmbeddingFlush = inngest.createFunction(
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
     if (!isEmbeddingBatchEnabled()) return { skipped: "batch_disabled" };
 
-    const db = ragDb();
+    const db = getRagDb();
     const result = await flushPendingEmbeddings({ db });
     return { ok: true, ...result };
   },

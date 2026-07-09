@@ -16,8 +16,8 @@
 
 export const dynamic = "force-dynamic";
 
-import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
+import { getRagDb } from "@/lib/db/supabase";
 import { ChunkFeedbackEventSchema, verifyWebhookSignature } from "@atc/contracts";
 import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
 import { getRedis } from "@/lib/redis/client";
@@ -76,16 +76,15 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // #1595 / D-151 — resolve rag env vars only. The prior
-  // `NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_RAG_URL` fallback mixed main-app env
-  // names into the rag app: in an env that set the main vars, this client would
-  // point at the WRONG project's database.
-  const url = process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) {
+  // #1595 / D-151 — getRagDb() is the single authority for rag DB env (rag-only
+  // vars, no main-app fallback). It throws when unset; preserve this route's
+  // explicit 500 contract rather than letting the throw surface as a bare 500.
+  let db: ReturnType<typeof getRagDb>;
+  try {
+    db = getRagDb();
+  } catch {
     return Response.json({ error: "supabase_env_not_set" }, { status: 500 });
   }
-  const db = createClient(url, key, { auth: { persistSession: false } });
 
   // Insert one row per chunk. Best-effort: a failure on one row doesn't
   // stop the rest. The §6.10 compute_feedback_factor() reads the events
