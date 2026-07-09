@@ -39,8 +39,6 @@
 1 apps/main/src/app/api/groups/route.ts::message : String(err)
 1 apps/main/src/app/api/help/sessions/[id]/message/route.ts::message : String(err)
 1 apps/main/src/app/api/onboarding/branding-skip/route.ts::message : String(err)
-1 apps/main/src/app/api/price-watches/[id]/route.ts::detail: String(err)
-1 apps/main/src/app/api/price-watches/route.ts::detail: String(err)
 1 apps/main/src/app/api/rag/queue/[id]/approve/route.ts::message : String(err)
 2 apps/main/src/app/api/tenant/billing/route.ts::error: String(err)
 1 apps/main/src/app/api/tenant/host-config/route.ts::error: String(err)

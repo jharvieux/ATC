@@ -289,7 +289,7 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 
 ### Migration PRs — stop-rule
 
-**If your diff touches `**/supabase/migrations/` or `db/*snapshot*.sql`, STOP and follow `docs/runbooks/migrations.md` before opening the PR.** Snapshot regen, the test-DB ledger hazard, the no-CONCURRENTLY rule, and expand→switch→contract sequencing all live there, and two CI guards (`check:policy-snapshot`, `rls-snapshot-diff`) will block you if you skip them.
+**If your diff touches `**/supabase/migrations/` or `db/*snapshot*.sql`, follow `docs/runbooks/migrations.md` before opening the PR.** The `migration-runbook-reminder.mjs` Stop hook will surface the checklist automatically the moment such a diff exists (working tree or unpushed commits) — treat it like the other Stop hook feedback (non-blocking, but act on it, don't dismiss it). Snapshot regen, the test-DB ledger hazard, the no-CONCURRENTLY rule, and expand→switch→contract sequencing all live there, and two CI guards (`check:policy-snapshot`, `rls-snapshot-diff`) will block you if you skip them.
 
 ### Pull requests
 

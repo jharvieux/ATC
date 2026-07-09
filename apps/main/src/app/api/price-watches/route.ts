@@ -23,8 +23,8 @@ export async function POST(req: Request): Promise<Response> {
     let body: ReturnType<typeof CreateWatchSchema.parse>;
     try {
       body = CreateWatchSchema.parse(await req.json());
-    } catch (err) {
-      return Response.json({ error: "invalid_request", detail: String(err) }, { status: 400 });
+    } catch {
+      return Response.json({ error: "invalid_request" }, { status: 400 });
     }
 
     // Coverage check (BP40 task 9).

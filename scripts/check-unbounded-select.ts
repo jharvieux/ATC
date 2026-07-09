@@ -33,6 +33,10 @@ const WATCHED_EXACT = new Set([
   "notifications",
   "email_log",
   "ai_call_log",
+  "bookings",
+  "attribution_touches",
+  "auth_attempts",
+  "ai_tool_calls",
 ]);
 const WATCHED_PREFIXES = ["forum_"];
 
