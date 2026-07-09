@@ -291,87 +291,62 @@ describe("buildDailyArray with apify rows", () => {
   });
 });
 
-// #1588 — the GET handler used to run a single unbounded select over
-// ai_call_log, which PostgREST silently truncates at its max-rows default
-// once a tenant's 30-day call volume passes it: the cost dashboard would
-// then quietly UNDER-report spend with no error and no signal to the
-// operator. fetchAiCallLogRows pages explicitly so every row is counted.
-describe("fetchAiCallLogRows", () => {
-  const row = (i: number) => ({
-    created_at: "2024-03-15T00:00:00Z",
+// #1698 — main ai_call_log is now aggregated DB-side by the
+// ai_call_log_model_rollup RPC, whose per-vendor/model result seeds
+// aggregateByModel. RAG embedding rows (from a separate DB) are still raw and
+// folded on top. These tests pin the seed+raw merge, which is the whole point
+// of the DB-side move: the route must fold pre-summed main totals together with
+// per-call RAG rows without double-counting or dropping either.
+describe("aggregateByModel with a DB-rollup seed (#1698)", () => {
+  const modelRow = (over: Partial<{ vendor: string; model: string; call_count: number; input_tokens: number; output_tokens: number; cost_cents: number }> = {}) => ({
     vendor: "anthropic",
-    model: "claude",
-    input_tokens: i,
-    output_tokens: i,
-    cost_estimate_cents: 1,
+    model: "claude-sonnet-4-6",
+    call_count: 5,
+    input_tokens: 1000,
+    output_tokens: 500,
+    cost_cents: 100,
+    ...over,
   });
 
-  it("returns everything from a single page under the page size (the common case)", async () => {
-    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
-    const fetchPage = vi.fn().mockResolvedValue({ data: [row(1), row(2)], error: null });
-
-    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, 1000);
-
-    expect(rows).toHaveLength(2);
-    expect(truncated).toBe(false);
-    expect(fetchPage).toHaveBeenCalledTimes(1); // stops after a short page — no wasted round-trip
+  it("returns the seed rows unchanged when there are no raw rows to fold in", async () => {
+    const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const seed = [modelRow()];
+    const result = aggregateByModel([], seed);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ vendor: "anthropic", model: "claude-sonnet-4-6", call_count: 5, cost_cents: 100 });
   });
 
-  it("pages through multiple full pages and stops on the first short page — this is the bug fix: a naive single select would have silently dropped page 2+", async () => {
-    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
-    const pageSize = 2;
-    const fetchPage = vi.fn()
-      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null }) // full page — must keep going
-      .mockResolvedValueOnce({ data: [row(3), row(4)], error: null }) // full page — must keep going
-      .mockResolvedValueOnce({ data: [row(5)], error: null }); // short page — must stop
-
-    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize);
-
-    expect(rows).toHaveLength(5);
-    expect(truncated).toBe(false);
-    expect(fetchPage).toHaveBeenCalledTimes(3);
-    expect(fetchPage).toHaveBeenNthCalledWith(1, 0, pageSize);
-    expect(fetchPage).toHaveBeenNthCalledWith(2, 2, pageSize);
-    expect(fetchPage).toHaveBeenNthCalledWith(3, 4, pageSize);
+  it("does not mutate the seed objects (route reuses them for totals)", async () => {
+    const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const seed = [modelRow()];
+    aggregateByModel(
+      [{ vendor: "anthropic", model: "claude-sonnet-4-6", input_tokens: 1, output_tokens: 1, cost_estimate_cents: 1 }],
+      seed,
+    );
+    expect(seed[0]!.call_count).toBe(5); // unchanged — the fold cloned it
+    expect(seed[0]!.cost_cents).toBe(100);
   });
 
-  it("stops after an exactly-page-size-sized final page returns empty, rather than looping forever", async () => {
-    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
-    const pageSize = 2;
-    const fetchPage = vi.fn()
-      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null })
-      .mockResolvedValueOnce({ data: [], error: null });
-
-    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize);
-
-    expect(rows).toHaveLength(2);
-    expect(truncated).toBe(false);
-    expect(fetchPage).toHaveBeenCalledTimes(2);
+  it("folds a raw RAG call into a seed row with the same vendor:model key", async () => {
+    const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const seed = [modelRow({ vendor: "openai", model: "text-embedding-3-small", call_count: 2, input_tokens: 2_000_000, output_tokens: 0, cost_cents: 400 })];
+    const raw = [
+      { vendor: "openai", model: "text-embedding-3-small", input_tokens: 500_000, output_tokens: 0, cost_estimate_cents: "100" },
+    ];
+    const result = aggregateByModel(raw, seed);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ call_count: 3, input_tokens: 2_500_000, cost_cents: 500 });
   });
 
-  it("caps at maxPages and flags truncated:true rather than paging an unbounded window into a timeout", async () => {
-    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
-    const pageSize = 2;
-    // Every page is full, so the loop would never self-terminate — the cap is
-    // the only thing that stops it. truncated:true tells the dashboard the AI
-    // cost figure is a lower bound, not a dead request.
-    const fetchPage = vi.fn().mockResolvedValue({ data: [row(1), row(2)], error: null });
-
-    const { rows, truncated } = await fetchAiCallLogRows(fetchPage, pageSize, 3);
-
-    expect(truncated).toBe(true);
-    expect(rows).toHaveLength(6); // 3 pages × 2 rows
-    expect(fetchPage).toHaveBeenCalledTimes(3); // stopped exactly at the cap
-  });
-
-  it("fails loud on a mid-pagination DB error instead of returning a partial, silently-wrong result", async () => {
-    const { fetchAiCallLogRows } = await import("@/app/api/admin/resource-utilization/aggregations");
-    const pageSize = 2;
-    const fetchPage = vi.fn()
-      .mockResolvedValueOnce({ data: [row(1), row(2)], error: null })
-      .mockResolvedValueOnce({ data: null, error: { message: "connection reset" } });
-
-    await expect(fetchAiCallLogRows(fetchPage, pageSize)).rejects.toThrow(/ai_call_log read failed/);
+  it("keeps seed-only and raw-only vendor:model pairs as separate rows, sorted by cost", async () => {
+    const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const seed = [modelRow({ vendor: "anthropic", model: "claude-opus", cost_cents: 900 })];
+    const raw = [
+      { vendor: "openai", model: "gpt-4o", input_tokens: 10, output_tokens: 5, cost_estimate_cents: 30 },
+    ];
+    const result = aggregateByModel(raw, seed);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.model).toBe("claude-opus"); // higher cost first
   });
 });
 

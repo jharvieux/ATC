@@ -123,6 +123,42 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
     expect(new Set(requests.rows.map((r) => r.batch_job_id)).size).toBe(1);
     expect(jobs.rows).toHaveLength(1);
     expect(jobs.rows[0]!.anthropic_batch_id).toBe("batch-abc");
+    // #1696 — every row also carries the Anthropic batch id + a submit time so
+    // the adoption sweep can recover it if a crash strands it before linking.
+    expect(requests.rows.every((r) => r.anthropic_batch_id === "batch-abc")).toBe(true);
+    expect(requests.rows.every((r) => typeof r.submitted_at === "string")).toBe(true);
+  });
+
+  it("stamps anthropic_batch_id onto the rows BEFORE inserting the job (#1696)", async () => {
+    const requests = new InMemoryTable([makePendingRow(1)]);
+    const jobs = new InMemoryTable([]);
+    const inner = makeBatchDb({ ai_batch_requests: requests, ai_batch_jobs: jobs });
+
+    // Probe the request-row state at the instant the job insert happens. The
+    // fix's guarantee is stamp-then-insert: if the process died between submit
+    // and insert, the row must already carry the batch id so adoption can
+    // recover it. So at insert time the row MUST already be stamped.
+    let stampedAtInsertTime: unknown = "insert-never-called";
+    const db = {
+      from(table: string) {
+        const t = inner.from(table);
+        if (table === "ai_batch_jobs") {
+          const origInsert = t.insert.bind(t);
+          return Object.assign(t, {
+            insert(payload: Record<string, unknown>) {
+              stampedAtInsertTime = requests.rows[0]!.anthropic_batch_id;
+              return origInsert(payload);
+            },
+          });
+        }
+        return t;
+      },
+    };
+
+    mockSubmit.mockResolvedValueOnce({ batch_id: "batch-xyz", request_count: 1, processing_status: "in_progress" });
+    await flushPendingForPurpose({ purpose: PURPOSE, db: db as never });
+
+    expect(stampedAtInsertTime).toBe("batch-xyz");
   });
 
   it("claims rows to 'submitted' BEFORE calling Anthropic, not after", async () => {
