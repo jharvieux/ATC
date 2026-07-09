@@ -75,7 +75,7 @@ export async function runCommissionSplitOnReceived(event: { data: { commission_i
 
     const payoutIntent = `commission.received.${commission_id}`;
 
-    // Insert payout record — idempotent via unique index on (commission_id, payout_intent)
+    // Insert payout record — idempotent via unique index on (commission_id, payout_intent).
     const { error: insertError } = await db.from("payout_records").insert({
       tenant_id: commission.tenant_id,
       amount_cents: commission.subhost_payable_cents.toString(),
@@ -86,26 +86,36 @@ export async function runCommissionSplitOnReceived(event: { data: { commission_i
       payout_intent: payoutIntent,
     });
 
-    if (insertError) {
-      if (insertError.code === "23505") {
-        // Duplicate — idempotent replay, safe to ignore
-        console.info(
-          `commission-split-on-received: payout record already exists for commission ${commission_id}`,
-        );
-        return { skipped: true };
-      }
+    // #1578: a 23505 here means a prior attempt already wrote the payout row.
+    // That is NOT a reason to skip the platform_revenue insert below: a crash
+    // after the payout landed but before the revenue row would otherwise leave
+    // platform revenue permanently under-recognized (the retry hits 23505 and
+    // used to return early). Fall through so the idempotent revenue insert runs.
+    const payoutAlreadyExisted = insertError?.code === "23505";
+    if (insertError && !payoutAlreadyExisted) {
       throw new Error(`commission-split-on-received: insert failed: ${insertError.message}`);
     }
+    if (payoutAlreadyExisted) {
+      console.info(
+        `commission-split-on-received: payout record already exists for commission ${commission_id} — reattempting platform_revenue insert`,
+      );
+    }
 
-    // Insert platform_revenue row for revenue recognition at received time
-    await safeAwait(db.from("platform_revenue").insert({
+    // Insert platform_revenue row for revenue recognition at received time.
+    // #1578: deterministic idempotency_key + ON CONFLICT DO NOTHING makes this
+    // insert its own single-entry guard, independent of the payout insert. The
+    // key embeds the globally-unique commission id per the F-pay-01 key contract
+    // (platform_revenue_idempotency_key_uniq is a GLOBAL unique index), so a
+    // retry after the payout already landed still writes exactly one revenue row.
+    await safeAwait(db.from("platform_revenue").upsert({
       tenant_id: commission.tenant_id,
       commission_id,
       amount_cents: commission.platform_retained_cents.toString(),
       currency: commission.currency,
       tier_rate_applied: commission.platform_split_rate,
       revenue_recognized_at: receivedAt,
-    }), "platform_revenue.insert");
+      idempotency_key: `commission.received.${commission_id}`,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true }), "platform_revenue.insert");
 
     return { ok: true, payout_intent: payoutIntent };
 }
