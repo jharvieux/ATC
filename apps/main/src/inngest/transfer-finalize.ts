@@ -37,11 +37,23 @@ export const transferFinalize = inngest.createFunction(
     id: "transfer-finalize",
     triggers: [{ event: "anonymous_session.transfer_finalize" }],
     retries: 3,
+    // #1655 — collapse concurrent duplicate runs of the SAME soft-commit
+    // attempt to a single run. Keyed on the per-attempt marker
+    // (transfer_soft_commit_at), NOT the bare session id: a legitimate
+    // undo→re-commit produces a fresh soft_commit_at → distinct key → still
+    // finalizes, whereas a plain session-id key would wrongly suppress it.
+    // Belt to the body-level marker gate below (which supersedes older
+    // attempts); this closes the same-attempt duplicate-send window.
+    idempotency: "event.data.anonymous_session_id + '-' + event.data.transfer_soft_commit_at",
   },
   async ({ event, step }) => {
     const anonymous_session_id = event.data.anonymous_session_id as string;
     const user_id = event.data.user_id as string;
     const tenant_id = event.data.tenant_id as string;
+    // Per-attempt marker. Absent on events scheduled before this field shipped
+    // (24h in-flight window) — the marker gates below fall back to prior
+    // behavior when it's undefined so those events still finalize.
+    const soft_commit_at = event.data.transfer_soft_commit_at as string | undefined;
 
     const ctx = tenantContextFromInngestEvent(
       event as { id: string; name: string; data: Record<string, unknown> },
@@ -111,15 +123,23 @@ export const transferFinalize = inngest.createFunction(
     const commitOutcome = await step.run("commit-transfer", async () => {
       const now = new Date().toISOString();
       try {
+        let commitQuery = db
+          .from("anonymous_sessions")
+          .update({ transfer_committed_at: now })
+          .eq("id", anonymous_session_id)
+          .eq("tenant_id", tenant_id)
+          .is("transfer_committed_at", null)
+          .not("transfer_soft_commit_at", "is", null);
+        // #1655 — only commit the attempt this event was scheduled for. If a
+        // later soft-commit (undo→re-commit) overwrote transfer_soft_commit_at,
+        // this older event's marker no longer matches → zero rows → it
+        // supersedes to a no-op instead of committing a stale attempt and
+        // double-running the side effects.
+        if (soft_commit_at) {
+          commitQuery = commitQuery.eq("transfer_soft_commit_at", soft_commit_at);
+        }
         await safeAwaitRowCount(
-          db
-            .from("anonymous_sessions")
-            .update({ transfer_committed_at: now })
-            .eq("id", anonymous_session_id)
-            .eq("tenant_id", tenant_id)
-            .is("transfer_committed_at", null)
-            .not("transfer_soft_commit_at", "is", null)
-            .select("id"),
+          commitQuery.select("id"),
           "anonymous_sessions.finalize_commit",
           1,
         );
@@ -148,10 +168,14 @@ export const transferFinalize = inngest.createFunction(
           transfer_soft_commit_at: string | null;
           transferred_to_user_id: string | null;
         } | null;
+        // #1655 — a self-recommit must also be THIS attempt: require the row's
+        // marker to still equal the event's, so a zero-row caused by a newer
+        // soft-commit (not our crash) doesn't get misread as our own recommit.
         const selfRecommitted =
           !!row?.transfer_committed_at &&
           !!row?.transfer_soft_commit_at &&
-          row.transferred_to_user_id === user_id;
+          row.transferred_to_user_id === user_id &&
+          (!soft_commit_at || row.transfer_soft_commit_at === soft_commit_at);
         return { committed: selfRecommitted };
       }
     });
