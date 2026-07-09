@@ -10,9 +10,10 @@
 //   - commission rate unresolvable → pending_host_review (503)
 //   - platform split rate missing → pending_host_review (503)
 //   - host adapter failure → revert CAS lock (502)
-//   - commission insert failure (500)
-//   - sandbox: commissions row skipped (200)
-//   - happy path: submitted with commissions (200)
+//   - commit RPC failure → pending_host_review (500)  [#1693]
+//   - commit RPC 0-row CAS flip → 409 booking_state_changed  [#1693]
+//   - sandbox: RPC called with p_is_sandbox=true (200)
+//   - happy path: commission + flip via one atomic RPC (200)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -38,7 +39,6 @@ const mocks = vi.hoisted(() => ({
   // tenantClient chains
   bookingRead: vi.fn(),
   bookingCasLock: vi.fn(),
-  commissionsInsert: vi.fn(),
   quotesMaybeSingle: vi.fn(),
   tenantFeeOverride: vi.fn(),
   // adminDb chains
@@ -47,6 +47,8 @@ const mocks = vi.hoisted(() => ({
   hostAdapterConfig: vi.fn(),
   feeConfig: vi.fn(),
   feeConfigEqCol: vi.fn(),
+  // #1693 — commission insert + status flip fold into one SECURITY DEFINER RPC
+  submitCommitBooking: vi.fn(),
   // side-effect mocks
   safeAwait: vi.fn().mockResolvedValue(null),
   writeAuditLog: vi.fn().mockResolvedValue(undefined),
@@ -110,9 +112,6 @@ vi.mock("@/lib/db/tenant-client", () => ({
           }),
         };
       }
-      if (table === "commissions") {
-        return { insert: (payload: unknown) => mocks.commissionsInsert(payload) };
-      }
       if (table === "quotes") {
         return { select: () => ({ eq: () => ({ maybeSingle: mocks.quotesMaybeSingle }) }) };
       }
@@ -126,6 +125,8 @@ vi.mock("@/lib/db/tenant-client", () => ({
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
+    // #1693 — submit_commit_booking RPC: commission insert + status flip in one txn
+    rpc: (name: string, params: unknown) => mocks.submitCommitBooking(name, params),
     from: (table: string) => {
       if (table === "tenants") {
         return { select: () => ({ eq: () => ({ single: mocks.tenantRow }) }) };
@@ -241,7 +242,8 @@ beforeEach(() => {
     value: { provider_booking_ref: "PBR-TEST-001" },
   });
 
-  mocks.commissionsInsert.mockResolvedValue({ data: null, error: null });
+  // RPC commits: 1 booking row flipped submitting → submitted
+  mocks.submitCommitBooking.mockResolvedValue({ data: 1, error: null });
   mocks.populateConversionTouch.mockResolvedValue(undefined);
   mocks.triggerMatchingSequences.mockResolvedValue(undefined);
   mocks.writeAuditLog.mockResolvedValue(undefined);
@@ -414,18 +416,18 @@ describe("POST /api/bookings/[id]/submit — host adapter failure", () => {
 
 // ── Commission insert failure ─────────────────────────────────────────────
 
-describe("POST /api/bookings/[id]/submit — commission record", () => {
-  it("returns 500 when commissions.insert fails", async () => {
-    mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "constraint violation" } });
+describe("POST /api/bookings/[id]/submit — commission record (#1693 atomic RPC)", () => {
+  it("returns 500 when the submit_commit_booking RPC errors", async () => {
+    mocks.submitCommitBooking.mockResolvedValue({ data: null, error: { message: "constraint violation" } });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
     expect((await res.json() as { error: string }).error).toBe("db_error");
   });
 
-  it("#1577 — persists provider_booking_ref BEFORE the commissions insert", async () => {
-    // A failing commissions insert must not erase the fact that the host
-    // booking already succeeded: the ref persists in its own write first.
-    mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "boom" } });
+  it("#1577 — persists provider_booking_ref BEFORE the commit RPC", async () => {
+    // A failing commit must not erase the fact that the host booking already
+    // succeeded: the ref persists in its own write first.
+    mocks.submitCommitBooking.mockResolvedValue({ data: null, error: { message: "boom" } });
     await POST(makeReq(), PARAMS);
     expect(mocks.safeAwait).toHaveBeenCalledWith(
       expect.anything(),
@@ -433,17 +435,37 @@ describe("POST /api/bookings/[id]/submit — commission record", () => {
     );
   });
 
-  it("#1577 — on commission-insert failure the booking goes to pending_host_review, not stuck in submitting", async () => {
+  it("#1577 — on commit-RPC failure the booking goes to pending_host_review, not stuck in submitting", async () => {
     // The host record is real (ref persisted), so the row must be routed to
     // manual review — never left in 'submitting' (sweep/retry would re-book)
     // and never reverted to 'draft'.
-    mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "boom" } });
+    mocks.submitCommitBooking.mockResolvedValue({ data: null, error: { message: "boom" } });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
     expect(mocks.safeAwait).toHaveBeenCalledWith(
       expect.anything(),
       "bookings.update.commission_write_failed",
     );
+  });
+
+  it("#1693 — commission insert + status flip go through ONE RPC call (atomic), not two writes", async () => {
+    await POST(makeReq(), PARAMS);
+    // Exactly one commit RPC carries both the commission fields and the flip.
+    expect(mocks.submitCommitBooking).toHaveBeenCalledTimes(1);
+    const [name, params] = mocks.submitCommitBooking.mock.calls[0] as [string, Record<string, unknown>];
+    expect(name).toBe("submit_commit_booking");
+    expect(params.p_booking_id).toBe(BOOKING_ID);
+    expect(params.p_tenant_id).toBe(TENANT_ID);
+    expect(params.p_provider_booking_ref).toBe("PBR-TEST-001");
+    expect(params.p_is_sandbox).toBe(false);
+  });
+
+  it("#1693 — a 0-row CAS flip (concurrent reconcile moved the row) returns 409, not a false 'submitted'", async () => {
+    mocks.submitCommitBooking.mockResolvedValue({ data: 0, error: null });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("booking_state_changed");
   });
 });
 
@@ -466,7 +488,7 @@ describe("POST /api/bookings/[id]/submit — unexpected error", () => {
 // ── Sandbox ───────────────────────────────────────────────────────────────
 
 describe("POST /api/bookings/[id]/submit — sandbox (§15.12)", () => {
-  it("skips commissions row for sandbox tenants but still returns submitted", async () => {
+  it("passes p_is_sandbox=true so the RPC no-ops the commission insert, still returns submitted", async () => {
     mocks.tenantRow.mockResolvedValue({
       data: { id: TENANT_ID, tenant_type: "nuo", tier_id: TIER_ID, is_sandbox: true },
       error: null,
@@ -476,15 +498,16 @@ describe("POST /api/bookings/[id]/submit — sandbox (§15.12)", () => {
     const body = await res.json() as { ok: boolean; status: string };
     expect(body.ok).toBe(true);
     expect(body.status).toBe("submitted");
-    // Commissions insert must NOT be called for sandbox tenants
-    expect(mocks.commissionsInsert).not.toHaveBeenCalled();
+    // The commission skip lives inside the RPC — the route signals it via p_is_sandbox.
+    const params = mocks.submitCommitBooking.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(params.p_is_sandbox).toBe(true);
   });
 });
 
 // ── Happy path ────────────────────────────────────────────────────────────
 
 describe("POST /api/bookings/[id]/submit — happy path", () => {
-  it("creates commissions row, transitions to submitted, returns provider_booking_ref", async () => {
+  it("commits commission + transition via RPC, returns provider_booking_ref", async () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json() as { ok: boolean; status: string; provider_booking_ref: string };
@@ -492,14 +515,9 @@ describe("POST /api/bookings/[id]/submit — happy path", () => {
     expect(body.status).toBe("submitted");
     expect(body.provider_booking_ref).toBe("PBR-TEST-001");
 
-    // Commission row must be written
-    expect(mocks.commissionsInsert).toHaveBeenCalledTimes(1);
-
-    // Booking updated to submitted via safeAwait
-    expect(mocks.safeAwait).toHaveBeenCalledWith(
-      expect.anything(),
-      "bookings.update",
-    );
+    // Commission row + status flip land in one atomic RPC (#1693)
+    expect(mocks.submitCommitBooking).toHaveBeenCalledTimes(1);
+    expect(mocks.submitCommitBooking.mock.calls[0]?.[0]).toBe("submit_commit_booking");
 
     // Audit log written with resolution outcome = success
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(
@@ -549,8 +567,10 @@ describe("POST /api/bookings/[id]/submit — happy path", () => {
 // percent applies to the GROSS COMMISSION (not the fare), rule_ref is the
 // applied row's id, and the filter column is host_adapter (not adapter_id).
 describe("POST /api/bookings/[id]/submit — host booking fee", () => {
-  function commissionPayload() {
-    return mocks.commissionsInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+  // #1693 — the commission fields now ride the submit_commit_booking RPC params
+  // (p_-prefixed) instead of a direct commissions insert payload.
+  function commissionParams() {
+    return mocks.submitCommitBooking.mock.calls[0]?.[1] as Record<string, unknown>;
   }
 
   it("flat fee is read in dollars and converted to cents; rule_ref is the config id", async () => {
@@ -560,11 +580,11 @@ describe("POST /api/bookings/[id]/submit — host booking fee", () => {
     });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
-    const p = commissionPayload();
-    expect(p.gross_commission_cents).toBe("50000");
-    expect(p.host_booking_fee_cents).toBe("2500"); // $25.00 → 2500c, NOT 25c
-    expect(p.host_booking_fee_rule_ref).toBe("cfg-flat");
-    expect(p.net_commission_cents).toBe("47500");
+    const p = commissionParams();
+    expect(p.p_gross_commission_cents).toBe("50000");
+    expect(p.p_host_booking_fee_cents).toBe("2500"); // $25.00 → 2500c, NOT 25c
+    expect(p.p_host_booking_fee_rule_ref).toBe("cfg-flat");
+    expect(p.p_net_commission_cents).toBe("47500");
     // The fee schedule must be looked up by host_adapter, not adapter_id.
     expect(mocks.feeConfigEqCol).toHaveBeenCalledWith("host_adapter");
   });
@@ -576,11 +596,11 @@ describe("POST /api/bookings/[id]/submit — host booking fee", () => {
     });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
-    const p = commissionPayload();
+    const p = commissionParams();
     // 10% of gross commission (50000) = 5000 — NOT 10% of the fare (500000) = 50000.
-    expect(p.host_booking_fee_cents).toBe("5000");
-    expect(p.host_booking_fee_rule_ref).toBe("cfg-pct");
-    expect(p.net_commission_cents).toBe("45000");
+    expect(p.p_host_booking_fee_cents).toBe("5000");
+    expect(p.p_host_booking_fee_rule_ref).toBe("cfg-pct");
+    expect(p.p_net_commission_cents).toBe("45000");
   });
 
   it("a tenant override supersedes the platform fee config", async () => {
@@ -594,17 +614,17 @@ describe("POST /api/bookings/[id]/submit — host booking fee", () => {
     });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
-    const p = commissionPayload();
-    expect(p.host_booking_fee_cents).toBe("5000"); // override (10% of 50000), not the $10 config
-    expect(p.host_booking_fee_rule_ref).toBe("ovr-pct");
+    const p = commissionParams();
+    expect(p.p_host_booking_fee_cents).toBe("5000"); // override (10% of 50000), not the $10 config
+    expect(p.p_host_booking_fee_rule_ref).toBe("ovr-pct");
   });
 
   it("no fee config → zero host fee, full gross flows to net", async () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
-    const p = commissionPayload();
-    expect(p.host_booking_fee_cents).toBe("0");
-    expect(p.host_booking_fee_rule_ref).toBeNull();
-    expect(p.net_commission_cents).toBe("50000");
+    const p = commissionParams();
+    expect(p.p_host_booking_fee_cents).toBe("0");
+    expect(p.p_host_booking_fee_rule_ref).toBeNull();
+    expect(p.p_net_commission_cents).toBe("50000");
   });
 });

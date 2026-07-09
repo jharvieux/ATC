@@ -35,7 +35,13 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
   flagged: number;
   total_stuck: number;
 }> {
-  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+  // #1694 — gate on BOOKING_RECONCILE_DISABLED, NOT BOOKING_CRONS_DISABLED. This is a
+  // pure flag-for-review safety net (it only routes stuck rows to pending_host_review;
+  // it never moves money), so it MUST keep running while the money-movement switch
+  // (BOOKING_CRONS_DISABLED) is on during an incident — that is exactly when a stuck
+  // 'submitting' booking most needs flagging. Only the dedicated reconcile switch
+  // stops it.
+  if (process.env.BOOKING_RECONCILE_DISABLED === "true") {
     return { flagged: 0, total_stuck: 0 };
   }
   const db = createServiceRoleClient();

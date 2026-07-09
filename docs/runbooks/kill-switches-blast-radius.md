@@ -12,26 +12,48 @@ Kill switches are environment variables that disable features, crons, or integra
 
 ### `BOOKING_CRONS_DISABLED` (default: false)
 
-**When true:** Disables ALL booking-related cron jobs that run via Inngest.
+**When true:** Disables the booking/payout/commission **money-movement** crons. As of #1694 it NO LONGER disables the reconcile safety nets — those have their own switch, `BOOKING_RECONCILE_DISABLED` (below).
 
 **Affected crons (disabled when true):**
 1. `commission-split-on-received` — reconciles commission splits when a booking transitions to "received" status. Without this, commission rows don't get split between platform and subhost.
 2. `payouts-mark-available` — transitions payout records from "pending_available" to "available" after the hold period. Without this, all payouts stay in hold indefinitely; subbosts can't withdraw.
 3. `reconcile-statement-automated` — auto-finalizes payout statements. Without this, statement reconciliation stalls; payouts queue grows unbounded.
 4. `payouts-execute-transfer` — executes the actual financial transfer. Without this, no transfers run, even if marked "available".
-5. `bookings-stuck-submitting-reconcile` (Vercel cron, 5min cadence) — reverts bookings stuck in "submitting" state (§14.4 lock revert threshold = 5 min). **Critical: this is the safety net for the CAS lock in `/api/bookings/[id]/submit`** — if the route process dies between acquiring the lock and committing the result, the row stays locked forever. Users can't retry. Disabling this causes bookings to hang indefinitely if the submit route ever crashes.
+
+**Partial effect on the reconcile safety nets (#1694):** `payouts-reconcile-processing` keeps running while this flag is on, but it will NOT *initiate* a Stripe transfer (`transfers.create`) — it still pages Stripe read-only, settles rows whose transfer already exists (recording already-moved money is not new movement), and alerts the operator (`payout_reconcile_transfer_suppressed_money_movement_disabled`) for any within-window row that would otherwise have been created. `bookings-stuck-submitting-reconcile` is unaffected by this flag (it never moves money). To stop the safety nets, use `BOOKING_RECONCILE_DISABLED`.
 
 **Blast radius:**
 - **Revenue integrity:** No commissions are split → platform and subhost earn nothing on new bookings.
 - **Payout availability:** All payouts frozen in hold state → subbosts can't withdraw earnings → cash-flow crisis.
-- **User experience:** Bookings can get permanently stuck if submit route crashes → users must contact support for every hang.
-- **Recovery complexity:** High. Reversing this requires manual reconciliation of all stuck rows and payout queue.
+- **Recovery complexity:** High. Reversing this requires manual reconciliation of the payout queue.
 
 **When to use:**
 - Rolling back a booking/commission/payout PR that introduced a bug.
 - Emergency pause of payouts while investigating a discrepancy.
 
-**⚠️ Caution:** Never leave this on for more than ~30 min. The stuck-submitting reconcile is a safety critical cron.
+**⚠️ Caution:** This pauses money movement only. Leaving the reconcile safety nets running (the default) is intentional and safe — they flag/record, they don't initiate new transfers while this flag is on.
+
+---
+
+### `BOOKING_RECONCILE_DISABLED` (default: false)
+
+**When true:** Disables the reconcile/flag-for-review **safety-net** crons entirely.
+
+**Affected crons (disabled when true):**
+1. `bookings-stuck-submitting-reconcile` (Vercel cron, 5min cadence) — routes bookings stuck in "submitting" to `pending_host_review` (reason `host_state_unknown`). **This is the safety net for the CAS lock in `/api/bookings/[id]/submit`** — if the route process dies between acquiring the lock and committing, the row stays locked. Disabling this causes stuck bookings to go unflagged.
+2. `payouts-reconcile-processing` (Vercel cron, 5min cadence) — recovers/settles payout rows stuck in "processing" (the "Stripe call succeeded but the response was lost" case).
+
+**Why separate from `BOOKING_CRONS_DISABLED` (#1694):** during an incident the operator sets `BOOKING_CRONS_DISABLED` to stop *new* money movement — but that is exactly when a stuck booking or a stuck payout most needs the reconcile sweep to flag it. Conflating "stop initiating money movement" with "stop the safety nets" was the bug this switch fixes. Keep this flag OFF unless the safety nets themselves are misbehaving.
+
+**Blast radius:**
+- **User experience:** Bookings can hang in "submitting" unflagged if the submit route crashes → users must contact support for every hang.
+- **Payout recovery:** Payouts stuck in "processing" are not recovered → manual reconciliation grows.
+- **Recovery complexity:** High — reversing requires manual reconciliation of all stuck rows.
+
+**When to use:**
+- Only when a reconcile cron itself is faulty (e.g. flagging healthy rows). Prefer fixing forward.
+
+**⚠️ Caution:** Never leave this on. The stuck-submitting reconcile is a safety-critical cron; this switch removes the net, not just the money movement.
 
 ---
 
@@ -276,7 +298,7 @@ Some env vars documented in `lib/env.ts` have call-site references that are NOT 
 
 1. **Identify all affected flows** — grep `process.env.<SWITCH_NAME>` in the codebase to see where it's checked.
 2. **Document the dependency chain** — does disabling this prevent a critical cron from running? Will it cascade?
-3. **Check for stuck rows** — if you're disabling a reconciliation cron (like `BOOKING_CRONS_DISABLED`), scan the DB for rows that will be stuck (e.g., bookings in "submitting" state).
+3. **Check for stuck rows** — if you're disabling a reconciliation cron (like `BOOKING_RECONCILE_DISABLED`), scan the DB for rows that will be stuck (e.g., bookings in "submitting" state).
 4. **Alert stakeholders** — notify ops, customer support, and engineering that the feature is disabled.
 5. **Set a re-enable deadline** — don't leave production kill switches on indefinitely without a plan to re-enable.
 6. **Log the change** — document when and why the switch was flipped in your incident log / ops wiki.
@@ -288,4 +310,4 @@ Some env vars documented in `lib/env.ts` have call-site references that are NOT 
 - **Env configuration:** `lib/env.ts` (the source of truth for all kill switches)
 - **Inngest registry:** `app/api/inngest/route.ts` (where all crons are registered)
 - **Cron source files:** `lib/cron/` and `inngest/` (individual cron implementations)
-- **Issue references:** #895 (booking stuck-submitting), #894 (custom domain deferral), #1668 (resolved — 7 unwired kill-switch/feature-flag env vars, see "Reference: env.ts Scan" above), #428 (OAuth provider dashboard setup, incl. the Apple code gap)
+- **Issue references:** #895 (booking money-movement crons), #1694 (reconcile safety-net split — `BOOKING_RECONCILE_DISABLED`), #894 (custom domain deferral), #1668 (resolved — 7 unwired kill-switch/feature-flag env vars, see "Reference: env.ts Scan" above), #428 (OAuth provider dashboard setup, incl. the Apple code gap)

@@ -268,8 +268,16 @@ const envSchema = z.object({
   FORENSICS_ENCRYPTION_KEY_PRIOR_2: z.string().optional(),
   // §25.10 staging real-PII risk acceptance — outbound isolation envs.
   STAGING_MODE: z.enum(["true", "false"]).optional().default("false"),
-  // Kill switch: disable booking/payout/commission crons until prongs 1+3 live (issue #895).
+  // Kill switch: disable booking/payout/commission MONEY-MOVEMENT crons until prongs 1+3 live (issue #895).
   BOOKING_CRONS_DISABLED: z.enum(["true", "false"]).optional().default("false"),
+  // Kill switch: disable the reconcile/flag-for-review SAFETY-NET crons
+  // (bookings-stuck-submitting-reconcile, payouts-reconcile-processing) — issue #1694.
+  // Deliberately SEPARATE from BOOKING_CRONS_DISABLED: during an incident the operator
+  // stops new money movement with BOOKING_CRONS_DISABLED but the safety nets must keep
+  // running (that's exactly when a stuck booking/payout most needs flagging). The
+  // reconcile crons still page Stripe read-only + settle already-moved transfers + alert
+  // while BOOKING_CRONS_DISABLED is on; they never INITIATE a transfer in that state.
+  BOOKING_RECONCILE_DISABLED: z.enum(["true", "false"]).optional().default("false"),
   // Kill switch: disable custom-domain (sub-hosting) crons while the feature is deferred (issue #894).
   SUBHOSTING_CRONS_DISABLED: z.enum(["true", "false"]).optional().default("false"),
   TEST_OVERRIDE_EMAIL: z.string().email().optional(),

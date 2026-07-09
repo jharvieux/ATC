@@ -223,12 +223,11 @@ describe("data-retention-purge — #1590", () => {
     }
   });
 
-  // #1719 — the fail-loud throw retries the WHOLE Inngest function. With each
-  // table purge and the audit write in their own step.run, a retry must replay
-  // completed work from the memo instead of re-deleting rows and appending a
-  // second audit row.
+  // #1719 — the fail-loud throw retries the WHOLE Inngest function. Each COMPLETED
+  // table purge and the audit write are memoized, so a retry replays them instead of
+  // re-deleting rows and appending a second audit row.
   it("retry after fail-loud skips completed tables and does not duplicate the audit row", async () => {
-    selectErrors["ai_call_log"] = { message: "connection reset" }; // one table fails
+    selectErrors["ai_call_log"] = { message: "connection reset" }; // one table fails, stays failed
     selectQueues["email_log"] = [ids(2, "e")]; // a healthy table does real deletes
     const step = makeStep();
 
@@ -240,10 +239,40 @@ describe("data-retention-purge — #1590", () => {
     // Inngest retries the whole function with the same memoized step state.
     await expect(runPurge(step)).rejects.toThrow(/ai_call_log/);
 
-    // Completed steps replay from the memo → no additional DELETEs…
+    // Completed steps (email_log, audit) replay from the memo → no additional
+    // DELETEs and the audit row is written exactly once across both attempts.
+    // (The failed ai_call_log step is NOT memoized — see the #1722 test below — but
+    // it throws before any DELETE, so it adds none.)
     expect(calls.deletes.length).toBe(deletesAfterRun1);
-    // …and the audit row is written exactly once across both attempts.
     expect(mockWriteAuditLog).toHaveBeenCalledOnce();
+  });
+
+  // #1722 — a table whose DB call errors now THROWS inside its step.run, so the
+  // step is never memoized. That is what lets Inngest re-attempt just that table.
+  // Before the fix the error was RETURNED (non-throwing), memoizing a one-off
+  // transient blip for the whole run so the table was never retried until the next
+  // day's cron. This models: fail once, then the blip clears and the retry recovers.
+  it("#1722 — a failed table is re-attempted on retry (not memoized) and a transient error recovers", async () => {
+    selectErrors["ai_call_log"] = { message: "connection reset" };
+    const step = makeStep();
+
+    // Run 1: ai_call_log errors → recorded failure → fail-loud throw. No delete.
+    await expect(runPurge(step)).rejects.toThrow(/ai_call_log/);
+    expect(calls.deletes.some((d) => d.table === "ai_call_log")).toBe(false);
+
+    // The transient blip clears before the retry.
+    selectErrors["ai_call_log"] = undefined;
+    selectQueues["ai_call_log"] = [ids(2, "a")];
+
+    // Run 2: ai_call_log's step was never memoized → it re-runs, now succeeds, and
+    // the run no longer throws (its failure was not locked in for the whole run).
+    const result = await runPurge(step);
+    const aiDeletes = calls.deletes.filter((d) => d.table === "ai_call_log");
+    expect(aiDeletes).toHaveLength(1);
+    expect(aiDeletes[0]!.ids).toHaveLength(2);
+    const aiResult = result.results!.find((r) => r.table === "ai_call_log")!;
+    expect(aiResult.affected).toBe(2);
+    expect(aiResult).not.toHaveProperty("error");
   });
 });
 
