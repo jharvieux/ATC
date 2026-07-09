@@ -20,14 +20,59 @@ import { isInternalHost } from "@atc/contracts";
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { gunzipSync, inflateSync, brotliDecompressSync } from "node:zlib";
 
 const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
 const MAX_REDIRECTS = 5;
+
+// #1597 — matches the 10MB cap used elsewhere for externally-supplied
+// payloads (apps/main/src/app/api/imports/upload/route.ts's MAX_BYTES).
+// Enforced both against the raw wire bytes (defends an unbounded/streamed
+// body) and against the decompressed size (defends a small gzip/br payload
+// that decompresses into something much larger).
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 export class SsrfBlockedError extends Error {
   constructor(reason: string) {
     super(`ssrf_blocked:${reason}`);
     this.name = "SsrfBlockedError";
+  }
+}
+
+export class ResponseTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(`response_too_large:${bytes}`);
+    this.name = "ResponseTooLargeError";
+  }
+}
+
+// #1597 — fetchGuarded's RequestInit accepted `body` but silently dropped it
+// (only method/headers/timeoutMs were forwarded). Fail loud instead: encode
+// the common server-to-server body shapes, and throw for anything else
+// (Blob/FormData/ReadableStream) rather than pretend to send it.
+function encodeBody(body: BodyInit | null | undefined): Buffer | undefined {
+  if (body === null || body === undefined) return undefined;
+  if (typeof body === "string") return Buffer.from(body, "utf8");
+  if (body instanceof URLSearchParams) return Buffer.from(body.toString(), "utf8");
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  throw new Error(`fetchGuarded: unsupported body type (${Object.prototype.toString.call(body)})`);
+}
+
+function decompressBody(buf: Buffer, contentEncoding: string): Buffer {
+  switch (contentEncoding.trim().toLowerCase()) {
+    case "gzip":
+    case "x-gzip":
+      return gunzipSync(buf);
+    case "deflate":
+      return inflateSync(buf);
+    case "br":
+      return brotliDecompressSync(buf);
+    case "identity":
+      return buf;
+    default:
+      throw new Error(`fetchGuarded: unsupported content-encoding "${contentEncoding}"`);
   }
 }
 
@@ -83,18 +128,22 @@ function fetchPinnedHop(
   url: string,
   pinnedIp: string,
   pinnedFamily: number,
-  init: { method?: string; headers?: Record<string, string>; timeoutMs: number },
+  init: { method?: string; headers?: Record<string, string>; body?: Buffer; timeoutMs: number },
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const port = u.port ? parseInt(u.port, 10) : (u.protocol === "https:" ? 443 : 80);
+    const headers: Record<string, string> = { host: u.hostname, ...init.headers };
+    if (init.body && !Object.keys(headers).some((k) => k.toLowerCase() === "content-length")) {
+      headers["content-length"] = String(init.body.length);
+    }
     // Build opts with `lookup` typed permissively; both http/https accept it at runtime.
     const opts = {
       hostname: u.hostname,
       port,
       path: u.pathname + u.search,
       method: init.method ?? "GET",
-      headers: { host: u.hostname, ...init.headers },
+      headers,
       lookup: (
         _h: string,
         _o: Record<string, unknown>,
@@ -103,25 +152,69 @@ function fetchPinnedHop(
     } as import("node:http").RequestOptions;
 
     function onResponse(res: import("node:http").IncomingMessage): void {
+      const declaredLength = Number(res.headers["content-length"]);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+        res.destroy();
+        reject(new ResponseTooLargeError(declaredLength));
+        return;
+      }
+
       const chunks: Buffer[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c));
+      let received = 0;
+      let settled = false;
+      res.on("data", (c: Buffer) => {
+        if (settled) return;
+        received += c.length;
+        if (received > MAX_RESPONSE_BYTES) {
+          settled = true;
+          res.destroy();
+          reject(new ResponseTooLargeError(received));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on("end", () => {
+        if (settled) return;
+        settled = true;
         const status = res.statusCode ?? 0;
         const resHeaders = new Headers();
         for (const [k, v] of Object.entries(res.headers)) {
           if (typeof v === "string") resHeaders.set(k, v);
           else if (Array.isArray(v)) v.forEach((h) => resHeaders.append(k, h));
         }
-        resolve(new Response(Buffer.concat(chunks), { status, headers: resHeaders }));
+
+        let body: Buffer = Buffer.concat(chunks);
+        const contentEncoding = resHeaders.get("content-encoding");
+        if (contentEncoding) {
+          try {
+            body = decompressBody(body, contentEncoding);
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
+          if (body.length > MAX_RESPONSE_BYTES) {
+            reject(new ResponseTooLargeError(body.length));
+            return;
+          }
+          // Body is already decoded; forwarding the original encoding/length
+          // headers would make a caller try to decode it a second time.
+          resHeaders.delete("content-encoding");
+          resHeaders.delete("content-length");
+        }
+        resolve(new Response(new Uint8Array(body), { status, headers: resHeaders }));
       });
-      res.on("error", reject);
+      res.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      });
     }
 
     const reqFn = (u.protocol === "https:" ? httpsRequest : httpRequest) as typeof httpRequest;
     const req = reqFn(opts, onResponse);
     req.setTimeout(init.timeoutMs, () => req.destroy(new Error("fetch_timeout")));
     req.on("error", reject);
-    req.end();
+    req.end(init.body);
   });
 }
 
@@ -133,10 +226,11 @@ export async function fetchGuarded(
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<Response> {
-  const { timeoutMs = 10_000, method, headers } = init;
+  const { timeoutMs = 10_000, method, headers, body } = init;
   const flatHeaders = headers instanceof Headers
     ? Object.fromEntries(headers.entries())
     : (headers as Record<string, string> | undefined);
+  const bodyBuffer = encodeBody(body);
 
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -145,6 +239,7 @@ export async function fetchGuarded(
     const hopInit: Parameters<typeof fetchPinnedHop>[3] = { timeoutMs };
     if (method) hopInit.method = method as string;
     if (flatHeaders) hopInit.headers = flatHeaders;
+    if (bodyBuffer) hopInit.body = bodyBuffer;
     const res = await fetchPinnedHop(current, check.pinnedIp!, check.pinnedFamily!, hopInit);
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
