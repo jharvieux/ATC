@@ -12,6 +12,7 @@ import {
   extractReferencedMessageIds,
   resolveInboundTenant,
   fetchReceivedEmail,
+  attachInboundToTimeline,
 } from "@/lib/email/inbound";
 
 describe("extractReferencedMessageIds", () => {
@@ -115,6 +116,114 @@ describe("resolveInboundTenant", () => {
     const { db } = mockDb({});
     const res = await resolveInboundTenant({ db, referencedIds: [], fromEmail: "stranger@b.com" });
     expect(res).toEqual({ method: "unresolved" });
+  });
+});
+
+// Table-routed mock for the timeline-attach writes. Mirrors the exact chain
+// attachInboundToTimeline drives; unexpected tables throw.
+function attachDb(cfg: {
+  existingConv?: { id: string }[];
+  convSelectError?: unknown;
+  convInsert?: { data: { id: string } | null; error: unknown };
+  msgInsertError?: { code?: string } | null;
+  dupMessage?: { conversation_id: string } | null;
+}): { db: SupabaseClient; inserted: { conversations: Record<string, unknown>[]; messages: Record<string, unknown>[] } } {
+  const inserted = { conversations: [] as Record<string, unknown>[], messages: [] as Record<string, unknown>[] };
+  const db = {
+    from(table: string) {
+      if (table === "conversations") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => Promise.resolve({ data: cfg.existingConv ?? [], error: cfg.convSelectError ?? null }),
+                }),
+              }),
+            }),
+          }),
+          insert: (row: Record<string, unknown>) => {
+            inserted.conversations.push(row);
+            return {
+              select: () => ({
+                single: () => Promise.resolve(cfg.convInsert ?? { data: { id: "conv-new" }, error: null }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === "messages") {
+        return {
+          insert: (row: Record<string, unknown>) => {
+            inserted.messages.push(row);
+            return Promise.resolve({ error: cfg.msgInsertError ?? null });
+          },
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: () => Promise.resolve({ data: cfg.dupMessage ?? null, error: null }) }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+  } as unknown as SupabaseClient;
+  return { db, inserted };
+}
+
+describe("attachInboundToTimeline", () => {
+  const base = { tenant_id: "t-1", contact_id: "c-1", providerMessageId: "inb-9", subject: "Re: deck", text: "See you there" };
+
+  it("attaches to the contact's existing conversation, tagging source + the provider id for dedup", async () => {
+    const { db, inserted } = attachDb({ existingConv: [{ id: "conv-1" }] });
+    const res = await attachInboundToTimeline({ db, ...base });
+    expect(res).toEqual({ status: "attached", conversation_id: "conv-1" });
+    expect(inserted.conversations).toHaveLength(0);
+    expect(inserted.messages[0]).toMatchObject({
+      tenant_id: "t-1",
+      conversation_id: "conv-1",
+      role: "user",
+      content: "See you there",
+      source: "email",
+      source_message_id: "inb-9",
+    });
+  });
+
+  it("creates a conversation titled from the subject when the contact has none", async () => {
+    const { db, inserted } = attachDb({ existingConv: [], convInsert: { data: { id: "conv-new" }, error: null } });
+    const res = await attachInboundToTimeline({ db, ...base });
+    expect(res).toEqual({ status: "attached", conversation_id: "conv-new" });
+    expect(inserted.conversations[0]).toMatchObject({ tenant_id: "t-1", contact_id: "c-1", title: "Re: deck", status: "active" });
+    expect(inserted.messages[0]).toMatchObject({ conversation_id: "conv-new", source_message_id: "inb-9" });
+  });
+
+  it("uses a default title when the subject is blank", async () => {
+    const { db, inserted } = attachDb({ existingConv: [], convInsert: { data: { id: "conv-new" }, error: null } });
+    await attachInboundToTimeline({ db, ...base, subject: "   " });
+    expect(inserted.conversations[0]!.title).toBe("Email reply");
+  });
+
+  it("stores a placeholder when the body is unavailable (content is NOT NULL)", async () => {
+    const { db, inserted } = attachDb({ existingConv: [{ id: "conv-1" }] });
+    await attachInboundToTimeline({ db, ...base, text: null });
+    expect(inserted.messages[0]!.content).toBe("(Email reply — body unavailable.)");
+  });
+
+  it("is idempotent — a redelivered provider id (23505) no-ops and returns where it landed", async () => {
+    const { db } = attachDb({ existingConv: [{ id: "conv-1" }], msgInsertError: { code: "23505" }, dupMessage: { conversation_id: "conv-earlier" } });
+    const res = await attachInboundToTimeline({ db, ...base });
+    expect(res).toEqual({ status: "duplicate", conversation_id: "conv-earlier" });
+  });
+
+  it("surfaces a hard DB error (non-23505) so the webhook returns 500 and the provider retries", async () => {
+    const { db } = attachDb({ existingConv: [{ id: "conv-1" }], msgInsertError: { code: "XX000" } });
+    expect(await attachInboundToTimeline({ db, ...base })).toEqual({ status: "error" });
+  });
+
+  it("surfaces a conversation-lookup error as error (no message written)", async () => {
+    const { db, inserted } = attachDb({ convSelectError: { code: "XX000" } });
+    expect(await attachInboundToTimeline({ db, ...base })).toEqual({ status: "error" });
+    expect(inserted.messages).toHaveLength(0);
   });
 });
 

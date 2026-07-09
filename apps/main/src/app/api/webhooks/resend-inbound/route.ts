@@ -21,6 +21,7 @@ import {
   fetchReceivedEmail,
   extractReferencedMessageIds,
   resolveInboundTenant,
+  attachInboundToTimeline,
 } from "@/lib/email/inbound";
 import { sendTenantNotification } from "@/lib/email/notifications";
 import { escapeHtml } from "@/lib/utils";
@@ -90,6 +91,30 @@ export async function POST(req: Request): Promise<Response> {
 
   const resolution = await resolveInboundTenant({ db: svc, referencedIds, fromEmail });
 
+  // #1728 — CRM timeline attach. ONLY the spoof-resistant "references" path may
+  // attach to a tenant's CRM (design "Security notes"); the "sender" fallback
+  // forwards but never attaches. Attaching before the forward means the reply
+  // is recorded even if the forward is later suppressed/rate-limited, and lets
+  // the forward carry a link to the conversation it landed on.
+  let attachedContactId: string | null = null;
+  if (resolution.method === "references" && resolution.contact_id) {
+    const attach = await attachInboundToTimeline({
+      db: svc,
+      tenant_id: resolution.tenant_id,
+      contact_id: resolution.contact_id,
+      providerMessageId,
+      subject: event.data.subject ?? null,
+      text: content?.text ?? null,
+    });
+    if (attach.status === "error") {
+      // No inbound_emails row written yet, so the provider retry reprocesses;
+      // the attach is idempotent on source_message_id.
+      console.error("[resend-inbound] timeline attach failed, returning 500 for provider retry");
+      return new Response("Timeline attach failed", { status: 500 });
+    }
+    attachedContactId = resolution.contact_id;
+  }
+
   let forwardedEmailLogId: string | null = null;
   if (resolution.method !== "unresolved") {
     const { data: tenantRow, error: tenantErr } = await svc
@@ -112,6 +137,7 @@ export async function POST(req: Request): Promise<Response> {
           toEmail: event.data.to?.[0] ?? "",
           subject,
           textBody: content?.text ?? null,
+          contactId: attachedContactId,
         }),
         category: "transactional",
         template_id: "inbound_persona_forward",
@@ -166,11 +192,12 @@ function buildForwardHtml(args: {
   toEmail: string;
   subject: string;
   textBody: string | null;
+  contactId: string | null;
 }): string {
   const bodyHtml = args.textBody
     ? escapeHtml(args.textBody).replace(/\r?\n/g, "<br>")
     : "<em>Body unavailable — view the message in the Resend dashboard.</em>";
-  return [
+  const lines = [
     `<p>A customer replied to your concierge's email address.</p>`,
     `<p><strong>From:</strong> ${escapeHtml(args.fromEmail)}<br>`,
     `<strong>To:</strong> ${escapeHtml(args.toEmail)}<br>`,
@@ -178,5 +205,17 @@ function buildForwardHtml(args: {
     `<hr>`,
     `<p>${bodyHtml}</p>`,
     `<p><em>Reply to this email to respond directly to the customer.</em></p>`,
-  ].join("\n");
+  ];
+  // #1728 — when the reply was attached to the CRM timeline, link the TA to the
+  // contact where the "Draft reply" action lives. contactId is a UUID from our
+  // own DB (not attacker-controlled), but escape it anyway for defense in depth.
+  if (args.contactId) {
+    const base = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
+    const url = `${base}/crm/contacts/${encodeURIComponent(args.contactId)}`;
+    lines.push(
+      `<p>This reply was added to the customer's CRM timeline — ` +
+        `<a href="${escapeHtml(url)}">open the contact to draft a reply</a>.</p>`,
+    );
+  }
+  return lines.join("\n");
 }

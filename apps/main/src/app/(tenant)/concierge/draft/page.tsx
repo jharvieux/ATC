@@ -4,7 +4,8 @@
 // Draft-only by contract: there is no send button on this page and no send
 // path in the API. The TA edits and copies into their own mail client.
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { InquiryDropZone } from "@/components/draft/InquiryDropZone";
 import type { ParsedInquiry } from "@/lib/draft/parse-inquiry";
 import { deriveGreetingName } from "@/lib/draft/greeting-name";
@@ -17,9 +18,21 @@ import {
 } from "@/components/ui/select";
 
 export default function DraftReplyPage(): React.JSX.Element {
-  const [inquiry, setInquiry] = useState("");
-  const [subject, setSubject] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  // useSearchParams needs a Suspense boundary (Next.js). #1728 — the CRM
+  // timeline's "Draft reply" action deep-links here with the inbound body
+  // pre-filled; this stays draft-only (no email import, no send path).
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading…</div>}>
+      <DraftReplyForm />
+    </Suspense>
+  );
+}
+
+function DraftReplyForm(): React.JSX.Element {
+  const search = useSearchParams();
+  const [inquiry, setInquiry] = useState(() => search.get("inquiry") ?? "");
+  const [subject, setSubject] = useState(() => search.get("subject") ?? "");
+  const [customerName, setCustomerName] = useState(() => search.get("customerName") ?? "");
   const [personaSlug, setPersonaSlug] = useState<string>(AGENT_CATALOG[0]!.slug);
   const [personaTouched, setPersonaTouched] = useState(false);
 
