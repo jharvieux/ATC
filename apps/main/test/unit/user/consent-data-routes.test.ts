@@ -106,8 +106,8 @@ describe("consent/pending — auth normalization (#1591)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { pending: Array<{ document_type: string; version: number }> };
     expect(json.pending).toHaveLength(1);
-    expect(json.pending[0].document_type).toBe("tou");
-    expect(json.pending[0].version).toBe(3);
+    expect(json.pending[0]?.document_type).toBe("tou");
+    expect(json.pending[0]?.version).toBe(3);
     // Isolation: the pending read is filtered by the verified auth_user_id.
     expect(h.eqCalls).toContainEqual(["auth_user_id", "user-abc"]);
   });

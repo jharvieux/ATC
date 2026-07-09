@@ -13,7 +13,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  writes: [] as Array<{ table: string; op: string; payload: unknown; onConflict?: string }>,
+  writes: [] as Array<{ table: string; op: string; payload: unknown; onConflict?: string | undefined }>,
   settingUpsertError: null as { message: string } | null,
 }));
 
