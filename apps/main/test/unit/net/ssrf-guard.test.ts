@@ -271,15 +271,21 @@ describe("fetchGuarded — redirect body/header semantics (#1702)", () => {
     return Object.keys(headers ?? {}).map((k) => k.toLowerCase());
   }
 
-  it("drops the body and strips Authorization on a cross-origin redirect", async () => {
+  it("drops the body and strips credential headers (authorization, cookie, proxy-authorization) on a cross-origin redirect (#1720)", async () => {
     vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
     // 307 normally preserves method+body, so this isolates the cross-origin rule:
-    // the method survives but the body + bearer token must not reach a new host.
+    // the method survives but the body + any credential-bearing header must
+    // not reach a host the caller never authenticated to.
     httpMockRequests.push({ status: 307, headers: { location: "https://other.example.com/next" } });
     httpMockRequests.push({ status: 200, headers: {}, body: "ok" });
     await fetchGuarded("https://api.example.com/start", {
       method: "POST",
-      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "session=abc123",
+        "proxy-authorization": "Basic proxysecret",
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ a: 1 }),
     });
     expect(httpMockCalls).toHaveLength(2);
@@ -288,7 +294,32 @@ describe("fetchGuarded — redirect body/header semantics (#1702)", () => {
     expect(secondHop.endBody).toBeUndefined(); // ...but the body is dropped cross-origin
     const keys = lowerKeys(secondHop.opts.headers);
     expect(keys).not.toContain("authorization"); // credential must not leak
+    expect(keys).not.toContain("cookie"); // #1720: session cookie must not leak
+    expect(keys).not.toContain("proxy-authorization"); // #1720: proxy credential must not leak
     expect(keys).not.toContain("content-length"); // no stale length without a body
+  });
+
+  it("keeps credential headers on a same-origin redirect (#1720 — same-origin direction of the strip)", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    httpMockRequests.push({ status: 307, headers: { location: "https://api.example.com/next" } });
+    httpMockRequests.push({ status: 200, headers: {}, body: "ok" });
+    await fetchGuarded("https://api.example.com/start", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "session=abc123",
+        "proxy-authorization": "Basic proxysecret",
+      },
+      body: JSON.stringify({ a: 1 }),
+    });
+    expect(httpMockCalls).toHaveLength(2);
+    const secondHop = httpMockCalls[1]!;
+    const keys = lowerKeys(secondHop.opts.headers);
+    // Same-origin 307 preserves the request as-is — credentials the caller
+    // already has for this host are not a cross-origin leak.
+    expect(keys).toContain("authorization");
+    expect(keys).toContain("cookie");
+    expect(keys).toContain("proxy-authorization");
   });
 
   it("downgrades to GET and drops the body on a 303 (same origin)", async () => {
