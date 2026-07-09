@@ -83,6 +83,33 @@ describe("fetchShipLookupChunks", () => {
     const db = makeDb({ knowledge_chunks: { data: null, error: { message: "timeout" } } });
     await expect(fetchShipLookupChunks(db, "tenant-1", { ship: "Bliss" })).rejects.toThrow(/ship lookup failed/);
   });
+
+  // WHY (#1589): this is a leading-wildcard ILIKE on knowledge_chunks — a
+  // growing table — on the chat critical path. Without a bound it seq-scans and
+  // can return an unbounded set for a ship with many intel chunks. The bound
+  // must be present (freshest first, so the cap sheds stale chunks) or a
+  // popular ship silently blows up retrieval latency. A test that can't fail
+  // when the .limit()/.order() is dropped would be worthless, so assert both.
+  it("bounds the ship lookup with a freshest-first limit", async () => {
+    const calls: Array<{ m: string; args: unknown[] }> = [];
+    const b: Record<string, unknown> = {};
+    for (const m of ["select", "ilike", "in", "eq", "is", "not", "or", "order", "limit"]) {
+      b[m] = (...args: unknown[]) => {
+        calls.push({ m, args });
+        return b;
+      };
+    }
+    b.then = (resolve: (v: Result) => void) => resolve({ data: [], error: null });
+    const db = { from: () => b } as unknown as Parameters<typeof fetchShipLookupChunks>[0];
+
+    await fetchShipLookupChunks(db, "tenant-1", { ship: "Bliss" });
+
+    const order = calls.find((c) => c.m === "order");
+    const limit = calls.find((c) => c.m === "limit");
+    expect(order?.args[0]).toBe("ingested_at");
+    expect(order?.args[1]).toMatchObject({ ascending: false });
+    expect(limit?.args[0]).toBe(40);
+  });
 });
 
 // ── fetchPortLookupChunks ─────────────────────────────────────────────────────
