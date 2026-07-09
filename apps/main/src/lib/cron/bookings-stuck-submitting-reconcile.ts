@@ -24,6 +24,8 @@
 //
 // Service-role import permitted: background cron, no user session. §5.4.4.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 

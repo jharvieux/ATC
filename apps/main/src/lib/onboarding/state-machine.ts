@@ -8,6 +8,8 @@
 //   - tax_form → state_of_operation     (BYO recovery: stuck at tax_form)
 //   - subscription → branding           (BYO hosts skip connect_setup)
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export const ONBOARDING_STAGES = [

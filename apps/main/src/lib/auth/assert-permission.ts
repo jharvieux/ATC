@@ -14,6 +14,8 @@
 // mutating route was therefore open to any active tenant member, regardless
 // of role.
 
+import "server-only";
+
 import { createHash } from "node:crypto";
 import { decodeJwt } from "jose";
 import { tenantContextFromRequest } from "@/lib/db/factories";

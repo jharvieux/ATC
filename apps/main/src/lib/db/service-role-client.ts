@@ -9,6 +9,8 @@
 // The service-role key bypasses RLS, so an unaudited service-role client
 // would silently defeat tenant isolation. See spec §5.4.
 
+import "server-only";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export function createServiceRoleClient(): SupabaseClient {

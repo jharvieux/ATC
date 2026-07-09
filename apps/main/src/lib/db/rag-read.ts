@@ -6,6 +6,8 @@
 // reconsider the architecture (cross-project reads from main → rag should
 // stay narrow).
 
+import "server-only";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 let _client: SupabaseClient | undefined;

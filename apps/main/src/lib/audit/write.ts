@@ -8,6 +8,8 @@
 // Callers in route handlers, Inngest jobs, libraries — every prior
 // [audit-log:STUB] call site goes through here after BP26.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export type AuditActorType = "user" | "system" | "admin" | "ai";

@@ -14,6 +14,8 @@
 //   - commission_statement            → no promotion here; statement matching
 //                                        is the §14.8 admin flow (separate path)
 
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { resolveCommissionRate, type ResolvedCommissionRate } from "./resolve-commission-rate";

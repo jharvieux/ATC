@@ -8,6 +8,8 @@
 //   - audit_log entry with action='credential.decryption_failed' in the
 //     last 24 hours → degraded (even if status row still says 'active')
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export interface CredentialHealth {
