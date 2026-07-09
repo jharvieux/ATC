@@ -7,6 +7,8 @@
 // any→healthy) are computed against the DURABLE prior state, not the
 // per-instance cache, so only one instance fires the alert per event.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 export type VendorName = "anthropic" | "openai" | "stripe" | "resend" | "supabase" | "inngest" | "upstash" | "rag" | "supabase_rag";
@@ -26,7 +28,10 @@ export const DOWN_AFTER_FAILURES = 5;
 
 const CACHE_TTL_MS = 30_000;
 
-const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS });
+// #1678 — keyed by VendorName, a fixed 9-value literal union; 32 is generous
+// headroom over that closed set and documents the bound is intentional, not
+// a copy-pasted default.
+const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS, maxEntries: 32 });
 
 export function computeStatus(consecutive_failures: number): VendorHealthStatus {
   if (consecutive_failures >= DOWN_AFTER_FAILURES) return "down";
@@ -48,6 +53,48 @@ function cacheSet(name: VendorName, state: VendorHealthState): void {
 
 export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
   return cacheGet(name)?.status ?? "healthy";
+}
+
+// ---------------------------------------------------------------------------
+// #1646 — cold-instance read-through. vendorHealthStatus() above only ever
+// sees THIS instance's own recordVendorSuccess/Failure calls, so an instance
+// that never itself observed a failure reports "healthy" even while the
+// durable `vendor_health` row says otherwise — the §26.9 chat fallback then
+// only fires on the instance(s) that happened to see the failure directly,
+// not fleet-wide. On a cache miss, read the durable row once and cache it
+// for CACHE_TTL_MS (30s) so the hot path adds at most one DB round-trip per
+// vendor per 30s per instance; a warm cache (from either path) never re-hits
+// the DB. Fail-open on a durable read error: return "healthy" (today's
+// cache-miss default) WITHOUT caching the error, so the next call retries.
+// ---------------------------------------------------------------------------
+export async function resolveVendorHealthStatus(
+  db: SupabaseClient,
+  name: VendorName,
+): Promise<VendorHealthStatus> {
+  const cached = cacheGet(name);
+  if (cached) return cached.status;
+
+  const { data, error } = await db
+    .from("vendor_health")
+    .select("status, consecutive_failures, last_checked_at, last_error, status_changed_at")
+    .eq("vendor", name)
+    .maybeSingle();
+  if (error) {
+    console.error(`[vendor-health] durable read failed for ${name}: ${error.message}`);
+    return "healthy";
+  }
+
+  const state: VendorHealthState = data
+    ? {
+        status: data.status as VendorHealthStatus,
+        consecutive_failures: data.consecutive_failures,
+        last_checked_at: data.last_checked_at,
+        last_error: data.last_error,
+        status_changed_at: data.status_changed_at,
+      }
+    : { status: "healthy", consecutive_failures: 0, last_checked_at: null, last_error: null };
+  cacheSet(name, state);
+  return state.status;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +157,7 @@ export interface UpsertVendorHealthInput {
   vendor: VendorName;
   success: boolean;
   error_message?: string | null;
-  db: import("@supabase/supabase-js").SupabaseClient;
+  db: SupabaseClient;
 }
 
 export interface UpsertVendorHealthResult {
@@ -172,7 +219,7 @@ export async function upsertVendorHealth(
 // ---------------------------------------------------------------------------
 
 export async function listVendorHealth(
-  db: import("@supabase/supabase-js").SupabaseClient,
+  db: SupabaseClient,
 ): Promise<Array<VendorHealthState & { vendor: string }>> {
   const { data, error } = await db
     .from("vendor_health")

@@ -1,10 +1,13 @@
 // §12.4 / §21.10.1 / §38 — loadQuoteRow + buildRenderInputFromQuote.
 //
 // Contracts pinned here:
-//   1. Kind selection: a quote with a locked_price_cents lands as
-//      "confirmed"; otherwise "estimate". The renderer's banner copy and
-//      footer disclosure key off this — getting it wrong sends the wrong
-//      legal disclosure on the customer attachment.
+//   1. Kind + variance are the AUTHORITATIVE derivation shared with the
+//      accept route (#1699): kind comes from the persisted price_kind column
+//      (NOT a locked_price_cents heuristic), and variance from the tenant's
+//      quote_variance_cents (env default when unset, 0 for confirmed). The
+//      renderer's banner copy + footer disclosure and the customer-accepted
+//      variance threshold key off these — a downloadable PDF that disagrees
+//      with the accepted snapshot is the dispute-defense hole #1699 closed.
 //   2. §38 trip source-of-truth: the cruise/ship/sailing/cabin/pax fields on
 //      the rendered PDF come from the representative quote_options row
 //      (customer-selected, else lowest option_index), NOT from the quotes
@@ -30,6 +33,7 @@ import {
   buildRenderInputFromQuote,
   type QuoteRow,
 } from "@/lib/quotes/build-render-input";
+import { deriveKindAndVariance } from "@/lib/quotes/kind-variance";
 import type { TenantContext } from "@/lib/db/tenant-context";
 
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
@@ -62,13 +66,24 @@ function makeAdminDb(opts: {
   tenant: { data: { display_name?: string } | null; error: { message: string } | null };
   host: { data: { value?: unknown } | null; error: { message: string } | null };
   options: OptionResult;
+  // #1699: tenant_settings.quote_variance_cents drives the render variance.
+  // Default null → env fallback, matching a tenant that hasn't customized it.
+  settings?: { data: { quote_variance_cents?: number } | null; error: { message: string } | null };
 }) {
+  const settings = opts.settings ?? { data: null, error: null };
   return {
     from: (table: string) => {
       if (table === "tenants") {
         return {
           select: () => ({
             eq: () => ({ maybeSingle: () => Promise.resolve(opts.tenant) }),
+          }),
+        };
+      }
+      if (table === "tenant_settings") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve(settings) }),
           }),
         };
       }
@@ -96,6 +111,7 @@ const BASE_QUOTE: QuoteRow = {
   id: "quote-1",
   status: "draft",
   customer_access_token: null,
+  price_kind: null,
   locked_price_cents: null,
   estimate_price_cents: 120000,
   price_lock_expires_at: null,
@@ -166,7 +182,7 @@ describe("loadQuoteRow — cheap container SELECT for status branching", () => {
 });
 
 describe("buildRenderInputFromQuote — enrich with tenant + host + option", () => {
-  it("returns kind='estimate' when locked_price_cents is null", async () => {
+  it("returns kind='estimate' when price_kind is null (DB default)", async () => {
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({ ...okEnrich }),
@@ -178,6 +194,22 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
       expect(result.input.total_cents).toBe(120000);
       expect(result.input.tenant_name).toBe("Acme Travel");
       expect(result.input.host_agency_legal_name).toBe("Travel Pros LLC");
+    }
+  });
+
+  // #1699 regression: the OLD derivation used `locked_price_cents != null`,
+  // which would call this quote "confirmed". The authoritative source is the
+  // persisted price_kind column — a locked amount with price_kind still
+  // 'estimate' (e.g. a lock that expired) must render as an estimate.
+  it("kind follows price_kind, NOT locked_price_cents (guards the #1699 divergence)", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({ ...okEnrich }),
+      quote: { ...BASE_QUOTE, price_kind: "estimate", locked_price_cents: 130000 },
+    });
+    if (result.ok) {
+      expect(result.input.kind).toBe("estimate");
+      expect(result.input.total_cents).toBe(130000); // locked still wins for the total
     }
   });
 
@@ -197,15 +229,16 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     }
   });
 
-  it("returns kind='confirmed' when locked_price_cents is set (drives banner + footer disclosure)", async () => {
+  it("returns kind='confirmed' when price_kind='confirmed' (drives banner + footer disclosure)", async () => {
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({ ...okEnrich }),
-      quote: { ...BASE_QUOTE, locked_price_cents: 130000, estimate_price_cents: 120000 },
+      quote: { ...BASE_QUOTE, price_kind: "confirmed", locked_price_cents: 130000, estimate_price_cents: 120000 },
     });
     if (result.ok) {
       expect(result.input.kind).toBe("confirmed");
       expect(result.input.total_cents).toBe(130000); // locked wins over estimate
+      expect(result.input.variance_cents).toBe(0); // confirmed → zero variance
     }
   });
 
@@ -344,4 +377,87 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
       expect(result.message).toMatch(/options lookup/);
     }
   });
+});
+
+// #1699 — variance_cents comes from tenant_settings.quote_variance_cents, not
+// a raw env read. Before the fix the downloadable PDF ignored tenant_settings
+// entirely, so a tenant with a customized threshold saw the WRONG variance vs
+// the accepted snapshot.
+describe("buildRenderInputFromQuote — variance from tenant_settings (#1699)", () => {
+  it("uses the tenant's customized quote_variance_cents for an estimate", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({
+        ...okEnrich,
+        settings: { data: { quote_variance_cents: 7500 }, error: null },
+      }),
+      quote: { ...BASE_QUOTE, price_kind: "estimate" },
+    });
+    if (result.ok) {
+      expect(result.input.variance_cents).toBe(7500);
+    }
+  });
+
+  it("forces variance_cents=0 for a confirmed quote even when tenant_settings has a value", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({
+        ...okEnrich,
+        settings: { data: { quote_variance_cents: 7500 }, error: null },
+      }),
+      quote: { ...BASE_QUOTE, price_kind: "confirmed" },
+    });
+    if (result.ok) {
+      expect(result.input.variance_cents).toBe(0);
+    }
+  });
+
+  it("falls back to the env default when the tenant has no quote_variance_cents", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({ ...okEnrich, settings: { data: null, error: null } }),
+      quote: { ...BASE_QUOTE, price_kind: "estimate" },
+    });
+    if (result.ok) {
+      // Assert against the shared SoT rather than a literal so the test isn't
+      // coupled to the env default's numeric value.
+      const expected = deriveKindAndVariance({ price_kind: "estimate", tenant_variance_cents: undefined });
+      expect(result.input.variance_cents).toBe(expected.variance_cents);
+    }
+  });
+});
+
+// #1699 cross-path guard: the downloadable-PDF path (buildRenderInputFromQuote)
+// and the accept-time snapshot (api/quotes/[id]/accept) MUST show the same kind
+// + variance for the same quote row. Both now delegate to deriveKindAndVariance;
+// this asserts the PDF path's output equals that shared source of truth across
+// the full (price_kind × tenant_variance) matrix. If buildRenderInputFromQuote
+// were reverted to its own derivation (the #1699 bug), one of these fails.
+describe("buildRenderInputFromQuote — agrees with the shared accept-route derivation (#1699)", () => {
+  const priceKinds: Array<"estimate" | "confirmed" | null> = ["estimate", "confirmed", null];
+  const tenantVariances: Array<number | null> = [null, 7500];
+
+  for (const price_kind of priceKinds) {
+    for (const variance of tenantVariances) {
+      it(`kind=${price_kind} variance=${variance}: PDF path == deriveKindAndVariance`, async () => {
+        const expected = deriveKindAndVariance({
+          price_kind,
+          tenant_variance_cents: variance ?? undefined,
+        });
+        const result = await buildRenderInputFromQuote({
+          ctx: CTX,
+          adminDb: makeAdminDb({
+            ...okEnrich,
+            settings: { data: variance == null ? null : { quote_variance_cents: variance }, error: null },
+          }),
+          quote: { ...BASE_QUOTE, price_kind },
+        });
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.input.kind).toBe(expected.kind);
+          expect(result.input.variance_cents).toBe(expected.variance_cents);
+        }
+      });
+    }
+  }
 });
