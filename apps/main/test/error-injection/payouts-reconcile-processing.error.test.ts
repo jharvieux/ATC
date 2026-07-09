@@ -140,6 +140,7 @@ import { runPayoutsReconcileProcessing } from "@/lib/cron/payouts-reconcile-proc
 
 const ORIG = process.env.STRIPE_SECRET_KEY;
 const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
+const ORIG_RECONCILE = process.env.BOOKING_RECONCILE_DISABLED;
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
@@ -160,14 +161,48 @@ afterEach(() => {
   else process.env.STRIPE_SECRET_KEY = ORIG;
   if (ORIG_BOOKING_CRONS === undefined) delete process.env.BOOKING_CRONS_DISABLED;
   else process.env.BOOKING_CRONS_DISABLED = ORIG_BOOKING_CRONS;
+  if (ORIG_RECONCILE === undefined) delete process.env.BOOKING_RECONCILE_DISABLED;
+  else process.env.BOOKING_RECONCILE_DISABLED = ORIG_RECONCILE;
   vi.restoreAllMocks();
 });
 
-describe("runPayoutsReconcileProcessing — BOOKING_CRONS_DISABLED kill switch", () => {
-  it("returns zero counts without touching Stripe when flag is true", async () => {
-    process.env.BOOKING_CRONS_DISABLED = "true";
+// #1694 — the safety net gates on BOOKING_RECONCILE_DISABLED now. Both-directions:
+// the dedicated switch stops the whole sweep; the money-movement switch
+// (BOOKING_CRONS_DISABLED) leaves the sweep RUNNING but suppresses transfer creation.
+describe("runPayoutsReconcileProcessing — BOOKING_RECONCILE_DISABLED kill switch (#1694)", () => {
+  it("returns zero counts without touching Stripe when BOOKING_RECONCILE_DISABLED is true", async () => {
+    process.env.BOOKING_RECONCILE_DISABLED = "true";
     const result = await runPayoutsReconcileProcessing();
     expect(result).toEqual({ recovered: 0, total_processing: 0 });
+    expect(mocks.createCalls).toBe(0);
+  });
+});
+
+describe("runPayoutsReconcileProcessing — BOOKING_CRONS_DISABLED suppresses money movement but keeps the sweep (#1694)", () => {
+  it("STILL settles an already-existing transfer (read-only recovery, no new money) when money movement is disabled", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    mocks.existingTransferMatches = true;
+    const result = await runPayoutsReconcileProcessing();
+    // The transfer already exists → recording it is not new money movement.
+    expect(mocks.createCalls).toBe(0);
+    expect(result.recovered).toBe(1);
+    const settle = mocks.updatePayloads.find((p) => p.status === "paid");
+    expect(settle).toMatchObject({ status: "paid", stripe_transfer_id: "tr_recovered" });
+  });
+
+  it("does NOT initiate a transfer for a within-window row with no transfer; alerts the operator instead", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    // Default row is recent (within window) with no existing transfer — normally a
+    // transfers.create; with money movement off it must be suppressed + alerted.
+    const result = await runPayoutsReconcileProcessing();
+    expect(mocks.createCalls).toBe(0);
+    expect(result.recovered).toBe(0);
+    expect(result.total_processing).toBe(1);
+    expect(mocks.alertCalls).toHaveLength(1);
+    expect(mocks.alertCalls[0]).toMatchObject({
+      signal: "payout_reconcile_transfer_suppressed_money_movement_disabled",
+      severity: "high",
+    });
   });
 });
 

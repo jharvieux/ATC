@@ -1,177 +1,92 @@
-// BP34 §34.5 — promoteImport idempotency (#1576).
+// BP34 §34.5 — promoteImport orchestration (#1576 / #1712).
 //
-// The invariant under test: promotion produces EXACTLY ONE contact + booking +
-// commission no matter how many times it is entered concurrently or retried.
-// A duplicate commission row is the double-payout vector (payout idempotency is
-// keyed per commission_id), so these tests fail if any of the three write
-// families runs twice.
+// Since #1712 the exactly-once guarantee lives in Postgres: the claim, the
+// contact/booking/commission inserts, the contact_imports row, and the finalize
+// all run inside ONE atomic RPC (public.promote_import). A mid-sequence crash
+// can no longer orphan a duplicate contact/booking — the transaction either
+// commits whole or rolls back whole. That property is proven end-to-end against
+// a real database in test/integration/import-promote-atomicity.test.ts (it can't
+// be exercised with a mock — a mock has no transaction to roll back).
 //
-// Three vectors, matching the issue's failure modes:
-//   1. Fresh promote writes one of each and lands the row in 'accepted'.
-//   2. A second accept while the first still holds the CAS claim ('promoting')
-//      must conflict WITHOUT writing (the double-click / two-agents case).
-//   3. A crash after the commission insert, then a resumed retry, re-drives
-//      from the checkpoints — no second contact/booking/commission.
+// This suite pins the APP-LAYER contract that remains meaningful with the writes
+// pushed into SQL:
+//   1. The non-write early exits still short-circuit BEFORE any RPC call
+//      (unsupported doc type; sub-host booking block; missing commission rate).
+//   2. The values resolved outside the transaction (commission rate, canonical
+//      line/ship ids, contact-name split) are actually forwarded into the RPC —
+//      if they weren't, the atomic write would persist wrong data.
+//   3. The RPC's jsonb result is mapped to the right PromoteResult, including the
+//      idempotent already_accepted path (why: a double-click / retry must return
+//      the existing records as success, never a spurious duplicate or error).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: vi.fn(async () => {}) }));
 vi.mock("@/lib/canonical/resolve-canonical", () => ({
-  resolveCanonical: vi.fn(async () => ({ matched: false as const })),
+  resolveCanonical: vi.fn(async (_name: string, kind: "line" | "ship") =>
+    kind === "line"
+      ? { matched: true as const, id: "line-canon-1" }
+      : { matched: true as const, id: "ship-canon-1" },
+  ),
 }));
 vi.mock("@/lib/import/resolve-commission-rate", () => ({
-  resolveCommissionRate: vi.fn(async () => ({ rate: 0.15, source: "doc_parsed" })),
+  resolveCommissionRate: vi.fn(async () => rateResult),
 }));
 
 import { promoteImport } from "@/lib/import/promote";
+import { writeAuditLog } from "@/lib/audit/write";
+
+const writeAuditLogMock = vi.mocked(writeAuditLog);
 
 const TENANT_ID = "tenant-1";
 const ROW_ID = "row-1";
 
-type Row = Record<string, unknown>;
+// Mutable so a test can force the "rate missing" branch.
+let rateResult: { rate: number; source: string } | null = { rate: 0.15, source: "doc_parsed" };
 
-// Minimal stateful Supabase-shaped fake. Tracks inserts per table so the tests
-// can assert exactly-once. import_queue is a single mutable row; its CAS claim,
-// checkpoints, and finalize mutate it in place.
-class FakeDB {
-  queue: Row;
-  contacts: Row[] = [];
-  bookings: Row[] = [];
-  commissions: Row[] = [];
-  contactImports: Row[] = [];
-  tenantType: string | null = "byo_host";
-  failFinalizeOnce = false;
-  private seq = 0;
-
-  constructor(queue: Row) {
-    this.queue = queue;
-  }
-  private id(prefix: string): string {
-    this.seq += 1;
-    return `${prefix}-${this.seq}`;
-  }
-
-  from(table: string) {
-    return {
-      select: (cols: string) => new QB(this, table, "select", { cols }),
-      insert: (payload: Row) => new QB(this, table, "insert", { payload }),
-      update: (payload: Row) => new QB(this, table, "update", { payload }),
-    };
-  }
-
-  // Called by QB terminals.
-  resolveSelect(table: string, filters: Filters): Row[] {
-    const rows =
-      table === "import_queue"
-        ? [this.queue]
-        : table === "tenants"
-          ? [{ id: filters.eq.id, tenant_type: this.tenantType }]
-          : table === "contacts"
-            ? this.contacts
-            : table === "bookings"
-              ? this.bookings
-              : table === "commissions"
-                ? this.commissions
-                : table === "contact_imports"
-                  ? this.contactImports
-                  : [];
-    return rows.filter((r) =>
-      Object.entries(filters.eq).every(([k, v]) => (r as Row)[k] === v),
-    );
-  }
-
-  resolveInsert(table: string, payload: Row): { data: Row | null; error: null } {
-    const store =
-      table === "contacts"
-        ? this.contacts
-        : table === "bookings"
-          ? this.bookings
-          : table === "commissions"
-            ? this.commissions
-            : this.contactImports;
-    const row = { id: this.id(table), ...payload };
-    store.push(row);
-    return { data: row, error: null };
-  }
-
-  resolveUpdate(table: string, payload: Row, filters: Filters): { data: Row[]; error: null } {
-    if (table !== "import_queue") return { data: [], error: null };
-    // CAS claim: .in("status", [...])
-    if (filters.in && filters.in.column === "status") {
-      if (!filters.in.values.includes(this.queue.status as string)) return { data: [], error: null };
-      Object.assign(this.queue, payload);
-      return { data: [this.queue], error: null };
-    }
-    // Guarded unclaim: .eq("status","promoting")
-    if (filters.eq.status !== undefined && filters.eq.status !== this.queue.status) {
-      return { data: [], error: null };
-    }
-    Object.assign(this.queue, payload);
-    return { data: [this.queue], error: null };
-  }
-}
-
-type Filters = {
-  eq: Record<string, unknown>;
-  in?: { column: string; values: unknown[] };
+type RpcResult = {
+  status: "promoted" | "already_accepted" | "conflict" | "not_found";
+  contact_id?: string | null;
+  booking_id?: string | null;
+  commission_id?: string | null;
+  row_status?: string | null;
 };
 
-class QB implements PromiseLike<unknown> {
-  private filters: Filters = { eq: {} };
-  constructor(
-    private db: FakeDB,
-    private table: string,
-    private op: "select" | "insert" | "update",
-    private args: { cols?: string; payload?: Row },
-  ) {}
-  eq(k: string, v: unknown) {
-    this.filters.eq[k] = v;
-    return this;
-  }
-  in(k: string, v: unknown[]) {
-    this.filters.in = { column: k, values: v };
-    return this;
-  }
-  is() {
-    return this;
-  }
-  not() {
-    return this;
-  }
-  limit() {
-    return this;
-  }
-  select() {
-    return this;
-  }
-  async maybeSingle() {
-    const rows = this.db.resolveSelect(this.table, this.filters);
-    return { data: rows[0] ?? null, error: null };
-  }
-  async single() {
-    if (this.op === "insert") return this.db.resolveInsert(this.table, this.args.payload ?? {});
-    const rows = this.db.resolveSelect(this.table, this.filters);
-    return { data: rows[0] ?? null, error: null };
-  }
-  then<TResult1 = unknown, TResult2 = never>(
-    onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-  ): PromiseLike<TResult1 | TResult2> {
-    return Promise.resolve(this.execThenable()).then(onfulfilled, onrejected);
-  }
-  private execThenable(): { data: unknown; error: unknown } {
-    if (this.op === "select") return { data: this.db.resolveSelect(this.table, this.filters), error: null };
-    if (this.op === "insert") return this.db.resolveInsert(this.table, this.args.payload ?? {});
-    // update
-    if (this.table === "import_queue" && this.db.failFinalizeOnce && "accepted_at" in (this.args.payload ?? {})) {
-      this.db.failFinalizeOnce = false;
-      return { data: null, error: { message: "connection reset", code: "57P01" } };
-    }
-    return this.db.resolveUpdate(this.table, this.args.payload ?? {}, this.filters);
-  }
+// Records every call so tests can assert on what the app forwarded / whether the
+// RPC was reached at all.
+type RpcCall = { fn: string; params: Record<string, unknown> };
+
+// Minimal svc fake: serves the queue-row load + tenants lookup via `from`, and
+// captures `rpc` calls. The real writes happen in Postgres, so `from` only needs
+// to answer the two reads and swallow the rate-missing status reset.
+function makeSvc(opts: {
+  queueRow: Record<string, unknown> | null;
+  tenantType?: string;
+  rpc: RpcResult | { error: string };
+}) {
+  const rpcCalls: RpcCall[] = [];
+  const svc = {
+    from(table: string) {
+      const chain: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "update"]) chain[m] = () => chain;
+      chain.maybeSingle = async () => {
+        if (table === "tenants") return { data: { tenant_type: opts.tenantType ?? "byo_host" }, error: null };
+        return { data: opts.queueRow, error: null };
+      };
+      // Awaitable terminal for the rate-missing `.update(...).eq(...)` reset.
+      chain.then = (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null });
+      return chain;
+    },
+    async rpc(fn: string, params: Record<string, unknown>) {
+      rpcCalls.push({ fn, params });
+      if ("error" in opts.rpc) return { data: null, error: { message: opts.rpc.error } };
+      return { data: opts.rpc, error: null };
+    },
+  };
+  return { svc: svc as unknown as Parameters<typeof promoteImport>[0]["svc"], rpcCalls };
 }
 
-function bookingQueueRow(status: string, extra: Row = {}): Row {
+function bookingRow(status = "pending_review", extra: Record<string, unknown> = {}) {
   return {
     id: ROW_ID,
     tenant_id: TENANT_ID,
@@ -179,13 +94,13 @@ function bookingQueueRow(status: string, extra: Row = {}): Row {
     source_ref: "msg-1",
     document_type: "booking_confirmation",
     raw_extracted_fields: {
-      passenger_last_names: ["Smith"],
+      passenger_last_names: ["Van Der Berg"],
       cruise_line: "Carnival",
       ship_name: "Vista",
       sailing_date: "2026-09-01",
       total_amount_cents: 500000,
       currency: "USD",
-      provider_booking_ref: null,
+      provider_booking_ref: "PNR123",
     },
     extraction_overall_confidence: 0.9,
     submitted_by_user_id: null,
@@ -196,83 +111,149 @@ function bookingQueueRow(status: string, extra: Row = {}): Row {
   };
 }
 
-const svc = (db: FakeDB) => db as unknown as Parameters<typeof promoteImport>[0]["svc"];
+function leadRow() {
+  return {
+    id: ROW_ID,
+    tenant_id: TENANT_ID,
+    import_path: "email",
+    source_ref: "lead-1",
+    document_type: "lead_notification",
+    raw_extracted_fields: { contact_name: "Ada Lovelace", contact_email: "ada@example.com", interest_summary: "Alaska" },
+    extraction_overall_confidence: 0.8,
+    submitted_by_user_id: null,
+    status: "pending_review",
+    promoted_contact_id: null,
+    promoted_booking_id: null,
+  };
+}
 
-beforeEach(() => vi.clearAllMocks());
-
-describe("promoteImport — fresh promote writes exactly one of each (#1576)", () => {
-  it("claims the row, writes contact+booking+commission, lands 'accepted'", async () => {
-    const db = new FakeDB(bookingQueueRow("pending_review"));
-    const result = await promoteImport({ queue_row_id: ROW_ID, svc: svc(db), acceptingUserId: "u1" });
-
-    expect(result.ok).toBe(true);
-    expect(db.contacts).toHaveLength(1);
-    expect(db.bookings).toHaveLength(1);
-    expect(db.commissions).toHaveLength(1);
-    expect(db.queue.status).toBe("accepted");
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+  rateResult = { rate: 0.15, source: "doc_parsed" };
 });
 
-describe("promoteImport — concurrent accept conflicts without writing (#1576)", () => {
-  it("returns promotion_in_progress and writes nothing when the row is already 'promoting'", async () => {
-    // A concurrent execution already flipped the row to 'promoting'. The HTTP
-    // accept path does not resume, so this second accept must conflict — the
-    // double-click / two-agents vector that produced duplicate commissions.
-    const db = new FakeDB(bookingQueueRow("promoting", { promoted_contact_id: "c-existing" }));
-    const result = await promoteImport({ queue_row_id: ROW_ID, svc: svc(db), acceptingUserId: "u2" });
-
-    expect(result).toEqual({ ok: false, error: "promotion_in_progress" });
-    expect(db.contacts).toHaveLength(0);
-    expect(db.bookings).toHaveLength(0);
-    expect(db.commissions).toHaveLength(0);
-  });
-});
-
-describe("promoteImport — resumed retry after a mid-sequence crash (#1576)", () => {
-  it("re-drives from the checkpoints: still exactly one contact/booking/commission", async () => {
-    const db = new FakeDB(bookingQueueRow("pending_review"));
-    db.failFinalizeOnce = true; // throw once at finalize, AFTER all three inserts
-
-    // Attempt 1 (Inngest auto-accept path): inserts land, finalize throws.
-    await expect(
-      promoteImport({ queue_row_id: ROW_ID, svc: svc(db), acceptingUserId: null, resumeInProgress: true }),
-    ).rejects.toThrow(/connection reset/);
-
-    // Checkpoints persisted; row is stuck 'promoting' (the throw skipped unclaim).
-    expect(db.queue.status).toBe("promoting");
-    expect(db.queue.promoted_contact_id).toBeTruthy();
-    expect(db.queue.promoted_booking_id).toBeTruthy();
-    expect(db.contacts).toHaveLength(1);
-    expect(db.bookings).toHaveLength(1);
-    expect(db.commissions).toHaveLength(1);
-
-    // Attempt 2 (retry, same logical run): resumes and completes.
-    const result = await promoteImport({
-      queue_row_id: ROW_ID,
-      svc: svc(db),
-      acceptingUserId: null,
-      resumeInProgress: true,
+describe("promoteImport — non-write early exits never reach the RPC (#1712)", () => {
+  it("unsupported document_type → needs_review, no RPC call", async () => {
+    const { svc, rpcCalls } = makeSvc({
+      queueRow: { ...bookingRow(), document_type: "commission_statement" },
+      rpc: { status: "promoted" },
     });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, needs_review: true, reason: "unsupported_document_type" });
+    expect(rpcCalls).toHaveLength(0);
+  });
 
-    expect(result.ok).toBe(true);
-    // The defect: no duplicate rows despite re-entry.
-    expect(db.contacts).toHaveLength(1);
-    expect(db.bookings).toHaveLength(1);
-    expect(db.commissions).toHaveLength(1);
-    expect(db.contactImports).toHaveLength(1);
-    expect(db.queue.status).toBe("accepted");
+  it("sub-host tenant cannot import a booking → error, no RPC call (§34.9)", async () => {
+    const { svc, rpcCalls } = makeSvc({ queueRow: bookingRow(), tenantType: "sub_host", rpc: { status: "promoted" } });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, error: "booking_import_not_permitted_for_tenant_type:sub_host" });
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("commission rate unresolved → needs_review, no promote RPC (row stays in review)", async () => {
+    rateResult = null; // §34.7.3 fall-through: no rate anywhere
+    const { svc, rpcCalls } = makeSvc({ queueRow: bookingRow(), rpc: { status: "promoted" } });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, needs_review: true, reason: "commission_rate_missing" });
+    expect(rpcCalls).toHaveLength(0);
   });
 });
 
-describe("promoteImport — second accept after completion is idempotent (#1576)", () => {
-  it("returns the already-promoted records without writing again", async () => {
-    const db = new FakeDB(
-      bookingQueueRow("accepted", { promoted_contact_id: "c-done", promoted_booking_id: "b-done" }),
-    );
-    const result = await promoteImport({ queue_row_id: ROW_ID, svc: svc(db), acceptingUserId: "u3" });
+describe("promoteImport — resolved inputs are forwarded into the atomic RPC (#1712)", () => {
+  it("booking: rate + canonical ids + split name reach the RPC; 'promoted' → ok with ids", async () => {
+    const { svc, rpcCalls } = makeSvc({
+      queueRow: bookingRow(),
+      rpc: { status: "promoted", contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" },
+    });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
 
-    expect(result).toEqual({ ok: true, contact_id: "c-done", booking_id: "b-done" });
-    expect(db.contacts).toHaveLength(0);
-    expect(db.commissions).toHaveLength(0);
+    expect(result).toEqual({ ok: true, status: "promoted", contact_id: "c-1", booking_id: "b-1", commission_id: "cm-1" });
+    expect(rpcCalls).toHaveLength(1);
+    const p = rpcCalls[0]!.params;
+    expect(p.p_is_booking).toBe(true);
+    // Resolved outside the transaction, must be persisted by the RPC:
+    expect(p.p_commission_rate).toBe(0.15);
+    expect(p.p_commission_rate_source).toBe("doc_parsed");
+    expect(p.p_cruise_line_id).toBe("line-canon-1");
+    expect(p.p_cruise_ship_id).toBe("ship-canon-1");
+    // Name split: first token → first_name, remainder → last_name.
+    expect(p.p_contact_first_name).toBe("Van");
+    expect(p.p_contact_last_name).toBe("Der Berg");
+    // Booking-path contact carries no dedup key — the RPC's atomicity is what
+    // keeps it exactly-once.
+    expect(p.p_contact_email).toBeNull();
+    expect(p.p_claimable_statuses).toEqual(["pending_review", "pending_validation"]);
+    expect(p.p_contact_source_ref).toBe("email:msg-1");
+  });
+
+  it("lead: is_booking=false and no booking fields are sent", async () => {
+    const { svc, rpcCalls } = makeSvc({ queueRow: leadRow(), rpc: { status: "promoted", contact_id: "c-9" } });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+
+    expect(result).toEqual({ ok: true, status: "promoted", contact_id: "c-9" });
+    const p = rpcCalls[0]!.params;
+    expect(p.p_is_booking).toBe(false);
+    expect(p.p_contact_email).toBe("ada@example.com");
+    expect(p.p_total_amount_cents).toBeNull();
+    expect(p.p_commission_rate).toBeNull();
+  });
+});
+
+describe("promoteImport — RPC result mapping (#1712)", () => {
+  it("already_accepted → idempotent success with the existing records, no commission_id", async () => {
+    // WHY: a double-click / whole-step Inngest retry hits an already-accepted
+    // row. The RPC returns the prior ids; the caller must see success, never a
+    // duplicate write or a spurious error.
+    const { svc } = makeSvc({
+      queueRow: bookingRow("accepted", { promoted_contact_id: "c-done", promoted_booking_id: "b-done" }),
+      rpc: { status: "already_accepted", contact_id: "c-done", booking_id: "b-done" },
+    });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u2" });
+    expect(result).toEqual({ ok: true, status: "already_accepted", contact_id: "c-done", booking_id: "b-done" });
+  });
+
+  it("conflict → not_promotable_status:<live status>", async () => {
+    const { svc } = makeSvc({ queueRow: bookingRow(), rpc: { status: "conflict", row_status: "rejected" } });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u3" });
+    expect(result).toEqual({ ok: false, error: "not_promotable_status:rejected" });
+  });
+
+  it("RPC error surfaces as a promote failure (mapped to 500 by the route)", async () => {
+    const { svc } = makeSvc({ queueRow: leadRow(), rpc: { error: "deadlock detected" } });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, error: "promote_import_rpc_failed: deadlock detected" });
+  });
+
+  it("unknown status → fail-loud bad-status error (contract drift), not silent undefined", async () => {
+    // WHY: if the RPC's jsonb status contract drifts, the switch must not fall
+    // through to undefined and mislead the caller into a false success. It must
+    // surface the offending status so the drift is diagnosable.
+    const { svc } = makeSvc({
+      queueRow: leadRow(),
+      rpc: { status: "promoting_v2" } as unknown as RpcResult,
+    });
+    const result = await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(result).toEqual({ ok: false, error: "promote_import_rpc_bad_status:promoting_v2" });
+  });
+});
+
+describe("promoteImport — audit log fires once per fresh promote (#1712 retry-safety)", () => {
+  it("promoted → writes exactly one import.accepted audit row", async () => {
+    const { svc } = makeSvc({ queueRow: leadRow(), rpc: { status: "promoted", contact_id: "c-9" } });
+    await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u1" });
+    expect(writeAuditLogMock).toHaveBeenCalledTimes(1);
+    expect(writeAuditLogMock.mock.calls[0]![0]).toMatchObject({ action: "import.accepted", resource_id: ROW_ID });
+  });
+
+  it("already_accepted → does NOT write the audit row (whole-step Inngest retry must not duplicate it)", async () => {
+    // WHY: writeAuditLog is a separate step from the atomic RPC. A whole-step
+    // retry re-invokes promoteImport; the RPC returns already_accepted, so the
+    // audit write must be suppressed or the audit row duplicates on every retry.
+    const { svc } = makeSvc({
+      queueRow: bookingRow("accepted", { promoted_contact_id: "c-done", promoted_booking_id: "b-done" }),
+      rpc: { status: "already_accepted", contact_id: "c-done", booking_id: "b-done" },
+    });
+    await promoteImport({ queue_row_id: ROW_ID, svc, acceptingUserId: "u2" });
+    expect(writeAuditLogMock).not.toHaveBeenCalled();
   });
 });
