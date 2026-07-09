@@ -36,7 +36,7 @@ import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { tenantContextFromRequest } from "@/lib/db/factories";
-import { vendorHealthStatus } from "@/lib/vendor-health/registry";
+import { resolveVendorHealthStatus } from "@/lib/vendor-health/registry";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { resolveChatQuota } from "@/lib/chat/resolve-chat-quota";
 import { buildHelpContextBlock } from "@/lib/chat/help-context";
@@ -731,7 +731,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // down, surface the §26.9 fallback message directly instead of attempting
   // the call. The probe cron updates the registry every minute; degraded
   // state activates after 3 consecutive failures, down after 5.
-  if (vendorHealthStatus("anthropic") === "down") {
+  // #1646 — durable read-through so a cold instance (no in-process failures
+  // of its own) still sees a fleet-wide "down" recorded by another instance.
+  if ((await resolveVendorHealthStatus(svc, "anthropic")) === "down") {
     const fallbackBody =
       "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.";
     await send({ type: "delta", text: fallbackBody });

@@ -2,8 +2,8 @@
 //
 // Wraps an outbound vendor call so success/failure is fed into the
 // vendor-health registry. The probe consumes the registry to surface
-// degraded/down states; the chat route reads vendorHealthStatus() before
-// dispatching to skip the call when down.
+// degraded/down states; the chat route calls resolveVendorHealthStatus()
+// before dispatching to skip the call when down.
 //
 // Usage:
 //   const subscription = await withVendorHealthGate("stripe", () =>
