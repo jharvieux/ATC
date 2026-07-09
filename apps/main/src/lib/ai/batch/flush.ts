@@ -122,15 +122,25 @@ export async function flushPendingForPurpose(args: {
     // Anthropic never accepted the batch — release the claim so the next
     // flush retries these rows instead of leaving them stranded as
     // 'submitted' with no job to reconcile against.
-    await safeAwait(
+    const released = await safeAwait(
       db
+        // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
         .from("ai_batch_requests")
         .update({ status: "pending" })
         .in("id", pendingIds)
         .eq("status", "submitted")
-        .is("batch_job_id", null),
+        .is("batch_job_id", null)
+        .select("id"),
       "ai_batch_requests.release_claim_on_submit_failure",
     );
+    if (!released || released.length !== pendingIds.length) {
+      // Don't throw here — we're already unwinding from the real submit
+      // failure and a second thrown error would mask it. Log loudly so an
+      // operator can find rows stranded at 'submitted' with no job.
+      console.error(
+        `[batch:flush] failed to fully release claim after submit failure: expected ${pendingIds.length}, released ${released?.length ?? 0} rows may be stranded`,
+      );
+    }
     throw err;
   }
 
@@ -153,7 +163,7 @@ export async function flushPendingForPurpose(args: {
 
   // Link the already-claimed requests to the job. They're already
   // 'submitted' from the claim step above; this just attaches batch_job_id.
-  await safeAwait(
+  const linked = await safeAwait(
     db
       // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
       .from("ai_batch_requests")
@@ -162,9 +172,18 @@ export async function flushPendingForPurpose(args: {
         submitted_at: new Date().toISOString(),
       })
       .in("id", pendingIds)
-      .eq("status", "submitted"),
+      .eq("status", "submitted")
+      .select("id"),
     "ai_batch_requests.link_to_job",
   );
+  if (!linked || linked.length !== pendingIds.length) {
+    // The batch was already submitted to Anthropic — these rows are now
+    // stranded at 'submitted' with no batch_job_id (see #1696) rather than
+    // silently unlinked.
+    throw new Error(
+      `flushPendingForPurpose: expected to link ${pendingIds.length} rows to job ${job.id}, linked ${linked?.length ?? 0}`,
+    );
+  }
 
   return { flushed: pending.length, batch_id: submitted.batch_id, remaining };
 }
