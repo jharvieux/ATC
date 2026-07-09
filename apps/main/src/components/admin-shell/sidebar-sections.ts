@@ -61,6 +61,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
       { href: "/admin/resources",             label: "Cost & Resource Monitoring", requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/vendor-status",         label: "Vendor Status",             requiredRoles: ["superadmin", "support"] },
       { href: "/admin/email-samples",         label: "Email Samples",             requiredRoles: ["superadmin", "support", "reviewer"] },
+      { href: "/admin/inbound-emails",        label: "Inbound Emails",            requiredRoles: ["superadmin", "support", "reviewer"] },
       { href: "/admin/integrations/weather",  label: "Weather Integration",       requiredRoles: ["superadmin"] },
     ],
   },
