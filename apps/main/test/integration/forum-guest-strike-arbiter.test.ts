@@ -6,7 +6,7 @@
 // WHY: checkStrikePatterns' guest auto-mute path upserts with
 // onConflict: "forum_id,invitation_id". PostgREST/postgres-js emit NO
 // predicate for ON CONFLICT, so the PARTIAL unique index added by
-// 20260717000000_forum_guest_authors.sql (WHERE invitation_id IS NOT NULL)
+// 20260709105548_forum_strikes_guest_authors.sql (WHERE invitation_id IS NOT NULL)
 // could not serve as an inference arbiter — Postgres raised 42P10 and the
 // guest was silently never muted. 20260709111701 replaced it with a FULL
 // UNIQUE(forum_id, invitation_id) constraint, which the pre-PR audit on
