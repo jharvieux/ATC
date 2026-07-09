@@ -33,6 +33,12 @@
 # POSIX filesystem: exactly one concurrent caller wins the race for a given
 # path. On EEXIST, sleep 1s and retry with a fresh timestamp (this also
 # advances the clock past the collision).
+#
+# Version floor (#1717): dev's migration ledger contains hand-picked future
+# dates (e.g. 20260722000000) alongside real-clock ones, so a pure wall-clock
+# version can sort BEFORE the newest merged migration on a fresh DB apply. The
+# version is therefore max(highest existing version in this app's migrations
+# dir + 1 second, wall clock) — never behind the ledger, never behind "now".
 
 set -euo pipefail
 
@@ -69,6 +75,19 @@ fi
 BRANCH="$(git branch --show-current 2>/dev/null || echo "(detached)")"
 WORKTREE="$(basename "$REPO_ROOT")"
 
+# Highest existing version in this app's migrations dir (numeric prefix before
+# the first `_`). `10#` forces base-10 parsing so a leading-zero legacy RAG
+# version like 0031 isn't misread as octal.
+FLOOR=0
+for f in "$MIGRATIONS_DIR"/*.sql; do
+  [[ -e "$f" ]] || continue
+  base="$(basename "$f")"
+  if [[ "$base" =~ ^([0-9]+)_ ]]; then
+    v=$((10#${BASH_REMATCH[1]}))
+    (( v > FLOOR )) && FLOOR=$v
+  fi
+done
+
 MAX_ATTEMPTS=30
 ATTEMPT=0
 VERSION=""
@@ -76,7 +95,14 @@ LOCK_DIR=""
 
 while (( ATTEMPT < MAX_ATTEMPTS )); do
   ATTEMPT=$((ATTEMPT + 1))
-  CANDIDATE="$(TZ=UTC date +%Y%m%d%H%M%S)"
+  WALL_CLOCK=$((10#$(TZ=UTC date +%Y%m%d%H%M%S)))
+  MIN_NEXT=$((FLOOR + 1))
+  if (( WALL_CLOCK > MIN_NEXT )); then
+    CANDIDATE_NUM=$WALL_CLOCK
+  else
+    CANDIDATE_NUM=$MIN_NEXT
+  fi
+  CANDIDATE="$(printf '%014d' "$CANDIDATE_NUM")"
   CANDIDATE_LOCK="$LOCK_ROOT/$CANDIDATE"
   if mkdir "$CANDIDATE_LOCK" 2>/dev/null; then
     VERSION="$CANDIDATE"
@@ -84,6 +110,7 @@ while (( ATTEMPT < MAX_ATTEMPTS )); do
     break
   fi
   echo "Version $CANDIDATE already reserved on this machine — retrying in 1s (attempt $ATTEMPT/$MAX_ATTEMPTS)" >&2
+  FLOOR=$CANDIDATE_NUM
   sleep 1
 done
 
