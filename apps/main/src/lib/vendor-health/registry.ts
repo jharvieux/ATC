@@ -7,6 +7,8 @@
 // any→healthy) are computed against the DURABLE prior state, not the
 // per-instance cache, so only one instance fires the alert per event.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 export type VendorName = "anthropic" | "openai" | "stripe" | "resend" | "supabase" | "inngest" | "upstash" | "rag" | "supabase_rag";
@@ -66,7 +68,7 @@ export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
 // cache-miss default) WITHOUT caching the error, so the next call retries.
 // ---------------------------------------------------------------------------
 export async function resolveVendorHealthStatus(
-  db: import("@supabase/supabase-js").SupabaseClient,
+  db: SupabaseClient,
   name: VendorName,
 ): Promise<VendorHealthStatus> {
   const cached = cacheGet(name);
@@ -77,7 +79,10 @@ export async function resolveVendorHealthStatus(
     .select("status, consecutive_failures, last_checked_at, last_error, status_changed_at")
     .eq("vendor", name)
     .maybeSingle();
-  if (error) return "healthy";
+  if (error) {
+    console.error(`[vendor-health] durable read failed for ${name}: ${error.message}`);
+    return "healthy";
+  }
 
   const state: VendorHealthState = data
     ? {
@@ -152,7 +157,7 @@ export interface UpsertVendorHealthInput {
   vendor: VendorName;
   success: boolean;
   error_message?: string | null;
-  db: import("@supabase/supabase-js").SupabaseClient;
+  db: SupabaseClient;
 }
 
 export interface UpsertVendorHealthResult {
@@ -214,7 +219,7 @@ export async function upsertVendorHealth(
 // ---------------------------------------------------------------------------
 
 export async function listVendorHealth(
-  db: import("@supabase/supabase-js").SupabaseClient,
+  db: SupabaseClient,
 ): Promise<Array<VendorHealthState & { vendor: string }>> {
   const { data, error } = await db
     .from("vendor_health")
