@@ -150,7 +150,7 @@ export const dataRetentionPurge = inngest.createFunction(
     id: "data-retention-purge",
     triggers: [{ cron: "30 4 * * *" }], // daily 04:30 UTC — after audit-log purge (04:00)
   },
-  async () => {
+  async ({ step }) => {
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
@@ -161,21 +161,29 @@ export const dataRetentionPurge = inngest.createFunction(
       return { skipped_for_staging: true };
     }
 
+    // Each table purge and the audit write run in their own memoized step. The
+    // terminal fail-loud throw below retries the WHOLE function; without steps
+    // that retry would re-run every DELETE and append a duplicate audit row.
+    // With per-table steps, a retry replays completed tables from the memo (no
+    // re-delete) and skips the already-written audit row (D-091 Inngest
+    // retry-safety).
     const results: TableResult[] = [];
     for (const target of DELETE_TARGETS) {
-      results.push(await purgeTable(svc, target));
+      results.push(await step.run(`purge-${target.table}`, () => purgeTable(svc, target)));
     }
-    results.push(await scrubStripeRawEvents(svc));
+    results.push(await step.run("purge-stripe_webhook_events", () => scrubStripeRawEvents(svc)));
 
     const failures = results.filter((r) => r.error);
 
-    await writeAuditLog({
-      actor_type: "system",
-      action: failures.length > 0 ? "data_retention_purge_partial_failure" : "data_retention_purge",
-      resource_type: "retention",
-      changes: {
-        results: results.map((r) => ({ table: r.table, affected: r.affected, window_days: r.window_days, error: r.error ?? null })),
-      },
+    await step.run("write-audit-log", async () => {
+      await writeAuditLog({
+        actor_type: "system",
+        action: failures.length > 0 ? "data_retention_purge_partial_failure" : "data_retention_purge",
+        resource_type: "retention",
+        changes: {
+          results: results.map((r) => ({ table: r.table, affected: r.affected, window_days: r.window_days, error: r.error ?? null })),
+        },
+      });
     });
 
     // Fail loud: any table error marks the whole run failed so alerting fires,

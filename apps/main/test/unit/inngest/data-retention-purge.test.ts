@@ -27,6 +27,10 @@ type Batch = Array<{ id: string }>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
 let mutateErrors: Record<string, { message: string } | undefined>;
+// Records the (column, cutoff) passed to every .lt() so tests can assert each
+// purge target filters on the RIGHT timestamp column — an arg-ignoring no-op
+// here would let a wrong-column purge (e.g. a non-existent one) pass silently.
+let ltCalls: Array<{ table: string; column: string; cutoff: string }>;
 const calls = {
   deletes: [] as Array<{ table: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
@@ -37,7 +41,8 @@ function makeChain(table: string) {
   return {
     select() {
       const chain = {
-        lt() {
+        lt(column: string, cutoff: string) {
+          ltCalls.push({ table, column, cutoff });
           return chain;
         },
         not() {
@@ -84,17 +89,38 @@ function ids(n: number, prefix = "x"): Batch {
   return Array.from({ length: n }, (_, i) => ({ id: `${prefix}-${i}` }));
 }
 
-async function runPurge(): Promise<{ results?: Array<{ table: string; affected: number }>; skipped_for_staging?: boolean }> {
+// Models Inngest step memoization: a completed step is cached by id and
+// replayed on retry without re-running; a step whose fn throws is NOT cached,
+// so it re-runs on the next invocation with the same step instance.
+type StepCtx = { run: (id: string, fn: () => Promise<unknown>) => Promise<unknown> };
+function makeStep(): StepCtx {
+  const memo = new Map<string, unknown>();
+  return {
+    run: async (id, fn) => {
+      if (memo.has(id)) return memo.get(id);
+      const result = await fn();
+      memo.set(id, result);
+      return result;
+    },
+  };
+}
+
+async function runPurge(
+  step: StepCtx = makeStep(),
+): Promise<{ results?: Array<{ table: string; affected: number }>; skipped_for_staging?: boolean }> {
   vi.resetModules();
   const { dataRetentionPurge } = await import("@/inngest/data-retention-purge");
-  const fn = dataRetentionPurge as unknown as { __handler: () => Promise<never> };
-  return fn.__handler();
+  const fn = dataRetentionPurge as unknown as {
+    __handler: (ctx: { step: StepCtx }) => Promise<never>;
+  };
+  return fn.__handler({ step });
 }
 
 beforeEach(() => {
   selectQueues = {};
   selectErrors = {};
   mutateErrors = {};
+  ltCalls = [];
   calls.deletes = [];
   calls.updates = [];
   calls.inserts = [];
@@ -162,6 +188,62 @@ describe("data-retention-purge — #1590", () => {
     // The failure is recorded in the audit row with the partial-failure action.
     const audit = mockWriteAuditLog.mock.calls[0]![0] as { action: string };
     expect(audit.action).toBe("data_retention_purge_partial_failure");
+  });
+
+  // #1719 — guard against a purge target pointing at a column the table does
+  // not have (the DELETE would never match, the row would never prune, and the
+  // fail-loud throw would fire every night). Asserting the exact column per
+  // target makes this test FAIL if someone reintroduces a wrong column.
+  it("each target filters on its expected timestamp column with a cutoff ≈ now − windowDays", async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    // email_log filters on created_at (DEFAULT NOW(), always populated) — NOT
+    // sent_at, which is NULL for rejected/failed sends and would leak that PII
+    // past its retention window. See migration 20260602000000_email_notifications.
+    const expected: Record<string, { column: string; days: number }> = {
+      ai_call_log: { column: "created_at", days: 180 },
+      ai_tool_calls: { column: "dispatched_at", days: 180 },
+      email_log: { column: "created_at", days: 365 },
+      notifications: { column: "created_at", days: 90 },
+      attribution_touches: { column: "occurred_at", days: 365 },
+      auth_attempts: { column: "occurred_at", days: 90 },
+      stripe_webhook_events: { column: "created_at", days: 90 },
+    };
+
+    const now = Date.now();
+    await runPurge();
+
+    for (const [table, exp] of Object.entries(expected)) {
+      const call = ltCalls.find((c) => c.table === table);
+      expect(call, `expected an lt() predicate for ${table}`).toBeDefined();
+      expect(call!.column, `${table} must purge on ${exp.column}`).toBe(exp.column);
+      const cutoffMs = Date.parse(call!.cutoff);
+      const expectedMs = now - exp.days * DAY;
+      // Tolerance covers the few ms between cutoff computation and this assertion.
+      expect(Math.abs(cutoffMs - expectedMs)).toBeLessThan(60_000);
+    }
+  });
+
+  // #1719 — the fail-loud throw retries the WHOLE Inngest function. With each
+  // table purge and the audit write in their own step.run, a retry must replay
+  // completed work from the memo instead of re-deleting rows and appending a
+  // second audit row.
+  it("retry after fail-loud skips completed tables and does not duplicate the audit row", async () => {
+    selectErrors["ai_call_log"] = { message: "connection reset" }; // one table fails
+    selectQueues["email_log"] = [ids(2, "e")]; // a healthy table does real deletes
+    const step = makeStep();
+
+    await expect(runPurge(step)).rejects.toThrow(/ai_call_log/);
+    const deletesAfterRun1 = calls.deletes.length;
+    expect(calls.deletes.some((d) => d.table === "email_log")).toBe(true);
+    expect(mockWriteAuditLog).toHaveBeenCalledOnce();
+
+    // Inngest retries the whole function with the same memoized step state.
+    await expect(runPurge(step)).rejects.toThrow(/ai_call_log/);
+
+    // Completed steps replay from the memo → no additional DELETEs…
+    expect(calls.deletes.length).toBe(deletesAfterRun1);
+    // …and the audit row is written exactly once across both attempts.
+    expect(mockWriteAuditLog).toHaveBeenCalledOnce();
   });
 });
 
