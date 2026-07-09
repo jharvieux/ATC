@@ -10,6 +10,21 @@
 // to not concurrent-run." Inngest provides that via its function
 // concurrency setting (concurrency: { limit: 1 }) on the flush
 // function.
+//
+// #1599 — claim-before-send (D-091 #21): the old version called
+// submitAnthropicBatch() while rows were still 'pending', and only
+// flipped them afterward. A retry of the whole function (Inngest step
+// retry, transient failure after submit) would re-select the same
+// still-'pending' rows and submit a SECOND Anthropic batch with
+// identical content — double spend, and the first batch is orphaned
+// (nothing ever links its results back to these rows). Rows are now
+// CAS-claimed to 'submitted' status BEFORE the Anthropic call; if the
+// call fails, the claim is released back to 'pending' so the next
+// flush retries cleanly instead of resubmitting. If the process dies
+// in the narrow window between a successful submit and the
+// ai_batch_jobs insert/link below, the claimed rows are stranded
+// (status='submitted', batch_job_id=null) rather than double-submitted
+// — a strictly smaller residual risk, tracked as a follow-up (#1696).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { submitAnthropicBatch, type BatchRequest } from "@/lib/ai/call-wrapper";
@@ -73,15 +88,61 @@ export async function flushPendingForPurpose(args: {
   if (countErr) throw new Error(`flushPendingForPurpose: remaining count failed: ${countErr.message}`);
   const remaining = Math.max(0, (remainingCount ?? 0) - pending.length);
 
+  const pendingIds = pending.map((p) => p.id);
+
+  // #1599 — claim-before-send: flip these rows out of 'pending' BEFORE
+  // calling Anthropic. Any retry of this whole function after this point
+  // sees them as no-longer-pending, so it can't select and resubmit them.
+  const claimed = await safeAwait(
+    db
+      // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
+      .from("ai_batch_requests")
+      .update({ status: "submitted" })
+      .in("id", pendingIds)
+      .eq("status", "pending")
+      .select("id"),
+    "ai_batch_requests.claim_before_send",
+  );
+  if (!claimed || claimed.length !== pendingIds.length) {
+    throw new Error(
+      `flushPendingForPurpose: expected to claim ${pendingIds.length} rows, claimed ${claimed?.length ?? 0} — a concurrent flush may have raced this one`,
+    );
+  }
+
   // Build the Anthropic batch request payload.
   const batchRequests: BatchRequest[] = pending.map((row) => ({
     custom_id: row.custom_id,
     params: row.request_params,
   }));
 
-  // Submit. Failure here means NONE of the rows reach Anthropic —
-  // they stay pending, the next flush will re-attempt.
-  const submitted = await submitAnthropicBatch({ requests: batchRequests });
+  let submitted: Awaited<ReturnType<typeof submitAnthropicBatch>>;
+  try {
+    submitted = await submitAnthropicBatch({ requests: batchRequests });
+  } catch (err) {
+    // Anthropic never accepted the batch — release the claim so the next
+    // flush retries these rows instead of leaving them stranded as
+    // 'submitted' with no job to reconcile against.
+    const released = await safeAwait(
+      db
+        // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
+        .from("ai_batch_requests")
+        .update({ status: "pending" })
+        .in("id", pendingIds)
+        .eq("status", "submitted")
+        .is("batch_job_id", null)
+        .select("id"),
+      "ai_batch_requests.release_claim_on_submit_failure",
+    );
+    if (!released || released.length !== pendingIds.length) {
+      // Don't throw here — we're already unwinding from the real submit
+      // failure and a second thrown error would mask it. Log loudly so an
+      // operator can find rows stranded at 'submitted' with no job.
+      console.error(
+        `[batch:flush] failed to fully release claim after submit failure: expected ${pendingIds.length}, released ${released?.length ?? 0} rows may be stranded`,
+      );
+    }
+    throw err;
+  }
 
   // Create the ai_batch_jobs row.
   const jobRow = await safeAwait(
@@ -100,22 +161,29 @@ export async function flushPendingForPurpose(args: {
   );
   const job = jobRow as unknown as { id: string };
 
-  // Link the requests to the job + flip them to submitted.
-  await safeAwait(
+  // Link the already-claimed requests to the job. They're already
+  // 'submitted' from the claim step above; this just attaches batch_job_id.
+  const linked = await safeAwait(
     db
       // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
       .from("ai_batch_requests")
       .update({
-        status: "submitted",
         batch_job_id: job.id,
         submitted_at: new Date().toISOString(),
       })
-      .in(
-        "id",
-        pending.map((p) => p.id),
-      ),
-    "ai_batch_requests.update.submitted",
+      .in("id", pendingIds)
+      .eq("status", "submitted")
+      .select("id"),
+    "ai_batch_requests.link_to_job",
   );
+  if (!linked || linked.length !== pendingIds.length) {
+    // The batch was already submitted to Anthropic — these rows are now
+    // stranded at 'submitted' with no batch_job_id (see #1696) rather than
+    // silently unlinked.
+    throw new Error(
+      `flushPendingForPurpose: expected to link ${pendingIds.length} rows to job ${job.id}, linked ${linked?.length ?? 0}`,
+    );
+  }
 
   return { flushed: pending.length, batch_id: submitted.batch_id, remaining };
 }

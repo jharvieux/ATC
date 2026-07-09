@@ -19,6 +19,8 @@
 // allows ONLY apps/main/src/lib/ai/call-wrapper.ts to import Anthropic
 // directly. This module imports from "./call-wrapper" instead.
 
+import "server-only";
+
 import Anthropic from "@anthropic-ai/sdk";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { getCostEstimate, primePricingCache } from "./pricing";

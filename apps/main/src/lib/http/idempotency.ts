@@ -27,6 +27,8 @@
 // the handler. This is the contract Stripe and others use — the client
 // trusts that the first call's side effects completed if it got a 200.
 
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 

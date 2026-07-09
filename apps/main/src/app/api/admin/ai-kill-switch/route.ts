@@ -72,6 +72,35 @@ export async function POST(req: Request): Promise<Response> {
           .single();
 
         if (error) throw new Error(error.message);
+
+        // #1653 — drive the route-level pre-generation gates from the same
+        // toggle. The supervisor reads ai_kill_switch_state (fail-closed, the
+        // authoritative layer), but the customer-chat and help SSE paths gate
+        // token STREAMING on platform_settings.ai_kill_switch_engaged so a
+        // paused AI never leaks partial tokens or burns a vendor call before
+        // the supervisor runs. Nothing synced the two sources, so an admin
+        // pause left those pre-gates off. Writing both here makes this one
+        // operator lever. Idempotent (fixed value keyed by 'ai_kill_switch_
+        // engaged') and retriable; if this write ever diverges from the state
+        // table the supervisor still denies. Value is a JSONB boolean to match
+        // the gates' `value === true` check.
+        const { error: settingErr } = await db
+          .from("platform_settings")
+          .upsert(
+            {
+              key: "ai_kill_switch_engaged",
+              value: paused,
+              description:
+                "§10.6 — global AI pause. Drives the chat/help pre-generation " +
+                "streaming gates; written by /api/admin/ai-kill-switch alongside " +
+                "ai_kill_switch_state (#1653).",
+              updated_by_user_id: adminUserId,
+            },
+            { onConflict: "key" },
+          );
+
+        if (settingErr) throw new Error(settingErr.message);
+
         return data;
       },
     );

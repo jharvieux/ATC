@@ -7,6 +7,8 @@
 // unexpected DB errors, which surfaces as a 500 (better than silently
 // sending the user somewhere wrong).
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 import { type OnboardingStage } from "@/lib/onboarding/state-machine";

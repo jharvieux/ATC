@@ -11,27 +11,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── mocks ──────────────────────────────────────────────────────────────────
 
-const { MockSupabaseMutationError, h } = vi.hoisted(() => {
-  class MockSupabaseMutationError extends Error {
-    code: string;
-    constructor(_label: string, code: string, _actual: number, _expected: number) {
-      super("mutation error");
-      this.code = code;
-    }
-  }
-  return {
-    MockSupabaseMutationError,
-    h: {
-      permFails: false,
-      userId: "user-1",
-      tenantId: "tenant-1",
-      sessionRow: null as Record<string, unknown> | null,
-      sessionReadError: null as { message: string } | null,
-      safeAwaitRowCountShouldThrow: false as boolean | "ROW_COUNT_MISMATCH",
-      writeAuditCalled: false,
-    },
-  };
-});
+const { h } = vi.hoisted(() => ({
+  h: {
+    permFails: false,
+    userId: "user-1",
+    tenantId: "tenant-1",
+    sessionRow: null as Record<string, unknown> | null,
+    sessionReadError: null as { message: string } | null,
+    // #1703 — the undo is now a single atomic RPC (undo_session_transfer) that
+    // does the CAS clear AND the conversation revert in one transaction. The
+    // mock returns the session-row count (0 = finalize cron won the race → 409)
+    // or an error (→ 500 fail-closed).
+    rpcReturn: 1 as number | null,
+    rpcError: null as { message: string } | null,
+    rpcCalledWith: null as { name: string; params: Record<string, unknown> } | null,
+    writeAuditCalled: false,
+  },
+}));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
   assertPermission: async (_req: unknown, _opts: unknown) => {
@@ -51,19 +47,9 @@ vi.mock("@/lib/audit/write", () => ({
   writeAuditLog: async () => { h.writeAuditCalled = true; },
 }));
 
-vi.mock("@/lib/db/safe-mutation", () => ({
-  safeAwaitRowCount: async () => {
-    if (h.safeAwaitRowCountShouldThrow === "ROW_COUNT_MISMATCH") {
-      throw new MockSupabaseMutationError("anonymous_sessions.undo_transfer", "ROW_COUNT_MISMATCH", 0, 1);
-    }
-    if (h.safeAwaitRowCountShouldThrow === true) throw new Error("generic DB failure");
-  },
-  SupabaseMutationError: MockSupabaseMutationError,
-}));
-
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
-    from: (_table: string) => ({
+    from: () => ({
       select: () => ({
         eq: () => ({
           eq: () => ({
@@ -71,10 +57,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
           }),
         }),
       }),
-      update: () => ({
-        eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ not: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) }) }),
-      }),
     }),
+    rpc: (name: string, params: Record<string, unknown>) => {
+      h.rpcCalledWith = { name, params };
+      return Promise.resolve({
+        data: h.rpcError ? null : h.rpcReturn,
+        error: h.rpcError,
+      });
+    },
   }),
 }));
 
@@ -115,7 +105,9 @@ beforeEach(() => {
   h.tenantId = "tenant-1";
   h.sessionRow = makeSession();
   h.sessionReadError = null;
-  h.safeAwaitRowCountShouldThrow = false;
+  h.rpcReturn = 1;
+  h.rpcError = null;
+  h.rpcCalledWith = null;
   h.writeAuditCalled = false;
 });
 
@@ -225,13 +217,15 @@ describe("transfer-session undo — ownership and state guards", () => {
   });
 });
 
-// ── CAS race condition ─────────────────────────────────────────────────────
+// ── atomic RPC: race + fail-closed (#1703) ─────────────────────────────────
 
-describe("transfer-session undo — CAS race condition", () => {
-  it("returns 409 when safeAwaitRowCount throws ROW_COUNT_MISMATCH (finalize cron won the race)", async () => {
-    // The finalize Inngest job committed between pre-check and CAS update.
-    // Must return 409 (not 500 — the race is user-visible and actionable).
-    h.safeAwaitRowCountShouldThrow = "ROW_COUNT_MISMATCH";
+describe("transfer-session undo — atomic RPC race and error handling", () => {
+  it("returns 409 when the RPC reports zero session rows updated (finalize cron won the race)", async () => {
+    // undo_session_transfer's CAS matched no row: the finalize Inngest job
+    // committed between our pre-check read and the RPC. Must be 409 (not 500 —
+    // the race is user-visible and actionable), and the RPC's internal
+    // conversation revert never ran because the CAS guarded it.
+    h.rpcReturn = 0;
     const res = await POST(req());
     expect(res.status).toBe(409);
     const body = await res.json() as { error: string };
@@ -239,10 +233,14 @@ describe("transfer-session undo — CAS race condition", () => {
     expect(h.writeAuditCalled).toBe(false);
   });
 
-  it("propagates non-ROW_COUNT_MISMATCH errors (unexpected DB failure → 403 via respondToAuthError)", async () => {
-    h.safeAwaitRowCountShouldThrow = true;
+  it("returns 500 (fail-closed, sanitized) when the RPC errors", async () => {
+    // A genuine RPC/DB failure must not claim success or write the audit log,
+    // and the raw error detail must not leak (dbErrorResponse sanitizes).
+    h.rpcError = { message: "connection reset" };
     const res = await POST(req());
-    expect(res.status).not.toBe(200);
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("db_error");
     expect(h.writeAuditCalled).toBe(false);
   });
 });
@@ -256,5 +254,19 @@ describe("transfer-session undo — happy path", () => {
     const body = await res.json() as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(h.writeAuditCalled).toBe(true);
+  });
+
+  it("invokes undo_session_transfer with the session, tenant, and caller ids (atomic revert)", async () => {
+    // The CAS clear AND the conversation revert live inside this one RPC now
+    // (#1703). Pin that the route hands it the caller-verified ids so the
+    // atomic transaction reverts the right session's conversations.
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(h.rpcCalledWith?.name).toBe("undo_session_transfer");
+    expect(h.rpcCalledWith?.params).toEqual({
+      p_session_id: VALID_UUID,
+      p_tenant_id: "tenant-1",
+      p_user_id: "user-1",
+    });
   });
 });

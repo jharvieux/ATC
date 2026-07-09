@@ -8,6 +8,8 @@
 // Service-role import permitted: background job running outside any user
 // session. §8.7a.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import type { TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";

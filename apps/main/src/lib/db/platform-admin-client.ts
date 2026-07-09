@@ -19,6 +19,8 @@
 // queries that rolled back still appear in the queries list — that is
 // intentional, since the audit row is forensic, not transactional.
 
+import "server-only";
+
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";

@@ -10,6 +10,8 @@
 // that always returns auth_failed. Do NOT silently fall back to the email adapter —
 // that would mask a security incident.
 
+import "server-only";
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
 import { getAdapter, getPlatformDefaultAdapter } from "./registry";

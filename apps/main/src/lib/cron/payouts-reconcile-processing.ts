@@ -19,6 +19,8 @@
 //
 // Service-role import permitted: background cron, no user session. §5.4.4.
 
+import "server-only";
+
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertSafeStripeAmount, type Cents } from "@/lib/money";
