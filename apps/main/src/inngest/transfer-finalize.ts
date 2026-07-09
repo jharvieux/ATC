@@ -6,7 +6,7 @@
 // Undo cancellation approach: rather than cancelling the Inngest event
 // (which requires the Inngest SDK's cancelOn machinery and a separate
 // cancel event), the finalize function re-reads the session on arrival.
-// If transfer_soft_commit_at is NULL (i.e., undoTransfer cleared it),
+// If transfer_soft_commit_at is NULL (i.e., the undo route cleared it),
 // this function no-ops. This is the "no-op flag on re-read" approach
 // documented in MEMORY.md.
 //

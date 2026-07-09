@@ -4,30 +4,17 @@
 // 2026-05-25 — tenant-scoped per audit finding Auth #4. Restore matches
 // the per-tenant delete shape: undoing on tenant A only clears tenant A.
 
-import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { authenticateUser } from "@/lib/auth/authenticate-user";
 
 export async function POST(req: Request): Promise<Response> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const authed = await authenticateUser(req);
+  if (!authed) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
-  const accessToken = authHeader.slice("Bearer ".length);
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(url, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const authUserId = authData.user.id;
+  const authUserId = authed.authUserId;
 
   const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   if (!tenantId || tenantId === "platform") {
