@@ -25,6 +25,13 @@ const CONFIG_FILE = path.join(ROOT, ".github/supabase-advisor-config.json");
 const BASELINE_FILE = path.join(ROOT, "scripts/supabase-advisor-baseline.txt");
 const API_BASE = process.env.SUPABASE_API_BASE ?? "https://api.supabase.com";
 
+// HONESTY: this shape is inferred from the MCP `get_advisors` transport, NOT
+// verified against the live HTTP Management API (GET .../advisors/security) —
+// no SUPABASE_ACCESS_TOKEN exists in CI yet, so this endpoint has never been
+// called from here. If the raw HTTP body differs (e.g. no `lints[]`, or
+// `cache_key` absent), fetchLints throws and the scheduled run fails loud —
+// it can't silently pass on a mis-parse. Confirm against a real response on the
+// first scheduled run once the token lands, and correct this interface then.
 export interface Lint {
   name: string;
   title?: string;

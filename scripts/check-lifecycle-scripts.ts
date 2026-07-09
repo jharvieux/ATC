@@ -89,6 +89,23 @@ function scanStore(store: string): Hook[] {
   return out;
 }
 
+const BASELINE_HEADER = [
+  "# Lifecycle-script supply-chain baseline (scripts/check-lifecycle-scripts.ts, #1636).",
+  "# One recognized install hook per line, keyed <name>::<script>::<sha1(content)>.",
+  "# Keyed by CONTENT HASH, not version — a routine version bump that keeps the same",
+  "# hook passes silently; a NEW or CHANGED preinstall/install/postinstall/prepare",
+  "# produces an unknown key and fails the PR. Add a line ONLY after reviewing the",
+  "# script (Shai-Hulud risk). Regenerate with: pnpm tsx scripts/check-lifecycle-scripts.ts --dump",
+].join("\n");
+
+// --dump output: the header + every current hook key, deduped and sorted, so
+// `… --dump > scripts/lifecycle-scripts-baseline.txt` regenerates the file after
+// a reviewed change. Exported (pure over a Hook list) so a test can pin it.
+export function formatBaseline(hooks: Hook[]): string {
+  const keys = [...new Set(hooks.map((h) => h.key))].sort();
+  return [BASELINE_HEADER, ...keys].join("\n") + "\n";
+}
+
 function loadBaseline(): Set<string> {
   if (!fs.existsSync(BASELINE_FILE)) return new Set();
   return new Set(
@@ -104,6 +121,10 @@ function main(): void {
   if (!fs.existsSync(STORE)) {
     console.error("Lifecycle-script guard: node_modules/.pnpm not found. Run `pnpm install` first.");
     process.exit(1);
+  }
+  if (process.argv.includes("--dump")) {
+    process.stdout.write(formatBaseline(scanStore(STORE)));
+    return;
   }
   const baseline = loadBaseline();
   const hooks = scanStore(STORE);

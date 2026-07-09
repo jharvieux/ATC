@@ -16,6 +16,8 @@ const noLocalEscapeHtml = require("../../packages/config/eslint-rules/no-local-e
 const noInlineSupabaseClient = require("../../packages/config/eslint-rules/no-inline-supabase-client");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const noMoneyMath = require("../../packages/config/eslint-rules/no-money-math");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const noSecretShapedPublicEnv = require("../../packages/config/eslint-rules/no-secret-shaped-public-env");
 
 const tester = new RuleTester({
   parserOptions: { ecmaVersion: 2022, sourceType: "module" },
@@ -116,6 +118,40 @@ run("no-inline-supabase-client", noInlineSupabaseClient, {
     },
   ],
 }, tsTester);
+
+run("no-secret-shaped-public-env", noSecretShapedPublicEnv, {
+  valid: [
+    // The two names that ARE public by design (allowlisted).
+    { code: `const k = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;` },
+    { code: `const k = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;` },
+    // A legit NEXT_PUBLIC_ name with no credential shape.
+    { code: `const u = process.env.NEXT_PUBLIC_BASE_URL;` },
+    { code: `const f = process.env.NEXT_PUBLIC_FEATURE_FLAG_X;` },
+    // Secret-shaped but NOT NEXT_PUBLIC_ — server var, not this rule's concern.
+    { code: `const s = process.env.STRIPE_SECRET_KEY;` },
+    // Allowlisted name via bracket access.
+    { code: `const k = process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"];` },
+  ],
+  invalid: [
+    {
+      code: `const k = process.env.NEXT_PUBLIC_OPENAI_API_KEY;`,
+      errors: [{ messageId: "secretShaped" }],
+    },
+    {
+      code: `const k = process.env.NEXT_PUBLIC_ADMIN_SECRET;`,
+      errors: [{ messageId: "secretShaped" }],
+    },
+    {
+      code: `const k = process.env.NEXT_PUBLIC_SLACK_TOKEN;`,
+      errors: [{ messageId: "secretShaped" }],
+    },
+    // Computed bracket access is flagged too.
+    {
+      code: `const k = process.env["NEXT_PUBLIC_SERVICE_ROLE_KEY"];`,
+      errors: [{ messageId: "secretShaped" }],
+    },
+  ],
+});
 
 run("no-money-math (/100 display extension)", noMoneyMath, {
   valid: [

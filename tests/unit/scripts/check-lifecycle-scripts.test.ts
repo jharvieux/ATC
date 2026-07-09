@@ -6,7 +6,7 @@
 // Shai-Hulud-style script swap.
 
 import { describe, it, expect } from "vitest";
-import { hooksFromManifest } from "../../../scripts/check-lifecycle-scripts";
+import { hooksFromManifest, formatBaseline } from "../../../scripts/check-lifecycle-scripts";
 
 describe("hooksFromManifest", () => {
   it("extracts preinstall/install/postinstall/prepare hooks", () => {
@@ -37,5 +37,22 @@ describe("hooksFromManifest", () => {
 
   it("skips empty/whitespace script bodies", () => {
     expect(hooksFromManifest({ name: "p", scripts: { postinstall: "   " } })).toEqual([]);
+  });
+});
+
+describe("formatBaseline (--dump output)", () => {
+  const mk = (name: string, content: string) =>
+    hooksFromManifest({ name, scripts: { postinstall: content } })[0];
+
+  it("emits header + deduped, sorted keys so a dump round-trips the baseline", () => {
+    const zeta = mk("zeta", "node z.js");
+    const alpha = mk("alpha", "node a.js");
+    const out = formatBaseline([zeta, alpha, mk("zeta", "node z.js")]);
+    const lines = out.trimEnd().split("\n");
+    const headerLen = lines.filter((l) => l.startsWith("#")).length;
+    const keys = lines.slice(headerLen);
+    expect(lines[0]).toMatch(/Lifecycle-script supply-chain baseline/);
+    expect(keys).toEqual([alpha.key, zeta.key]); // sorted, duplicate zeta collapsed
+    expect(out.endsWith("\n")).toBe(true);
   });
 });
