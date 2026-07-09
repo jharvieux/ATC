@@ -9,3 +9,4 @@ export * from "./ingest";
 export * from "./rag-events";
 export * from "./retrieve";
 export * from "./safe-url";
+export * from "./service-jwt";

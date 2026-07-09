@@ -42,29 +42,5 @@ export default [
       "atc/no-secret-shaped-public-env": "error",
     },
   },
-  {
-    // Grandfathered ad-hoc createClient sites (block-new, not rewrite-existing).
-    // These 12 files build clients directly instead of getRagDb(); migrating
-    // them is a runtime change (singleton vs fresh client, header/auth wiring
-    // differences) tracked in a follow-up issue. New files are NOT exempt — the
-    // rule fires everywhere else so the count can only shrink.
-    files: [
-      "src/app/api/platform-settings-events/route.ts",
-      "src/app/api/feedback/route.ts",
-      "src/app/api/tenant-events/route.ts",
-      "src/inngest/openai-embedding-stale-alert.ts",
-      "src/inngest/openai-embedding-reconcile.ts",
-      "src/inngest/openai-embedding-flush.ts",
-      "src/inngest/promo-state-drift-alert.ts",
-      "src/inngest/promo-state-reconcile.ts",
-      "src/inngest/retrieval-log-aggregate.ts",
-      "src/inngest/tenant-registry-reconcile.ts",
-      "src/inngest/platform-settings-reconcile.ts",
-      "src/lib/auth/verify-service-jwt.ts",
-    ],
-    rules: {
-      "atc/no-inline-supabase-client": "off",
-    },
-  },
   ...sonarjsConfig,
 ];

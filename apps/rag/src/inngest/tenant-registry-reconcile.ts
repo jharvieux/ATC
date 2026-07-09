@@ -5,11 +5,10 @@
 //   • Present in both with different fields → update (use main's source_revision)
 //   • Present in shadow but absent in main → log warning (investigate manually)
 //
-// Service-role import permitted: background job, no user session.
-// This file is in the no-direct-service-role-import allowlist.
+// Background job, no user session — the service-role DB env lives in getRagDb().
 
-import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { getRagDb } from "@/lib/db/supabase";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
 
@@ -72,11 +71,7 @@ export const tenantRegistryReconcile = inngest.createFunction(
     }
     const { tenants: mainTenants }: { tenants: MainTenant[] } = await res.json();
 
-    const db = createClient(
-      process.env.SUPABASE_RAG_URL!,
-      process.env.SUPABASE_RAG_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const db = getRagDb();
 
     const { data: shadowRows, error } = await db
       .from("tenant_registry_shadow")

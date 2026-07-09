@@ -5,15 +5,8 @@
 // queued_at < NOW() - INTERVAL '36 hours'. Non-zero count → log loudly so
 // the platform admin gets paged via log monitoring.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("RAG Supabase env not set for openai-embedding-stale-alert");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
+import { getRagDb } from "@/lib/db/supabase";
 
 export const openaiEmbeddingStaleAlert = inngest.createFunction(
   {
@@ -23,7 +16,7 @@ export const openaiEmbeddingStaleAlert = inngest.createFunction(
   async () => {
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
 
-    const db = ragDb();
+    const db = getRagDb();
     const cutoff = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
     const { count, error } = await db
       // d091-allow:service-role-tenant — platform stale-alert cron; pending_embedding.tenant_id nullable by design; platform-wide count required.

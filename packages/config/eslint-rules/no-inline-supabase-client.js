@@ -3,10 +3,11 @@
 // Shift-left guard (#1613 item 4) — client-factory discipline for apps/rag.
 //
 // apps/rag has a canonical service-role factory (src/lib/db/supabase.ts →
-// getRagDb()), but 12 files still import `createClient` from
-// @supabase/supabase-js and build ad-hoc clients — the exact drift that let a
-// main-app env name leak in (#1595 review). Every ad-hoc client duplicates the
-// url/key wiring and can pick the wrong key or skip the factory's auth options.
+// getRagDb()). Every ad-hoc `createClient` call duplicates the url/key wiring
+// and can pick the wrong key or skip the factory's auth options — the exact
+// drift that let a main-app env name leak in (#1595 review). The prior 12
+// ad-hoc importers were migrated onto the factory in #1708/#1729 (#1772);
+// this rule now enforces repo-wide with no grandfathered files.
 //
 // This rule forbids importing the `createClient` VALUE from @supabase/supabase-js
 // outside the factory. Importing the `SupabaseClient` TYPE stays allowed (type
@@ -15,8 +16,6 @@
 // rag-local equivalent the parity gap needed.
 //
 // Allowed to call createClient: src/lib/db/supabase.ts (the factory).
-// The 12 pre-existing ad-hoc sites are grandfathered in apps/rag's eslint
-// config (block-new, not rewrite-existing) — migration tracked in a follow-up.
 
 const ALLOWED_PATH_SUFFIXES = ["/lib/db/supabase.ts"];
 

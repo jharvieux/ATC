@@ -9,15 +9,8 @@
 // a small log table; alerts when two consecutive runs show drift > 0
 // (≈ 30+ minutes of drift, matching the spec).
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
-
-function ragDb(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL;
-  const key = process.env.SUPABASE_RAG_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("RAG Supabase env not set for promo-state-drift-alert");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
+import { getRagDb } from "@/lib/db/supabase";
 
 export const promoStateDriftAlert = inngest.createFunction(
   {
@@ -27,7 +20,7 @@ export const promoStateDriftAlert = inngest.createFunction(
   async () => {
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
 
-    const db = ragDb();
+    const db = getRagDb();
     const { data, error } = await db.rpc("count_promo_state_drift");
     if (error) {
       console.error("[promo-state-drift-alert] rpc failed:", error.message);

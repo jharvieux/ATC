@@ -10,6 +10,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
+import { ServiceJwtClaimsSchema } from "@atc/contracts";
 import {
   signServiceJwt,
   _resetSigningKeyCacheForTests,
@@ -71,6 +72,28 @@ describe("signServiceJwt", () => {
     expect(payload.iat).toBeTypeOf("number");
     expect(payload.exp).toBeTypeOf("number");
     expect(payload.exp - payload.iat).toBeGreaterThan(0);
+  });
+
+  it("emits claims that satisfy the shared @atc/contracts ServiceJwtClaimsSchema", async () => {
+    // #1708 — signer and rag verifier now share one claim contract. If the
+    // signer ever emits a claim the shared schema rejects (wrong scope value,
+    // non-uuid tenant), the two sides have silently drifted again.
+    const jwt = await signServiceJwt({
+      tenant_id: "00000000-0000-0000-0000-0000000000aa",
+      scope: "write",
+      service_identifier: "platform-admin",
+      user_id: "user-1",
+      persona_id: null,
+    });
+    const payload = JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString("utf8"));
+    const claims = ServiceJwtClaimsSchema.parse(payload);
+    expect(claims).toMatchObject({
+      tenant_id: "00000000-0000-0000-0000-0000000000aa",
+      scope: "write",
+      service_identifier: "platform-admin",
+      user_id: "user-1",
+      persona_id: null,
+    });
   });
 
   it("respects ttl_seconds override", async () => {
