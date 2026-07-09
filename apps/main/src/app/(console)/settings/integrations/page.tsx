@@ -10,6 +10,7 @@
 // only the name, acting member, scopes, and last-used date are visible.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { Button } from "@/components/ui/button";
 
 interface ActingUser {
@@ -265,9 +266,9 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
                     )}
                     Scopes: {tok.scopes.join(", ")} &middot;{" "}
                     {tok.last_used_at
-                      ? `Last used ${new Date(tok.last_used_at).toLocaleDateString()}`
+                      ? `Last used ${formatDate(tok.last_used_at)}`
                       : "Never used"}{" "}
-                    &middot; Created {new Date(tok.created_at).toLocaleDateString()}
+                    &middot; Created {formatDate(tok.created_at)}
                   </p>
                 </div>
                 {isOwner && (
@@ -306,8 +307,8 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
                   <p className="font-semibold text-[14px] text-foreground line-through">{tok.name}</p>
                   <p className="text-[12px] text-muted-foreground mt-0.5">
                     {isOwner && <>Acting as {actingLabel(tok)} &middot;{" "}</>}
-                    Revoked {new Date(tok.revoked_at!).toLocaleDateString()} &middot; Created{" "}
-                    {new Date(tok.created_at).toLocaleDateString()}
+                    Revoked {formatDate(tok.revoked_at!)} &middot; Created{" "}
+                    {formatDate(tok.created_at)}
                   </p>
                 </div>
               </div>

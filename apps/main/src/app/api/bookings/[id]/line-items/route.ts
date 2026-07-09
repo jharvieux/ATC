@@ -5,12 +5,12 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertLineItemsAvailable } from "@/lib/line-items/tier-gate";
-import { computeExpectedCommissionCents, validateLineItem, type ItemType } from "@/lib/line-items/validate";
+import { computeExpectedCommissionCents, validateLineItem, ITEM_TYPES, LINE_ITEM_STATUSES, type ItemType } from "@/lib/line-items/validate";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const LineItemCreateSchema = z.object({
-  item_type: z.enum(["flight", "hotel", "transfer", "excursion", "insurance", "other"]),
+  item_type: z.enum(ITEM_TYPES),
   description: z.string().min(1),
   supplier_name: z.string().optional(),
   supplier_booking_ref: z.string().optional(),
@@ -22,7 +22,7 @@ const LineItemCreateSchema = z.object({
   commissionable: z.boolean().optional(),
   commission_rate: z.number().min(0).max(1).optional(),
   currency: z.string().optional(),
-  status: z.enum(["planned", "booked", "confirmed", "cancelled", "completed"]).optional(),
+  status: z.enum(LINE_ITEM_STATUSES).optional(),
   item_details: z.record(z.unknown()).optional(),
   include_in_itinerary: z.boolean().optional(),
 });

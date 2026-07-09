@@ -3,6 +3,7 @@
 // §12 — Contact detail: timeline + relationship graph + DOB display rules (§11.5).
 
 import { useState, useEffect, use } from "react";
+import { formatDate } from "@/lib/format-date";
 import { dobDisplayLabel } from "@/lib/contacts/dob-display";
 import { RelationshipsPanel } from "@/components/crm/RelationshipsPanel";
 
@@ -122,7 +123,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
             {timeline.map((item) => (
               <li key={`${item.type}-${item.id}`} className="flex gap-3 text-sm">
                 <span className="text-gray-400 w-24 shrink-0">
-                  {new Date(item.created_at).toLocaleDateString()}
+                  {formatDate(item.created_at)}
                 </span>
                 {item.type === "email" ? (
                   <>

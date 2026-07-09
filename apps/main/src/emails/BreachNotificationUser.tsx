@@ -4,6 +4,7 @@
  
 
 import * as React from "react";
+import { formatDate } from "@/lib/format-date";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 
 export interface BreachNotificationUserProps {
@@ -34,7 +35,7 @@ export function BreachNotificationUser(props: BreachNotificationUserProps): Reac
         We&rsquo;re writing to let you know about a {sum.confirmed_or_suspected}{" "}
         security incident that may have affected your account. We discovered
         the incident on{" "}
-        <strong>{new Date(sum.discovered_at).toLocaleDateString()}</strong> and
+        <strong>{formatDate(sum.discovered_at)}</strong> and
         are sharing what we know now in line with the law&rsquo;s notification
         requirements.
       </p>

@@ -9,6 +9,7 @@
 // user_id prefix for staff-authored ones — same visual treatment either way.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 
 const STATUS_CHIP: Record<string, string> = {
   visible: "border-[var(--cruise-success)] text-[var(--cruise-success)]",
@@ -273,7 +274,7 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
                   <span className={`${BADGE} bg-[var(--cruise-bg)] text-[var(--cruise-text-muted)]`}>Locked</span>
                 )}
                 <span className="text-xs text-[var(--cruise-text-muted)]">
-                  {new Date(thread.created_at).toLocaleDateString()}
+                  {formatDate(thread.created_at)}
                 </span>
               </button>
             </li>

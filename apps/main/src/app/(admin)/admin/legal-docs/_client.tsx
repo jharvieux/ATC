@@ -3,6 +3,7 @@
 // §17.5 — Admin page for publishing new legal document versions.
 
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format-date";
 import { adminFetch } from "@/lib/admin-fetch";
 
 interface LegalDoc {
@@ -183,7 +184,7 @@ export default function AdminLegalDocsPage() {
                   <td className="border px-3 py-2">{TYPE_LABELS[doc.document_type] ?? doc.document_type}</td>
                   <td className="border px-3 py-2">v{doc.version}</td>
                   <td className="border px-3 py-2">
-                    {new Date(doc.effective_at).toLocaleDateString()}
+                    {formatDate(doc.effective_at)}
                   </td>
                   <td className="border px-3 py-2">
                     {doc.superseded_at ? (

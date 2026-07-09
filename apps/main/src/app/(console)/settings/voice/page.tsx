@@ -5,6 +5,7 @@
 // The extracted style card is shown as a summary the TA can override.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -132,7 +133,7 @@ export default function VoiceProfilePage(): React.JSX.Element {
           Your writing style
           {card?.extracted_at && (
             <span className="ml-2 font-normal normal-case">
-              — extracted {new Date(card.extracted_at).toLocaleDateString()}
+              — extracted {formatDate(card.extracted_at)}
             </span>
           )}
         </h2>
@@ -231,7 +232,7 @@ function SampleList({
         {samples.map((s) => (
           <li key={s.id} className="border border-border rounded-lg p-3 text-[12px]">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-muted-foreground">{s.source_label || "(no label)"} · {new Date(s.created_at).toLocaleDateString()}</span>
+              <span className="text-muted-foreground">{s.source_label || "(no label)"} · {formatDate(s.created_at)}</span>
               <button
                 type="button"
                 onClick={() => onDelete(s.id)}

@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { computeExpectedCommissionCents, validateLineItem, type ItemType } from "@/lib/line-items/validate";
+import { computeExpectedCommissionCents, validateLineItem, LINE_ITEM_STATUSES, type ItemType } from "@/lib/line-items/validate";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -20,7 +20,7 @@ const PatchSchema = z.object({
   commission_rate: z.number().min(0).max(1).nullable().optional(),
   received_commission_cents: z.number().int().nonnegative().optional(),
   currency: z.string().optional(),
-  status: z.enum(["planned", "booked", "confirmed", "cancelled", "completed"]).optional(),
+  status: z.enum(LINE_ITEM_STATUSES).optional(),
   cancellation_reason: z.string().nullable().optional(),
   item_details: z.record(z.unknown()).optional(),
   include_in_itinerary: z.boolean().optional(),

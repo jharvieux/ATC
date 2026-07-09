@@ -68,19 +68,9 @@ function isHostAllowed(url: string): { allowed: boolean; reason?: string } {
   return { allowed: true };
 }
 
-/**
- * Record a hot-linked deck plan image. Calls the RAG service to upsert
- * a rag_media_assets row.
- */
-export async function recordDeckPlanImage(input: RecordImageInput): Promise<RecordImageOutcome> {
-  const validation = isHostAllowed(input.imageUrl);
-  if (!validation.allowed) {
-    console.warn(`[cm-diy] image rejected: ${input.imageUrl} (${validation.reason})`);
-    const out: RecordImageOutcome = { status: "skipped" };
-    if (validation.reason) out.reason = validation.reason;
-    return out;
-  }
-
+// Shared by recordDeckPlanImage / recordCabinImage (#1610) — both upsert
+// via the same RAG endpoint, differing only in the payload they build.
+async function upsertMediaAsset(payload: Record<string, unknown>): Promise<RecordImageOutcome> {
   const ragUrl = process.env.RAG_SERVICE_URL;
   if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
 
@@ -94,22 +84,6 @@ export async function recordDeckPlanImage(input: RecordImageInput): Promise<Reco
   } catch (err) {
     return { status: "error", reason: `jwt_sign_failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-
-  const entityId = `${input.shipSlug}-deck-${String(input.deckNumber ?? "?").padStart(2, "0")}`;
-
-  const payload = {
-    kind: "deck_plan",
-    entity_type: "deck",
-    entity_id: entityId,
-    scope: "global",
-    image_url: input.imageUrl,
-    source_page_url: input.sourcePageUrl,
-    attribution: "Image: CruiseMapper",
-    caption: input.caption ?? null,
-    width_px: input.width ?? null,
-    height_px: input.height ?? null,
-    source: "cruisemapper.com",
-  };
 
   let res: Response;
   try {
@@ -134,6 +108,36 @@ export async function recordDeckPlanImage(input: RecordImageInput): Promise<Reco
   return assetId ? { status: "recorded", asset_id: assetId } : { status: "error", reason: "no_asset_id_returned" };
 }
 
+/**
+ * Record a hot-linked deck plan image. Calls the RAG service to upsert
+ * a rag_media_assets row.
+ */
+export async function recordDeckPlanImage(input: RecordImageInput): Promise<RecordImageOutcome> {
+  const validation = isHostAllowed(input.imageUrl);
+  if (!validation.allowed) {
+    console.warn(`[cm-diy] image rejected: ${input.imageUrl} (${validation.reason})`);
+    const out: RecordImageOutcome = { status: "skipped" };
+    if (validation.reason) out.reason = validation.reason;
+    return out;
+  }
+
+  const entityId = `${input.shipSlug}-deck-${String(input.deckNumber ?? "?").padStart(2, "0")}`;
+
+  return upsertMediaAsset({
+    kind: "deck_plan",
+    entity_type: "deck",
+    entity_id: entityId,
+    scope: "global",
+    image_url: input.imageUrl,
+    source_page_url: input.sourcePageUrl,
+    attribution: "Image: CruiseMapper",
+    caption: input.caption ?? null,
+    width_px: input.width ?? null,
+    height_px: input.height ?? null,
+    source: "cruisemapper.com",
+  });
+}
+
 export interface RecordCabinImageInput {
   imageUrl: string;
   sourcePageUrl: string;
@@ -153,26 +157,12 @@ export async function recordCabinImage(input: RecordCabinImageInput): Promise<Re
     return out;
   }
 
-  const ragUrl = process.env.RAG_SERVICE_URL;
-  if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
-
-  let jwt: string;
-  try {
-    jwt = await signServiceJwt({
-      tenant_id: PLATFORM_SENTINEL_TENANT_ID,
-      scope: "write",
-      service_identifier: "platform-admin",
-    });
-  } catch (err) {
-    return { status: "error", reason: `jwt_sign_failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
-
   // entity_id = <shipSlug>-cabin-<category-slug> so floor plan + photos for the
   // same category share an entity; the image_url column provides the per-image key.
   const categorySlug = input.categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const entityId = `${input.shipSlug}-cabin-${categorySlug}`;
 
-  const payload = {
+  return upsertMediaAsset({
     kind: input.imageType === "floor_plan" ? "cabin_plan" : "cabin_photo",
     entity_type: "cabin",
     entity_id: entityId,
@@ -184,28 +174,7 @@ export async function recordCabinImage(input: RecordCabinImageInput): Promise<Re
     width_px: null,
     height_px: null,
     source: "cruisemapper.com",
-  };
-
-  let res: Response;
-  try {
-    res = await fetch(`${ragUrl}/api/admin/media-assets/upsert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(20_000),
-    });
-  } catch (err) {
-    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
-  }
-
-  let json: Record<string, unknown> = {};
-  try { json = (await res.json()) as Record<string, unknown>; } catch { /* tolerate */ }
-
-  if (!res.ok) {
-    return { status: "error", reason: typeof json.error === "string" ? json.error : `HTTP ${res.status}` };
-  }
-  const assetId = typeof json.asset_id === "string" ? json.asset_id : undefined;
-  return assetId ? { status: "recorded", asset_id: assetId } : { status: "error", reason: "no_asset_id_returned" };
+  });
 }
 
 // Test-only export.

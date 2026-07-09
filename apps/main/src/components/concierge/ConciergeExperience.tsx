@@ -11,6 +11,7 @@
 // ChatExperience; this component only controls layout, agent selection, and theme.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
@@ -133,7 +134,7 @@ function ConvGroup({
                 }}
               >
                 {c.message_count ?? 0} msgs ·{" "}
-                {c.last_message_at ? new Date(c.last_message_at).toLocaleDateString() : "—"}
+                {c.last_message_at ? formatDate(c.last_message_at) : "—"}
               </div>
             </div>
           </button>

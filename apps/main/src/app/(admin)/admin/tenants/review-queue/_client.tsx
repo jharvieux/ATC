@@ -4,6 +4,7 @@
 // Visible only to platform_compliance and platform_super_admin roles.
 
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format-date";
 import { adminFetch } from "@/lib/admin-fetch";
 
 type TenantSummary = {
@@ -82,7 +83,7 @@ export default function ReviewQueuePage() {
           <div key={t.id} className="border rounded p-4 flex items-center justify-between">
             <div>
               <p className="font-medium">{t.display_name}</p>
-              <p className="text-xs text-gray-500">{t.legal_name} · {t.slug} · {t.state_of_operation ?? "—"} · Submitted {new Date(t.created_at).toLocaleDateString()}</p>
+              <p className="text-xs text-gray-500">{t.legal_name} · {t.slug} · {t.state_of_operation ?? "—"} · Submitted {formatDate(t.created_at)}</p>
             </div>
             <button
               onClick={() => { setSelected(t); setAction(null); setReason(""); }}

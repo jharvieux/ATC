@@ -3,6 +3,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatDate } from "@/lib/format-date";
 import { MessageSources, type MessageCitation } from "./MessageSources";
 import { renderMessageContent, type DisplayAsset } from "./renderMessageContent";
 
@@ -29,7 +30,7 @@ function relativeTime(iso: string | undefined): string {
   if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatDate(iso);
 }
 
 export function MessageBubble({

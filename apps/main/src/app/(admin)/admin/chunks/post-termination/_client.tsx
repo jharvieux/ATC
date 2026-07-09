@@ -5,6 +5,7 @@
 // Three actions: retain, demote (tenant-scoped → purged after 90d), hard-delete.
 
 import { useState, useEffect, useCallback } from "react";
+import { formatDate } from "@/lib/format-date";
 import { adminFetch } from "@/lib/admin-fetch";
 
 interface Chunk {
@@ -102,7 +103,7 @@ export default function PostTerminationReviewPage() {
                       Tenant: {chunk.terminated_origin_tenant_id ?? chunk.tenant_id ?? "unknown"}
                     </span>
                     <span className="text-xs text-gray-400">
-                      · {new Date(chunk.created_at).toLocaleDateString()}
+                      · {formatDate(chunk.created_at)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-800 line-clamp-3 mb-1">{chunk.content}</p>

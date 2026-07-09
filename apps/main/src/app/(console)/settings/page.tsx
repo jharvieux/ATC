@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
+import { formatDate } from "@/lib/format-date";
 import {
   Users,
   Bot,
@@ -59,24 +60,11 @@ interface DashboardData {
 const MONO = "var(--font-geist-mono, monospace)";
 
 function formatLongDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    });
-  } catch {
-    return "";
-  }
+  return formatDate(iso, "long");
 }
 
 function formatShortDate(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "—";
-  }
+  return formatDate(iso, "short");
 }
 
 function relativeTime(iso: string): string {
@@ -90,7 +78,7 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return formatDate(iso, "short");
 }
 
 export default function ConsoleHomePage(): JSX.Element {

@@ -5,6 +5,7 @@
 // (required because useSearchParams opts into dynamic rendering in Next.js 14).
 
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format-date";
 import { useRouter, useSearchParams } from "next/navigation";
 
 interface MessagePreview {
@@ -82,10 +83,10 @@ export function TransferConsentClient() {
   if (!preview) return null;
 
   const fromDate = preview.time_span
-    ? new Date(preview.time_span.from).toLocaleDateString()
+    ? formatDate(preview.time_span.from)
     : null;
   const toDate = preview.time_span
-    ? new Date(preview.time_span.to).toLocaleDateString()
+    ? formatDate(preview.time_span.to)
     : null;
 
   return (

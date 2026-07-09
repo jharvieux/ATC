@@ -3,6 +3,7 @@
 // §7.6 — Tenant CRM bookings list.
 
 import Link from "next/link";
+import { formatDate } from "@/lib/format-date";
 import { useEffect, useState } from "react";
 
 interface Contact {
@@ -205,7 +206,7 @@ export function BookingsView() {
                     </span>
                   </td>
                   <td className="px-4 py-2 text-gray-500 text-xs">
-                    {new Date(b.updated_at).toLocaleDateString()}
+                    {formatDate(b.updated_at)}
                   </td>
                 </tr>
               ))

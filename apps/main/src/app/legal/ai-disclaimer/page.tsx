@@ -3,6 +3,7 @@
 // Includes state-specific appendix sections.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { formatDate } from "@/lib/format-date";
 
 async function getCurrentAiDisclaimer() {
   const db = createServiceRoleClient();
@@ -32,7 +33,7 @@ export default async function AiDisclaimerPage() {
   return (
     <div className="max-w-3xl mx-auto py-10 px-4">
       <p className="text-sm text-gray-400 mb-4">
-        Version {doc.version} · Effective {new Date(doc.effective_at).toLocaleDateString()}
+        Version {doc.version} · Effective {formatDate(doc.effective_at)}
       </p>
       <div className="prose max-w-none whitespace-pre-wrap text-sm text-gray-800">
         {doc.content_markdown}
