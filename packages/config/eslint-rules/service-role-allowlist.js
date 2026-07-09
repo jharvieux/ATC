@@ -385,6 +385,9 @@ module.exports = [
   // §7.9 — request_idempotency purge cron: background Inngest job, no
   // user session.
   "/inngest/request-idempotency-purge.ts",
+  // #1590 — cross-tenant retention/pruning cron for fast-growing log/event
+  // tables: background Inngest job, no user session.
+  "/inngest/data-retention-purge.ts",
   // §38.8.1 / §39.5 — Token-gated public chat for quote view + trip
   // itinerary. Auth is the URL token; no user session. Resolves tenant
   // from the token's resource via service_role lookup, then runs the AI
