@@ -177,7 +177,7 @@ export async function sendGroupInvitationEmail(args: {
   // never duplicate the winner's email.
   const claimRows = await safeAwait(
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted by the caller.
-    args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).is("last_email_sent_at", null).select("id"),
+    args.svc.from("invitations").update({ last_email_sent_at: new Date().toISOString() }).eq("id", args.invitationId).is("last_email_sent_at", null).select("id"),
     "invitations.update.last_email_sent_at.claim",
   );
   if (!claimRows || (claimRows as unknown[]).length === 0) {

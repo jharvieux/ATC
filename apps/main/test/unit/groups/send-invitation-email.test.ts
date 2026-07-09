@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   brandingMaybeSingle: vi.fn(),
   allInvitations: vi.fn(),
   updateEq: vi.fn(),
+  updateFilterEq: vi.fn(),
   claimResult: vi.fn(),
   revertResult: vi.fn(),
   emailLogInsert: vi.fn(),
@@ -62,7 +63,7 @@ vi.mock("@/emails/GroupInvitation", () => ({
   GroupInvitation: () => null,
 }));
 
-function buildSvc() {
+function buildSvc(targetId = "inv-1") {
   return {
     from: (table: string) => {
       if (table === "invitations") {
@@ -75,11 +76,26 @@ function buildSvc() {
           }),
           update: (payload: unknown) => {
             mocks.updateEq(payload);
+            // Both the claim CAS and the revert filter by .eq("id", ...) FIRST
+            // (#1654 — a dropped id filter mass-stamps every unstamped invitation
+            // across all tenants). The update-return exposes ONLY `.eq`, so a claim
+            // chain that skips the id filter (`.update(...).is(...)`) throws here and
+            // fails the test; and the claim resolves rows only when the id filter
+            // equals the invitation under test.
             return {
-              // revert path: .update({ last_email_sent_at: null }).eq("id", ...)
-              eq: () => Promise.resolve(mocks.revertResult()),
-              // claim CAS path: .update({...}).is("last_email_sent_at", null).select("id")
-              is: () => ({ select: () => Promise.resolve(mocks.claimResult()) }),
+              eq: (col: string, id: string) => {
+                mocks.updateFilterEq(col, id);
+                const scoped = col === "id" && id === targetId;
+                return {
+                  // revert path: .update({ last_email_sent_at: null }).eq("id", id)
+                  then: (r: (v: unknown) => unknown) => Promise.resolve(mocks.revertResult()).then(r),
+                  // claim CAS path: .eq("id", id).is("last_email_sent_at", null).select("id")
+                  is: () => ({
+                    select: () =>
+                      Promise.resolve(scoped ? mocks.claimResult() : { data: [], error: null }),
+                  }),
+                };
+              },
             };
           },
         };
@@ -188,6 +204,41 @@ describe("sendGroupInvitationEmail — claim-before-send stamping (#1584 / #1716
     });
 
     expect(lastUpdatePayload()).toEqual({ last_email_sent_at: null });
+  });
+
+  it("scopes the claim CAS to exactly the target invitation id (no cross-tenant mass-stamp) (#1654)", async () => {
+    mocks.sendEmail.mockResolvedValue({ status: "sent", resend_message_id: "m-1" });
+
+    await sendGroupInvitationEmail({
+      svc: buildSvc() as never,
+      invitationId: "inv-1",
+      group: GROUP,
+      tenantId: "t-1",
+    });
+
+    // The claim UPDATE must be filtered by the exact invitation id. Dropping this
+    // .eq("id", ...) stamps last_email_sent_at on every unstamped invitation row
+    // across all tenants on every send (#1654).
+    expect(mocks.updateFilterEq).toHaveBeenCalledWith("id", "inv-1");
+    // A send WAS attempted — the claim resolved a row because it was scoped to inv-1.
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats the claim as lost when it is NOT scoped to the target invitation — send is skipped", async () => {
+    // The mock resolves a claimed row only when .eq("id", ...) matches the target.
+    // Point the svc at a different id: the source's .eq("id","inv-1") then matches
+    // no row, proving the CAS is genuinely id-scoped (a dropped/wrong filter would
+    // otherwise let the send proceed against the wrong rows).
+    mocks.sendEmail.mockResolvedValue({ status: "sent", resend_message_id: "m-1" });
+
+    await sendGroupInvitationEmail({
+      svc: buildSvc("some-other-invitation") as never,
+      invitationId: "inv-1",
+      group: GROUP,
+      tenantId: "t-1",
+    });
+
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
   it("skips the send when the claim is lost (zero rows) — a concurrent send/cadence already stamped", async () => {

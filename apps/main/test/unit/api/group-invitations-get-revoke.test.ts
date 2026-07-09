@@ -102,11 +102,26 @@ vi.mock("@/lib/db/service-role-client", () => ({
             select: () => mocks.inviteInsertQuery(data),
           }),
           update: () => ({
-            // claim CAS inside sendGroupInvitationEmail — .is("last_email_sent_at", null).select("id")
-            is: () => ({ select: () => mocks.inviteClaimQuery() }),
-            eq: () => ({
+            // Every update path filters by .eq(...) FIRST (#1654 — a dropped id
+            // filter mass-stamps every unstamped invitation across all tenants).
+            // The update-return exposes ONLY `.eq`, so a claim chain that skips the
+            // id filter throws here; and the claim resolves rows only when scoped
+            // to the target invitation id.
+            eq: (col: string, id: string) => ({
               // revoke action — .eq("id").eq("group_id").is("token_revoked_at", null)
               eq: () => ({ is: () => mocks.updateQuery() }),
+              // claim CAS inside sendGroupInvitationEmail —
+              //   .eq("id", id).is("last_email_sent_at", null).select("id")
+              // The route mints invId via crypto.randomUUID(), so scope on the
+              // filter COLUMN being the invitation id (dropping .eq("id", …)
+              // resolves no row); the exact-id assertion lives in the deterministic
+              // send-invitation-email.test.ts.
+              is: () => ({
+                select: () =>
+                  col === "id"
+                    ? mocks.inviteClaimQuery()
+                    : Promise.resolve({ data: [], error: null }),
+              }),
               // claim revert inside sendGroupInvitationEmail — .eq("id") awaited directly
               then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
             }),
