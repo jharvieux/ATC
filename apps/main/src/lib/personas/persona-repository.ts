@@ -27,7 +27,10 @@ export type LoadedSafety = { editable_block: string; version: number };
 
 const TTL_MS = 60_000;
 
-const personaCache = new BoundedTtlCache<string, LoadedPersona>({ defaultTtlMs: TTL_MS });
+// #1678 — personas table is GLOBAL (no tenant_id, platform-managed), so slug
+// cardinality stays in the dozens, not the thousands; 64 gives headroom over
+// today's count while documenting the bound is a deliberate choice.
+const personaCache = new BoundedTtlCache<string, LoadedPersona>({ defaultTtlMs: TTL_MS, maxEntries: 64 });
 // Singleton value — stored under one fixed key so it shares the same bounded-cache implementation.
 const SAFETY_KEY = "default";
 const safetyCache = new BoundedTtlCache<string, LoadedSafety>({ defaultTtlMs: TTL_MS, maxEntries: 1 });

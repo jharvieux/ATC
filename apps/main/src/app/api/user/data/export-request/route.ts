@@ -29,8 +29,11 @@ export async function POST(req: Request): Promise<Response> {
 
   const db = createServiceRoleClient();
 
-  // Rate limit: 1 export per 30 days.
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Rate limit: 1 export per 30 days (rolling). This SELECT is the exact
+  // enforcement; the unique index on (auth_user_id, window_bucket) is the
+  // DB-level backstop against the concurrent double-submit race (#1705).
+  const WINDOW_SECONDS = 30 * 24 * 60 * 60;
+  const thirtyDaysAgo = new Date(Date.now() - WINDOW_SECONDS * 1000).toISOString();
   const { data: existing } = await db
     .from("user_data_export_requests")
     .select("id, requested_at")
@@ -45,12 +48,24 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // Insert the export request row.
+  // Insert the export request row. window_bucket collides for two concurrent
+  // requests (same instant → same bucket) so exactly one insert wins; the
+  // loser hits the unique constraint (23505) and is rate-limited (#1705).
+  const windowBucket = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
   const { data: row, error: insertErr } = await db
     .from("user_data_export_requests")
-    .insert({ auth_user_id: authUserId })
+    .insert({ auth_user_id: authUserId, window_bucket: windowBucket })
     .select("id")
     .single();
+
+  if (insertErr && (insertErr as { code?: string }).code === "23505") {
+    // Lost the concurrent-insert race against a sibling request in the same
+    // window — treat identically to the app-layer rate-limit hit above.
+    return Response.json(
+      { error: "rate_limited", message: "Only 1 export request per 30 days." },
+      { status: 429 },
+    );
+  }
 
   if (insertErr || !row) {
     // #1591 — a null `row` with a null `insertErr` (insert reported success but

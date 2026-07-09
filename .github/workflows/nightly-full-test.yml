@@ -91,9 +91,13 @@ jobs:
       - name: Run full vitest suite
         id: vitest
         # JSON reporter writes per-test results we parse for failure detail.
-        # exit 0 so this step doesn't short-circuit the workflow before the
-        # issue-open step runs — we'd rather report a failure than silently
-        # red-X the workflow without an issue.
+        # `default` runs alongside it so a beforeAll/afterAll (hook) throw —
+        # which blanks the ENTIRE JSON report to testResults: [] even when
+        # other files in the run passed — still lands the failing file/suite
+        # in the console log (#1738). exit 0 so this step doesn't
+        # short-circuit the workflow before the issue-open step runs — we'd
+        # rather report a failure than silently red-X the workflow without
+        # an issue.
         #
         # --no-file-parallelism: the DB-backed suites share one Supabase project
         # and some inngest probes run global crons (billing-period-rollover,
@@ -102,7 +106,7 @@ jobs:
         # execution isolates them. Acceptable cost for a nightly.
         run: |
           set +e
-          pnpm vitest run --reporter=json --outputFile=vitest-report.json --no-file-parallelism
+          pnpm vitest run --reporter=default --reporter=json --outputFile=vitest-report.json --no-file-parallelism
           STATUS=$?
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0

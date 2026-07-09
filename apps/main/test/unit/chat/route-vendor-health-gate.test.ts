@@ -1,17 +1,16 @@
-// #850 — On an ANONYMOUS chat turn, the route must pass `user_id: null` (NOT the
-// anon session id) into retrieveForChat. ai_call_log.user_id has an FK to
-// users(id), and entity extraction writes that row mid-retrieval via
-// instrumentedClaudeCall. The pre-fix code passed `userId ?? anonSessionId ??
-// "anonymous"`, so every anonymous turn FK-violated the ai_call_log insert →
-// extraction threw → empty entities → the concierge ignored ship+date itinerary
-// data. This test fails if that conflation is ever reintroduced.
+// §26.9 — vendor-health gate at the chat route. When resolveVendorHealthStatus
+// reports Anthropic "down", the route must surface the fallback message and
+// never dispatch the AI call — this test pins that contract at the route
+// level (unit tests on the registry/gate helpers don't exercise the route).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
+// The route checks ANTHROPIC_API_KEY before the vendor-health gate; without
+// it the route short-circuits on a different error before reaching §26.9.
+process.env.ANTHROPIC_API_KEY = "test-key";
+
 vi.mock("@/lib/env", () => ({ verifyEnvAtBoot: vi.fn() }));
-// Self-contained fluent service-role mock: every builder method chains, and the
-// terminal reads resolve enough for handleChat to reach retrieveForChat.
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => {
     const b: Record<string, unknown> = {};
@@ -36,7 +35,7 @@ vi.mock("@/lib/ai/stream-wrapper", () => ({ instrumentedClaudeStream: vi.fn() })
 vi.mock("@/lib/ai/sentence-buffer", () => ({ bufferToSentences: vi.fn() }));
 vi.mock("@/lib/supervisor/per-sentence-check", () => ({ checkSentence: vi.fn() }));
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/lib/vendor-health/registry", () => ({ resolveVendorHealthStatus: vi.fn().mockResolvedValue("healthy") }));
+vi.mock("@/lib/vendor-health/registry", () => ({ resolveVendorHealthStatus: vi.fn().mockResolvedValue("down") }));
 vi.mock("@/lib/chat/anon-session-cookie", () => ({
   ANON_SESSION_COOKIE: "_atc_anon",
   buildAnonCookieHeader: vi.fn(),
@@ -57,7 +56,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({ loadTenantSnapshot: vi.fn(), evictTenan
 vi.mock("@/lib/abuse/counters", () => ({ incrementChatMessages: vi.fn() }));
 vi.mock("@/lib/supervisor/run-supervisor", () => ({ runSupervisor: vi.fn(), HATE_SPEECH_REGEN_INSTRUCTION: "" }));
 vi.mock("@/lib/chat/customer-tone-override", () => ({ detectToneOverride: vi.fn(), applyToneOverride: vi.fn() }));
-vi.mock("@/lib/chat/tone-resolution", () => ({ resolveToneLevel: vi.fn() }));
+vi.mock("@/lib/chat/tone-resolution", () => ({ resolveToneLevel: vi.fn().mockReturnValue({ level: 3 }) }));
 vi.mock("@/lib/chat/fingerprint", () => ({ deriveFingerprint: vi.fn(), extractClientIp: vi.fn() }));
 vi.mock("@/lib/db/safe-mutation", () => ({ safeAwait: vi.fn() }));
 
@@ -69,6 +68,8 @@ import { detectBugIntent } from "@/lib/help-ai/bug-intent-recognizer";
 import { resolveActivePersonaSlug } from "@/lib/personas/resolve-active-persona-slug";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 
 const EMPTY_ENTITIES = {
   destinations: [], departure_ports: [], cruise_lines: [], ships: [],
@@ -78,20 +79,17 @@ const EMPTY_ENTITIES = {
 
 const ANON_SESSION_ID = "anon-sess-00000000-0000-0000-0000-000000000000";
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  vi.mocked(verifyAnonSession).mockResolvedValue(null);
-  vi.mocked(freshAnonSession).mockResolvedValue({ id: ANON_SESSION_ID, cookieValue: "cv" });
-  vi.mocked(buildAnonCookieHeader).mockReturnValue("_atc_anon=cv");
-  vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
-  vi.mocked(detectBugIntent).mockResolvedValue({ triggered: false } as never);
-  vi.mocked(loadConversationHistory).mockResolvedValue([] as never);
-  vi.mocked(resolveActivePersonaSlug).mockResolvedValue("marcus-cole");
-  vi.mocked(buildSystemPrompt).mockResolvedValue({ prompt: "system", citations: [] } as never);
-  vi.mocked(retrieveForChat).mockResolvedValue({
-    knowledge_block: "", citations: [], retrieved_chunk_ids: [],
-    entities: EMPTY_ENTITIES, retrieval_id: null, retrieval_latency_ms: null, assets: [],
-  });
+vi.mocked(verifyAnonSession).mockResolvedValue(null);
+vi.mocked(freshAnonSession).mockResolvedValue({ id: ANON_SESSION_ID, cookieValue: "cv" });
+vi.mocked(buildAnonCookieHeader).mockReturnValue("_atc_anon=cv");
+vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
+vi.mocked(detectBugIntent).mockResolvedValue({ triggered: false } as never);
+vi.mocked(loadConversationHistory).mockResolvedValue([] as never);
+vi.mocked(resolveActivePersonaSlug).mockResolvedValue("marcus-cole");
+vi.mocked(buildSystemPrompt).mockResolvedValue({ prompt: "system", citations: [] } as never);
+vi.mocked(retrieveForChat).mockResolvedValue({
+  knowledge_block: "", citations: [], retrieved_chunk_ids: [],
+  entities: EMPTY_ENTITIES, retrieval_id: null, retrieval_latency_ms: null, assets: [],
 });
 
 function anonReq(message: string): Request {
@@ -102,19 +100,17 @@ function anonReq(message: string): Request {
   });
 }
 
-describe("POST /api/chat — anonymous user_id attribution (#850)", () => {
-  it("passes user_id=null into retrieveForChat for an anonymous turn (never the anon session id)", async () => {
-    const res = await POST(anonReq("What is the itinerary for the Norwegian Bliss on 10/3/26?"));
+async function readSse(res: Response): Promise<string> {
+  return await new Response(res.body).text();
+}
+
+describe("POST /api/chat — §26.9 vendor-health gate (down)", () => {
+  it("surfaces the vendor-down fallback and never dispatches the AI call", async () => {
+    const res = await POST(anonReq("What is the itinerary for the Norwegian Bliss?"));
     expect(res.status).toBe(200);
-
-    // handleChat runs detached from the Response; wait for it to reach retrieval.
-    await vi.waitFor(() => expect(retrieveForChat).toHaveBeenCalled());
-
-    const arg = vi.mocked(retrieveForChat).mock.calls[0]![0];
-    // The FK-safe contract: real users.id or null — and for anon it's null.
-    expect(arg.user_id).toBeNull();
-    // Explicit regression guard against `userId ?? anonSessionId ?? "anonymous"`.
-    expect(arg.user_id).not.toBe(ANON_SESSION_ID);
-    expect(arg.user_id).not.toBe("anonymous");
+    const body = await readSse(res);
+    expect(body).toContain("Our AI is temporarily unavailable");
+    expect(instrumentedClaudeCall).not.toHaveBeenCalled();
+    expect(instrumentedClaudeStream).not.toHaveBeenCalled();
   });
 });

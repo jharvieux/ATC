@@ -93,6 +93,19 @@ export function makeBatchDb(tables: Record<string, InMemoryTable>) {
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return chain;
       },
+      // .not(col, "is", null) → col IS NOT NULL (the only form we use).
+      not(col: string, op: string, val: unknown) {
+        if (op === "is" && val === null) {
+          filters.push((r) => r[col] !== null && r[col] !== undefined);
+        } else {
+          filters.push((r) => r[col] !== val);
+        }
+        return chain;
+      },
+      lt(col: string, val: unknown) {
+        filters.push((r) => String(r[col] ?? "") < String(val));
+        return chain;
+      },
       order(col: string, opts?: { ascending: boolean }) {
         orderCol = col;
         orderAsc = opts?.ascending ?? true;
@@ -103,6 +116,11 @@ export function makeBatchDb(tables: Record<string, InMemoryTable>) {
         return chain;
       },
       async single() {
+        const r = resolveResult();
+        const arr = Array.isArray(r.data) ? r.data : r.data ? [r.data] : [];
+        return { data: arr[0] ?? null, error: null };
+      },
+      async maybeSingle() {
         const r = resolveResult();
         const arr = Array.isArray(r.data) ? r.data : r.data ? [r.data] : [];
         return { data: arr[0] ?? null, error: null };

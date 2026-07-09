@@ -4,6 +4,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { reconcileSubmittedBatches } from "@/lib/ai/batch/reconcile";
+import { adoptStrandedBatches } from "@/lib/ai/batch/adopt";
 
 export const aiBatchReconcile = inngest.createFunction(
   {
@@ -17,7 +18,10 @@ export const aiBatchReconcile = inngest.createFunction(
   },
   async () => {
     const db = createServiceRoleClient();
+    // #1696 — recover rows stranded by a crash between submit and job-link
+    // FIRST, so any job this creates gets polled by the same reconcile pass.
+    const adopted = await adoptStrandedBatches({ db });
     const result = await reconcileSubmittedBatches({ db });
-    return result;
+    return { ...result, adopted };
   },
 );
