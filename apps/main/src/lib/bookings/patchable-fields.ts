@@ -1,7 +1,12 @@
 // §7.6 / §14.4 — Allowed PATCH fields per booking status.
 //
 // Direct field edits are only safe in draft and pending_host_review (host
-// rejected auto-submission; agent fixes trip details and resubmits).
+// rejected auto-submission; agent fixes trip details, then returns the booking
+// to draft via POST /api/bookings/[id]/resolve-review — the wired
+// pending_host_review→draft transition, #1764 — and re-runs submit). PATCH
+// itself never changes status; the resolve-review route owns that transition and
+// refuses reasons where a live host booking may exist (see
+// lib/bookings/state-machine.ts).
 // submitting holds a lock held by the submit flow; submitted / confirmed must
 // go through the modify flow so the host adapter stays in sync;
 // cancelled / failed are terminal. Internal platform-managed fields (status,
