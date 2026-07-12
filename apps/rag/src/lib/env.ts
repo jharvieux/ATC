@@ -120,10 +120,3 @@ export function verifyEnvAtBoot(): Env {
   _env = result.data;
   return _env;
 }
-
-export function env(): Env {
-  if (!_env) {
-    throw new Error("env() called before verifyEnvAtBoot()");
-  }
-  return _env;
-}

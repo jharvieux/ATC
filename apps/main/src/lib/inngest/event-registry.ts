@@ -156,7 +156,3 @@ export function validateInngestEvent(
     throw new EventPayloadInvalidError(name, issues);
   }
 }
-
-export function isPlatformAdminEvent(name: string): boolean {
-  return EVENT_REGISTRY[name]?.kind === "platform_admin";
-}

@@ -150,9 +150,3 @@ export const preCruiseEmailSchedulerMultiphase = inngest.createFunction(
   { id: "pre-cruise-email-scheduler-multiphase", triggers: [{ cron: "0 9 * * *" }] },
   async () => scanAndEmit({ via: "batched", phases: MULTIPHASE, windowHours: 12 }),
 );
-
-// Backward-compat alias for the legacy export name. The Inngest registry
-// (route.ts) registers the two new functions instead; this stays so any
-// in-flight imports keep typechecking. Delete once we've verified no
-// stale references in CI.
-export const preCruiseEmailScheduler = preCruiseEmailSchedulerT1;

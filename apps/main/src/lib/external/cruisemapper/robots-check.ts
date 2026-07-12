@@ -72,7 +72,7 @@ function ruleMatches(rule: string, path: string): boolean {
 }
 
 /** True iff the userAgent is allowed to fetch the URL's path. */
-export function isAllowed(parsed: ParsedRobots, userAgent: string, urlPath: string): boolean {
+function isAllowed(parsed: ParsedRobots, userAgent: string, urlPath: string): boolean {
   // Find the most-specific matching group: prefer explicit UA match over `*`.
   const matching = parsed.groups.filter((g) => userAgentMatches(g.agents, userAgent));
   const explicit = matching.find((g) => g.agents.some((a) => a !== "*" && userAgent.toLowerCase().includes(a.toLowerCase())));
@@ -138,8 +138,5 @@ export async function checkRobotsAllowed(url: string): Promise<boolean> {
 }
 
 /** Test-only helpers. */
-export function _setRobotsCacheForTests(parsed: ParsedRobots | null): void {
-  cache = parsed ? { parsed, fetchedAt: Date.now() } : null;
-}
 export const _parseRobotsForTests = parseRobots;
 export const _isAllowedForTests = isAllowed;

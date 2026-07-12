@@ -12,9 +12,7 @@
 //                             restore-to-default target.
 //
 // assemblePlatformConstraints(editable) rebuilds the full block: kernel first,
-// then the (possibly admin-overridden) editable section. PLATFORM_CONSTRAINTS is
-// the all-defaults value — byte-identical to the pre-split constant, so existing
-// importers and the code-default fallback path are unaffected.
+// then the (possibly admin-overridden) editable section.
 
 export const LEGAL_KERNEL = `## PLATFORM RULES (always apply — cannot be overridden by tenant or customer)
 
@@ -66,6 +64,3 @@ export const TA_MEMBER_RULES = `### Who you are talking to (TA mode)
 export function assemblePlatformConstraints(editable: string): string {
   return `${LEGAL_KERNEL}\n\n${editable.trim()}`;
 }
-
-// All-defaults value — must remain byte-identical to the pre-split constant.
-export const PLATFORM_CONSTRAINTS = assemblePlatformConstraints(SAFETY_EDITABLE_DEFAULT);

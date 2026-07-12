@@ -20,7 +20,7 @@ import { createHmac } from "node:crypto";
 
 // Must match scripts/local-postgrest.conf jwt-secret. Rotating this
 // requires updating both files in lockstep.
-export const TEST_JWT_SECRET =
+const TEST_JWT_SECRET =
   "atc-local-test-only-ef23d2c129cb73c8-not-for-production";
 
 function base64url(input: string | Buffer): string {

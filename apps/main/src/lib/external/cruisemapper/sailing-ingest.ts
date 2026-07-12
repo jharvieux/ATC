@@ -95,7 +95,7 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
 // CRUISEMAPPER_DETAIL_FETCH_ENABLED; when off, list items map with no ports
 // exactly as before (the gate defaults closed — this is a scraping-volume op).
 
-export function sailingDetailUrl(dataRowId: string): string {
+function sailingDetailUrl(dataRowId: string): string {
   const base = (process.env.CRUISEMAPPER_DIY_BASE_URL ?? "https://www.cruisemapper.com").replace(/\/$/, "");
   return `${base}/ships/cruise.json?id=${encodeURIComponent(dataRowId)}`;
 }

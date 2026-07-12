@@ -25,7 +25,7 @@ export interface AdminNavSection {
   requiredRoles?: PlatformAdminRole[];
 }
 
-export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
+const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
   {
     heading: "Tenants & Access",
     items: [

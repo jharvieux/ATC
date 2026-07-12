@@ -5,20 +5,10 @@
 // the response writer should clear the cookie after a successful touch
 // write so a stale UTM doesn't get attached to a future identification.
 
-import type { NextRequest, NextResponse } from "next/server";
+import type { NextResponse } from "next/server";
 import type { AttributionPendingCookie } from "./types";
 
 export const ATTRIBUTION_PENDING_COOKIE = "atc_attribution_pending";
-
-export function readPendingAttribution(req: NextRequest): AttributionPendingCookie | null {
-  const raw = req.cookies.get(ATTRIBUTION_PENDING_COOKIE)?.value;
-  if (!raw) return null;
-  try {
-    return JSON.parse(decodeURIComponent(raw)) as AttributionPendingCookie;
-  } catch {
-    return null;
-  }
-}
 
 // Server actions / route handlers — also support standard Request cookies.
 export function readPendingAttributionFromHeader(cookieHeader: string | null): AttributionPendingCookie | null {

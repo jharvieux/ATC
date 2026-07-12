@@ -65,7 +65,7 @@ const REGION_TOKENS = [
   "Asia", "Antarctica", "Greek Isles", "Bermuda", "Canada", "New England",
 ];
 
-export function collapse(s: string): string {
+function collapse(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
@@ -97,7 +97,7 @@ export interface ClassifiedItineraryRow {
 
 // "01 Jun 10:00 - 18:00" → { day:1, monthIdx:5, times:["10:00","18:00"] }
 // "02 Jun" → { day:2, monthIdx:5, times:[] }
-export function parseDateCell(raw: string): { day: number; monthIdx: number; times: string[] } | null {
+function parseDateCell(raw: string): { day: number; monthIdx: number; times: string[] } | null {
   const m = /^\s*(\d{1,2})\s+([A-Za-z]{3,})\s*(.*)$/.exec(collapse(raw));
   if (!m) return null;
   const day = parseInt(m[1] ?? "", 10);

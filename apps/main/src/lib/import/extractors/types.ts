@@ -82,8 +82,3 @@ export type ExtractedByType =
   | { type: "commission_statement"; result: ExtractionResult<CommissionStatementFields> }
   | { type: "intake_form"; result: ExtractionResult<IntakeFormFields> }
   | { type: "unknown"; result: ExtractionResult<Record<string, never>> };
-
-/** True if the document type has an extractor wired (everything except `unknown`). */
-export function isExtractableType(t: DocumentType): t is Exclude<DocumentType, "unknown"> {
-  return t !== "unknown";
-}

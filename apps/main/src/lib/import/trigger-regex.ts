@@ -13,7 +13,7 @@
 // before persona response logic (§9). Result is logged on the message
 // row for debuggability.
 
-export const IMPORT_TRIGGER = /^\s*IMPORT\b/i;
+const IMPORT_TRIGGER = /^\s*IMPORT\b/i;
 
 /**
  * Returns true iff the message qualifies for inbound-import parsing.

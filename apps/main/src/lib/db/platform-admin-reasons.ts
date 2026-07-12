@@ -9,7 +9,7 @@
 // predictable. Free-text reasons drift (three spellings for one operation);
 // the enum eliminates that. New reasons require a PR + reviewer.
 
-export const PLATFORM_ADMIN_REASONS = [
+const PLATFORM_ADMIN_REASONS = [
   // Tenant lifecycle
   "tenant_listing_for_admin_dashboard",
   "tenant_detail_lookup",

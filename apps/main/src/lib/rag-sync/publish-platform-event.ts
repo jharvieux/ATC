@@ -133,12 +133,3 @@ export async function publishPlatformEvent(event: PlatformEvent): Promise<void> 
 
   await queuePendingPlatformSync(toPublish, lastError);
 }
-
-// Helper: compute the source_revision for a platform_settings change. Uses
-// the highest updated_at across the changed rows so receivers can compare
-// numerically. Caller passes the updated rows it just read back from the
-// database (the auto-updated_at trigger guarantees a fresh value).
-export function sourceRevisionFromUpdatedAt(updatedAt: string | Date): number {
-  const d = typeof updatedAt === "string" ? new Date(updatedAt) : updatedAt;
-  return Math.floor(d.getTime() / 1000);
-}

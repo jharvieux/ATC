@@ -59,8 +59,3 @@ export async function getInstallationToken(): Promise<string> {
   };
   return _cached.token;
 }
-
-/** Test helper — clears the cache so a unit test can force a re-mint. */
-export function _resetInstallationTokenCacheForTests(): void {
-  _cached = null;
-}
