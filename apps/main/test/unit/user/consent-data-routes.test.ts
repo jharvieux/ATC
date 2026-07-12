@@ -18,7 +18,6 @@ import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 const h = vi.hoisted(() => ({
   authed: null as { authUserId: string; email: string | null } | null,
   eqCalls: [] as Array<[string, unknown]>,
-  gteCalls: [] as Array<[string, unknown]>,
   inserted: [] as unknown[],
   existingExport: [] as Array<{ id: string; requested_at: string }>,
   insertError: null as { code: string } | null,
@@ -102,7 +101,6 @@ vi.mock("@/lib/db/service-role-client", () => ({
           return c;
         },
         gte: (col: string, val: string) => {
-          h.gteCalls.push([col, val]);
           gteThreshold = val;
           return c;
         },
@@ -124,7 +122,6 @@ beforeEach(() => {
   vi.resetModules();
   h.authed = null;
   h.eqCalls = [];
-  h.gteCalls = [];
   h.inserted = [];
   h.existingExport = [];
   h.insertError = null;
@@ -197,7 +194,7 @@ describe("data/export-request — auth + isolation (#1591)", () => {
 
   it("returns 429 when the user already requested an export in the window", async () => {
     h.authed = { authUserId: "user-xyz", email: null };
-    h.existingExport = [{ id: "prev-1", requested_at: "2026-07-01T00:00:00Z" }];
+    h.existingExport = [{ id: "prev-1", requested_at: daysAgo(11) }];
     const { POST } = await import("@/app/api/user/data/export-request/route");
     const res = await POST(post("/api/user/data/export-request"));
     expect(res.status).toBe(429);
