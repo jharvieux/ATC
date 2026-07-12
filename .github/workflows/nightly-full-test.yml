@@ -37,6 +37,11 @@ jobs:
       # that PR CI shifts left. Without it they describe.skip and the nightly
       # safety net would silently cover nothing.
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      # Activates the RAG-app DB-backed suites (e.g. match-region-segment.test.ts,
+      # #1470) the same way SUPABASE_DB_URL above activates the main-app ones.
+      # Without it they describe.skip and the nightly safety net silently covers
+      # nothing for the RAG app. See #1758.
+      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
       # Activates the stripe-webhook integration suite. Placeholders are fine:
       # the suite self-signs events with STRIPE_WEBHOOK_SECRET and the handler
       # verifies with the same value (pure HMAC, no Stripe API call). The Stripe
