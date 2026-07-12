@@ -74,7 +74,7 @@ export async function deliverChatResponse(args: DeliverChatResponseArgs): Promis
       content: escalationBody,
     }), "messages.insert");
     await safeAwait(svc
-      // d091-allow:service-role-tenant pre-existing debt moved verbatim from route.ts (#1759/#1781); tracked in #726/#730/#740.
+      // d091-allow:service-role-tenant pre-existing debt moved verbatim from route.ts (#1759/#1781); tracked in #1815.
       .from("conversations")
       .update({ status: "escalated", last_message_at: new Date().toISOString() })
       .eq("id", conversationId), "conversations.update");
@@ -139,7 +139,7 @@ export async function deliverChatResponse(args: DeliverChatResponseArgs): Promis
 
   // Bump conversation last_message_at + count.
   await safeAwait(svc
-    // d091-allow:service-role-tenant pre-existing debt moved verbatim from route.ts (#1759/#1781); tracked in #726/#730/#740.
+    // d091-allow:service-role-tenant pre-existing debt moved verbatim from route.ts (#1759/#1781); tracked in #1815.
     .from("conversations")
     .update({
       last_message_at: new Date().toISOString(),
