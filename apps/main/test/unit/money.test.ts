@@ -137,6 +137,16 @@ describe("formatCents (canonical display formatter with currency)", () => {
     expect(formatCents(100, "eur")).toBe("€1.00");
     expect(formatCents(100, "usd")).toBe("$1.00");
   });
+
+  it("accepts bigint minor units directly (#1779)", () => {
+    // Some DB drivers return bigint columns as native bigint. Callers used
+    // to strip that with a manual Number() cast before calling in — the
+    // exact "drop the integer bigint constraint" pattern atc/no-money-math
+    // exists to catch. formatCents must accept bigint itself so no caller
+    // needs that cast.
+    expect(formatCents(72500n)).toBe("$725.00");
+    expect(formatCents(100n, "JPY")).toBe("¥100");
+  });
 });
 
 // ── multiplyRate ─────────────────────────────────────────────────────────────
