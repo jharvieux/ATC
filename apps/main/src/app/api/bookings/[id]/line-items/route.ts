@@ -5,7 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertLineItemsAvailable } from "@/lib/line-items/tier-gate";
-import { computeExpectedCommissionCents, validateLineItem, ITEM_TYPES, LINE_ITEM_STATUSES, type ItemType } from "@/lib/line-items/validate";
+import { computeExpectedCommissionCents, validateLineItem, ITEM_TYPES, LINE_ITEM_STATUSES, MAX_BOOKING_LINE_ITEMS, type ItemType } from "@/lib/line-items/validate";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -35,13 +35,18 @@ export async function GET(
     const { ctx } = await assertPermission(req, { resource: "bookings.line_items", action: "list" });
     const { id: bookingId } = await params;
     const db = tenantClient(ctx);
-    const { data, error } = await db
+    // #1788 — no bound previously; matches the 500-row cap the tenant-wide
+    // /api/line-items view already applies to this same table. count: 'exact'
+    // + total lets callers detect a capped response, matching the sibling
+    // endpoints (/api/line-items, /api/crm/contacts).
+    const { data, count, error } = await db
       .from("booking_line_items")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("booking_id", bookingId)
-      .order("start_date", { ascending: true, nullsFirst: false });
+      .order("start_date", { ascending: true, nullsFirst: false })
+      .limit(MAX_BOOKING_LINE_ITEMS);
     if (error) return dbErrorResponse(error);
-    return Response.json({ items: data ?? [] });
+    return Response.json({ items: data ?? [], total: count ?? 0 });
   } catch (err) {
     return respondToAuthError(err);
   }

@@ -1,5 +1,10 @@
 // BP40 §40.3 / §40.9 — Per-type item_details validation + date-semantics check.
 
+// #1788 — shared cap for reads of booking_line_items. A booking (or the
+// tenant-wide /api/line-items view) that has accumulated more rows than this
+// silently truncates past PostgREST's default row cap without one.
+export const MAX_BOOKING_LINE_ITEMS = 500;
+
 export const ITEM_TYPES = ["flight", "hotel", "transfer", "excursion", "insurance", "other"] as const;
 export type ItemType = (typeof ITEM_TYPES)[number];
 
