@@ -10,6 +10,7 @@ import { renderItineraryPdf, type ItineraryPdfData } from "@/lib/deliverables/it
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { MAX_BOOKING_LINE_ITEMS } from "@/lib/line-items/validate";
 
 const PatchSchema = z.object({
   agent_notes: z.string().optional(),
@@ -122,11 +123,13 @@ export async function PATCH(
 
         // §40.6 — non-cruise line items for itinerary integration.
         // Soft-fail when BP40 table isn't on dev yet (env without #139 merged).
+        // #1788 — bound to the shared per-booking cap; no other guard on this read.
         let lineItems: import("@/lib/deliverables/itinerary-pdf").ItineraryLineItem[] = [];
         const { data: liData, error: liErr } = await svc
           .from("booking_line_items")
           .select("id, item_type, description, supplier_name, start_date, end_date, include_in_itinerary")
-          .eq("booking_id", r.booking_id);
+          .eq("booking_id", r.booking_id)
+          .limit(MAX_BOOKING_LINE_ITEMS);
         if (liErr && liErr.code !== "42P01") {
           console.warn("[itinerary-send] booking_line_items load failed:", liErr.message);
         } else if (liData) {
