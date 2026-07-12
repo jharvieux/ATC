@@ -3,8 +3,12 @@
 // #489 — Platform admin email sample sender.
 // Renders any pre-cruise or group template to HTML and optionally sends it
 // via Resend so admins can verify design and deliverability.
+//
+// #1791 — form fields consolidated into one useReducer (was 15 separate
+// useState calls, one per field); request state (sending/result/error)
+// stays as plain useState since it's a different concern.
 
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
 import { listRegionImageCoverage } from "@/lib/cruise-regions/destination-images";
 
@@ -29,49 +33,76 @@ const DEFAULT_SAILING_DATE = new Date(Date.now() + NINETY_DAYS_MS).toISOString()
 const inputCls = "w-full px-2 py-1.5 border border-border rounded text-[14px] box-border";
 const labelCls = "block font-semibold mb-1 text-[13px] text-foreground";
 
+interface FormState {
+  template: string;
+  toEmail: string;
+  customerName: string;
+  shipName: string;
+  cruiseLine: string;
+  sailingDate: string;
+  region: string;
+  ports: string;
+  companionUrl: string;
+  groupName: string;
+  inviteeName: string;
+  coordinatorMsg: string;
+  inviteUrl: string;
+  broadcastSubject: string;
+  broadcastMessage: string;
+}
+
+const initialFormState: FormState = {
+  template: "T90",
+  toEmail: "",
+  customerName: "Jordan",
+  shipName: "Norwegian Bliss",
+  cruiseLine: "Norwegian Cruise Line",
+  sailingDate: DEFAULT_SAILING_DATE,
+  region: "caribbean",
+  ports: DEFAULT_PORTS,
+  companionUrl: "https://example.com/companion",
+  groupName: "Our Group Cruise",
+  inviteeName: "Alex",
+  coordinatorMsg: "We're so excited you can join us!",
+  inviteUrl: "https://example.com/group/invite/token",
+  broadcastSubject: "Update from your group coordinator",
+  broadcastMessage: "Hello everyone! Just a quick update from your coordinator.\n\nLooking forward to seeing you on board!",
+};
+
+function formReducer(state: FormState, action: { field: keyof FormState; value: string }): FormState {
+  return { ...state, [action.field]: action.value };
+}
+
 export default function EmailSamplesPage() {
-  const [template, setTemplate]               = useState<string>("T90");
-  const [toEmail, setToEmail]                 = useState("");
-  const [customerName, setCustomerName]       = useState("Jordan");
-  const [shipName, setShipName]               = useState("Norwegian Bliss");
-  const [cruiseLine, setCruiseLine]           = useState("Norwegian Cruise Line");
-  const [sailingDate, setSailingDate]         = useState(DEFAULT_SAILING_DATE);
-  const [region, setRegion]                   = useState("caribbean");
-  const [ports, setPorts]                     = useState(DEFAULT_PORTS);
-  const [companionUrl, setCompanionUrl]       = useState("https://example.com/companion");
+  const [form, dispatch] = useReducer(formReducer, initialFormState);
+  const setField = (field: keyof FormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+      dispatch({ field, value: e.target.value });
 
-  // Group-specific fields
-  const [groupName, setGroupName]             = useState("Our Group Cruise");
-  const [inviteeName, setInviteeName]         = useState("Alex");
-  const [coordinatorMsg, setCoordinatorMsg]   = useState("We're so excited you can join us!");
-  const [inviteUrl, setInviteUrl]             = useState("https://example.com/group/invite/token");
-  const [broadcastSubject, setBroadcastSubject] = useState("Update from your group coordinator");
-  const [broadcastMessage, setBroadcastMessage] = useState("Hello everyone! Just a quick update from your coordinator.\n\nLooking forward to seeing you on board!");
+  const [sending, setSending] = useState(false);
+  const [result, setResult]   = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
-  const [sending, setSending]   = useState(false);
-  const [result, setResult]     = useState<string | null>(null);
-  const [error, setError]       = useState<string | null>(null);
-
-  const isGroup = template === "GroupInvitation" || template === "GroupBroadcast";
+  const isGroup = form.template === "GroupInvitation" || form.template === "GroupBroadcast";
 
   function buildParams(): Record<string, string> {
     const base: Record<string, string> = {
-      template,
-      customer_name: customerName,
-      ship_name: shipName,
-      cruise_line: cruiseLine,
-      sailing_date: new Date(sailingDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
-      ports,
-      destination_region: region,
-      companion_page_url: companionUrl,
+      template: form.template,
+      customer_name: form.customerName,
+      ship_name: form.shipName,
+      cruise_line: form.cruiseLine,
+      sailing_date: new Date(form.sailingDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+      ports: form.ports,
+      destination_region: form.region,
+      companion_page_url: form.companionUrl,
     };
     if (isGroup) {
-      base.group_name         = groupName;
-      base.invitee_name       = inviteeName;
-      base.coordinator_message = coordinatorMsg;
-      base.invite_url         = inviteUrl;
-      base.broadcast_subject  = broadcastSubject;
-      base.broadcast_message  = broadcastMessage;
+      base.group_name         = form.groupName;
+      base.invitee_name       = form.inviteeName;
+      base.coordinator_message = form.coordinatorMsg;
+      base.invite_url         = form.inviteUrl;
+      base.broadcast_subject  = form.broadcastSubject;
+      base.broadcast_message  = form.broadcastMessage;
     }
     return base;
   }
@@ -83,14 +114,14 @@ export default function EmailSamplesPage() {
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!toEmail) return;
+    if (!form.toEmail) return;
     setSending(true);
     setResult(null);
     setError(null);
     try {
       const res = await adminFetch("/api/admin/email-samples", {
         method: "POST",
-        body: JSON.stringify({ ...buildParams(), to_email: toEmail }),
+        body: JSON.stringify({ ...buildParams(), to_email: form.toEmail }),
       });
       const json = await res.json() as { ok?: boolean; resend_message_id?: string; error?: string };
       if (!res.ok) {
@@ -116,7 +147,7 @@ export default function EmailSamplesPage() {
       <form onSubmit={(e) => void handleSend(e)}>
         <div className="mb-3.5">
           <label className={labelCls}>Template</label>
-          <select value={template} onChange={(e) => setTemplate(e.target.value)} className={inputCls}>
+          <select value={form.template} onChange={setField("template")} className={inputCls}>
             {TEMPLATE_OPTIONS.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
@@ -125,31 +156,31 @@ export default function EmailSamplesPage() {
 
         <div className="mb-3.5">
           <label className={labelCls}>Destination Email (required for Send)</label>
-          <input type="email" value={toEmail} onChange={(e) => setToEmail(e.target.value)} className={inputCls} placeholder="you@example.com" />
+          <input type="email" value={form.toEmail} onChange={setField("toEmail")} className={inputCls} placeholder="you@example.com" />
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-3.5">
           <div>
             <label className={labelCls}>Customer Name</label>
-            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inputCls} />
+            <input value={form.customerName} onChange={setField("customerName")} className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>Ship Name</label>
-            <input value={shipName} onChange={(e) => setShipName(e.target.value)} className={inputCls} />
+            <input value={form.shipName} onChange={setField("shipName")} className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>Cruise Line</label>
-            <input value={cruiseLine} onChange={(e) => setCruiseLine(e.target.value)} className={inputCls} />
+            <input value={form.cruiseLine} onChange={setField("cruiseLine")} className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>Sailing Date</label>
-            <input type="date" value={sailingDate} onChange={(e) => setSailingDate(e.target.value)} className={inputCls} />
+            <input type="date" value={form.sailingDate} onChange={setField("sailingDate")} className={inputCls} />
           </div>
         </div>
 
         <div className="mb-3.5">
           <label className={labelCls}>Destination Region (hero image)</label>
-          <select value={region} onChange={(e) => setRegion(e.target.value)} className={inputCls}>
+          <select value={form.region} onChange={setField("region")} className={inputCls}>
             {REGION_OPTIONS.map((r) => (
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
@@ -158,12 +189,12 @@ export default function EmailSamplesPage() {
 
         <div className="mb-3.5">
           <label className={labelCls}>Ports of Call (one per line)</label>
-          <textarea value={ports} onChange={(e) => setPorts(e.target.value)} rows={7} className={`${inputCls} resize-y`} />
+          <textarea value={form.ports} onChange={setField("ports")} rows={7} className={`${inputCls} resize-y`} />
         </div>
 
         <div className="mb-3.5">
           <label className={labelCls}>Companion Page URL</label>
-          <input value={companionUrl} onChange={(e) => setCompanionUrl(e.target.value)} className={inputCls} />
+          <input value={form.companionUrl} onChange={setField("companionUrl")} className={inputCls} />
         </div>
 
         {isGroup && (
@@ -172,28 +203,28 @@ export default function EmailSamplesPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>Group Name</label>
-                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} className={inputCls} />
+                <input value={form.groupName} onChange={setField("groupName")} className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Invitee Name</label>
-                <input value={inviteeName} onChange={(e) => setInviteeName(e.target.value)} className={inputCls} />
+                <input value={form.inviteeName} onChange={setField("inviteeName")} className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Invite URL</label>
-                <input value={inviteUrl} onChange={(e) => setInviteUrl(e.target.value)} className={inputCls} />
+                <input value={form.inviteUrl} onChange={setField("inviteUrl")} className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Broadcast Subject</label>
-                <input value={broadcastSubject} onChange={(e) => setBroadcastSubject(e.target.value)} className={inputCls} />
+                <input value={form.broadcastSubject} onChange={setField("broadcastSubject")} className={inputCls} />
               </div>
             </div>
             <div className="mt-3">
               <label className={labelCls}>Coordinator Message</label>
-              <textarea value={coordinatorMsg} onChange={(e) => setCoordinatorMsg(e.target.value)} rows={3} className={`${inputCls} resize-y`} />
+              <textarea value={form.coordinatorMsg} onChange={setField("coordinatorMsg")} rows={3} className={`${inputCls} resize-y`} />
             </div>
             <div className="mt-3">
               <label className={labelCls}>Broadcast Message</label>
-              <textarea value={broadcastMessage} onChange={(e) => setBroadcastMessage(e.target.value)} rows={4} className={`${inputCls} resize-y`} />
+              <textarea value={form.broadcastMessage} onChange={setField("broadcastMessage")} rows={4} className={`${inputCls} resize-y`} />
             </div>
           </div>
         )}
@@ -208,7 +239,7 @@ export default function EmailSamplesPage() {
           </button>
           <button
             type="submit"
-            disabled={sending || !toEmail}
+            disabled={sending || !form.toEmail}
             className="px-[18px] py-2 bg-blue-600 text-white border-none rounded-md text-[14px] font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {sending ? "Sending…" : "Send via Resend"}
