@@ -175,6 +175,9 @@ run("no-money-math (/100 display extension)", noMoneyMath, {
     { code: `const avg = total_count / 100;` },
     // Dividing by a different literal is not the display bypass.
     { code: `const x = fee_cents / 1000;` },
+    // "recents" contains "cents" as a substring but isn't the bare
+    // identifier — must not false-positive off a naive substring check.
+    { code: `const label = recents / 100;` },
   ],
   invalid: [
     {
@@ -183,6 +186,24 @@ run("no-money-math (/100 display extension)", noMoneyMath, {
     },
     {
       code: `const usd = total_amount / 100;`,
+      errors: [{ messageId: "noCentsDivDisplay" }],
+    },
+  ],
+});
+
+run("no-money-math (bare cents/amount identifiers, #1779)", noMoneyMath, {
+  // #1779: the *_cents/_amount substring check let a plain `cents` param
+  // (e.g. `function formatDollars(cents: number)`) divide by 100 undetected
+  // — the exact bug class this rule exists to catch, just under a different
+  // spelling. Bare "cents"/"amount" must be flagged the same as "_cents".
+  valid: [{ code: `const label = recents / 100;` }],
+  invalid: [
+    {
+      code: `const dollars = cents / 100;`,
+      errors: [{ messageId: "noCentsDivDisplay" }],
+    },
+    {
+      code: `const dollars = amount / 100;`,
       errors: [{ messageId: "noCentsDivDisplay" }],
     },
   ],

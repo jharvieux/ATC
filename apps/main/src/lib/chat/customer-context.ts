@@ -70,8 +70,7 @@ interface ItineraryContextRow {
 }
 
 function fmtMoney(amount: number | bigint | null | undefined, currency: string | null | undefined): string {
-  const cents = typeof amount === "bigint" ? Number(amount) : amount;
-  return formatCents(cents, currency ?? "USD");
+  return formatCents(amount, currency ?? "USD");
 }
 
 function fmtNumberOrDash(n: number | null | undefined): string {

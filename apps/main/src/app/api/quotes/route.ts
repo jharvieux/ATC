@@ -14,6 +14,7 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { resolveQuoteKind, NO_HOST_INTEGRATION_ADAPTER } from "@/lib/quotes/kind-resolver";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -145,6 +146,22 @@ export async function POST(req: Request): Promise<Response> {
     for (const [k, v] of Object.entries(parsed.data)) {
       if (OPTION_FIELDS.has(k)) optionFields[k] = v;
       else containerFields[k] = v;
+    }
+
+    // #1742 — a quote that's priced at creation (total_amount_cents supplied)
+    // gets its price_kind evaluated + persisted now, not left to the DB
+    // DEFAULT forever. This API has no field for a host-issued lock token, so
+    // resolveQuoteKind always lands on 'estimate' here (§21.10.1's documented
+    // safe default) — see kind-resolver.ts for why CONFIRMED isn't reachable
+    // until a real price-lock integration exists, and why this is evaluated
+    // once at pricing time rather than re-derived on every later render.
+    if (typeof optionFields.total_amount_cents === "number") {
+      const pricedAt = new Date().toISOString();
+      containerFields.priced_at = pricedAt;
+      containerFields.price_kind = resolveQuoteKind(
+        { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
+        NO_HOST_INTEGRATION_ADAPTER,
+      );
     }
 
     const { data: quote, error } = await db

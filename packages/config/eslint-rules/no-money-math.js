@@ -11,8 +11,15 @@
 //
 // These patterns are the §14.0.4 "code-review reflex made automated."
 
+// Matches the *_cents/_amount naming convention plus the bare "cents"/
+// "amount" identifiers that convention slips past (#1779) — e.g. a
+// destructured or renamed param like `function f(cents: number)` has no
+// underscore for the substring check to catch.
 function hasCentsOrAmount(name) {
-  return typeof name === "string" && (name.includes("_cents") || name.includes("_amount"));
+  if (typeof name !== "string") return false;
+  if (name.includes("_cents") || name.includes("_amount")) return true;
+  const lower = name.toLowerCase();
+  return lower === "cents" || lower === "amount";
 }
 
 function getNodeName(node) {
