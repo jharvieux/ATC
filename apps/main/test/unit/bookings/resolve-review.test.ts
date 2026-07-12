@@ -35,9 +35,11 @@ function makeDb(currentRow: { status: string; review_reason: string | null } | n
       eq: vi.fn(() => ({
         eq: vi.fn(() => ({
           in: vi.fn(() => ({
-            select: vi.fn(() =>
-              Promise.resolve({ data: casMatches ? [{ id: BOOKING_ID }] : [], error: null }),
-            ),
+            select: vi.fn(() => ({
+              maybeSingle: vi.fn(() =>
+                Promise.resolve({ data: casMatches ? { id: BOOKING_ID } : null, error: null }),
+              ),
+            })),
           })),
         })),
       })),

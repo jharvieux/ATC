@@ -59,6 +59,8 @@ export async function resolvePendingHostReview(opts: {
 }): Promise<ResolvePendingHostReviewResult> {
   const { db, bookingId, actorUserId, tenantId } = opts;
 
+  // CAS is by primary-key id (≤1 row); .maybeSingle() bounds it and returns the
+  // updated row or null when the guard (status + safe reason) matched nothing.
   const updated = (await safeAwait(
     db
       .from("bookings")
@@ -66,11 +68,12 @@ export async function resolvePendingHostReview(opts: {
       .eq("id", bookingId)
       .eq("status", "pending_host_review")
       .in("review_reason", SAFE_TO_RESUBMIT_REVIEW_REASONS as unknown as string[])
-      .select("id"),
+      .select("id")
+      .maybeSingle(),
     "bookings.update.resolve_pending_host_review",
-  )) as Array<{ id: string }> | null;
+  )) as { id: string } | null;
 
-  if (updated && updated.length > 0) {
+  if (updated) {
     await writeAuditLog({
       tenant_id: tenantId,
       actor_type: "user",
