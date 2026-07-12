@@ -93,17 +93,20 @@ export function fromCents(cents: Cents | bigint): string {
  * exponent from Intl's CLDR data (so scale and rendered precision can't disagree),
  * NOT a hardcoded 100 — a flat ÷100 rendered zero-decimal currencies 100× too small (#1658).
  * Falls back to "CODE amount" for codes Intl rejects; returns "—" for null/undefined.
+ * Accepts bigint (some drivers return DB bigint columns as native bigint) so
+ * callers don't have to drop precision with a manual Number() cast (#1779).
  */
-export function formatCents(minorUnits: number | null | undefined, currency: string = "USD"): string {
+export function formatCents(minorUnits: number | bigint | null | undefined, currency: string = "USD"): string {
   if (minorUnits == null) return "—";
+  const value = typeof minorUnits === "bigint" ? Number(minorUnits) : minorUnits;
   const code = currency.toUpperCase();
   try {
     const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: code });
     const fractionDigits = fmt.resolvedOptions().maximumFractionDigits ?? 2;
-    return fmt.format(minorUnits / 10 ** fractionDigits);
+    return fmt.format(value / 10 ** fractionDigits);
   } catch {
     // Invalid currency code — no minor-unit data, assume 2 decimals.
-    return `${code} ${(minorUnits / 100).toFixed(2)}`;
+    return `${code} ${(value / 100).toFixed(2)}`;
   }
 }
 
