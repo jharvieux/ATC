@@ -35,11 +35,14 @@ export async function GET(
     const { ctx } = await assertPermission(req, { resource: "bookings.line_items", action: "list" });
     const { id: bookingId } = await params;
     const db = tenantClient(ctx);
+    // #1788 — no bound previously; matches the 500-row cap the tenant-wide
+    // /api/line-items view already applies to this same table.
     const { data, error } = await db
       .from("booking_line_items")
       .select("*")
       .eq("booking_id", bookingId)
-      .order("start_date", { ascending: true, nullsFirst: false });
+      .order("start_date", { ascending: true, nullsFirst: false })
+      .limit(500);
     if (error) return dbErrorResponse(error);
     return Response.json({ items: data ?? [] });
   } catch (err) {

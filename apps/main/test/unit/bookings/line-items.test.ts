@@ -34,7 +34,9 @@ vi.mock("@/lib/db/tenant-client", () => ({
     from: (_table: string) => ({
       select: () => ({
         eq: () => ({
-          order: () => mocks.lineItemsList(),
+          order: () => ({
+            limit: (n: number) => mocks.lineItemsList(n),
+          }),
         }),
       }),
       // Capture insert row so tests can assert the computed include_in_itinerary value.
@@ -117,6 +119,11 @@ describe("GET /api/bookings/[id]/line-items — list", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { items: unknown[] };
     expect(body.items).toHaveLength(1);
+  });
+
+  it("#1788 — caps the query at 500 rows so a booking that has accumulated many line items over its lifetime can't silently return an incomplete list past PostgREST's row cap", async () => {
+    await GET(makeGetReq(), PARAMS);
+    expect(mocks.lineItemsList).toHaveBeenCalledWith(500);
   });
 });
 
