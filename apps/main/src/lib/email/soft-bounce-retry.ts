@@ -101,19 +101,27 @@ async function markHardBounceAndSuppress(
   tenantId: string,
   toEmail: string,
 ): Promise<void> {
-  await safeAwait(
-    db
-      .from("email_log")
-      .update({ status: "hard_bounced", bounce_reason: "soft_bounce_max_retries" })
-      .eq("id", emailLogId),
-    "email_log.update",
-  );
+  // Order matters for crash-recovery. The terminal branch short-circuits on
+  // isTerminalStatus(email_log_id), so once email_log.status is flipped to
+  // hard_bounced a re-run returns "already_terminated" and never reaches this
+  // function again. If the status flip ran FIRST and the process crashed before
+  // the suppression upsert, the address would be hard-bounced but UN-suppressed
+  // forever. So write the suppression FIRST, then flip the status: both writes
+  // are idempotent, and a crash between them re-runs both safely because the
+  // status is still soft_bounced (isTerminalStatus false) on the retry.
   await safeAwait(
     db.from("email_suppressions").upsert(
       { tenant_id: tenantId, email_address: toEmail, reason: "hard_bounce" },
       { onConflict: "tenant_id,email_address,reason" },
     ),
     "email_suppressions.upsert",
+  );
+  await safeAwait(
+    db
+      .from("email_log")
+      .update({ status: "hard_bounced", bounce_reason: "soft_bounce_max_retries" })
+      .eq("id", emailLogId),
+    "email_log.update",
   );
 }
 
@@ -212,7 +220,25 @@ export async function runSoftBounceRetryAttempt(
     .eq("email_log_id", email_log_id)
     .eq("claimed_attempt", attempt - 1)
     .select("email_log_id");
-  if (!Array.isArray(claimedRows) || claimedRows.length === 0) return "claim_lost";
+  if (!Array.isArray(claimedRows) || claimedRows.length === 0) {
+    // Zero-row claim is ambiguous: either a genuine duplicate/out-of-order event
+    // (another run owns a LATER attempt), or a re-entrant resume — a prior run for
+    // THIS attempt advanced claimed_attempt then crashed before finishing the send
+    // and scheduleNext, so the CAS predicate (claimed_attempt == attempt-1) no
+    // longer matches. Re-read to tell them apart. If this exact attempt is already
+    // claimed, fall through and re-run the post-claim work: sendEmail is idempotent
+    // (deterministic per-attempt Idempotency-Key → no-op re-send at Resend) and the
+    // last_send_log_id update is idempotent, so resuming is safe — and it MUST
+    // resume, else scheduleNext never fires and the escalation chain dies silently.
+    const { data: freshRow } = await db
+      // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
+      .from("email_retry_content")
+      .select("claimed_attempt")
+      .eq("email_log_id", email_log_id)
+      .maybeSingle();
+    const currentAttempt = (freshRow as { claimed_attempt?: number } | null)?.claimed_attempt ?? -1;
+    if (currentAttempt !== attempt) return "claim_lost";
+  }
 
   const tenant = await loadTenantForSend(db, tenant_id);
   if (!tenant) return "tenant_missing";

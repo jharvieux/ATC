@@ -23,6 +23,7 @@ import {
   runSoftBounceRetryAttempt,
   RETRY_DELAYS_HOURS,
   TERMINAL_GRACE_HOURS,
+  MAX_ATTEMPTS,
   type SoftBounceRetryPayload,
 } from "@/lib/email/soft-bounce-retry";
 import type { EmailSendResult, SendEmailInput } from "@/lib/email/send";
@@ -253,8 +254,92 @@ describe("§23.7 soft-bounce retry — termination", () => {
   });
 });
 
-describe("§23.7 soft-bounce retry — no duplicate send", () => {
-  it("a duplicate retry event for an already-claimed attempt is skipped by the CAS claim", async () => {
+describe("§23.7 soft-bounce retry — terminal write ordering (crash recovery)", () => {
+  // Wraps a db so the FIRST email_log UPDATE (the terminal status flip) fails once,
+  // simulating a crash in the window between the two terminal writes.
+  function dbWithOneEmailLogUpdateFailure(state: State) {
+    const base = makeDb(state) as unknown as { from: (t: string) => Record<string, unknown> };
+    let failNext = true;
+    return {
+      from(table: string) {
+        const chain = base.from(table);
+        if (table !== "email_log") return chain;
+        let isUpdate = false;
+        const origUpdate = (chain.update as (p: unknown) => unknown).bind(chain);
+        chain.update = (p: unknown) => {
+          isUpdate = true;
+          return origUpdate(p);
+        };
+        const origThen = (chain.then as (r: (v: unknown) => unknown) => unknown).bind(chain);
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (isUpdate && failNext) {
+            failNext = false;
+            return Promise.resolve(
+              resolve({
+                data: null,
+                error: { message: "simulated crash", code: "XX000", hint: null, details: null, name: "e" },
+              }),
+            );
+          }
+          return origThen(resolve);
+        };
+        return chain;
+      },
+    } as unknown as SendEmailInput["db"];
+  }
+
+  // The terminal branch short-circuits on isTerminalStatus(email_log_id): once the
+  // status is flipped to hard_bounced, a re-run returns already_terminated and the
+  // suppression upsert would never run again. So the suppression MUST be written
+  // BEFORE the status flip. This test crashes the status flip and proves (a) the
+  // suppression already landed, and (b) the retry completes both writes. The
+  // inverse — status flipped but suppression missing — is impossible by
+  // construction, because suppression is the first of the two writes.
+  it("suppression persists when the terminal status flip crashes; the retry completes both", async () => {
+    const state = makeState();
+    const db = dbWithOneEmailLogUpdateFailure(state);
+    const { fn: sendEmail } = makeSendEmail(state, ["soft_bounced", "soft_bounced", "soft_bounced"]);
+    const deps = {
+      db,
+      sendEmail,
+      sleep: async () => {},
+      scheduleNext: async () => {},
+    };
+    const run = (attempt: number) =>
+      runSoftBounceRetryAttempt(deps, { email_log_id: "orig", tenant_id: "t-1", attempt });
+
+    // Drive attempts 1-3 (three soft bounces) up to the terminal judgment.
+    await run(1);
+    await run(2);
+    await run(3);
+
+    // Terminal attempt: suppression upsert succeeds, then the status flip crashes.
+    await expect(run(MAX_ATTEMPTS + 1)).rejects.toThrow();
+    expect(state.suppressions).toEqual([
+      { tenant_id: "t-1", email_address: "customer@example.com", reason: "hard_bounce" },
+    ]);
+    // Status NOT yet flipped → a retry still enters the terminal branch (not short-circuited).
+    expect(state.emailLog.find((r) => r.id === "orig")!.status).toBe("soft_bounced");
+
+    // Retry the terminal attempt — the flip now succeeds; both writes are idempotent.
+    const outcome = await run(MAX_ATTEMPTS + 1);
+    expect(outcome).toBe("suppressed_terminal");
+    expect(state.emailLog.find((r) => r.id === "orig")!.status).toBe("hard_bounced");
+    expect(state.suppressions).toHaveLength(1); // upsert idempotent — no duplicate suppression
+  });
+});
+
+describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim resume", () => {
+  // The CAS claim is RE-ENTRANT, not a hard skip. A duplicate delivery of the
+  // same attempt re-enters the post-claim work rather than short-circuiting on
+  // claim_lost — because a hard skip strands the chain forever if the ORIGINAL
+  // run crashed after advancing the claim but before scheduling the next attempt
+  // (no next attempt, no terminal suppress: the escalation silently dies). No
+  // customer double-send results: every re-send for a given attempt carries the
+  // SAME deterministic Idempotency-Key, which Resend no-ops on replay. D-091 #23
+  // (the idempotency key) is the authoritative send-dedup; the CAS claim only
+  // orders attempts, it is not the delivery guard.
+  it("a duplicate attempt event re-enters with the identical Idempotency-Key (Resend dedups the replay)", async () => {
     const state = makeState();
     const { deps, calls } = makeDeps(state, ["soft_bounced", "soft_bounced"]);
     const payload = { email_log_id: "orig", tenant_id: "t-1", attempt: 1 };
@@ -262,8 +347,47 @@ describe("§23.7 soft-bounce retry — no duplicate send", () => {
     // Redeliver the SAME attempt-1 event (webhook double-fire / Inngest replay).
     const second = await runSoftBounceRetryAttempt(deps, payload);
     expect(first).toBe("resent");
-    expect(second).toBe("claim_lost");
-    expect(calls).toHaveLength(1); // exactly one send despite two events
+    expect(second).toBe("resent");
+    // Both re-sends carry the SAME per-attempt key → Resend delivers at most once.
+    expect(calls.map((c) => c.idempotencyKey)).toEqual(["soft-retry:orig:1", "soft-retry:orig:1"]);
+  });
+
+  // Finding 2 — the crash this re-entrancy exists to survive. A run advances the
+  // claim, re-sends, then the process dies before scheduleNext fires. The Inngest
+  // re-run of the same event must resume and STILL schedule attempt+1, or the
+  // escalation is silently dropped. Intent: escalation is never lost to a crash
+  // in the post-claim window.
+  it("resumes a crash after the claim and still schedules the next attempt", async () => {
+    const state = makeState();
+    const { fn: sendEmail, calls } = makeSendEmail(state, ["soft_bounced", "soft_bounced"]);
+    const scheduled: SoftBounceRetryPayload[] = [];
+    let scheduleShouldCrash = true;
+    const deps = {
+      db: makeDb(state),
+      sendEmail,
+      sleep: async () => {},
+      scheduleNext: async (p: SoftBounceRetryPayload) => {
+        if (scheduleShouldCrash) {
+          scheduleShouldCrash = false;
+          throw new Error("simulated crash after claim, before scheduleNext");
+        }
+        scheduled.push(p);
+      },
+    };
+    const payload = { email_log_id: "orig", tenant_id: "t-1", attempt: 1 };
+
+    // Run 1: claim advances to 1, the re-send lands, then scheduleNext crashes.
+    await expect(runSoftBounceRetryAttempt(deps, payload)).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+    expect(state.content[0]!.claimed_attempt).toBe(1); // claim already advanced
+    expect(scheduled).toHaveLength(0); // next attempt NOT yet scheduled
+
+    // Run 2 (Inngest re-run of the same event): the CAS predicate no longer matches
+    // (claimed_attempt is 1, not 0), but the re-entrant resume detects this exact
+    // attempt is already claimed and completes the post-claim bookkeeping.
+    const outcome = await runSoftBounceRetryAttempt(deps, payload);
+    expect(outcome).toBe("resent");
+    expect(scheduled).toEqual([{ email_log_id: "orig", tenant_id: "t-1", attempt: 2 }]);
   });
 });
 
