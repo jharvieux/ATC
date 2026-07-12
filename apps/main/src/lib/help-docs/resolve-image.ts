@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 
 export interface ResolvedHelpImage {
   data: Buffer;
@@ -43,7 +43,11 @@ function resolvePublicDir(): string {
 export function resolveHelpImage(src: string): ResolvedHelpImage | null {
   const type = EXT_TO_TYPE[extname(src).toLowerCase()];
   if (!type || !src.startsWith("/")) return null;
-  const filePath = join(resolvePublicDir(), src);
+  // Containment check: a traversal src (e.g. "/../../../etc/hosts.png")
+  // must not resolve outside public/ — join() alone doesn't stop "..".
+  const root = resolve(resolvePublicDir());
+  const filePath = resolve(join(root, src));
+  if (!filePath.startsWith(root + sep)) return null;
   if (!existsSync(filePath)) return null;
   return { data: readFileSync(filePath), type };
 }

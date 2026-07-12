@@ -29,6 +29,14 @@ describe("resolveHelpImage (#1688)", () => {
   it("returns null for a src that isn't rooted at /", () => {
     expect(resolveHelpImage("help/test-fixtures/red-rect.png")).toBeNull();
   });
+
+  // Invariant: resolved paths must stay inside public/. This src's
+  // `path.join` result genuinely exists on disk (traversal-fixture.png,
+  // checked in one level above public/) — proving null comes from the
+  // containment check, not the existsSync fallback for a missing file.
+  it("returns null for a src that traverses outside public/", () => {
+    expect(resolveHelpImage("/../test/unit/help-docs/traversal-fixture.png")).toBeNull();
+  });
 });
 
 describe("pngDimensions (#1688)", () => {
