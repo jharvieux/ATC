@@ -67,8 +67,8 @@ export async function activateTenant(
   // with 403 tenant_inactive, so chat answers fall back to ungrounded. This was
   // the gap: activation previously emitted no event (only signup did), and the
   // nightly reconcile is the only backstop. Best-effort by design —
-  // publishTenantEvent retries then queues to pending_rag_sync and never
-  // throws, so RAG being unreachable cannot fail tenant activation.
+  // publishTenantEvent enqueues to Inngest (rag-sync-deliver owns delivery +
+  // retries) and never throws, so RAG being unreachable cannot fail activation.
   await publishTenantEvent({
     event_type: "tenant.status_changed",
     tenant_id: tenantId,

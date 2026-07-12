@@ -47,17 +47,8 @@ module.exports = [
   // Vercel cron reconciliation job: background cron outside any user
   // session; service-role required to scan stripe_webhook_events. §7.9a.
   "/lib/cron/stripe-webhook-incomplete-reconcile.ts",
-  // RAG sync retry: the daily ragSyncCleanup cron stays on Inngest; the
-  // 15-min ragSyncRetry moved to a Vercel cron (#894). Both need service-role
-  // (background job, no user session). §8.7a.
-  "/inngest/rag-sync-retry.ts",
-  "/lib/cron/rag-sync-retry.ts",
   // DOB re-prompt cron: cross-tenant scan, no user session. §11.5.
   "/inngest/dob-estimate-reprompt-eligible.ts",
-  // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
-  "/lib/rag-sync/publish-tenant-event.ts",
-  // D-041 follow-up — platform_settings sync publisher, same shape as tenant publisher.
-  "/lib/rag-sync/publish-platform-event.ts",
   // Platform-internal admin endpoint: bearer-token auth, no user JWT. §8.3.
   "/api/admin/tenants/route.ts",
   // D-041 follow-up — platform_settings list endpoint for rag reconcile cron.

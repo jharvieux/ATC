@@ -2,7 +2,7 @@
 
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { ragSyncCleanup } from "@/inngest/rag-sync-retry";
+import { ragSyncDeliver } from "@/inngest/rag-sync-deliver";
 import { extractMemory, extractMemoryFromBatchResult } from "@/inngest/extract-memory";
 import { extractVoiceProfile } from "@/inngest/extract-voice-profile";
 import { dobEstimateRepromptEligible } from "@/inngest/dob-estimate-reprompt-eligible";
@@ -145,7 +145,7 @@ const subhostingCronsDisabled = process.env.SUBHOSTING_CRONS_DISABLED === "true"
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    ragSyncCleanup,
+    ragSyncDeliver,
     extractMemory,
     extractMemoryFromBatchResult,
     extractVoiceProfile,
