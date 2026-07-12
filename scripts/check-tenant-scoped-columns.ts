@@ -36,6 +36,7 @@ import {
   TENANT_SCOPED_TABLES,
   PLATFORM_READABLE_TABLES,
 } from "../apps/main/src/lib/db/tenant-scoped-tables";
+import { redactSecrets } from "./lib/redact-secrets";
 
 // PLATFORM_READABLE tables that legitimately carry a tenant_id column. Each
 // entry MUST have a documented reason — adding one is a deliberate decision to
@@ -150,6 +151,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("check-tenant-scoped-columns crashed:", err);
+  console.error("check-tenant-scoped-columns crashed:", redactSecrets(err));
   process.exit(2);
 });
