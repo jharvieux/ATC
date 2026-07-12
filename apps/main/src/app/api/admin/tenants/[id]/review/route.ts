@@ -78,18 +78,22 @@ async function notifyTenantUsers(
     const recipients = ((users ?? []) as Array<{ email: string }>).map((u) => u.email);
     if (recipients.length === 0) return;
     const { sendTenantNotification } = await import("@/lib/email/notifications");
-    for (const to of recipients) {
-      await sendTenantNotification({
-        db,
-        tenant_id: tenantId,
-        to,
-        subject: email.subject,
-        html: email.html,
-        category: "transactional",
-        template_id: email.template_id,
-        template_variables: email.template_variables,
-      });
-    }
+    // Recipients are independent sends (category "transactional" bypasses
+    // the per-recipient rate limiter, so no shared-counter race).
+    await Promise.all(
+      recipients.map((to) =>
+        sendTenantNotification({
+          db,
+          tenant_id: tenantId,
+          to,
+          subject: email.subject,
+          html: email.html,
+          category: "transactional",
+          template_id: email.template_id,
+          template_variables: email.template_variables,
+        }),
+      ),
+    );
   } catch (notifyErr) {
     console.warn(
       "[admin/tenants/review] %s notification failed: %s",

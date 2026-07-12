@@ -11,11 +11,17 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 interface CountRow {
   tenant_id: string;
   count: number;
 }
+
+// #1787 — up to 1000 tenant_ids per call; bounded concurrency turns a
+// worst-case 1000 sequential round-trips into ~1000/20 batches without
+// hammering the DB with an unbounded fan-out.
+const COUNT_CONCURRENCY = 20;
 
 export const POST = withServiceAuth(async (req, ctx) => {
   if (ctx.scope !== "read" && ctx.scope !== "write") {
@@ -47,8 +53,11 @@ export const POST = withServiceAuth(async (req, ctx) => {
   // Per-tenant count of approved, non-superseded, tenant-scope chunks.
   // Global-scope chunks aren't tenant-attributable and are excluded here —
   // tenant_rag_quotas tracks each tenant's own chunk budget, not platform-wide.
-  const counts: CountRow[] = [];
-  for (const tenant_id of ids) {
+  //
+  // #1787 — up to 1000 tenant_ids; bounded-concurrency fan out instead of
+  // one round-trip at a time. Each query is independent (different
+  // tenant_id), so per-tenant skip-on-error isolation is unaffected.
+  const rows = await mapWithConcurrency(ids, COUNT_CONCURRENCY, async (tenant_id) => {
     const { count, error } = await db
       .from("knowledge_chunks")
       .select("*", { count: "exact", head: true })
@@ -60,10 +69,11 @@ export const POST = withServiceAuth(async (req, ctx) => {
       console.error("[admin/tenant-chunk-counts] read failed for tenant=%s: %s", tenant_id, error.message);
       // Skip this tenant rather than fail the whole batch; caller can detect
       // missing rows by intersecting requested ids vs returned ids.
-      continue;
+      return null;
     }
-    counts.push({ tenant_id, count: count ?? 0 });
-  }
+    return { tenant_id, count: count ?? 0 };
+  });
+  const counts: CountRow[] = rows.filter((r): r is CountRow => r !== null);
 
   return Response.json({ counts });
 });

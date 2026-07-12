@@ -121,16 +121,21 @@ export async function PUT(req: Request): Promise<Response> {
     const result = await withPlatformAdminAudit(
       { admin_user_id: adminUserId, reason: "retrieval_weights_change", operation: "retrieval_weights.update" },
       async (db, recordQuery) => {
-        const updated: WeightKey[] = [];
-        for (const [w, value] of Object.entries(requested) as Array<[WeightKey, number]>) {
-          recordQuery({ op: "update", table: "platform_settings" });
-          const { error } = await (db as unknown as PlatformDb)
-            .from("platform_settings")
-            .update({ value })
-            .eq("key", settingKey(w));
-          if (error) throw new Error(`update ${settingKey(w)} failed: ${String(error)}`);
-          updated.push(w);
-        }
+        // Each weight lives on its own platform_settings row (different key),
+        // so the updates are independent — fan out instead of one
+        // round-trip per key.
+        const entries = Object.entries(requested) as Array<[WeightKey, number]>;
+        await Promise.all(
+          entries.map(async ([w, value]) => {
+            recordQuery({ op: "update", table: "platform_settings" });
+            const { error } = await (db as unknown as PlatformDb)
+              .from("platform_settings")
+              .update({ value })
+              .eq("key", settingKey(w));
+            if (error) throw new Error(`update ${settingKey(w)} failed: ${String(error)}`);
+          }),
+        );
+        const updated: WeightKey[] = entries.map(([w]) => w);
         const values = await loadCurrent(db as unknown as PlatformDb);
         return {
           updated,

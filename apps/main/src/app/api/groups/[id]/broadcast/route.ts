@@ -21,6 +21,11 @@ import { sendTenantNotification } from "@/lib/email/notifications";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1787 — recipient lists can be large; bound how many sends are in flight
+// at once rather than firing all of them at the Resend pipeline together.
+const BROADCAST_CONCURRENCY = 10;
 
 // invitations.rsvp_state CHECK values (apps/main/supabase/migrations/
 // 20260529000000_groups.sql). Keep in sync with that constraint.
@@ -174,22 +179,25 @@ export async function POST(
     const unsubscribeUrl = `${baseUrl}/settings/notifications`;
     const { renderToStaticMarkup } = await import("react-dom/server");
 
-    let sent = 0;
-    let suppressed = 0;
-    let failed = 0;
-    for (const to of recipients) {
-      const html = renderToStaticMarkup(
-        React.createElement(GroupBroadcast, {
-          branding: branding ?? {},
-          tenant_legal_name,
-          tenant_business_address,
-          unsubscribe_url: unsubscribeUrl,
-          subject,
-          message,
-          group_name: groupName,
-        }),
-      );
-      const result = await sendTenantNotification({
+    // #1787 — the rendered HTML doesn't vary per recipient (no per-recipient
+    // token/name is interpolated), so render it once instead of once per
+    // recipient inside the loop.
+    const html = renderToStaticMarkup(
+      React.createElement(GroupBroadcast, {
+        branding: branding ?? {},
+        tenant_legal_name,
+        tenant_business_address,
+        unsubscribe_url: unsubscribeUrl,
+        subject,
+        message,
+        group_name: groupName,
+      }),
+    );
+
+    // category "transactional" bypasses the per-recipient rate limiter, so
+    // bounded-concurrency fan out carries no shared-counter race.
+    const outcomes = await mapWithConcurrency(recipients, BROADCAST_CONCURRENCY, (to) =>
+      sendTenantNotification({
         db,
         tenant_id: ctx.tenant_id,
         to,
@@ -197,7 +205,13 @@ export async function POST(
         template_id: "group_broadcast",
         category: "transactional",
         html,
-      });
+      }),
+    );
+
+    let sent = 0;
+    let suppressed = 0;
+    let failed = 0;
+    for (const result of outcomes) {
       if (result.status === "sent") sent++;
       else if (result.status === "suppressed" || result.status === "rate_limited") suppressed++;
       else failed++;

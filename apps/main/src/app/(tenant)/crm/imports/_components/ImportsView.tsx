@@ -100,23 +100,25 @@ export function ImportsView() {
     if (selected.size === 0) return;
     if (!confirm(`Accept ${selected.size} item${selected.size === 1 ? "" : "s"} as-is?`)) return;
     setBulkRunning(true);
-    const results: Array<{ id: string; ok: boolean; reason: string | undefined }> = [];
-    for (const id of selected) {
-      try {
-        const r = await fetch(`/api/imports/review/${id}/accept`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-        });
-        if (r.ok) results.push({ id, ok: true, reason: undefined });
-        else {
+    // Each accept targets a distinct import row — independent requests, so
+    // fan out instead of one round-trip at a time. Per-item try/catch is
+    // preserved so one failure doesn't block the rest of the batch.
+    const results = await Promise.all(
+      Array.from(selected).map(async (id) => {
+        try {
+          const r = await fetch(`/api/imports/review/${id}/accept`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (r.ok) return { id, ok: true, reason: undefined as string | undefined };
           const j = (await r.json().catch(() => ({ error: "unknown" }))) as { error?: string; reason?: string };
-          results.push({ id, ok: false, reason: j.reason ?? j.error ?? "unknown" });
+          return { id, ok: false, reason: j.reason ?? j.error ?? "unknown" };
+        } catch (err) {
+          return { id, ok: false, reason: err instanceof Error ? err.message : String(err) };
         }
-      } catch (err) {
-        results.push({ id, ok: false, reason: err instanceof Error ? err.message : String(err) });
-      }
-    }
+      }),
+    );
     setBulkRunning(false);
     const failed = results.filter((r) => !r.ok);
     if (failed.length > 0) {

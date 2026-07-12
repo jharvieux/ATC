@@ -82,18 +82,22 @@ async function sendBYOWelcomeEmail(db: SupabaseClient, tenantId: string): Promis
   const html = byoWelcomeEmailHtml(legal_name ?? "Your agency", dashboardUrl, helpUrl);
 
   const { sendTenantNotification } = await import("@/lib/email/notifications");
-  for (const to of recipients) {
-    await sendTenantNotification({
-      db,
-      tenant_id: tenantId,
-      to,
-      subject: "Welcome to AI Travel Concierge — your agency is live",
-      html,
-      category: "transactional",
-      template_id: "byo_host_welcome",
-      template_variables: { legal_name: legal_name ?? "", dashboard_url: dashboardUrl, help_url: helpUrl },
-    });
-  }
+  // Recipients are independent sends (category "transactional" bypasses the
+  // per-recipient rate limiter, so no shared-counter race).
+  await Promise.all(
+    recipients.map((to) =>
+      sendTenantNotification({
+        db,
+        tenant_id: tenantId,
+        to,
+        subject: "Welcome to AI Travel Concierge — your agency is live",
+        html,
+        category: "transactional",
+        template_id: "byo_host_welcome",
+        template_variables: { legal_name: legal_name ?? "", dashboard_url: dashboardUrl, help_url: helpUrl },
+      }),
+    ),
+  );
 }
 
 export async function POST(req: Request): Promise<Response> {

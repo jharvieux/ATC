@@ -168,14 +168,20 @@ If amounts appear to be in dollars, multiply by 100 to convert to cents.`;
       async (db, recordQuery) => {
         const counts = { auto_accepted: 0, queued: 0, orphans: 0, errors: 0 };
 
-        for (const line of parsed.line_items as ParsedLineItem[]) {
-          try {
-            await processLineItem(db, tenantId, line, "manual_upload", counts, recordQuery);
-          } catch (err) {
-            console.error("[reconciliation] processLineItem failed", { tenantId, provider_booking_ref: line.provider_booking_ref, amount_cents: line.received_amount_cents, error: String(err) });
-            counts.errors++;
-          }
-        }
+        // #1787 — each line item matches a distinct provider_booking_ref, so
+        // items are independent; fan out instead of one round-trip per item.
+        // Per-item try/catch is preserved so one failure doesn't abort the
+        // batch (counts.errors++ same as the prior sequential loop).
+        await Promise.all(
+          (parsed.line_items as ParsedLineItem[]).map(async (line) => {
+            try {
+              await processLineItem(db, tenantId, line, "manual_upload", counts, recordQuery);
+            } catch (err) {
+              console.error("[reconciliation] processLineItem failed", { tenantId, provider_booking_ref: line.provider_booking_ref, amount_cents: line.received_amount_cents, error: String(err) });
+              counts.errors++;
+            }
+          }),
+        );
         return counts;
       },
     );
