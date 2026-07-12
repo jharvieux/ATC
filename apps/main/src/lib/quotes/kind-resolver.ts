@@ -8,12 +8,26 @@
 //
 // Otherwise ESTIMATE.
 //
-// The persisted price_kind column on quotes records the kind at PDF render
-// time. This resolver is used by the booking-submit handler to decide the
-// flow path; the persisted value is used by the PDF renderer and the
-// /api/quotes/:id/accept handler.
+// #1742 — the 15-minute freshness window (condition 1) means this must be
+// evaluated ONCE, at the moment a quote is priced (priced_at gets stamped),
+// and the result persisted to quotes.price_kind — NOT recomputed on every
+// later PDF render/download. #1699 made the persisted column authoritative
+// specifically so a render doesn't re-derive and potentially disagree with
+// what the customer already accepted; re-running this resolver at render
+// time would silently flip a legitimately CONFIRMED quote back to ESTIMATE
+// the moment priced_at ages past 15 minutes, even with a still-valid lock.
+// The persisted value is read (not re-derived) by the PDF renderer and the
+// /api/quotes/:id/accept handler; the booking-submit handler uses this
+// resolver directly to decide its own flow path.
+//
+// Today NO write path ever supplies a price_lock_token (no host-adapter
+// price-lock integration exists for quotes yet — see NO_HOST_INTEGRATION_ADAPTER
+// below), so this deterministically resolves to 'estimate' everywhere it's
+// called. That's the correct, spec-mandated default (§21.10.1: "Most host
+// adapters at launch will NOT expose price-lock — so default is estimate").
+// CONFIRMED becomes reachable the day a real price-lock call is wired in.
 
-import type { HostAgencyClient } from "@atc/shared-types";
+import type { HostAgencyClient, HostCapabilities } from "@atc/shared-types";
 
 export interface QuoteForKind {
   priced_at: string | null;
@@ -22,6 +36,26 @@ export interface QuoteForKind {
 }
 
 export type QuoteKind = "estimate" | "confirmed";
+
+// Stand-in for write paths (manual quote-pricing entry today) that have no
+// real host-adapter selection available and can never supply a lock token
+// anyway — supports_price_lock's value doesn't change the outcome for those
+// callers, but declaring it false is the honest representation.
+const NO_LOCK_CAPABILITIES: HostCapabilities = {
+  supports_inventory_search: false,
+  supports_real_time_booking: false,
+  supports_modification: false,
+  supports_cancellation: false,
+  supports_commission_api: false,
+  supports_price_lock: false,
+  booking_types: [],
+  cruise_lines_supported: [],
+  commission_currency: "USD",
+  payment_lag_days_typical: 0,
+};
+export const NO_HOST_INTEGRATION_ADAPTER: Pick<HostAgencyClient, "capabilities"> = {
+  capabilities: NO_LOCK_CAPABILITIES,
+};
 
 const FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
 
