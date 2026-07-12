@@ -18,7 +18,7 @@ vi.mock("@/lib/webhooks/resend-signature", () => ({
 }));
 
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
-  data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com" },
+  data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: null },
   error: null,
 };
 const mockSafeAwaitCalls: string[] = [];
@@ -78,7 +78,7 @@ beforeEach(() => {
   process.env.RESEND_WEBHOOK_SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
   mockVerifyResult = true;
   mockMaybeSingleResult = {
-    data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com" },
+    data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: null },
     error: null,
   };
   mockSafeAwaitCalls.length = 0;
@@ -192,6 +192,27 @@ describe("Resend webhook — event routing", () => {
       expect.objectContaining({ name: "email/soft.bounce.retry" }),
     );
     expect(mockSafeAwaitCalls).not.toContain("email_suppressions.upsert");
+  });
+
+  it("#1611: soft bounce on a RE-SEND row records status but does NOT start a new retry chain", async () => {
+    // A re-send (email_log.retry_of set) that soft-bounces must not spawn a
+    // fresh attempt=1 chain — the original send's chain self-drives and reads
+    // this row's status. Without the gate the chain would loop forever at +6h,
+    // never escalating to +12h/+24h or suppressing.
+    mockMaybeSingleResult = {
+      data: { id: "log-2", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: "log-1" },
+      error: null,
+    };
+    const body = JSON.stringify({
+      type: "email.bounced",
+      data: { email_id: "resend-abc", bounce: { type: "soft", message: "mailbox full" } },
+    });
+    const res = await POST(makeReq(body));
+    expect(res.status).toBe(200);
+    // Status still recorded (the chain reads it)...
+    expect(mockSafeAwaitCalls).toContain("email_log.update");
+    // ...but no new retry chain is triggered.
+    expect(mockInngestSend).not.toHaveBeenCalled();
   });
 
   it("email.complained → updates email_log + upserts email_suppressions", async () => {

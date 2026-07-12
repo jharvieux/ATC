@@ -58,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
   // Look up the email_log row
   const { data: logRow, error: logErr } = await svc
     .from("email_log")
-    .select("id, tenant_id, to_email")
+    .select("id, tenant_id, to_email, retry_of")
     .eq("resend_message_id", resendMessageId)
     .maybeSingle();
 
@@ -68,9 +68,14 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("OK", { status: 200 });
   }
 
-  const logId = (logRow as { id: string; tenant_id: string; to_email: string }).id;
-  const tenantId = (logRow as { id: string; tenant_id: string; to_email: string }).tenant_id;
-  const toEmail = (logRow as { id: string; tenant_id: string; to_email: string }).to_email;
+  type LogRow = { id: string; tenant_id: string; to_email: string; retry_of: string | null };
+  const logId = (logRow as LogRow).id;
+  const tenantId = (logRow as LogRow).tenant_id;
+  const toEmail = (logRow as LogRow).to_email;
+  // §23.7/#1611 — a soft bounce on a re-send row must NOT start a fresh retry
+  // chain: the original send's chain self-drives its +6h/+12h/+24h schedule and
+  // reads this row's status directly. Status is still recorded below for that read.
+  const isRetrySend = (logRow as LogRow).retry_of !== null;
   const now = new Date().toISOString();
 
   switch (event.type) {
@@ -96,15 +101,18 @@ export async function POST(req: Request): Promise<Response> {
           { onConflict: "tenant_id,email_address,reason" },
         ), "email_suppressions.upsert");
       } else {
-        // Soft bounce — trigger retry Inngest job
+        // Soft bounce — record status; trigger a retry chain only for original
+        // sends (re-send rows are driven by the existing chain, not a new one).
         await safeAwait(svc
           .from("email_log")
           .update({ status: "soft_bounced", bounced_at: now, bounce_reason: bounceMessage })
           .eq("id", logId), "email_log.update");
-        await inngest.send({
-          name: "email/soft.bounce.retry",
-          data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
-        });
+        if (!isRetrySend) {
+          await inngest.send({
+            name: "email/soft.bounce.retry",
+            data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
+          });
+        }
       }
       break;
     }
