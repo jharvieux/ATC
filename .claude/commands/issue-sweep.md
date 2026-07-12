@@ -129,7 +129,7 @@ When a batch's root cause lands in a supervised path the operator didn't pre-app
 - Verify actual scope first (read the code), fix, add/adjust tests per repo standards; fix verify failures before pushing.
 - Commit per issue with `#<n>` references; PR body lists `Closes #<n>` per issue, carries the `auto-triaged` label, and notes anything skipped. Draft is NOT needed — these merge automatically.
 - Open the PR (`gh pr create --base dev`) but do **not** run audit agents or post marker comments — the supervisor owns finalization.
-- Return a JSON summary: `{branch, pr, completed: [...], skipped: [{number, reason}], memory_entry: {...} | null}`.
+- Return a JSON summary: `{branch, pr, completed: [...], skipped: [{number, reason}], follow_ups: [{title, detail, files}], memory_entry: {...} | null}`. `follow_ups` = anything noticed but not fixed: bugs encountered en route, deferred cleanups, test gaps, partial fixes, "we should also..." items. Report every one — the supervisor turns them into issues at wrap-up, and an unreported follow-up is lost work.
 
 ### Supervisor finalization (serial, one PR at a time)
 
@@ -158,7 +158,11 @@ Failures don't block the sweep: a batch that can't complete is reported in the f
 ## Wrap-up (single checkpoint — no per-PR check-ins)
 
 - **The sweep is not finished while any ledger batch is neither `merged` nor `parked`.** Reconcile the ledger against `gh pr list --label auto-triaged --state open` first — a PR the ledger doesn't account for is a bookkeeping bug to fix, not noise.
-- Table of outcomes: issue → PR → merged/skipped/failed, with reasons.
+- **Log every skip and follow-up as a GitHub issue BEFORE deleting the ledger — this is mandatory, not optional, and it is the step sweeps historically miss.** Collect from the whole sweep: every executor/fix-agent `skipped` entry, every `parked` batch, every `follow_ups` entry, and anything a PR body noted as deferred or not-in-scope. For each:
+  - Item already has an open issue (a swept issue that got skipped/parked) → comment on that issue with the skip/park reason and a link to the sweep PR or plan, so the trail lives on the issue, not in the sweep transcript.
+  - Item has no issue (a follow-up discovered mid-sweep) → `gh issue create` with what the problem is, where it lives (file paths), acceptance criteria, and why it was deferred — specific enough that someone returning cold could pick it up (CLAUDE.md's "issue or it didn't happen" rule).
+  The sweep is not done until every such item has an issue trail.
+- Table of outcomes: issue → PR → merged/skipped/failed, with reasons — and for every skipped/parked/follow-up row, the issue number that now tracks it.
 - Supervised and below-cutoff items still open, so the operator can queue a follow-up sweep.
 - Update `SESSION.md`. Add a MEMORY entry only if the sweep produced a decision worth logging (not for routine sweeps).
 - Delete `.git/issue-sweep-ledger.json`.
