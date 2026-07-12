@@ -166,10 +166,11 @@ describeIf("promote_import RPC atomicity (DB integration)", () => {
       expect(queue?.promoted_contact_id).toBe(res.contact_id);
       expect(queue?.promoted_booking_id).toBe(res.booking_id);
 
-      const [comm] = await sql<{ gross_commission_cents: number }[]>`
+      // gross_commission_cents is BIGINT; postgres-js returns int8 as a string.
+      const [comm] = await sql<{ gross_commission_cents: string }[]>`
         SELECT gross_commission_cents FROM public.commissions WHERE id = ${res.commission_id}
       `;
-      expect(comm?.gross_commission_cents).toBe(Math.round(500000 * 0.15)); // 75000
+      expect(Number(comm?.gross_commission_cents)).toBe(Math.round(500000 * 0.15)); // 75000
     },
     60000,
   );

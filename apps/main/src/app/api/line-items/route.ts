@@ -6,7 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-import { ITEM_TYPES, LINE_ITEM_STATUSES } from "@/lib/line-items/validate";
+import { ITEM_TYPES, LINE_ITEM_STATUSES, MAX_BOOKING_LINE_ITEMS } from "@/lib/line-items/validate";
 
 const VALID_TYPES = new Set<string>(ITEM_TYPES);
 const VALID_STATUSES = new Set<string>(LINE_ITEM_STATUSES);
@@ -21,7 +21,7 @@ export async function GET(req: Request): Promise<Response> {
     const supplier = url.searchParams.get("supplier_name");
     const startFrom = url.searchParams.get("start_from");
     const startTo = url.searchParams.get("start_to");
-    const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 500);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), MAX_BOOKING_LINE_ITEMS);
 
     if (itemType && !VALID_TYPES.has(itemType)) {
       return Response.json({ error: `invalid item_type: ${itemType}` }, { status: 400 });
