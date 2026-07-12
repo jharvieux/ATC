@@ -9,496 +9,27 @@
 //
 // Backend/chat logic is unchanged — all API calls and SSE handling live in
 // ChatExperience; this component only controls layout, agent selection, and theme.
+//
+// #1781/#1791 — this file used to be 925 lines: a 14-useState god component
+// plus 4 sub-components (ConvGroup/ChatsPanel/TaMemoryPanel/TaPrefsPanel)
+// defined inline. The sub-components now live in their own files, and the
+// conversation/persona state lives in useConciergeConversations — this
+// component keeps only its own layout-local UI state (rail/tab/search).
 
-import { useCallback, useEffect, useState } from "react";
-import { formatDate } from "@/lib/format-date";
+import { useState } from "react";
 import { PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
-import type { ChatMessage } from "@/components/chat/MessageBubble";
-import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useTaThemeSync, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
+import { useConciergeConversations } from "@/lib/concierge/use-concierge-conversations";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
-import { TONE_LABELS } from "@/lib/tone/constants";
-
-// ─── Types ──────────────────────────────────────────────────────────────────
+import { ChatsPanel } from "./ChatsPanel";
+import { TaMemoryPanel } from "./TaMemoryPanel";
+import { TaPrefsPanel } from "./TaPrefsPanel";
 
 type SidebarTab = "chats" | "memory" | "prefs";
 type MainTab = "conversation" | "draft";
-
-interface TaConversation {
-  id: string;
-  title: string | null;
-  last_message_at: string | null;
-  message_count: number | null;
-  active_persona_id: string | null;
-}
-
-interface ConvMessages {
-  conversation: { active_persona_id: string | null };
-  messages: ChatMessage[];
-}
-
-// ─── Sidebar sub-panels ──────────────────────────────────────────────────────
-
-function ConvGroup({
-  label,
-  items,
-  activeConvId,
-  loadingConv,
-  onOpen,
-}: {
-  label: string;
-  items: TaConversation[];
-  activeConvId: string | null;
-  loadingConv: boolean;
-  onOpen: (id: string) => void;
-}): React.JSX.Element | null {
-  if (items.length === 0) return null;
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 700,
-          letterSpacing: 0.7,
-          textTransform: "uppercase",
-          color: "var(--ta-text-mute)",
-          padding: "4px 2px",
-          marginBottom: 2,
-        }}
-      >
-        {label}
-      </div>
-      {items.map((c) => {
-        const isActive = c.id === activeConvId;
-        return (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => onOpen(c.id)}
-            disabled={loadingConv}
-            style={{
-              width: "100%",
-              textAlign: "left",
-              padding: "6px 8px",
-              borderRadius: 7,
-              marginBottom: 1,
-              border: isActive ? "1px solid var(--ta-border-2)" : "1px solid transparent",
-              background: isActive ? "var(--ta-surface-2)" : "transparent",
-              cursor: loadingConv ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 6,
-            }}
-            onMouseEnter={(e) => {
-              if (!isActive)
-                (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
-            }}
-            onMouseLeave={(e) => {
-              if (!isActive)
-                (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: isActive ? "var(--ta-accent)" : "var(--ta-border-2)",
-                flexShrink: 0,
-                marginTop: 5,
-              }}
-            />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: isActive ? "var(--ta-text)" : "var(--ta-text-soft)",
-                  fontWeight: isActive ? 600 : 400,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  fontStyle: c.title ? "normal" : "italic",
-                }}
-              >
-                {c.title ?? "Untitled"}
-              </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--ta-text-mute)",
-                  fontFamily: "var(--font-geist-mono, monospace)",
-                  marginTop: 1,
-                }}
-              >
-                {c.message_count ?? 0} msgs ·{" "}
-                {c.last_message_at ? formatDate(c.last_message_at) : "—"}
-              </div>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function ChatsPanel({
-  conversations,
-  activeConvId,
-  loadingConv,
-  searchQuery,
-  onOpen,
-}: {
-  conversations: TaConversation[] | null;
-  activeConvId: string | null;
-  loadingConv: boolean;
-  searchQuery: string;
-  onOpen: (id: string) => void;
-}): React.JSX.Element {
-  if (conversations === null) {
-    return <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>Loading…</p>;
-  }
-
-  const filtered = conversations.filter((c) => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (c.title ?? "").toLowerCase().includes(q);
-  });
-
-  if (filtered.length === 0) {
-    return (
-      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
-        {searchQuery ? `No chats matching "${searchQuery}"` : "No chats yet."}
-      </p>
-    );
-  }
-
-  const today = new Date().toDateString();
-  const todayList = filtered.filter(
-    (c) => c.last_message_at && new Date(c.last_message_at).toDateString() === today,
-  );
-  const earlierList = filtered.filter(
-    (c) => !c.last_message_at || new Date(c.last_message_at).toDateString() !== today,
-  );
-
-  return (
-    <>
-      <ConvGroup
-        label="Today"
-        items={todayList}
-        activeConvId={activeConvId}
-        loadingConv={loadingConv}
-        onOpen={onOpen}
-      />
-      <ConvGroup
-        label="Earlier"
-        items={earlierList}
-        activeConvId={activeConvId}
-        loadingConv={loadingConv}
-        onOpen={onOpen}
-      />
-    </>
-  );
-}
-
-// ─── Memory panel ────────────────────────────────────────────────────────────
-
-interface MemoryRow {
-  preferences?: Record<string, unknown> | null;
-  travel_history?: Record<string, unknown> | null;
-  family_composition?: unknown[] | null;
-  accessibility_needs?: Record<string, unknown> | null;
-  dietary_restrictions?: Record<string, unknown> | null;
-  loyalty_programs?: unknown[] | null;
-  important_dates?: Record<string, unknown> | null;
-  notes_freeform?: string | null;
-}
-
-const MEMORY_ICONS: Record<string, string> = {
-  preferences: "⚙️",
-  travel_history: "🗺️",
-  family_composition: "👨‍👩‍👧",
-  accessibility_needs: "♿",
-  dietary_restrictions: "🍽️",
-  loyalty_programs: "🎖️",
-  important_dates: "📅",
-  notes_freeform: "📝",
-};
-
-const MEMORY_LABELS: Record<string, string> = {
-  preferences: "Preferences",
-  travel_history: "Travel history",
-  family_composition: "Family",
-  accessibility_needs: "Accessibility",
-  dietary_restrictions: "Dietary",
-  loyalty_programs: "Loyalty",
-  important_dates: "Dates",
-  notes_freeform: "Notes",
-};
-
-function TaMemoryPanel(): React.JSX.Element {
-  const [mem, setMem] = useState<MemoryRow | null | "loading">("loading");
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const r = await fetch("/api/memory");
-        if (!r.ok) { setErr(`HTTP ${r.status}`); return; }
-        const data = (await r.json()) as MemoryRow | null;
-        setMem(data ?? null);
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : String(e));
-      }
-    })();
-  }, []);
-
-  if (err) {
-    return (
-      <p style={{ fontSize: 12, color: "#F87171" }}>Could not load memory: {err}</p>
-    );
-  }
-  if (mem === "loading") {
-    return <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>Loading…</p>;
-  }
-  if (!mem) {
-    return (
-      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
-        No client memory yet — keep chatting and it will appear here.
-      </p>
-    );
-  }
-
-  const entries = Object.entries(mem).filter(([, v]) => {
-    if (v === null || v === undefined) return false;
-    if (Array.isArray(v) && v.length === 0) return false;
-    if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
-    return true;
-  });
-
-  if (entries.length === 0) {
-    return (
-      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
-        No client memory yet — keep chatting and it will appear here.
-      </p>
-    );
-  }
-
-  return (
-    <div>
-      {entries.map(([key, val]) => (
-        <div
-          key={key}
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 8,
-            padding: "7px 8px",
-            borderRadius: 7,
-            marginBottom: 3,
-            background: "var(--ta-surface-2)",
-            border: "1px solid var(--ta-border)",
-          }}
-        >
-          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
-            {MEMORY_ICONS[key] ?? "💡"}
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-                color: "var(--ta-text-mute)",
-                marginBottom: 2,
-              }}
-            >
-              {MEMORY_LABELS[key] ?? key}
-            </div>
-            <div
-              style={{
-                fontSize: 11.5,
-                color: "var(--ta-text-soft)",
-                fontFamily: "var(--font-geist-mono, monospace)",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {typeof val === "string"
-                ? val
-                : JSON.stringify(val, null, 2)}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Prefs panel ─────────────────────────────────────────────────────────────
-
-function TaPrefsPanel({
-  showQualityPill,
-  onToggleQualityPill,
-}: {
-  showQualityPill: boolean;
-  onToggleQualityPill: (v: boolean) => void;
-}): React.JSX.Element {
-  const [tone, setTone] = useState<number>(3);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const r = await fetch("/api/memory");
-        if (!r.ok) return;
-        const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
-        setTone(data?.rapport_tone_level ?? 3);
-      } catch {
-        // network failure — leave the default tone in place
-      }
-    })();
-  }, []);
-
-  async function save(): Promise<void> {
-    setSaving(true);
-    setStatus(null);
-    try {
-      const r = await fetch("/api/memory", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rapport_tone_level: tone }),
-      });
-      setStatus(r.ok ? "Saved." : "Couldn't save.");
-    } catch {
-      setStatus("Couldn't save.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const rowStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "8px 0",
-    borderBottom: "1px solid var(--ta-border)",
-  };
-  const labelStyle: React.CSSProperties = {
-    fontSize: 12,
-    color: "var(--ta-text-soft)",
-  };
-  return (
-    <div>
-      <div style={rowStyle}>
-        <span style={labelStyle}>Default agent</span>
-        <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Set via agent picker</span>
-      </div>
-      <div style={{ padding: "8px 0", borderBottom: "1px solid var(--ta-border)" }}>
-        <span style={labelStyle}>Reply tone</span>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-          {TONE_LABELS.map((label, i) => {
-            const level = i + 1;
-            return (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setTone(level)}
-                style={{
-                  padding: "3px 10px",
-                  borderRadius: 20,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  border: `1px solid ${tone === level ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
-                  background: tone === level ? "var(--ta-accent-soft)" : "transparent",
-                  color: tone === level ? "var(--ta-accent)" : "var(--ta-text-soft)",
-                  transition: "all 0.12s",
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-        {tone === 5 && (
-          <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
-            ⚠ Profanity is permitted at this tone level.
-          </p>
-        )}
-      </div>
-      <div style={rowStyle}>
-        <span style={labelStyle}>Quality-review notice</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={showQualityPill}
-          onClick={() => onToggleQualityPill(!showQualityPill)}
-          style={{
-            width: 36,
-            height: 20,
-            borderRadius: 10,
-            border: "none",
-            background: showQualityPill ? "var(--ta-accent)" : "var(--ta-border-2)",
-            cursor: "pointer",
-            position: "relative",
-            transition: "background 0.2s",
-            flexShrink: 0,
-          }}
-        >
-          <span
-            style={{
-              position: "absolute",
-              top: 2,
-              left: showQualityPill ? 18 : 2,
-              width: 16,
-              height: 16,
-              borderRadius: "50%",
-              background: "#fff",
-              transition: "left 0.2s",
-            }}
-          />
-        </button>
-      </div>
-      <button
-        type="button"
-        onClick={() => void save()}
-        disabled={saving}
-        style={{
-          marginTop: 14,
-          padding: "6px 16px",
-          borderRadius: 7,
-          fontSize: 12,
-          fontWeight: 500,
-          cursor: saving ? "not-allowed" : "pointer",
-          border: "none",
-          background: saving ? "var(--ta-surface-2)" : "var(--ta-accent)",
-          color: saving ? "var(--ta-text-mute)" : "var(--ta-accent-ink)",
-          transition: "background 0.15s",
-        }}
-      >
-        {saving ? "Saving…" : "Save preferences"}
-      </button>
-      {status && (
-        <p
-          style={{
-            fontSize: 11,
-            marginTop: 6,
-            color: status === "Saved." ? "var(--ta-green)" : "#F87171",
-          }}
-        >
-          {status}
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConciergeExperience(): React.JSX.Element {
   // Theme sync — TenantShell owns the toggle button; this component only
@@ -508,68 +39,27 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // Local rail open/close. Tri-state: null = CSS default (closed below lg, open on lg+).
   const [railOpen, setRailOpen] = useState<boolean | null>(null);
-
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
   const [mainTab, setMainTab] = useState<MainTab>("conversation");
   const [showQualityPill, setShowQualityPill] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [conversations, setConversations] = useState<TaConversation[] | null>(null);
-  const [forbidden, setForbidden] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
-  const [selectedPersona, setSelectedPersona] = useState<string>(AGENT_CATALOG[0]!.slug);
-  const [convLoadError, setConvLoadError] = useState<string | null>(null);
-  const [loadingConv, setLoadingConv] = useState(false);
-  const [chatKey, setChatKey] = useState(0);
 
-  const selectedAgent =
-    AGENT_CATALOG.find((a) => a.slug === selectedPersona) ?? AGENT_CATALOG[0]!;
-
-  // ─── Data fetching ────────────────────────────────────────────────────────
-
-  const fetchConversations = useCallback(async () => {
-    try {
-      const res = await fetch("/api/chat/ta-conversations");
-      if (res.status === 403) { setForbidden(true); return; }
-      if (!res.ok) { setLoadError(`Could not load conversations (HTTP ${res.status})`); return; }
-      const data = (await res.json()) as { conversations: TaConversation[] };
-      setConversations(data.conversations ?? []);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => { void fetchConversations(); }, [fetchConversations]);
-
-  async function openConversation(convId: string): Promise<void> {
-    setConvLoadError(null);
-    setLoadingConv(true);
-    try {
-      const res = await fetch(`/api/chat/conversations/${convId}`);
-      if (!res.ok) { setConvLoadError(`Could not load conversation (HTTP ${res.status})`); return; }
-      const data = (await res.json()) as ConvMessages;
-      const persona = data.conversation.active_persona_id ?? selectedPersona;
-      setActiveConvId(convId);
-      setActiveMessages(data.messages ?? []);
-      setSelectedPersona(persona);
-      setChatKey((k) => k + 1);
-    } finally {
-      setLoadingConv(false);
-    }
-  }
-
-  function startNew(): void {
-    setActiveConvId(null);
-    setActiveMessages([]);
-    setConvLoadError(null);
-    setChatKey((k) => k + 1);
-  }
-
-  const handleConversationCreated = useCallback(
-    (_id: string) => { void fetchConversations(); },
-    [fetchConversations],
-  );
+  const {
+    conversations,
+    forbidden,
+    loadError,
+    activeConvId,
+    activeMessages,
+    selectedPersona,
+    selectedAgent,
+    convLoadError,
+    loadingConv,
+    chatKey,
+    openConversation,
+    startNew,
+    handleConversationCreated,
+    selectPersona,
+  } = useConciergeConversations();
 
   // ─── Error / access states ────────────────────────────────────────────────
 
@@ -797,12 +287,7 @@ export function ConciergeExperience(): React.JSX.Element {
           >
             <AgentPickerPopover
               selectedSlug={selectedPersona}
-              onSelect={(slug) => {
-                setSelectedPersona(slug);
-                setActiveConvId(null);
-                setActiveMessages([]);
-                setChatKey((k) => k + 1);
-              }}
+              onSelect={selectPersona}
             />
             <div style={{ flex: 1 }} />
             {/* TA mode pill */}
