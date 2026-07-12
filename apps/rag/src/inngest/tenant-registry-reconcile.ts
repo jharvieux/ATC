@@ -11,6 +11,11 @@ import { inngest } from "./client";
 import { getRagDb } from "@/lib/db/supabase";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — platform-wide nightly reconcile; bounded concurrency instead of
+// one tenant at a time.
+const RECONCILE_CONCURRENCY = 20;
 
 type MainTenant = {
   id: string;
@@ -86,10 +91,10 @@ export const tenantRegistryReconcile = inngest.createFunction(
       mainTenants.map((t) => [t.id, t]),
     );
 
-    let inserted = 0;
-    let updated = 0;
-
-    for (const tenant of mainTenants) {
+    // Each tenant's insert/update targets a distinct tenant_id row —
+    // independent of every other tenant's, so fan out with a concurrency
+    // bound instead of one round-trip at a time.
+    const outcomes = await mapWithConcurrency(mainTenants, RECONCILE_CONCURRENCY, async (tenant) => {
       const shadow = shadowMap.get(tenant.id);
 
       if (!shadow) {
@@ -103,8 +108,7 @@ export const tenantRegistryReconcile = inngest.createFunction(
           last_reconcile_sync_at: new Date().toISOString(),
         }), "tenant_registry_shadow.insert");
         console.warn("[reconcile] inserted missing tenant", { tenant_id: tenant.id });
-        inserted++;
-        continue;
+        return "inserted" as const;
       }
 
       const drifted =
@@ -130,18 +134,23 @@ export const tenantRegistryReconcile = inngest.createFunction(
         }).eq("tenant_id", tenant.id).select("tenant_id"), "tenant_registry_shadow.update");
         if (corrected && corrected.length > 0) {
           console.warn("[reconcile] corrected drifted tenant", { tenant_id: tenant.id });
-          updated++;
+          return "updated" as const;
         }
-      } else {
-        // No drift — just touch last_reconcile_sync_at. Same concurrent-delete
-        // race as the drifted path, but tolerated without a row-match check:
-        // this write is uncounted and the field has no downstream consumer, so
-        // a silent no-op on a deleted row is harmless and self-corrects next run.
-        await safeAwait(db.from("tenant_registry_shadow").update({
-          last_reconcile_sync_at: new Date().toISOString(),
-        }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
+        return "noop" as const;
       }
-    }
+
+      // No drift — just touch last_reconcile_sync_at. Same concurrent-delete
+      // race as the drifted path, but tolerated without a row-match check:
+      // this write is uncounted and the field has no downstream consumer, so
+      // a silent no-op on a deleted row is harmless and self-corrects next run.
+      await safeAwait(db.from("tenant_registry_shadow").update({
+        last_reconcile_sync_at: new Date().toISOString(),
+      }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
+      return "noop" as const;
+    });
+
+    const inserted = outcomes.filter((o) => o === "inserted").length;
+    const updated = outcomes.filter((o) => o === "updated").length;
 
     // Shadow rows absent from main — usually means tenant got deleted from
     // main; investigate manually. The PLATFORM sentinel (all-zero UUID,

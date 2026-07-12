@@ -11,6 +11,11 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — up to 1000 expired-override rows per run; bounded concurrency
+// caps how many overlapping writes hit the DB at once.
+const SWEEP_CONCURRENCY = 20;
 
 export const abuseOverrideExpirySweep = inngest.createFunction(
   {
@@ -38,9 +43,10 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
         const rows = (expired ?? []) as Array<{ id: string; tenant_id: string; dimension: string; effective_to: string }>;
         recordQuery({ op: "select", table: "tenant_usage_overrides", row_count: rows.length });
 
+        // Each override row is independent (distinct id/tenant/dimension) —
+        // bounded-concurrency fan out instead of one row at a time.
         const touchedTenants = new Set<string>();
-
-        for (const r of rows) {
+        await mapWithConcurrency(rows, SWEEP_CONCURRENCY, async (r) => {
           await safeAwait(db
             .from("tenant_usage_overrides")
             .update({ expiry_notified_at: new Date().toISOString() })
@@ -58,15 +64,16 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
             threshold_crossed: "0",
             resolution_action: `override_expired:${r.id}`,
           }), "usage_limit_events.insert");
-        }
+        });
 
         // Recompute state for each touched tenant (revert to tier caps).
-        for (const tenant_id of touchedTenants) {
-          await inngest.send({
+        // Independent sends — different tenant_id per event.
+        await mapWithConcurrency([...touchedTenants], SWEEP_CONCURRENCY, (tenant_id) =>
+          inngest.send({
             name: "tenant.subscription_changed",
             data: { tenant_id, change: "tier" },
-          });
-        }
+          }),
+        );
 
         return {
           expired_overrides: rows.length,

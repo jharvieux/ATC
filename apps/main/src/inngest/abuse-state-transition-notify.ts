@@ -125,12 +125,12 @@ export const abuseStateTransitionNotify = inngest.createFunction(
         }
 
         const usagePageUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}${PUBLIC_ORIGIN_PATH}`;
-        const sentTo: string[] = [];
 
         const { renderToStaticMarkup } = await import("react-dom/server");
 
-        // 4. Render + send per admin.
-        for (const admin of adminList) {
+        // 4. Render + send per admin (independent recipients, bounded at 20
+        // by the query above; each has its own idempotency key).
+        const sendOutcomes = await Promise.all(adminList.map(async (admin) => {
           const html = renderToStaticMarkup(
             React.createElement(AbuseStateTransition, {
               layout: {
@@ -182,8 +182,9 @@ export const abuseStateTransitionNotify = inngest.createFunction(
             // to_state) gets a new key and sends.
             idempotencyKey: `abuse_state_transition:${data.tenant_id}:${data.dimension}:${data.to_state}:${admin.id}`,
           });
-          if (result.status === "sent") sentTo.push(admin.email);
-        }
+          return { email: admin.email, sent: result.status === "sent" };
+        }));
+        const sentTo = sendOutcomes.filter((o) => o.sent).map((o) => o.email);
 
         // 5. Stamp the most-recent usage_limit_events row for this transition.
         const { data: eventRow } = await db
