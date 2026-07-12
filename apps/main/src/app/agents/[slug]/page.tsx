@@ -26,13 +26,16 @@ export default async function AgentProfilePage({ params }: PageParams) {
   const agent = AGENT_CATALOG.find((a) => a.slug === slug);
   if (!agent) notFound();
 
-  const headerProps = await getSiteHeaderProps();
-
-  // Prefer the DB-authored bio (admins edit it through /admin/personas);
-  // fall back to the catalog so the page still renders if the persona
-  // row is missing the field. Split on blank lines into paragraphs to
-  // match the catalog's paragraph-array shape.
-  const dbBio = await fetchPersonaCustomerBio(agent.slug);
+  // #1792 — independent reads (header props don't depend on the bio and
+  // vice versa); fan out instead of waiting on them in sequence.
+  const [headerProps, dbBio] = await Promise.all([
+    getSiteHeaderProps(),
+    // Prefer the DB-authored bio (admins edit it through /admin/personas);
+    // fall back to the catalog so the page still renders if the persona
+    // row is missing the field. Split on blank lines into paragraphs to
+    // match the catalog's paragraph-array shape.
+    fetchPersonaCustomerBio(agent.slug),
+  ]);
   const bioParagraphs = dbBio
     ? dbBio.split(/\n\s*\n/).map((s) => s.trim()).filter((s) => s.length > 0)
     : [...agent.bio];

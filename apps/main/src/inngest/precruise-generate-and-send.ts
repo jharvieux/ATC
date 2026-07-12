@@ -756,11 +756,13 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
       };
     }
     case "t_30": {
-      const [checkin, packInspiration] = await Promise.all([
+      // #1792 — all three prompts are independent Haiku calls (none reads
+      // another's output); fan out together instead of a trailing solo await.
+      const [checkin, packInspiration, recs] = await Promise.all([
         haikuGenerate(tenant_id, sys, "Explain the online check-in window and why to do it early, in 2 sentences."),
         haikuGenerate(tenant_id, sys, "Give packing inspiration / style tips for this cruise, in 2-3 sentences."),
+        haikuGenerate(tenant_id, sys, "List 3 personalized recommendations (specialty dining, excursions, spa) one per line, no bullet points."),
       ]);
-      const recs = await haikuGenerate(tenant_id, sys, "List 3 personalized recommendations (specialty dining, excursions, spa) one per line, no bullet points.");
       return {
         reservation_reminders: ["Specialty dining reservations", "Shore excursions", "Spa appointments"],
         checkin_window: checkin,
@@ -770,13 +772,15 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
       };
     }
     case "t_7": {
-      const [packingRaw, embarkation, firstDay] = await Promise.all([
+      // #1792 — all five prompts are independent Haiku calls; fan out
+      // together instead of two trailing solo awaits after the batch.
+      const [packingRaw, embarkation, firstDay, highlights, tips] = await Promise.all([
         haikuGenerate(tenant_id, sys, "Generate a concise packing checklist of 8 essential items, one per line, no bullet points."),
         haikuGenerate(tenant_id, sys, "Describe what to expect on embarkation day in 2-3 sentences."),
         haikuGenerate(tenant_id, sys, "Describe the magic of the first day aboard in 2 sentences."),
+        haikuGenerate(tenant_id, sys, "List 3 ship highlights one per line, no bullet points."),
+        haikuGenerate(tenant_id, sys, "Give 3 cruise-line-specific tips one per line, no bullet points."),
       ]);
-      const highlights = await haikuGenerate(tenant_id, sys, "List 3 ship highlights one per line, no bullet points.");
-      const tips = await haikuGenerate(tenant_id, sys, "Give 3 cruise-line-specific tips one per line, no bullet points.");
       return {
         packing_checklist: packingRaw.split("\n").filter(Boolean).slice(0, 8),
         ship_highlights: highlights.split("\n").filter(Boolean).slice(0, 3),

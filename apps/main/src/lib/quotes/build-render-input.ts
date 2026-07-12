@@ -94,25 +94,58 @@ export async function loadQuoteRow(args: LoadArgs): Promise<LoadQuoteResult> {
 export async function buildRenderInputFromQuote(
   args: BuildArgs,
 ): Promise<BuildInputResult> {
-  const { data: tenantData, error: tenantErr } = await args.adminDb
-    .from("tenants")
-    // #1190: tenants has no "name" column — the display label is display_name.
-    .select("display_name")
-    .eq("id", args.ctx.tenant_id)
-    .maybeSingle();
+  // #1792 — these four reads are mutually independent (none consumes another's
+  // result — each is scoped by ctx.tenant_id/args.quote.id, which are already
+  // known), so fan out instead of waiting on them one at a time.
+  const [
+    { data: tenantData, error: tenantErr },
+    { data: hostNameRow, error: hostErr },
+    { data: optionRows, error: optionsErr },
+    { data: settingsData, error: settingsErr },
+  ] = await Promise.all([
+    args.adminDb
+      .from("tenants")
+      // #1190: tenants has no "name" column — the display label is display_name.
+      .select("display_name")
+      .eq("id", args.ctx.tenant_id)
+      .maybeSingle(),
+    // platform_settings.value historically ships as either a bare string or
+    // a JSON object with .value — both forms are in the wild on dev, so the
+    // helper tolerates both rather than picking one and breaking the other.
+    args.adminDb
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "host_agency_legal_name")
+      .maybeSingle(),
+    // §38 — trip detail lives on quote_options. Read this quote's options and
+    // pick the representative one (customer-selected, else lowest option_index).
+    // adminDb is service-role (RLS bypassed), so scope the read by BOTH
+    // tenant_id and quote_id — D-091 two-layer isolation on a service-role read.
+    args.adminDb
+      .from("quote_options")
+      .select(
+        "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, total_amount_cents",
+      )
+      .eq("tenant_id", args.ctx.tenant_id)
+      .eq("quote_id", args.quote.id)
+      .order("option_index", { ascending: true }),
+    // #1699 — kind + variance are derived by the shared source of truth so the
+    // downloadable PDF matches the accept-time snapshot. Variance comes from the
+    // tenant's configured threshold; unlike the tenant/host/options reads above
+    // this one doesn't fail-loud — a settings blip falls back to the env default
+    // (the same fallback the accept route uses) rather than 500-ing a PDF.
+    args.adminDb
+      .from("tenant_settings")
+      .select("quote_variance_cents")
+      .eq("tenant_id", args.ctx.tenant_id)
+      .maybeSingle(),
+  ]);
+
   if (tenantErr) {
     return { ok: false, status: 500, message: `tenant lookup: ${tenantErr.message}` };
   }
   const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? "Sub-host";
 
-  // platform_settings.value historically ships as either a bare string or
-  // a JSON object with .value — both forms are in the wild on dev, so the
-  // helper tolerates both rather than picking one and breaking the other.
-  const { data: hostNameRow, error: hostErr } = await args.adminDb
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "host_agency_legal_name")
-    .maybeSingle();
   if (hostErr) {
     return { ok: false, status: 500, message: `host lookup: ${hostErr.message}` };
   }
@@ -124,18 +157,6 @@ export async function buildRenderInputFromQuote(
         ? String((hostNameValue.value as { value?: string }).value ?? "Host Agency")
         : "Host Agency";
 
-  // §38 — trip detail lives on quote_options. Read this quote's options and
-  // pick the representative one (customer-selected, else lowest option_index).
-  // adminDb is service-role (RLS bypassed), so scope the read by BOTH
-  // tenant_id and quote_id — D-091 two-layer isolation on a service-role read.
-  const { data: optionRows, error: optionsErr } = await args.adminDb
-    .from("quote_options")
-    .select(
-      "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, total_amount_cents",
-    )
-    .eq("tenant_id", args.ctx.tenant_id)
-    .eq("quote_id", args.quote.id)
-    .order("option_index", { ascending: true });
   if (optionsErr) {
     return { ok: false, status: 500, message: `options lookup: ${optionsErr.message}` };
   }
@@ -143,16 +164,6 @@ export async function buildRenderInputFromQuote(
     (optionRows ?? []) as RenderOptionRow[],
   );
 
-  // #1699 — kind + variance are derived by the shared source of truth so the
-  // downloadable PDF matches the accept-time snapshot. Variance comes from the
-  // tenant's configured threshold; unlike the tenant/host/options reads above
-  // this one doesn't fail-loud — a settings blip falls back to the env default
-  // (the same fallback the accept route uses) rather than 500-ing a PDF.
-  const { data: settingsData, error: settingsErr } = await args.adminDb
-    .from("tenant_settings")
-    .select("quote_variance_cents")
-    .eq("tenant_id", args.ctx.tenant_id)
-    .maybeSingle();
   if (settingsErr) {
     console.warn(
       `[quotes/build-render-input] tenant_settings lookup failed for tenant ${args.ctx.tenant_id}, falling back to env default:`,

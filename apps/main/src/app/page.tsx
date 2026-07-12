@@ -41,8 +41,9 @@ export default async function HomePage() {
   // whether to dispatch — that way anonymous visitors hit getUser exactly
   // once instead of twice (the dispatcher would also call it). Authenticated
   // visitors redirect so the second call inside resolvePostLogin is fine.
-  const headerProps = await getSiteHeaderProps();
-  const incoming = await headers();
+  // #1792 — headerProps (DB-backed) and the incoming request headers don't
+  // depend on each other; fan out instead of waiting in sequence.
+  const [headerProps, incoming] = await Promise.all([getSiteHeaderProps(), headers()]);
 
   if (headerProps.isAuthenticated) {
     const forwarded = new Headers();

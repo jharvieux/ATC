@@ -50,11 +50,31 @@ export async function sendTaskReminderEmail(args: {
 }): Promise<EmailReminderOutcome> {
   const { svc, task_id, tenant_id, reminder_id } = args;
 
-  const { data: taskData } = await svc
-    .from("tasks")
-    .select("id, tenant_id, title, description, due_at, priority, assigned_to_user_id, created_by_user_id")
-    .eq("id", task_id)
-    .maybeSingle();
+  // #1792 — tenant + branding only depend on tenant_id (an input, not a
+  // result of the task lookup), so they can run alongside the task fetch
+  // instead of waiting behind it. Only the user fetch below has a real
+  // dependency (needs recipientUserId, derived from the task row).
+  const [{ data: taskData }, { data: tenantData }, { data: brandingData }] = await Promise.all([
+    svc
+      .from("tasks")
+      .select("id, tenant_id, title, description, due_at, priority, assigned_to_user_id, created_by_user_id")
+      .eq("id", task_id)
+      .maybeSingle(),
+    svc
+      .from("tenants")
+      // #1190: email_* / send-pattern / resend-key live on tenant_branding.
+      .select("id, legal_name, mailing_address")
+      .eq("id", tenant_id)
+      .maybeSingle(),
+    svc
+      .from("tenant_branding")
+      // #1190: email send config (send-pattern, resend key, from-address/name) is
+      // on tenant_branding, not tenants.
+      .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+      .eq("tenant_id", tenant_id)
+      .maybeSingle(),
+  ]);
+
   if (!taskData) return { status: "failed", reason: "task_not_found" };
   const task = taskData as TaskRow;
   if (task.tenant_id !== tenant_id) return { status: "failed", reason: "tenant_mismatch" };
@@ -72,22 +92,9 @@ export async function sendTaskReminderEmail(args: {
   const user = userData as UserRow;
   if (!user.email) return { status: "suppressed", reason: "recipient_has_no_email" };
 
-  const { data: tenantData } = await svc
-    .from("tenants")
-    // #1190: email_* / send-pattern / resend-key live on tenant_branding.
-    .select("id, legal_name, mailing_address")
-    .eq("id", tenant_id)
-    .maybeSingle();
   if (!tenantData) return { status: "failed", reason: "tenant_not_found" };
   const tenant = tenantData as TenantRow;
 
-  const { data: brandingData } = await svc
-    .from("tenant_branding")
-    // #1190: email send config (send-pattern, resend key, from-address/name) is
-    // on tenant_branding, not tenants.
-    .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
-    .eq("tenant_id", tenant_id)
-    .maybeSingle();
   const branding = (brandingData as {
     logo_url: string | null;
     primary_color: string | null;
