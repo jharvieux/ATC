@@ -93,7 +93,7 @@ beforeEach(() => {
     user: { id: USER_ID },
   });
   mocks.lineItemsGate.mockResolvedValue({ ok: true });
-  mocks.lineItemsList.mockResolvedValue({ data: [], error: null });
+  mocks.lineItemsList.mockResolvedValue({ data: [], count: 0, error: null });
   mocks.lineItemsInsert.mockImplementation(() => {});
   mocks.lineItemsInsertSingle.mockResolvedValue({ data: CREATED_ITEM, error: null });
 });
@@ -107,14 +107,14 @@ describe("GET /api/bookings/[id]/line-items — auth gate", () => {
 });
 
 describe("GET /api/bookings/[id]/line-items — list", () => {
-  it("returns { items: [] } when there are no line items", async () => {
+  it("returns { items: [], total: 0 } when there are no line items", async () => {
     const res = await GET(makeGetReq(), PARAMS);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ items: [] });
+    expect(await res.json()).toEqual({ items: [], total: 0 });
   });
 
   it("returns line items in the list", async () => {
-    mocks.lineItemsList.mockResolvedValue({ data: [CREATED_ITEM], error: null });
+    mocks.lineItemsList.mockResolvedValue({ data: [CREATED_ITEM], count: 1, error: null });
     const res = await GET(makeGetReq(), PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json() as { items: unknown[] };
@@ -124,6 +124,20 @@ describe("GET /api/bookings/[id]/line-items — list", () => {
   it("#1788 — caps the query at 500 rows so a booking that has accumulated many line items over its lifetime can't silently return an incomplete list past PostgREST's row cap", async () => {
     await GET(makeGetReq(), PARAMS);
     expect(mocks.lineItemsList).toHaveBeenCalledWith(500);
+  });
+
+  it("passes through the exact-count total so a capped response is detectable (matches /api/line-items and /api/crm/contacts)", async () => {
+    // Total (1200) exceeding the returned page (500 rows) is exactly the
+    // signal a caller needs to know the list was truncated at the cap.
+    mocks.lineItemsList.mockResolvedValue({
+      data: Array(500).fill(CREATED_ITEM),
+      count: 1200,
+      error: null,
+    });
+    const res = await GET(makeGetReq(), PARAMS);
+    const body = await res.json() as { items: unknown[]; total: number };
+    expect(body.items).toHaveLength(500);
+    expect(body.total).toBe(1200);
   });
 });
 
