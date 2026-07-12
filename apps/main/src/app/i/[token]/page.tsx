@@ -9,6 +9,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { headers } from "next/headers";
 import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
+import { MAX_BOOKING_LINE_ITEMS } from "@/lib/line-items/validate";
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -75,10 +76,12 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
     start_date: string | null;
   };
   let lineItems: ItinLi[] = [];
+  // #1788 — bound to the shared per-booking cap; no other guard on this read.
   const { data: liData, error: liErr } = await svc
     .from("booking_line_items")
     .select("id, item_type, description, supplier_name, start_date, include_in_itinerary")
-    .eq("booking_id", row.booking_id);
+    .eq("booking_id", row.booking_id)
+    .limit(MAX_BOOKING_LINE_ITEMS);
   if (liErr && liErr.code !== "42P01") {
     console.warn("[public-itinerary] booking_line_items load failed:", liErr.message);
   } else if (liData) {
