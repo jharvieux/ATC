@@ -7,6 +7,7 @@
 // resolves the generation model/purpose, the streaming-mode flag, and the
 // per-sentence-supervisor deny list.
 
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveAiAvailability } from "@/lib/chat/resolve-ai-availability";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
