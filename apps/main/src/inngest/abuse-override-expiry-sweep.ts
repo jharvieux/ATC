@@ -10,7 +10,7 @@
 
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 // #1789 — up to 1000 expired-override rows per run; bounded concurrency
@@ -53,23 +53,16 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
           // them left the row un-reselectable (stamped) with the audit insert
           // permanently lost. Reordered to audit-first, stamp-last: a crash
           // before the stamp leaves expiry_notified_at null, so the next sweep
-          // re-selects the row. The existence check below then makes the
-          // re-insert a no-op instead of a duplicate audit row.
+          // re-selects the row and re-attempts the insert.
           //
-          // This SELECT-then-INSERT dedup isn't backed by a DB uniqueness
-          // constraint (D-091 #24 would normally want one) — deliberately
-          // deferred to avoid a migration in this fix, since the sweep is a
-          // singleton daily cron and this check only needs to survive a
-          // sequential crash-then-retry, not true concurrent double-invocation.
-          // Tracked as a follow-up: #1844 (add UNIQUE(resolution_action) on
-          // usage_limit_events + a 23505 handler).
+          // D-091 #24 / #1844 — the re-attempt (and a true concurrent
+          // double-invocation, which #1830's SELECT-then-INSERT check couldn't
+          // protect against) dedupes at the DB: a partial unique index
+          // (usage_limit_events_override_expired_uidx, scoped to the
+          // 'override_expired:%' namespace) rejects the duplicate with 23505,
+          // which we treat as "already recorded".
           const resolutionAction = `override_expired:${r.id}`;
-          const { data: existingEvent } = await db
-            .from("usage_limit_events")
-            .select("id")
-            .eq("resolution_action", resolutionAction)
-            .maybeSingle();
-          if (!existingEvent) {
+          try {
             // Audit the expiry as a state-transition-like event so admins see
             // it in usage_limit_events history.
             await safeAwait(db.from("usage_limit_events").insert({
@@ -81,6 +74,8 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
               threshold_crossed: "0",
               resolution_action: resolutionAction,
             }), "usage_limit_events.insert");
+          } catch (err) {
+            if (!(err instanceof SupabaseMutationError) || err.code !== "23505") throw err;
           }
 
           await safeAwait(db
