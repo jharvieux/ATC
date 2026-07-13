@@ -19,12 +19,17 @@ interface TenantRow {
 // platform_settings.value ships as either a bare string or a JSON object
 // with .value — both forms are in the wild on dev (see build-render-input.ts,
 // api/quotes/[id]/accept/route.ts for the same unwrap).
-function unwrapHostAgencyName(raw: unknown): string {
+//
+// Fail-closed (#1856 audit): null means "no legal name available" — never a
+// placeholder. The caller must treat null as a disclosure failure, not a
+// displayable value.
+function unwrapHostAgencyName(raw: unknown): string | null {
   if (typeof raw === "string") return raw;
   if (typeof raw === "object" && raw !== null) {
-    return String((raw as { value?: string }).value ?? "Host Agency");
+    const value = (raw as { value?: unknown }).value;
+    return typeof value === "string" ? value : null;
   }
-  return "Host Agency";
+  return null;
 }
 
 export async function GET(
@@ -60,9 +65,11 @@ export async function GET(
 
   const tenant = tenantData as TenantRow | null;
 
+  // Fail-closed: a missing tenant/settings row yields null, never a
+  // placeholder string — the client blocks submission on null.
   return Response.json({
     tenant: {
-      name: tenant?.display_name ?? "Sub-host",
+      name: tenant?.display_name ?? null,
       support_email: tenant?.support_email ?? "",
     },
     host_agency: {

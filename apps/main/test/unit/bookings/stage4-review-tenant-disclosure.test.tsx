@@ -92,4 +92,50 @@ describe("Stage4Review — tenant-of-record disclosure (#1856)", () => {
     const submitButton = screen.getByRole("button", { name: /confirm & submit booking/i }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
   });
+
+  // Audit finding on #1856: the route can return a 200 with a null legal
+  // name / tenant name (missing platform_settings row or tenant record)
+  // instead of a fetch failure. The client must treat that null the same
+  // as a fetch failure — fail closed, never render nothing-there as if it
+  // were a real disclosure.
+  it("fails closed — blocks submission when the route returns a 200 with a null legal name", async () => {
+    await renderStage4((url) => {
+      if (url.includes("/tenant-of-record")) {
+        return jsonResponse(200, {
+          tenant: { name: "Coral Cove Travel", support_email: "help@coralcove.example" },
+          host_agency: { legal_name: null },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/couldn't load the tenant-of-record disclosure/i)).not.toBeNull();
+    });
+
+    expect(screen.queryByText("Coral Cove Travel")).toBeNull();
+    expect(screen.queryByText("Host Agency")).toBeNull();
+    const submitButton = screen.getByRole("button", { name: /confirm & submit booking/i }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+  });
+
+  it("fails closed — blocks submission when the route returns a 200 with a null tenant name", async () => {
+    await renderStage4((url) => {
+      if (url.includes("/tenant-of-record")) {
+        return jsonResponse(200, {
+          tenant: { name: null, support_email: "help@coralcove.example" },
+          host_agency: { legal_name: "Wavecrest Host Agency LLC" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/couldn't load the tenant-of-record disclosure/i)).not.toBeNull();
+    });
+
+    expect(screen.queryByText("Sub-host")).toBeNull();
+    const submitButton = screen.getByRole("button", { name: /confirm & submit booking/i }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+  });
 });
