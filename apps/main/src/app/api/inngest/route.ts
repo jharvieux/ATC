@@ -2,7 +2,7 @@
 
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { ragSyncCleanup } from "@/inngest/rag-sync-retry";
+import { ragSyncDeliver } from "@/inngest/rag-sync-deliver";
 import { extractMemory, extractMemoryFromBatchResult } from "@/inngest/extract-memory";
 import { extractVoiceProfile } from "@/inngest/extract-voice-profile";
 import { dobEstimateRepromptEligible } from "@/inngest/dob-estimate-reprompt-eligible";
@@ -63,6 +63,7 @@ import {
 } from "@/inngest/pre-cruise-email-scheduler";
 import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
 import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
+import { emailRetryContentPurge } from "@/inngest/email-retry-content-purge";
 // BP24: Chat UI maintenance crons (§24)
 import { anonymousChatCounterCleanup } from "@/inngest/anonymous-chat-counter-cleanup";
 import { customerChatCounterRecompute } from "@/inngest/customer-chat-counter-recompute";
@@ -145,7 +146,7 @@ const subhostingCronsDisabled = process.env.SUBHOSTING_CRONS_DISABLED === "true"
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    ragSyncCleanup,
+    ragSyncDeliver,
     extractMemory,
     extractMemoryFromBatchResult,
     extractVoiceProfile,
@@ -204,6 +205,7 @@ export const { GET, POST, PUT } = serve({
     // (pre-cruise schedulers registered above under the booking kill switch)
     precruiseGenerateAndSend,
     emailSoftBounceRetry,
+    emailRetryContentPurge,
     // BP24: Chat UI maintenance crons (§24)
     anonymousChatCounterCleanup,
     customerChatCounterRecompute,

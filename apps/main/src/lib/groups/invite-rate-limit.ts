@@ -15,7 +15,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export const INVITE_WINDOW_SECONDS = 5 * 60;
+const INVITE_WINDOW_SECONDS = 5 * 60;
 export const INVITE_MAX_PER_WINDOW = 5;
 
 export interface InviteFrequencyResult {

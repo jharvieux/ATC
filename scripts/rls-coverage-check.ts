@@ -25,6 +25,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postgres from "postgres";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const dbUrl = process.env.SUPABASE_DB_URL;
 if (!dbUrl) {
@@ -301,6 +302,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("rls-coverage-check crashed:", err);
+  console.error("rls-coverage-check crashed:", redactSecrets(err));
   process.exit(2);
 });

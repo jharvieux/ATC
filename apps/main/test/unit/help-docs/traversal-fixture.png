@@ -1,0 +1,4 @@
+Sentinel fixture for resolve-image.test.ts (#1688). Deliberately placed
+OUTSIDE apps/main/public so the path-traversal containment test proves
+resolveHelpImage refuses to read it even though a file genuinely exists
+at the resolved path. Not a real PNG — never read for its bytes.

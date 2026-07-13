@@ -9,7 +9,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 function currentPeriodRange(): { rangeLiteral: string; periodStart: Date; periodEnd: Date } {
@@ -60,8 +60,8 @@ export async function GET(req: Request): Promise<Response> {
     period_end: periodEnd.toISOString().slice(0, 10),
     days_elapsed: daysElapsed,
     total_days_in_month: totalDaysInMonth,
-    current_period_spend: fromCents(mtdCents as Cents),
-    projected_month_end_spend: fromCents(projectedCents as Cents),
+    current_period_spend: fromCents(mtdCents),
+    projected_month_end_spend: fromCents(projectedCents),
     currency: "USD",
   });
 }

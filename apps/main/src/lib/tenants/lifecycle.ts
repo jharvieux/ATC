@@ -3,7 +3,7 @@
 // resolve-post-login.ts and an inline full union in billing/payment-state.ts
 // (#1610) — both now import from here.
 
-export const TENANT_LIFECYCLE_STATUSES = [
+const TENANT_LIFECYCLE_STATUSES = [
   "onboarding",
   "pending_review",
   "active",

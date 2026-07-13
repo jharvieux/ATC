@@ -223,6 +223,8 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
     ]);
 
   const checkTypeCounts = groupByCheckType(flaggedMessages);
+  // #1793 — computed once instead of sorting inline in JSX on every render.
+  const sortedCheckTypeCounts = Object.entries(checkTypeCounts).sort(([, a], [, b]) => b - a);
 
   const driftColorClass =
     drift.delta_pct === null
@@ -335,14 +337,12 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
               </tr>
             </thead>
             <tbody>
-              {Object.entries(checkTypeCounts)
-                .sort(([, a], [, b]) => b - a)
-                .map(([check, count]) => (
-                  <tr key={check}>
-                    <td className={tdCls}>{check}</td>
-                    <td className={tdCls}>{count}</td>
-                  </tr>
-                ))}
+              {sortedCheckTypeCounts.map(([check, count]) => (
+                <tr key={check}>
+                  <td className={tdCls}>{check}</td>
+                  <td className={tdCls}>{count}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

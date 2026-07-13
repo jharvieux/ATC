@@ -6,7 +6,7 @@
 
 import "server-only";
 
-export class VercelApiError extends Error {
+class VercelApiError extends Error {
   constructor(public status: number, public body: string) {
     super(`Vercel API ${status}: ${body}`);
     this.name = "VercelApiError";

@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import postgres from "postgres";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const FIXTURES_DIR = resolve(__dirname, "..", "test-data", "fixtures");
 const EXPECTED_COUNTS_PATH = join(FIXTURES_DIR, "EXPECTED_COUNTS.md");
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
 // Only run main when invoked as a script (not when imported by tests).
 if (require.main === module) {
   main().catch((err) => {
-    console.error("[load-fixtures] crashed:", err);
+    console.error("[load-fixtures] crashed:", redactSecrets(err));
     process.exit(1);
   });
 }

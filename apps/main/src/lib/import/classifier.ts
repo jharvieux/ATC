@@ -27,7 +27,7 @@ const DOCUMENT_TYPES: ReadonlySet<DocumentType> = new Set([
   "unknown",
 ]);
 
-export const CLASSIFY_REVIEW_THRESHOLD = 0.60;
+const CLASSIFY_REVIEW_THRESHOLD = 0.60;
 
 export interface ClassifyResult {
   type: DocumentType;

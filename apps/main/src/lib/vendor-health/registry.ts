@@ -23,8 +23,8 @@ export interface VendorHealthState {
   status_changed_at?: string | null;
 }
 
-export const DEGRADE_AFTER_FAILURES = 3;
-export const DOWN_AFTER_FAILURES = 5;
+const DEGRADE_AFTER_FAILURES = 3;
+const DOWN_AFTER_FAILURES = 5;
 
 const CACHE_TTL_MS = 30_000;
 

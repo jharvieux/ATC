@@ -55,7 +55,7 @@ import {
 // that the proxy previously fell through to raw service-role access for
 // any unknown table — e.g., `tasks` and `quote_options` were reachable
 // cross-tenant from authenticated handlers.
-export class UnregisteredTenantTableError extends Error {
+class UnregisteredTenantTableError extends Error {
   constructor(table: string) {
     super(
       `tenantClient: refusing to access table '${table}'. ` +
@@ -119,7 +119,7 @@ function wrapQueryBuilder(qb: unknown, tenant_id: string): unknown {
 // withPlatformAdminAudit explicitly — the audit row is part of the contract.
 const UNSCOPED_METHODS: ReadonlySet<string> = new Set(["rpc", "schema"]);
 
-export class UnscopedTenantClientMethodError extends Error {
+class UnscopedTenantClientMethodError extends Error {
   constructor(method: string) {
     super(
       `tenantClient: refusing to expose '${method}'. This method bypasses ` +

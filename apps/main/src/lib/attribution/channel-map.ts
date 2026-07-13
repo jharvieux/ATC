@@ -4,8 +4,6 @@
 // alongside the channel value is deferred (§35.10 — out of scope until
 // the default map churns).
 
-export const CHANNEL_MAP_VERSION = "2026-05-24-v1";
-
 const MAP: Array<[RegExp, string]> = [
   // ordering matters: most-specific first; later patterns won't reach
   // values that already matched.

@@ -61,10 +61,3 @@ export async function assertIntakePathPermitted(
   }
   return { ok: true };
 }
-
-// §34.9 — bookings-of-record-elsewhere are BYO-only (sub-host has no
-// external host by definition). Called by the promoter when document_type
-// is booking_confirmation.
-export function isBookingImportPermittedForTenantType(tenant_type: string): boolean {
-  return tenant_type === "byo_host";
-}

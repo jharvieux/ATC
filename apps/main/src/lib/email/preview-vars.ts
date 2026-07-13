@@ -13,7 +13,7 @@ import type { EmailTemplateSpec } from "@/lib/email/template-registry";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 
-export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
 
 export interface PreviewTenantRow {
   legal_name: string | null;

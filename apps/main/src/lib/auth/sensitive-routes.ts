@@ -6,7 +6,7 @@
 //
 // Matched against the request pathname using startsWith.
 
-export const SENSITIVE_ROUTE_PREFIXES: ReadonlySet<string> = new Set([
+const SENSITIVE_ROUTE_PREFIXES: ReadonlySet<string> = new Set([
   "/api/commissions",        // commission overrides
   "/api/onboarding/ica",     // ICA acceptance
   "/api/user/data",          // CCPA delete/export
