@@ -97,7 +97,7 @@ describeIf("process_transfer_reversal", () => {
         net_commission_cents: 10000,
         platform_retained_cents: 2000,
         subhost_payable_cents: 8000,
-        status: "paid",
+        status: "received",
       })
       .select("id")
       .single();
@@ -161,7 +161,7 @@ describeIf("process_transfer_reversal", () => {
         net_commission_cents: 5000,
         platform_retained_cents: 1000,
         subhost_payable_cents: 4000,
-        status: "paid",
+        status: "received",
       })
       .select("id")
       .single();

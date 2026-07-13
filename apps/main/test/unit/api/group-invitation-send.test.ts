@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   generateToken: vi.fn(),
   invitationInsert: vi.fn(),
   invitationInsertResult: vi.fn(),
+  reserveRpc: vi.fn(),
   inviteCountQuery: vi.fn(),
   inviteFreqQuery: vi.fn(),
   loadTenantSnapshot: vi.fn(),
@@ -131,6 +132,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
         }),
       };
     },
+    // #1680 — the single-invite cap is now enforced by the reserve RPC.
+    rpc: (name: string, args: unknown) => mocks.reserveRpc(name, args),
   }),
 }));
 
@@ -176,6 +179,7 @@ beforeEach(() => {
   mocks.safeAwait.mockResolvedValue([{ id: "inv-new" }]);
   mocks.inviteFreqQuery.mockResolvedValue({ count: 0, error: null });
   mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
+  mocks.reserveRpc.mockResolvedValue({ data: { status: "ok", inserted: 1 }, error: null });
   mocks.invitationInsertResult.mockResolvedValue({ data: [{ id: "inv-new" }], error: null });
   mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
   mocks.incrementGroupInvitees.mockResolvedValue(undefined);
@@ -200,24 +204,30 @@ beforeEach(() => {
 });
 
 describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
-  it("valid invite → inserts the invitation row, returns ok + invitation_id", async () => {
+  it("valid invite → reserves+inserts the invitation row, returns ok + invitation_id", async () => {
     const res = await POST(postReq({ action: "invite", invitee_email: "Guest@Example.com" }), PARAMS);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; invitation_id: string };
     expect(body.ok).toBe(true);
     expect(typeof body.invitation_id).toBe("string");
-    expect(mocks.invitationInsert).toHaveBeenCalledOnce();
-    // Email is normalized to lowercase
-    const payload = mocks.invitationInsert.mock.calls[0]![0] as Record<string, unknown>;
-    expect(payload.invitee_email).toBe("guest@example.com");
+    // #1680 — the row is reserved+inserted atomically by the RPC (not a bare
+    // insert). Email is normalized to lowercase before it reaches the RPC.
+    expect(mocks.reserveRpc).toHaveBeenCalledOnce();
+    const [name, args] = mocks.reserveRpc.mock.calls[0] as [
+      string,
+      { p_group_id: string; p_invitations: Array<Record<string, unknown>>; p_max: number },
+    ];
+    expect(name).toBe("reserve_group_invitations");
+    expect(args.p_max).toBe(50);
+    expect(args.p_invitations[0]!.invitee_email).toBe("guest@example.com");
   });
 
-  it("includes the NOT NULL token in the insert (regression: missing token 500'd every add)", async () => {
+  it("includes the NOT NULL token in the reserved row (regression: missing token 500'd every add)", async () => {
     const res = await POST(postReq({ action: "invite", invitee_email: "guest@example.com" }), PARAMS);
     expect(res.status).toBe(200);
-    expect(mocks.invitationInsert).toHaveBeenCalledOnce();
-    const payload = mocks.invitationInsert.mock.calls[0]![0] as Record<string, unknown>;
-    expect(payload.token).toBe("tok-abc");
+    expect(mocks.reserveRpc).toHaveBeenCalledOnce();
+    const args = mocks.reserveRpc.mock.calls[0]![1] as { p_invitations: Array<Record<string, unknown>> };
+    expect(args.p_invitations[0]!.token).toBe("tok-abc");
   });
 
   it("invalid email → 400, no DB write", async () => {
@@ -225,7 +235,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("invitee_email");
-    expect(mocks.invitationInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
   // #84: the email regex is the ReDoS guard. A >254-char address matches the
@@ -237,7 +247,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("invitee_email");
-    expect(mocks.invitationInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
   it("invalid visibility_choice → 400, no DB write", async () => {
@@ -248,7 +258,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("visibility_choice");
-    expect(mocks.invitationInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
   it("email send failure is silenced — invitation_id still returned", async () => {
