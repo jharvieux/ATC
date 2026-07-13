@@ -1,0 +1,53 @@
+name: Bug report
+description: Something is broken — mirrors CLAUDE.md's "never ignore a bug you find" required fields.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What's the bug?
+      description: What's broken, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: input
+    id: where
+    attributes:
+      label: Where does it live?
+      description: File path(s), route, or component. A best guess is fine.
+      placeholder: e.g. apps/main/src/app/api/chat/route.ts:469
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What you observed — error message, wrong output, screenshot, log line.
+    validations:
+      required: true
+
+  - type: textarea
+    id: likely-fix
+    attributes:
+      label: Likely fix
+      description: What the fix probably looks like, if you have a guess. "Not sure" is fine.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: model-tier
+    attributes:
+      label: Suggested model tier (advisory)
+      description: >-
+        Optional hint for whoever triages this, per docs/runbooks/triage.md's rubric.
+        Not binding — triage makes the final call and applies the actual label.
+      options:
+        - Not sure
+        - haiku — single file, no control-flow change (docs/typos/copy/config)
+        - sonnet — default, including large mechanical work
+        - opus — migration, new API route/Inngest fn/cron, webhook/idempotency/state-machine, new service-role path, or permission-matrix/auth logic
+      default: 0
+    validations:
+      required: false
