@@ -42,6 +42,7 @@ const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
       { href: "/admin/personas",                label: "Personas",                   requiredRoles: ["superadmin"] },
       { href: "/admin/rag/authority",           label: "RAG Authority Overrides" },
       { href: "/admin/retrieval-weights",       label: "Retrieval Weights" },
+      { href: "/admin/feedback-settings",       label: "Feedback Settings" },
       { href: "/admin/chunks/post-termination", label: "Post-termination Chunks" },
       { href: "/admin/travel-news",             label: "Travel News Feeds" },
       { href: "/admin/cruise-catalog",          label: "Cruise Catalog" },

@@ -41,7 +41,7 @@ describe("ADMIN_AREA_GRANTS — superadmin is present in every area", () => {
 
 describe("ADMIN_AREA_GRANTS — reviewer access boundaries", () => {
   const REVIEWER_DENIED = ["abuse", "tenants", "personas", "persona_safety", "pricing", "ai_pricing", "reconciliation", "resource_util", "admins", "legal_docs", "pause_ai", "ai_kill_switch", "integrations"] as const;
-  const REVIEWER_GRANTED = ["rag", "chunks", "retrieval_weights", "travel_news", "cruise_catalog", "denylist", "email_samples"] as const;
+  const REVIEWER_GRANTED = ["rag", "chunks", "retrieval_weights", "feedback_settings", "travel_news", "cruise_catalog", "denylist", "email_samples"] as const;
 
   for (const area of REVIEWER_DENIED) {
     it(`reviewer cannot access '${area}'`, () => {
