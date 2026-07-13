@@ -8,6 +8,10 @@ export async function mapWithConcurrency<T, R>(
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
+  // limit <= 0 would spawn zero workers and silently return a hole-filled
+  // array — fail loud instead (all current callers pass literals, but a
+  // config-derived limit could hit this).
+  if (limit <= 0) throw new Error("mapWithConcurrency: limit must be >= 1");
   const results: R[] = new Array(items.length);
   let next = 0;
   async function worker(): Promise<void> {

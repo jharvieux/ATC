@@ -123,9 +123,14 @@ export async function PUT(req: Request): Promise<Response> {
       async (db, recordQuery) => {
         // Each weight lives on its own platform_settings row (different key),
         // so the updates are independent — fan out instead of one
-        // round-trip per key.
+        // round-trip per key. allSettled (not all) because the weights are
+        // a cohesive scoring config read together downstream: a fail-fast
+        // rejection would race the still-in-flight sibling updates and lose
+        // track of which keys actually applied. On any failure, report the
+        // applied/failed split in the thrown error so the audit log and
+        // server logs show the true partial state.
         const entries = Object.entries(requested) as Array<[WeightKey, number]>;
-        await Promise.all(
+        const settled = await Promise.allSettled(
           entries.map(async ([w, value]) => {
             recordQuery({ op: "update", table: "platform_settings" });
             const { error } = await (db as unknown as PlatformDb)
@@ -135,6 +140,17 @@ export async function PUT(req: Request): Promise<Response> {
             if (error) throw new Error(`update ${settingKey(w)} failed: ${String(error)}`);
           }),
         );
+        const failedKeys = entries
+          .filter((_, i) => settled[i]?.status === "rejected")
+          .map(([w]) => settingKey(w));
+        if (failedKeys.length > 0) {
+          const appliedKeys = entries
+            .filter((_, i) => settled[i]?.status === "fulfilled")
+            .map(([w]) => settingKey(w));
+          throw new Error(
+            `retrieval-weights update partial failure — failed: [${failedKeys.join(", ")}], applied: [${appliedKeys.join(", ")}]`,
+          );
+        }
         const updated: WeightKey[] = entries.map(([w]) => w);
         const values = await loadCurrent(db as unknown as PlatformDb);
         return {
