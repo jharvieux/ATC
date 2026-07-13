@@ -52,15 +52,20 @@ function makeDb(opts: {
         };
       }
       if (table === "quotes") {
+        const selectChain: Record<string, unknown> = {};
+        selectChain.eq = () => selectChain;
+        selectChain.single = () => Promise.resolve({ data: { priced_at: opts.quotePricedAt }, error: null });
+
+        const updateChain: Record<string, unknown> = {};
+        updateChain.eq = () => updateChain;
+        updateChain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
+          Promise.resolve({ data: null, error: null }).then(resolve);
+
         return {
-          select: () => ({
-            eq: () => ({
-              single: () => Promise.resolve({ data: { priced_at: opts.quotePricedAt }, error: null }),
-            }),
-          }),
+          select: () => selectChain,
           update: (payload: Record<string, unknown>) => {
             opts.onQuoteUpdate(payload);
-            return { eq: () => Promise.resolve({ data: null, error: null }) };
+            return updateChain;
           },
         };
       }

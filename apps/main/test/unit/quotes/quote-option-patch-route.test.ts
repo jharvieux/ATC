@@ -51,7 +51,11 @@ function makeDb(onQuoteUpdate: (payload: Record<string, unknown>) => void) {
         return {
           update: (payload: Record<string, unknown>) => {
             onQuoteUpdate(payload);
-            return { eq: () => Promise.resolve({ data: null, error: null }) };
+            const updateChain: Record<string, unknown> = {};
+            updateChain.eq = () => updateChain;
+            updateChain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
+              Promise.resolve({ data: null, error: null }).then(resolve);
+            return updateChain;
           },
         };
       }

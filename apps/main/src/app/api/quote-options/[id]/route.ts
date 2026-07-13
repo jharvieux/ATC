@@ -94,7 +94,7 @@ export async function PATCH(
             { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
             NO_HOST_INTEGRATION_ADAPTER,
           ),
-        }).eq("id", quoteId),
+        }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
         "quotes.update.price_kind_from_option_patch",
       );
     }

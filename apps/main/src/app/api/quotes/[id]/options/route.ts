@@ -138,6 +138,7 @@ export async function POST(
         .from("quotes")
         .select("priced_at")
         .eq("id", quoteId)
+        .eq("tenant_id", ctx.tenant_id)
         .single();
       if (quoteReadErr) return dbErrorResponse(quoteReadErr);
       if ((quoteRow as { priced_at: string | null }).priced_at == null) {
@@ -149,7 +150,7 @@ export async function POST(
               { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
               NO_HOST_INTEGRATION_ADAPTER,
             ),
-          }).eq("id", quoteId),
+          }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
           "quotes.update.price_kind_from_option_create",
         );
       }
