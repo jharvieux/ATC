@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { redact, extractFailingList, extractUnhandledSection } from "../../../scripts/parse-nightly-failures.mjs";
+import { redact, extractFailingList, extractUnhandledSection, extractMigrateFailure } from "../../../scripts/parse-nightly-failures.mjs";
 
 const FIXTURES = join(__dirname, "../../fixtures/nightly-failures");
 const readFixture = (name: string) => readFileSync(join(FIXTURES, name), "utf-8");
@@ -47,6 +47,35 @@ describe("extractUnhandledSection", () => {
 
   it("returns an empty string when no unhandled-error banner is present", () => {
     expect(extractUnhandledSection("stdout | some.test.ts > passes fine\nTest Files  1 passed (1)\n")).toBe("");
+  });
+});
+
+describe("extractMigrateFailure", () => {
+  it("wraps the ANSI-stripped tail of the push output in a code fence (#1893)", () => {
+    const log = "\x1b[32mApplying migration 0011_x.sql\x1b[0m\nERROR: relation \"foo\" does not exist (SQLSTATE 42P01)";
+    const result = extractMigrateFailure(log);
+    expect(result).toContain("ERROR: relation \"foo\" does not exist");
+    expect(result).not.toContain("\x1b[");
+    expect(result.startsWith("```\n")).toBe(true);
+    expect(result.endsWith("\n```")).toBe(true);
+  });
+
+  it("reports a fallback when the log is empty", () => {
+    expect(extractMigrateFailure("")).toBe("(no migration output captured; see run logs)");
+  });
+
+  it("keeps only the last lines so a huge push log can't bloat the issue body", () => {
+    const log = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    const result = extractMigrateFailure(log);
+    expect(result).toContain("line 199");
+    expect(result).not.toContain("line 0\n");
+  });
+
+  it("end-to-end: a postgres URL in the push output is scrubbed before the issue body", () => {
+    const log = "failed to connect: postgres://ci_user:s3cr3t_fake@db.example.internal:5432/rag";
+    const redacted = redact(extractMigrateFailure(log));
+    expect(redacted).not.toContain("s3cr3t_fake");
+    expect(redacted).toContain("postgres://REDACTED@");
   });
 });
 
