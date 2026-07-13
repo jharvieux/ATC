@@ -17,14 +17,26 @@ function makeDb({
   logCount = 0,
   insertId = "log-1",
   logInsertError = null as { message: string } | null,
+  logInserts = null as Record<string, unknown>[] | null,
+  retryContentInserts = null as Record<string, unknown>[] | null,
 }: {
   suppressions?: unknown[];
   logCount?: number;
   insertId?: string;
   logInsertError?: { message: string } | null;
+  logInserts?: Record<string, unknown>[] | null;
+  retryContentInserts?: Record<string, unknown>[] | null;
 } = {}): SupabaseClient {
   return {
     from: (table: string) => {
+      if (table === "email_retry_content") {
+        return {
+          insert: (payload: Record<string, unknown>) => {
+            retryContentInserts?.push(payload);
+            return Promise.resolve({ data: null, error: null });
+          },
+        };
+      }
       if (table === "email_suppressions") {
         return {
           select: () => ({
@@ -45,13 +57,16 @@ function makeDb({
           eq: () => countChain,
           gte: () => countChain,
           not: vi.fn().mockResolvedValue({ data: Array(logCount).fill({ id: "x" }), error: null }),
-          insert: () => ({
-            select: () => ({
-              single: vi.fn().mockResolvedValue(
-                logInsertError ? { data: null, error: logInsertError } : { data: { id: insertId }, error: null },
-              ),
-            }),
-          }),
+          insert: (payload: Record<string, unknown>) => {
+            logInserts?.push(payload);
+            return {
+              select: () => ({
+                single: vi.fn().mockResolvedValue(
+                  logInsertError ? { data: null, error: logInsertError } : { data: { id: insertId }, error: null },
+                ),
+              }),
+            };
+          },
         };
         return countChain as unknown as ReturnType<SupabaseClient["from"]>;
       }
@@ -202,6 +217,50 @@ describe("sendEmail — §23", () => {
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     const headers = calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("#1611: an original send stores the rendered payload in email_retry_content for a soft-bounce re-send", async () => {
+    const retryContentInserts: Record<string, unknown>[] = [];
+    const db = makeDb({ retryContentInserts });
+    await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Your cruise awaits",
+      template_id: "pre_cruise_t_7",
+      category: "pre_cruise",
+      html: testHtml,
+    });
+    expect(retryContentInserts).toHaveLength(1);
+    const stored = retryContentInserts[0]!;
+    // Fidelity: exactly what we sent must be re-sendable verbatim (option a).
+    expect(stored.html).toBe(testHtml);
+    expect(stored.subject).toBe("Your cruise awaits");
+    expect(stored.to_email).toBe("customer@example.com");
+    expect(stored.email_category).toBe("pre_cruise");
+    expect(stored.email_log_id).toBe("log-1");
+    expect(stored.expires_at).toBeTypeOf("string"); // PII TTL set
+  });
+
+  it("#1611: a re-send (retry_of set) stamps email_log.retry_of and does NOT store its own retry content", async () => {
+    const retryContentInserts: Record<string, unknown>[] = [];
+    const logInserts: Record<string, unknown>[] = [];
+    const db = makeDb({ retryContentInserts, logInserts });
+    await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Your cruise awaits",
+      template_id: "pre_cruise_t_7",
+      category: "pre_cruise",
+      html: testHtml,
+      retry_of: "orig-log-1",
+    });
+    // No new retry chain / no duplicate stored payload for a re-send.
+    expect(retryContentInserts).toHaveLength(0);
+    // The re-send row is marked so the webhook won't start a fresh chain.
+    expect(logInserts).toHaveLength(1);
+    expect(logInserts[0]!.retry_of).toBe("orig-log-1");
   });
 
   it("returns failed when RESEND_API_KEY is not set", async () => {
