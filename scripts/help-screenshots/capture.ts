@@ -31,6 +31,7 @@ import { rejectWrongStateRender, LOGIN_CTA_NAME, INACTIVE_SITE_TEXT } from "./re
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SHOTS, VIEWPORT, DEVICE_SCALE_FACTOR, type Shot, type ShotAnnotation } from "./manifest";
+import { redactSecrets } from "../lib/redact-secrets";
 
 const OUT_ROOT = path.join(process.cwd(), "apps", "main", "public", "help");
 const CLIP_PADDING = 16;
@@ -283,6 +284,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(redactSecrets(err));
   process.exit(1);
 });

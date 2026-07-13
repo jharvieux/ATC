@@ -35,6 +35,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
+import { redactSecrets } from "./lib/redact-secrets";
 import { stripeFormEncode } from "./lib/stripe-form-encode";
 import {
   substitutePlaceholders,
@@ -313,6 +314,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error(err);
+  console.error(redactSecrets(err));
   process.exit(1);
 });
