@@ -75,6 +75,33 @@ describe("Stage4Review — tenant-of-record disclosure (#1856)", () => {
     expect(submitButton.disabled).toBe(false);
   });
 
+  // Re-audit finding on #1856: the disclosure conditionally renders the
+  // "Customer service contact" sentence and mailto link only when
+  // support_email is non-empty. Pin the empty case so a revert to
+  // always-rendering it can't silently regress.
+  it("omits the customer-service-contact sentence and mailto link when support_email is empty", async () => {
+    await renderStage4((url) => {
+      if (url.includes("/tenant-of-record")) {
+        return jsonResponse(200, {
+          tenant: { name: "Coral Cove Travel", support_email: "" },
+          host_agency: { legal_name: "Wavecrest Host Agency LLC" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Coral Cove Travel")).not.toBeNull();
+    });
+
+    expect(screen.queryByText(/customer service contact/i)).toBeNull();
+    expect(document.querySelector('a[href^="mailto:"]')).toBeNull();
+
+    // Missing support_email isn't a fail-closed condition — name + legal name are present.
+    const submitButton = screen.getByRole("button", { name: /confirm & submit booking/i }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(false);
+  });
+
   it("fails closed — shows an error and disables submit, never a placeholder, if the fetch fails", async () => {
     await renderStage4((url) => {
       if (url.includes("/tenant-of-record")) {
