@@ -28,11 +28,51 @@ jobs:
     outputs:
       code: ${{ steps.f.outputs.code }}
       workflows_only: ${{ steps.f.outputs.workflows_only }}
+      rag_changed: ${{ steps.rag.outputs.rag_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Detect atc-rag changes (#1829)
+        # Gates the beta-tier RAG deploy job so an ordinary atc-main-only PR
+        # merge to dev doesn't trigger a redundant atc-rag deploy. Diffs
+        # against the pre-push SHA on `push` (dev-merge) and against the PR
+        # base on `pull_request`; PROD RAG deploys (deploy-production) are
+        # NOT gated by this — they deploy unconditionally alongside atc-main
+        # on every release cut, same as atc-main's own prod step has no
+        # change filter.
+        id: rag
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags origin "$BASE" || true
+            DIFF_RANGE="origin/$BASE...HEAD"
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            DIFF_RANGE="$BEFORE...HEAD"
+          else
+            # workflow_dispatch, or a push with no usable `before` (e.g. a
+            # brand-new branch) — fail SAFE, same posture as doc-detection
+            # below: uncertainty means deploy, not silently skip.
+            echo "::notice::No diffable range for atc-rag change detection — defaulting to rag_changed=true."
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! CHANGED=$(git diff --name-only "$DIFF_RANGE" 2>/dev/null); then
+            echo "::warning::git diff failed — defaulting to rag_changed=true."
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$CHANGED" | grep -qE '^(apps/rag/|packages/contracts/|packages/config/|pnpm-lock\.yaml$)'; then
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rag_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Detect non-doc changes
         id: f
@@ -498,6 +538,49 @@ jobs:
         run: pnpm test:cross-tenant
 
   # ============================================================
+  # atc-rag beta deploy (#1829) — runs on dev-merge only, gated by
+  # detect-changes' rag_changed filter so an atc-main-only PR merge
+  # doesn't trigger a redundant RAG deploy. Mirrors the manual command
+  # in the ops runbook (`cd apps/rag && vercel deploy --yes`) rather
+  # than the atc-main pull/build/deploy-prebuilt pattern below — that's
+  # the already-verified-working remote-build path for this project
+  # (see memory: reference_rag_deploy.md), and needs no local
+  # Node/pnpm install step.
+  #
+  # atc-main itself has NO equivalent explicit beta-deploy job in this
+  # file — Vercel's native Git integration deploys atc-main on every
+  # push to `dev` automatically. atc-rag's Git integration does not
+  # (confirmed by the manual-deploy-only status quo this issue fixes),
+  # so this job is the explicit substitute for that missing integration
+  # wiring, scoped by path so it only fires when relevant.
+  # ============================================================
+
+  deploy-rag-beta:
+    name: Deploy atc-rag (Beta)
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.detect-changes.outputs.rag_changed == 'true'
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@54
+
+      - name: Vercel deploy (atc-rag beta)
+        working-directory: apps/rag
+        run: |
+          if [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
+            exit 1
+          fi
+          vercel deploy --token="$VERCEL_TOKEN" --yes
+
+  # ============================================================
   # db-copy block — production → staging clone (job 5)
   # Runs only on push to release/* branches
   # ============================================================
@@ -880,6 +963,35 @@ jobs:
         run: |
           sleep 30
           curl -f https://ai-travelconcierge.com/api/health
+
+      # #1829 — atc-rag prod deploy, through this SAME job and the SAME
+      # `production` GitHub Environment approval gate as atc-main above (one
+      # approval covers both; a separate job here would need its own
+      # `environment: production` and force a second reviewer click).
+      # Unconditional on every release, same as atc-main's own prod deploy
+      # step has no change filter — this is a rare, deliberate event, not
+      # the frequent dev-merge traffic the beta job's rag_changed filter
+      # protects against. Uses the same remote-build `vercel deploy --prod`
+      # command already verified working manually (memory:
+      # reference_rag_deploy.md) rather than the pull/build/deploy-prebuilt
+      # pattern atc-main uses above.
+      - name: Vercel deploy (atc-rag production)
+        env:
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
+        working-directory: apps/rag
+        run: |
+          if [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
+            exit 1
+          fi
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Smoke test atc-rag production
+        # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md
+        # — not a secret, so no new secret needed for this check.
+        run: |
+          sleep 15
+          curl -f https://rag.ai-travelconcierge.com/api/health
 
       - name: Sync Inngest app (#835)
         # Vercel CLI deploys don't fire the Vercel→Inngest integration, so a newly
