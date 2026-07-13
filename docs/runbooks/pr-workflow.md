@@ -22,6 +22,12 @@ The comments are **summaries** (scope, finding one-liners, standalone `Status` l
 - **`BEHIND` is harmless on its own.** A queued PR's effective diff (files API) is pinned to its existing merge-base until you actually update-branch it — dev moving underneath it does not touch the hash or stale its markers. There is nothing to do while a PR just sits `BEHIND`.
 - **Same-file sibling overlap legitimately re-hashes.** If a merging sibling PR touches a file this PR also touches, update-branching genuinely changes this PR's diff content (not just line offsets) — that's a real re-audit, not waste (#1671 finding 2: a dev-merge once reintroduced a bug into a queued PR, and only the forced re-audit caught it).
 
+## PR bodies on multi-issue PRs: one `Closes #<n>` line per completed issue
+
+A single `Closes` on a multi-issue PR leaves the other issues open forever. 2026-07-12 lesson: PRs #1736/#1765 resolved six issues between them but auto-close-linked only one — the six stayed open and a later sweep burned a full batch re-verifying already-done work. Rules: every COMPLETED issue gets its own `Closes #<n>` line; a PARTIALLY-completed issue gets a remainder comment on the issue (scope done / scope left / acceptance criteria), never a `Closes` line. At merge, confirm the links actually closed the issues; close stragglers with a comment naming the PR.
+
+Related audit-workflow note: **auditors and rebind re-audits must diff against `origin/dev`** (`git fetch origin dev` first, cross-check against `gh pr view <n> --json files`) — worktree-local `dev` refs go stale as the merge train moves and produce phantom out-of-scope findings (five instances on 2026-07-12).
+
 ## Merge trains (multiple PRs queued to merge in sequence)
 
 Investigated in #1671 after a 20-PR sweep burned 2–5 audit-agent pairs per PR on avoidable re-audits. The gate's hash recipe was not the problem (verified stable across no-op merges) — the waste was purely orchestration behavior. Two rules:

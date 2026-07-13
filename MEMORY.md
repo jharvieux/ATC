@@ -4,6 +4,102 @@ Newest entries on top.
 
 ---
 
+## D-339 — 2026-07-12 — Bounded-concurrency convention for N+1 fixes (per-app helper, no shared package, no p-limit)
+
+**Decision**: Serial-await fixes use per-app `mapWithConcurrency` copies (`apps/main` and `apps/rag` each have `src/lib/async/with-concurrency.ts`) rather than a shared workspace package. Defaults: unbounded `Promise.all` only for small/bounded collections; limit 5–20 for unbounded or service-hammering loops; `Promise.allSettled` with applied/failed reporting where the writes form a cohesive config read together downstream. Each copy carries its own drift-pin test.
+
+**Why**: PR #1827 (#1787/#1789/#1792) parallelized ~25 serial-await sites; future N+1 fixes should reuse the helper and bounds instead of reinventing per-site. No shared runtime package exists between the apps (packages/shared-types is types-only) — creating one for a 20-line utility is a bigger architectural change than it justifies.
+
+**Rejected**: shared workspace package (first cross-app runtime dep); `p-limit` (new runtime dependency needs explicit permission). Deliberately NOT parallelized pending dedicated review: `task-reminders-fire` (claim-before-send, incident history #1581/#1679) and `re-encrypt-old-records` (key-rotation sensitivity) — acceptance criteria recorded on #1789.
+
+**Related artifacts**: PR #1827; `apps/main/src/lib/async/with-concurrency.ts`; `apps/rag/src/lib/async/with-concurrency.ts`; issues #1789 (open, remainder), #1792 (open, remainder), #1830.
+
+---
+
+## D-338 — 2026-07-12 — Knip dead-code sweep: "no importer found" is a hypothesis, not a verdict (#1785)
+
+**Decision**: Every knip candidate was verified individually (dynamic refs, MEMORY decisions, runbooks, spec cross-references) before deletion. 10 of 14 flagged files and ~20 of 65 flagged exports were NOT deleted: some are dormant-by-design (incident-response emails, legal-hold, MEMORY-logged deferrals like the screenshot-PII stub), and five were genuinely live features that were never wired to their callers — surfaced as bugs instead of deleted: #1818 (LegalPageAttribution vs spec §16.7.1), #1820 (GmailHealthBanner), #1821 (error-injection helpers unadopted), #1822 (task-sequence tier gates never enforced), #1823 (customer_chat bug-flow wording unused).
+
+**Why**: Mechanically deleting knip's list would have destroyed compliance/incident-response infrastructure and masked real enforcement gaps as "cleanup." The unused-export signal is precisely where unwired-feature bugs hide.
+
+**Rejected**: mechanical deletion of everything flagged; also deferred knip's separate "Unused exported types (81)" section (unexplored scope — operator's call whether to queue it).
+
+**Related artifacts**: PR #1824; issues #1818, #1820, #1821, #1822, #1823; `knip.json` (scripts glob now includes .tsx).
+
+---
+
+## D-337 — 2026-07-12 — RAG-sync delivery moved to Inngest; pending-queue cron retired (#1609/#1780)
+
+**Decision**: Replaced the RAG-sync publishers' in-request 3× backoff sleeps (~36s billed wall-time in the originating handler) and the custom `pending_rag_sync` table + 15-min Vercel retry cron with Inngest-owned delivery: publishers enqueue `rag-sync/{tenant,platform}.event` via a shared never-throws helper and return immediately; new `rag-sync-deliver` Inngest fn performs the signed HMAC POST with `retries: 10` (matching the old alert threshold) and fires `rag_sync_exhausted_retries` on exhaustion. Deterministic event ids dedupe re-enqueues; the RAG consumer's `source_revision` guard keeps duplicates/out-of-order idempotent; nightly reconcile (§8.3) is the durable backstop. #1780 resolved as a side effect (2 of 3 hand-rolled retry copies deleted; single cruisemapper survivor left without a shared util — single-use abstraction avoided).
+
+**Why**: Operator decision on #1609 (2026-07-12): treat §8.3 as "must deliver reliably," not "must use these exact sleeps." Inngest quota impact assessed negligible (tenant-lifecycle volume only).
+
+**Rejected**: keeping the spec-prescribed design (operator-rejected; spec amendment pending); dropping `pending_rag_sync` in the same PR (contract migration deferred to #1825 per expand→switch→contract); shared withRetry util for one caller; publisher-throws-on-enqueue-failure (callers commit lifecycle rows first — alert + reconcile instead).
+
+**Related artifacts**: PR #1819; `apps/main/src/inngest/rag-sync-deliver.ts`; `apps/main/src/lib/rag-sync/enqueue.ts`; issues #1609, #1780, #1825, #1826; spec §8.3/§8.7/§8.7a amendment pending operator approval.
+
+---
+
+## D-336 — 2026-07-12 — Help-doc exporters resolve images from disk, not URLs (#1688)
+
+**Decision**: New `resolveHelpImage()` reads `public/help` images off disk inside the Inngest export workers (the hand-rolled markdown converters never parsed image syntax at all), with a minimal PNG IHDR parser for docx dimensions and a path-containment check (`resolve()` + `startsWith(root + sep)`) added after the audit found a live path-traversal escape.
+
+**Why**: Exporters run with no browser origin and already have filesystem access to the same `public/` tree; disk reads beat absolute-URL fetches or data-URI rewriting on reliability and cost.
+
+**Rejected**: absolute deployment-origin URLs / data URIs (network+encoding overhead); an image-dimensions dependency (no new runtime deps without permission). Known accepted residual: symlink-follow inside public/ (same trust boundary as Next static serving).
+
+**Related artifacts**: PR #1811; `apps/main/src/lib/help-docs/resolve-image.ts`; issue #1816 (step.run boundaries for both export generators).
+
+---
+
+## D-335 — 2026-07-12 — React god-component/perf sweep: 3-of-28 done, remainder deferred with a verify-first rule (#1791/#1793 scope cut)
+
+**Decision**: PR #1809 decomposed the 3 highest-traffic god components (ConciergeExperience, admin/email-samples, settings/integrations) and the 2 highest-leverage perf sites (dialog.tsx context churn, supervisor sort-in-render). Remainder deferred: #1812 (25 components — email-templates page is HIGH RISK: 28 hooks, cascading-state effect, zero tests → tests-first) and #1813 (~27 perf flags — each must be re-verified individually before changing, because 4 of 4 sampled flags were false positives for real render impact).
+
+**Why**: sweep batch scope control; sampling showed most remaining static-analysis flags have no measurable impact, so bulk-fixing adds churn and regression risk without benefit.
+
+**Rejected**: fixing all 28 components + all perf sites in one PR (unreviewable; high regression risk on the untested email-templates page).
+
+**Related artifacts**: PR #1809; issues #1812, #1813, #1815 (service-role tenant-scoping debt in deliver-chat-response.ts, discovered by the same PR's audit).
+
+---
+
+## D-334 — 2026-07-12 — pending_host_review→draft resolution gates on review_reason, not just status (#1764)
+
+**Decision**: `resolvePendingHostReview()` CAS-gates on safe pre-host-call review reasons only (`commission_rate_unresolvable`, `host_adapter_unhealthy`, `missing_platform_split`); refuses `commission_write_failed`/`host_state_unknown` with `host_booking_may_exist`; null/`manual_review_requested` fail closed. Exposed via `POST /api/bookings/[id]/resolve-review` with the permission grant + matrix tuple in the same PR. The reason gate lives inside the CAS predicate, so no caller can revert an unsafe row.
+
+**Why**: Post-host-call reasons mean a real or unknown host-side booking may exist — reverting to draft and re-submitting would double-book at the cruise line (#1577's incident class).
+
+**Rejected**: broadening submit's CAS lock to re-accept pending_host_review (entangles a behavior change with #1777's pure decomposition of the same file); blanket status-only transition (reintroduces the double-book bug).
+
+**Related artifacts**: PR #1807; `apps/main/src/lib/bookings/state-machine.ts`; `apps/main/src/app/api/bookings/[id]/resolve-review/route.ts`; issues #1764, #1577, #1810 (console UI follow-up).
+
+---
+
+## D-333 — 2026-07-12 — §23.7 soft-bounce retries store & re-send rendered HTML (option a — reverses Option B)
+
+**Decision**: New `email_retry_content` table (fully rendered HTML per successful send, keyed on `email_log` id, TTL 7 days, service-role-only, hourly batched purge cron) + re-send verbatim at +6h/+12h/+24h inter-attempt delays; suppress as hard bounce after 4 consecutive failures. `email_log.retry_of` marks re-send rows so the Resend webhook doesn't spawn fresh chains. Duplicate protection is three-layered: deterministic Inngest event ids (`soft-retry:<log>:attempt:<n>`) collapse Svix redeliveries; CAS claim on `claimed_attempt` prevents concurrent sends; `completed_attempt` marker (written after scheduleNext) distinguishes crash-resume from already-completed. Deterministic Resend `Idempotency-Key` per attempt.
+
+**Why**: The prior handler never re-sent anything (original HTML unstored) — a soft bounce meant silent non-delivery then suppression, contradicting §23.7. Storing at `sendEmail` covers all ~12 bespoke senders with zero call-site changes; re-rendering is impossible for AI/weather content generated at send time.
+
+**Rejected**: Option B (store template ref + variables; recorded 2026-07-01, REVERSED by operator 2026-07-12 — unimplementable for AI senders); narrowing retries to template-reproducible senders (drops the high-value pre-cruise emails); gating storage by email_category (speculative). Known accepted residuals: Pattern-14 duplicate-bookkeeping window (#1832), event-id test pin (#1831). Spec §23.7's "over 24h" wording vs the implemented cumulative 42h window awaits operator confirmation (schedule inherited from pre-existing RETRY_DELAYS_HOURS).
+
+**Related artifacts**: PR #1817 (3 audit rounds); migrations `20260722000017/18`; `apps/main/src/lib/email/soft-bounce-retry.ts`; issues #1611, #1831, #1832, #1825.
+
+---
+
+## D-332 — 2026-07-12 — Quote price_kind wired at creation time, not render time (#1742)
+
+**Decision**: `resolveQuoteKind` is evaluated once in `POST /api/quotes` when option-level `total_amount_cents` is supplied, and the result persisted; render paths trust the persisted `price_kind`. Also: `atc/no-money-math` ESLint rule broadened to bare `cents`/`amount` identifiers; `formatCents` widened to accept `bigint`; `admin/resources/_client.tsx`'s `formatDollars` kept as the intentionally-divergent formatter (D-319) with a justified lint suppression.
+
+**Why**: CONFIRMED requires `priced_at` within a 15-minute freshness window — recomputing at PDF-render time would flip a legitimately CONFIRMED quote back to ESTIMATE as `priced_at` ages, contradicting #1699's "persisted price_kind is authoritative." Creation-time evaluation matches the #1699 architecture. No write path sets `price_lock_token` today, so behavior is unchanged until a host adapter supports price-lock (#1805 tracks that product decision).
+
+**Rejected**: render-time wiring (matches the resolver's stale header comment, since corrected); swapping `formatDollars` for `formatCents` per #1779's literal suggestion (per-#1657 comment documents intentional divergence; USD-only so #1658's zero-decimal bug can't occur).
+
+**Related artifacts**: PR #1806; `apps/main/src/lib/quotes/kind-resolver.ts`; `apps/main/src/app/api/quotes/route.ts`; issues #1804 (multi-option wiring gap + dead expiry-cron discovery), #1805 (price-lock product decision), #1808 (date-only email call sites).
+
+---
+
 ## D-331 — 2026-07-09 — /issue-sweep top-20 plan cap removed by operator direction; plan gate is the sole size control
 
 **Decision**: both skill copies now present ALL executable issues in the Phase-2 plan (no numeric cap; the below-cutoff concept is gone). The operator trims at the gate ("top N", "drop #X") when a smaller sweep is wanted. Batch-scaling guidance (~1 batch per 4–5 issues, ≤6 issues per batch, subsystem-coherent) unchanged.
