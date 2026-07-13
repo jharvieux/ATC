@@ -26,6 +26,11 @@ module.exports = [
   // users+tenants join — at this point there is no resolved tenant context,
   // so RLS-aware clients have nothing to scope to. Read-only.
   "/lib/auth/resolve-post-login.ts",
+  // BP34 §34.2.4: request-scoped tenant tier-code read for server-component
+  // layouts (e.g. the CRM Gmail-health banner) that gate UI by tier and have
+  // no assertPermission ctx to scope an RLS-aware client with. Reads only the
+  // non-PII tier code; read-only. Same pattern as fetch-tenant-branding.ts.
+  "/lib/tenancy/request-tenant-tier.ts",
   // Public landing tenant-branding fetch: anonymous visitors hitting
   // tenant subdomains need to see the tenant's display_name + logo +
   // slogan before any auth happens. RLS on tenant_branding requires

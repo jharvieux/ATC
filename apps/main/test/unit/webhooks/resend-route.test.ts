@@ -188,9 +188,16 @@ describe("Resend webhook — event routing", () => {
     expect(mockSafeAwaitCalls).toContain("email_log.update");
     // Soft bounce fires Inngest — not email_suppressions
     expect(mockInngestSend).toHaveBeenCalledOnce();
-    expect(mockInngestSend).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "email/soft.bounce.retry" }),
-    );
+    // #1831: the id is load-bearing — it's what collapses a Svix redelivery of
+    // this same bounce to a single retry-chain start (Inngest drops a duplicate
+    // event id). A typo or dropped field here silently reopens the concurrent-
+    // duplicate race that the completed_attempt marker alone doesn't cover.
+    // logId is "log-1" from the default mockMaybeSingleResult (see beforeEach).
+    expect(mockInngestSend).toHaveBeenCalledWith({
+      id: "soft-retry:log-1:attempt:1",
+      name: "email/soft.bounce.retry",
+      data: { email_log_id: "log-1", tenant_id: "tenant-1", attempt: 1 },
+    });
     expect(mockSafeAwaitCalls).not.toContain("email_suppressions.upsert");
   });
 

@@ -1,7 +1,9 @@
 import postgres from "postgres";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { redactSecrets } from "./lib/redact-secrets";
+import { psqlInvocation } from "./lib/psql-invocation";
 
 const dbUrl = process.env.SUPABASE_DB_URL;
 const allowed = process.env.ALLOW_DB_RESET === "true";
@@ -55,11 +57,15 @@ async function main(): Promise<void> {
     .sort();
   console.log(`Reapplying ${migrations.length} migrations...`);
   for (const file of migrations) {
-    execSync(`psql "${dbUrl}" -f "${join(migrationsDir, file)}"`, { stdio: "inherit" });
+    // Host/user/db passed as discrete argv elements (never shell-interpolated),
+    // password passed only via PGPASSWORD — psql's own `ps` output never shows
+    // the credential, unlike a shell string that /bin/sh would expand into argv.
+    const { args, env } = psqlInvocation(dbUrl!, join(migrationsDir, file));
+    execFileSync("psql", args, { stdio: "inherit", env: { ...process.env, ...env } });
   }
 }
 
 main().catch((err) => {
-  console.error("Reset failed:", err);
+  console.error("Reset failed:", redactSecrets(err));
   process.exit(1);
 });
