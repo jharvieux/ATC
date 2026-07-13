@@ -10,37 +10,49 @@
 // a JSONL of drafts + a guarded .sql the operator inspects, edits, and applies
 // by hand.
 //
+// Outputs land in the repo-local, gitignored scripts/.signature-drafts/ —
+// NOT the shared OS /tmp — because the apply SQL is hand-applied via psql and
+// a predictable, world-writable /tmp path is a tamper/symlink surface for
+// whatever else runs on the box. Override via the env vars below if needed.
+//
 // WORKFLOW (from repo root; do not echo the DB URL):
 //
 //   # 1. Export deck_intel content from RAG as JSON (robust vs. CSV quoting).
 //   set -a; source .env.local; set +a
-//   psql "$SUPABASE_RAG_DB_URL" -t -A -o /tmp/rag_deck_intel.json -c \
+//   mkdir -p scripts/.signature-drafts
+//   psql "$SUPABASE_RAG_DB_URL" -t -A -o scripts/.signature-drafts/rag_deck_intel.json -c \
 //     "SELECT json_agg(json_build_object('ship', ship_or_property, 'content', content)) \
 //      FROM knowledge_chunks WHERE category = 'deck_intel' AND ship_or_property IS NOT NULL"
 //
 //   # 2. Draft signature features (Haiku default; $10 hard cap; resumes on rerun).
 //   pnpm tsx scripts/draft-signature-features.ts
 //
-//   # 3. REVIEW /tmp/signature-features-draft.jsonl by hand. Each line has the
-//   #    ship, the drafted feature, the model's rationale, and the source deck
-//   #    text it drew from. Edit or delete any line you disagree with.
+//   # 3. REVIEW scripts/.signature-drafts/draft.jsonl by hand. Each line has
+//   #    the ship, the drafted feature, the model's rationale, and the source
+//   #    deck text it drew from. Edit or delete any line you disagree with.
 //
 //   # 4. Regenerate the apply SQL from the (reviewed) JSONL, then apply to main:
 //   pnpm tsx scripts/draft-signature-features.ts --sql-only
-//   #    Inspect /tmp/signature-features-apply.sql, then:
-//   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f /tmp/signature-features-apply.sql
+//   #    Inspect scripts/.signature-drafts/apply.sql, then:
+//   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f scripts/.signature-drafts/apply.sql
 //
 // The emitted UPDATEs are keyed on lower(canonical_name) and guarded by
 // `signature_feature IS NULL`, so applying is idempotent and never clobbers a
 // value an operator already set via the admin console (#1565 part 2).
 
-import { readFileSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 
-const INPUT_PATH = process.env.DECK_INTEL_JSON ?? "/tmp/rag_deck_intel.json";
-const DRAFT_PATH = process.env.SIGNATURE_DRAFT_JSONL ?? "/tmp/signature-features-draft.jsonl";
-const SQL_PATH = process.env.SIGNATURE_APPLY_SQL ?? "/tmp/signature-features-apply.sql";
+// Repo-local, gitignored — not the shared OS /tmp (CodeQL "insecure temporary
+// file": a predictable /tmp path is a tamper/symlink surface for SQL an
+// operator hand-applies via psql). loadDrafts() resumes from DRAFT_PATH
+// across reruns, so a stable path fits the design better than mkdtempSync.
+const OUTPUT_DIR = "scripts/.signature-drafts";
+const INPUT_PATH = process.env.DECK_INTEL_JSON ?? `${OUTPUT_DIR}/rag_deck_intel.json`;
+const DRAFT_PATH = process.env.SIGNATURE_DRAFT_JSONL ?? `${OUTPUT_DIR}/draft.jsonl`;
+const SQL_PATH = process.env.SIGNATURE_APPLY_SQL ?? `${OUTPUT_DIR}/apply.sql`;
 const MODEL = process.env.SIGNATURE_MODEL ?? "claude-haiku-4-5-20251001";
 const HARD_CAP_USD = 10;
 const SIGNATURE_MAX_CHARS = 120; // must match the route's SIGNATURE_FEATURE_MAX
@@ -131,6 +143,7 @@ export function writeApplySql(drafts: DraftLine[], sqlPath: string = SQL_PATH): 
     `  WHERE lower(canonical_name) = lower('${sqlEscape(d.ship)}') AND signature_feature IS NULL; -- ${d.rationale.replace(/\n/g, " ")}`,
   );
   const footer = ["", "COMMIT;", ""];
+  mkdirSync(dirname(sqlPath), { recursive: true });
   writeFileSync(sqlPath, [...header, ...stmts, ...footer].join("\n"));
   console.log(`[signature] wrote ${applied.length} UPDATE(s) to ${sqlPath} (${drafts.length - applied.length} null/skipped).`);
 }
@@ -200,6 +213,7 @@ async function main(): Promise<void> {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   let processed = 0;
+  mkdirSync(dirname(DRAFT_PATH), { recursive: true });
 
   for (const row of rows) {
     if (done.has(row.ship)) continue;
