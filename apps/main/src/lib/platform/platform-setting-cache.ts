@@ -64,3 +64,23 @@ export function _resetPlatformSettingCacheForTests(): void {
 export function evictPlatformSetting(key: string): void {
   cache.delete(key);
 }
+
+// §20.7 — Resolve the platform host-agency legal name from a raw
+// `platform_settings.value`. The value ships as either a bare string or a JSON
+// object with a nested `.value` — both shapes are in the wild on dev.
+//
+// Fail-closed (#1856/#1878 semantics): returns null on a missing or malformed
+// value — NEVER a placeholder. Every caller that renders the §20.7
+// tenant-of-record disclosure must treat null as "disclosure unavailable" and
+// fail closed, never substitute a fabricated legal name into a customer-facing
+// document. This is the single canonical unwrap: #1877 collapsed the three
+// copy-paste variants (build-render-input, quotes/accept, tenant-of-record)
+// plus the divergent quote-stripping reader onto it.
+export function resolveHostAgencyLegalName(raw: unknown): string | null {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null) {
+    const value = (raw as { value?: unknown }).value;
+    return typeof value === "string" ? value : null;
+  }
+  return null;
+}
