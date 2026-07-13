@@ -253,33 +253,54 @@ function StateBadge({ state }: { state: string }): JSX.Element {
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
-export default function ResourceUtilizationPage(): JSX.Element {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface PageState {
+  data: DashboardData | null;
+  loading: boolean;
+  error: string | null;
+}
 
-  const [editingPricing, setEditingPricing] = useState(false);
-  const [pricingDraft, setPricingDraft] = useState<Record<string, { input: string; output: string }>>({});
-  const [resendDraft, setResendDraft] = useState("");
-  const [savingPricing, setSavingPricing] = useState(false);
-  const [pricingMsg, setPricingMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [capDraft, setCapDraft] = useState("");
-  const [savingCap, setSavingCap] = useState(false);
-  const [capMsg, setCapMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [apifyBudgetDraft, setApifyBudgetDraft] = useState("");
-  const [savingApifyBudget, setSavingApifyBudget] = useState(false);
-  const [apifyBudgetMsg, setApifyBudgetMsg] = useState<{ ok: boolean; text: string } | null>(null);
+interface PricingFormState {
+  editingPricing: boolean;
+  pricingDraft: Record<string, { input: string; output: string }>;
+  resendDraft: string;
+  savingPricing: boolean;
+  pricingMsg: { ok: boolean; text: string } | null;
+}
+
+interface CapFormState {
+  capDraft: string;
+  savingCap: boolean;
+  capMsg: { ok: boolean; text: string } | null;
+}
+
+interface ApifyBudgetFormState {
+  apifyBudgetDraft: string;
+  savingApifyBudget: boolean;
+  apifyBudgetMsg: { ok: boolean; text: string } | null;
+}
+
+export default function ResourceUtilizationPage(): JSX.Element {
+  // #1812 — the 15 useState hooks (page load, pricing-catalog editor,
+  // weather-cap form, Apify-budget form) are grouped into 4 state objects by
+  // concern, one useState each, matching the pattern established in #1791.
+  const [page, setPage] = useState<PageState>({ data: null, loading: true, error: null });
+  const [pricingForm, setPricingForm] = useState<PricingFormState>({
+    editingPricing: false, pricingDraft: {}, resendDraft: "", savingPricing: false, pricingMsg: null,
+  });
+  const [capForm, setCapForm] = useState<CapFormState>({ capDraft: "", savingCap: false, capMsg: null });
+  const [apifyBudgetForm, setApifyBudgetForm] = useState<ApifyBudgetFormState>({
+    apifyBudgetDraft: "", savingApifyBudget: false, apifyBudgetMsg: null,
+  });
 
   async function load() {
-    setLoading(true);
-    setError(null);
+    setPage((p) => ({ ...p, loading: true, error: null }));
     try {
       const res = await adminFetch("/api/admin/resource-utilization");
       if (!res.ok) throw new Error(`Load failed (${res.status})`);
       const d = (await res.json()) as DashboardData;
-      setData(d);
-      setCapDraft(String(d.summary.weather_cap));
-      setApifyBudgetDraft(String(d.summary.apify_monthly_budget_usd));
+      setPage((p) => ({ ...p, data: d }));
+      setCapForm((f) => ({ ...f, capDraft: String(d.summary.weather_cap) }));
+      setApifyBudgetForm((f) => ({ ...f, apifyBudgetDraft: String(d.summary.apify_monthly_budget_usd) }));
       // Prime pricing editor drafts from loaded data.
       const draft: Record<string, { input: string; output: string }> = {};
       for (const [model, p] of Object.entries(d.pricing.ai)) {
@@ -288,12 +309,11 @@ export default function ResourceUtilizationPage(): JSX.Element {
           output: String(p.output_per_million_cents),
         };
       }
-      setPricingDraft(draft);
-      setResendDraft(String(d.pricing.resend_rate));
+      setPricingForm((f) => ({ ...f, pricingDraft: draft, resendDraft: String(d.pricing.resend_rate) }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setPage((p) => ({ ...p, error: e instanceof Error ? e.message : "Unknown error" }));
     } finally {
-      setLoading(false);
+      setPage((p) => ({ ...p, loading: false }));
     }
   }
 
@@ -301,12 +321,11 @@ export default function ResourceUtilizationPage(): JSX.Element {
 
   async function savePricing(e: React.FormEvent) {
     e.preventDefault();
-    setSavingPricing(true);
-    setPricingMsg(null);
+    setPricingForm((f) => ({ ...f, savingPricing: true, pricingMsg: null }));
     try {
       // Validate + build AI catalog.
       const catalog: Record<string, { input_per_million_cents: number; output_per_million_cents: number }> = {};
-      for (const [model, v] of Object.entries(pricingDraft)) {
+      for (const [model, v] of Object.entries(pricingForm.pricingDraft)) {
         const inp = parseInt(v.input, 10);
         const out = parseInt(v.output, 10);
         if (!Number.isInteger(inp) || inp < 0 || !Number.isInteger(out) || out < 0) {
@@ -315,7 +334,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
         catalog[model] = { input_per_million_cents: inp, output_per_million_cents: out };
       }
 
-      const resendRate = parseFloat(resendDraft);
+      const resendRate = parseFloat(pricingForm.resendDraft);
       if (!Number.isFinite(resendRate) || resendRate < 0) {
         throw new Error("Resend rate must be a non-negative number.");
       }
@@ -334,24 +353,21 @@ export default function ResourceUtilizationPage(): JSX.Element {
         throw new Error(`Resend rate save failed: ${d.error ?? resendRes.status}`);
       }
 
-      setPricingMsg({ ok: true, text: "Pricing saved." });
-      setEditingPricing(false);
+      setPricingForm((f) => ({ ...f, pricingMsg: { ok: true, text: "Pricing saved." }, editingPricing: false }));
       await load();
     } catch (e) {
-      setPricingMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
+      setPricingForm((f) => ({ ...f, pricingMsg: { ok: false, text: e instanceof Error ? e.message : "Unknown error" } }));
     } finally {
-      setSavingPricing(false);
+      setPricingForm((f) => ({ ...f, savingPricing: false }));
     }
   }
 
   async function saveApifyBudget(e: React.FormEvent) {
     e.preventDefault();
-    setSavingApifyBudget(true);
-    setApifyBudgetMsg(null);
-    const v = parseFloat(apifyBudgetDraft);
+    setApifyBudgetForm((f) => ({ ...f, savingApifyBudget: true, apifyBudgetMsg: null }));
+    const v = parseFloat(apifyBudgetForm.apifyBudgetDraft);
     if (!Number.isFinite(v) || v <= 0) {
-      setApifyBudgetMsg({ ok: false, text: "Budget must be a positive number." });
-      setSavingApifyBudget(false);
+      setApifyBudgetForm((f) => ({ ...f, apifyBudgetMsg: { ok: false, text: "Budget must be a positive number." }, savingApifyBudget: false }));
       return;
     }
     try {
@@ -363,23 +379,21 @@ export default function ResourceUtilizationPage(): JSX.Element {
         const d = (await res.json()) as { error?: string };
         throw new Error(d.error ?? "Save failed.");
       }
-      setApifyBudgetMsg({ ok: true, text: `Budget saved at $${v.toFixed(2)}/month.` });
+      setApifyBudgetForm((f) => ({ ...f, apifyBudgetMsg: { ok: true, text: `Budget saved at $${v.toFixed(2)}/month.` } }));
       await load();
     } catch (e) {
-      setApifyBudgetMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
+      setApifyBudgetForm((f) => ({ ...f, apifyBudgetMsg: { ok: false, text: e instanceof Error ? e.message : "Unknown error" } }));
     } finally {
-      setSavingApifyBudget(false);
+      setApifyBudgetForm((f) => ({ ...f, savingApifyBudget: false }));
     }
   }
 
   async function saveCap(e: React.FormEvent) {
     e.preventDefault();
-    setSavingCap(true);
-    setCapMsg(null);
-    const cap = parseInt(capDraft, 10);
+    setCapForm((f) => ({ ...f, savingCap: true, capMsg: null }));
+    const cap = parseInt(capForm.capDraft, 10);
     if (!Number.isInteger(cap) || cap < 1 || cap > 10000) {
-      setCapMsg({ ok: false, text: "Cap must be a whole number between 1 and 10000." });
-      setSavingCap(false);
+      setCapForm((f) => ({ ...f, capMsg: { ok: false, text: "Cap must be a whole number between 1 and 10000." }, savingCap: false }));
       return;
     }
     try {
@@ -391,18 +405,22 @@ export default function ResourceUtilizationPage(): JSX.Element {
         const d = (await res.json()) as { error?: string; hint?: string };
         throw new Error(d.hint ?? d.error ?? "Save failed.");
       }
-      setCapMsg({ ok: true, text: `Daily cap saved at ${cap.toLocaleString()}.` });
+      setCapForm((f) => ({ ...f, capMsg: { ok: true, text: `Daily cap saved at ${cap.toLocaleString()}.` } }));
       await load();
     } catch (e) {
-      setCapMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
+      setCapForm((f) => ({ ...f, capMsg: { ok: false, text: e instanceof Error ? e.message : "Unknown error" } }));
     } finally {
-      setSavingCap(false);
+      setCapForm((f) => ({ ...f, savingCap: false }));
     }
   }
 
-  if (loading) return <main className="px-6 py-6">Loading…</main>;
-  if (!data) return <main className="px-6 py-6 text-red-700 dark:text-red-400">{error ?? "No data."}</main>;
+  if (page.loading) return <main className="px-6 py-6">Loading…</main>;
+  if (!page.data) return <main className="px-6 py-6 text-red-700 dark:text-red-400">{page.error ?? "No data."}</main>;
 
+  const { data } = page;
+  const { editingPricing, pricingDraft, resendDraft, savingPricing, pricingMsg } = pricingForm;
+  const { capDraft, savingCap, capMsg } = capForm;
+  const { apifyBudgetDraft, savingApifyBudget, apifyBudgetMsg } = apifyBudgetForm;
   const { summary, daily, model_breakdown, tenant_proximity, apify_by_line, pricing } = data;
   const totalCostCents = summary.total_ai_cost_cents + summary.total_email_cost_cents;
 
@@ -488,7 +506,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
               <input
                 type="number"
                 value={capDraft}
-                onChange={(e) => setCapDraft(e.target.value)}
+                onChange={(e) => setCapForm((f) => ({ ...f, capDraft: e.target.value }))}
                 min={1}
                 max={10000}
                 className="ml-2.5 w-[90px] px-2 py-1 border border-border rounded text-right text-[13px]"
@@ -545,7 +563,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
               <input
                 type="number"
                 value={apifyBudgetDraft}
-                onChange={(e) => setApifyBudgetDraft(e.target.value)}
+                onChange={(e) => setApifyBudgetForm((f) => ({ ...f, apifyBudgetDraft: e.target.value }))}
                 min={1}
                 step={1}
                 className="ml-2.5 w-[90px] px-2 py-1 border border-border rounded text-right text-[13px]"
@@ -602,7 +620,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
           <h2 className="mt-0">Pricing catalog</h2>
           {!editingPricing && (
             <button
-              onClick={() => setEditingPricing(true)}
+              onClick={() => setPricingForm((f) => ({ ...f, editingPricing: true }))}
               className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium"
             >
               Edit
@@ -633,7 +651,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
                       <input
                         type="number"
                         value={v.input}
-                        onChange={(e) => setPricingDraft((prev) => ({ ...prev, [model]: { input: e.target.value, output: prev[model]?.output ?? "0" } }))}
+                        onChange={(e) => setPricingForm((f) => ({ ...f, pricingDraft: { ...f.pricingDraft, [model]: { input: e.target.value, output: f.pricingDraft[model]?.output ?? "0" } } }))}
                         className="w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                         min={0}
                       />
@@ -642,7 +660,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
                       <input
                         type="number"
                         value={v.output}
-                        onChange={(e) => setPricingDraft((prev) => ({ ...prev, [model]: { input: prev[model]?.input ?? "0", output: e.target.value } }))}
+                        onChange={(e) => setPricingForm((f) => ({ ...f, pricingDraft: { ...f.pricingDraft, [model]: { input: f.pricingDraft[model]?.input ?? "0", output: e.target.value } } }))}
                         className="w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                         min={0}
                       />
@@ -658,7 +676,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
                 <input
                   type="number"
                   value={resendDraft}
-                  onChange={(e) => setResendDraft(e.target.value)}
+                  onChange={(e) => setPricingForm((f) => ({ ...f, resendDraft: e.target.value }))}
                   className="ml-3 w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                   min={0}
                   step={0.1}
@@ -679,7 +697,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
               </button>
               <button
                 type="button"
-                onClick={() => { setEditingPricing(false); setPricingMsg(null); }}
+                onClick={() => setPricingForm((f) => ({ ...f, editingPricing: false, pricingMsg: null }))}
                 className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium"
               >
                 Cancel

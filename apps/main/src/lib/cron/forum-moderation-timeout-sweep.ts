@@ -10,6 +10,12 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyEnvAtBoot } from "@/lib/env";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — up to 100 independent per-row CAS updates (distinct message ids,
+// each guarded by its own moderation_attempt_count); bounded concurrency
+// instead of one-at-a-time.
+const SWEEP_CONCURRENCY = 20;
 
 export async function runForumModerationTimeoutSweep() {
   const env = verifyEnvAtBoot();
@@ -27,8 +33,7 @@ export async function runForumModerationTimeoutSweep() {
     .limit(100);
   if (selectError) throw new Error(`forum_messages select failed: ${selectError.message}`);
 
-  let escalated = 0;
-  for (const msg of stale ?? []) {
+  const results = await mapWithConcurrency(stale ?? [], SWEEP_CONCURRENCY, async (msg) => {
     const { data: updated, error: updateError } = await svc
       .from("forum_messages")
       .update({
@@ -41,9 +46,9 @@ export async function runForumModerationTimeoutSweep() {
       .eq("moderation_attempt_count", msg.moderation_attempt_count)
       .select("id");
     if (updateError) throw new Error(`forum_messages update failed: ${updateError.message}`);
-
-    if ((updated ?? []).length > 0) escalated++;
-  }
+    return (updated ?? []).length > 0;
+  });
+  const escalated = results.filter(Boolean).length;
 
   console.log(`[forum-moderation-timeout-sweep] escalated=${escalated}`);
   return { escalated };

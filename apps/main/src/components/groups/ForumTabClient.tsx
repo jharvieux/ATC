@@ -58,101 +58,113 @@ const BUTTON_OUTLINE =
   "rounded-[var(--cruise-radius-pill)] border border-[var(--cruise-border)] bg-transparent px-4 py-2 font-[family-name:var(--font-quicksand)] text-sm font-bold text-[var(--cruise-text)] transition-colors hover:bg-[var(--cruise-bg)] disabled:opacity-60";
 const BADGE = "rounded-[var(--cruise-radius-pill)] px-2 py-0.5 text-xs font-medium";
 
-export function ForumTabClient({ groupId }: { groupId: string }) {
-  const [forum, setForum] = useState<ForumInfo | null>(null);
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [messagesLoading, setMessagesLoading] = useState(false);
+interface ForumState {
+  forum: ForumInfo | null;
+  threads: Thread[];
+  selectedThread: Thread | null;
+  messages: Message[];
+  loading: boolean;
+  error: string | null;
+  messagesLoading: boolean;
+}
 
-  const [creatingThread, setCreatingThread] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+interface ComposeState {
+  creatingThread: boolean;
+  newTitle: string;
+  createError: string | null;
+  submitting: boolean;
+}
+
+export function ForumTabClient({ groupId }: { groupId: string }) {
+  // #1812 — the 11 useState hooks (forum/thread/message data vs. the
+  // new-thread compose form) are grouped into 2 state objects by concern,
+  // one useState each, matching the pattern established in #1791.
+  const [state, setState] = useState<ForumState>({
+    forum: null, threads: [], selectedThread: null, messages: [], loading: true, error: null, messagesLoading: false,
+  });
+  const [compose, setCompose] = useState<ComposeState>({
+    creatingThread: false, newTitle: "", createError: null, submitting: false,
+  });
 
   const loadForum = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setState((s) => ({ ...s, loading: true, error: null }));
     try {
       const fRes = await fetch(`/api/groups/${groupId}/forum`);
       if (!fRes.ok) {
-        setError(`Failed to load forum (${fRes.status})`);
+        setState((s) => ({ ...s, error: `Failed to load forum (${fRes.status})` }));
         return;
       }
       const fData: ForumInfo = await fRes.json();
-      setForum(fData);
 
       const tRes = await fetch(`/api/forums/${fData.forum_id}/threads`);
       if (!tRes.ok) {
-        setError(`Failed to load threads (${tRes.status})`);
+        setState((s) => ({ ...s, forum: fData, error: `Failed to load threads (${tRes.status})` }));
         return;
       }
       const tData: { threads: Thread[] } = await tRes.json();
-      setThreads(tData.threads ?? []);
+      setState((s) => ({ ...s, forum: fData, threads: tData.threads ?? [] }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setState((s) => ({ ...s, error: err instanceof Error ? err.message : "Failed to load" }));
     } finally {
-      setLoading(false);
+      setState((s) => ({ ...s, loading: false }));
     }
   }, [groupId]);
 
   useEffect(() => { void loadForum(); }, [loadForum]);
 
   async function openThread(thread: Thread) {
-    if (!forum) return;
-    setSelectedThread(thread);
-    setMessagesLoading(true);
+    if (!state.forum) return;
+    setState((s) => ({ ...s, selectedThread: thread, messagesLoading: true }));
     try {
       const res = await fetch(
-        `/api/forums/${forum.forum_id}/threads/${thread.id}/messages`,
+        `/api/forums/${state.forum.forum_id}/threads/${thread.id}/messages`,
       );
       const data: { messages: Message[]; error?: string } = await res.json();
       if (!res.ok) {
-        setError(data.error ?? `Failed to load messages (${res.status})`);
+        setState((s) => ({ ...s, error: data.error ?? `Failed to load messages (${res.status})` }));
         return;
       }
-      setMessages(data.messages ?? []);
+      setState((s) => ({ ...s, messages: data.messages ?? [] }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load messages");
+      setState((s) => ({ ...s, error: err instanceof Error ? err.message : "Failed to load messages" }));
     } finally {
-      setMessagesLoading(false);
+      setState((s) => ({ ...s, messagesLoading: false }));
     }
   }
 
   async function createThread() {
-    if (!forum || !newTitle.trim()) return;
-    setCreateError(null);
-    setSubmitting(true);
+    if (!state.forum || !compose.newTitle.trim()) return;
+    setCompose((c) => ({ ...c, createError: null, submitting: true }));
     try {
-      const res = await fetch(`/api/forums/${forum.forum_id}/threads`, {
+      const res = await fetch(`/api/forums/${state.forum.forum_id}/threads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: newTitle.trim() }),
+        body: JSON.stringify({ title: compose.newTitle.trim() }),
       });
       const data: { error?: string } = await res.json();
       if (!res.ok) {
-        setCreateError(data.error ?? `Error ${res.status}`);
+        setCompose((c) => ({ ...c, createError: data.error ?? `Error ${res.status}` }));
         return;
       }
-      setNewTitle("");
-      setCreatingThread(false);
+      setCompose((c) => ({ ...c, newTitle: "", creatingThread: false }));
       await loadForum();
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create");
+      setCompose((c) => ({ ...c, createError: err instanceof Error ? err.message : "Failed to create" }));
     } finally {
-      setSubmitting(false);
+      setCompose((c) => ({ ...c, submitting: false }));
     }
   }
 
-  if (loading) {
+  if (state.loading) {
     return <p className="text-sm font-medium text-[var(--cruise-text-muted)]">Loading forum…</p>;
   }
 
-  if (error || !forum) {
-    return <p className="text-sm text-[var(--cruise-coral)]">{error ?? "Forum not found"}</p>;
+  if (state.error || !state.forum) {
+    return <p className="text-sm text-[var(--cruise-coral)]">{state.error ?? "Forum not found"}</p>;
   }
+
+  const { forum, threads, selectedThread, messages, messagesLoading } = state;
+  const { creatingThread, newTitle, createError, submitting } = compose;
 
   if (selectedThread) {
     return (
@@ -160,7 +172,7 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => { setSelectedThread(null); setMessages([]); }}
+            onClick={() => setState((s) => ({ ...s, selectedThread: null, messages: [] }))}
             className="text-sm font-semibold text-[var(--cruise-accent)] hover:underline"
           >
             ← Threads
@@ -216,7 +228,7 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
           )}
         </div>
         {!forum.is_locked && (
-          <button type="button" className={BUTTON_OUTLINE} onClick={() => setCreatingThread(true)} disabled={creatingThread}>
+          <button type="button" className={BUTTON_OUTLINE} onClick={() => setCompose((c) => ({ ...c, creatingThread: true }))} disabled={creatingThread}>
             + New thread
           </button>
         )}
@@ -229,7 +241,7 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
             <input
               id="thread-title"
               value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
+              onChange={(e) => setCompose((c) => ({ ...c, newTitle: e.target.value }))}
               placeholder="What is this thread about?"
               disabled={submitting}
               className={INPUT}
@@ -243,7 +255,7 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
             <button
               type="button"
               className={BUTTON_OUTLINE}
-              onClick={() => { setCreatingThread(false); setNewTitle(""); setCreateError(null); }}
+              onClick={() => setCompose((c) => ({ ...c, creatingThread: false, newTitle: "", createError: null }))}
               disabled={submitting}
             >
               Cancel
