@@ -173,6 +173,16 @@ jobs:
         # suite the same way `pnpm test:rag` does (`pnpm --dir apps/rag run
         # test`), with the same reporter flags + PIPESTATUS capture as the main
         # suite above (D-349 — no `shell:` key here either).
+        #
+        # Gated on rag-migrate succeeding (exit_status == '0', which also
+        # covers the skip-with-notice no-secret case above): a failed schema
+        # push means the suite would run a full vitest pass against known-bad
+        # schema, burning minutes and burying the real migrate failure under a
+        # wall of unrelated test errors (#1893 audit finding 1). When this step
+        # is skipped, its exit_status output is never written — the issue-open
+        # step below handles that empty value explicitly rather than treating
+        # it as a distinct suite failure.
+        if: steps.rag-migrate.outputs.exit_status == '0'
         run: |
           set +e
           pnpm --dir apps/rag run test -- --reporter=default --reporter=json --outputFile=rag-vitest-report.json --no-file-parallelism 2>&1 | tee apps/rag/rag-vitest-console.log
@@ -213,7 +223,18 @@ jobs:
           else
             MAIN_SECTION=""
           fi
-          if [ "$RAG_STATUS" != "0" ]; then
+          # vitest-rag is gated on rag-migrate succeeding (#1893 audit finding
+          # 1), so a rag-migrate failure means the step never ran and never
+          # wrote its exit_status output — RAG_STATUS is empty, not "0" or a
+          # nonzero code. Handle that explicitly with its own branch instead
+          # of falling into the `!= "0"` arm below: that arm calls the parser
+          # against report/console files that don't exist (the run never
+          # happened), and its "(no JSON report; see run logs)" fallback would
+          # read like an unexplained test failure duplicating the
+          # RAG_MIGRATE_SECTION below rather than pointing at it.
+          if [ -z "$RAG_STATUS" ]; then
+            RAG_SECTION="### apps/rag"$'\n\n'"(skipped — RAG migration apply failed; see the schema section above)"
+          elif [ "$RAG_STATUS" != "0" ]; then
             node scripts/parse-nightly-failures.mjs apps/rag/rag-vitest-report.json apps/rag/rag-vitest-console.log nightly-rag-failing-list.md nightly-rag-unhandled-section.md
             RAG_SECTION="### apps/rag"$'\n\n'"$(cat nightly-rag-failing-list.md)"$'\n'"$(cat nightly-rag-unhandled-section.md)"
           else
@@ -223,7 +244,10 @@ jobs:
           # regression — surface it as its own section so triage doesn't chase a
           # phantom test bug (#1893). The teed push log is redacted (public repo,
           # #1851) via the parser's `migrate` mode before it lands here.
-          if [ "$RAG_MIGRATE_STATUS" != "0" ] && [ -n "$RAG_MIGRATE_STATUS" ]; then
+          # RAG_MIGRATE_STATUS is always written (either a real exit code or
+          # the skip-with-notice "0" for the no-secret case) — no `-n` guard
+          # needed, unlike RAG_STATUS above which genuinely can be empty.
+          if [ "$RAG_MIGRATE_STATUS" != "0" ]; then
             node scripts/parse-nightly-failures.mjs migrate apps/rag/rag-migrate-console.log nightly-rag-migrate-section.md
             RAG_MIGRATE_SECTION="### apps/rag — test DB migration apply FAILED (exit $RAG_MIGRATE_STATUS)"$'\n\n'"\`supabase db push\` to the RAG test DB failed before the suite ran, so any RAG results below ran against a stale or absent schema. Triage this as a schema/infra failure, not a test regression."$'\n\n'"$(cat nightly-rag-migrate-section.md)"
           else
@@ -242,8 +266,8 @@ jobs:
 
           **Failing tests**:
           $MAIN_SECTION
-          $RAG_SECTION
           $RAG_MIGRATE_SECTION
+          $RAG_SECTION
 
           Triage by re-running the workflow once. If it stays red, it's a real regression — bisect across commits to \`dev\` since the last green nightly.
 
