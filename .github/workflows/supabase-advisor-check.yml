@@ -45,7 +45,20 @@ jobs:
 
       - name: Scan Supabase advisors
         id: scan
-        run: pnpm tsx scripts/check-supabase-advisors.ts 2>&1 | tee /tmp/advisor-out.txt
+        # No `shell:` key on this step, so GH Actions runs `run:` with the
+        # implicit default `bash -e {0}` — NOT `-o pipefail` (that only
+        # applies with an explicit `shell: bash`). Without pipefail, the
+        # step's own exit code (and therefore `continue-on-error`'s
+        # `steps.scan.outcome`) reflects `tee`'s exit status, not the scan
+        # script's — so a real WARN+ finding would never flip `outcome` to
+        # 'failure' and the issue-open step below would never fire (D-349;
+        # same shape as #1864/#1865). Capture `${PIPESTATUS[0]}` (the scan
+        # script's own exit code) and exit with it explicitly instead of
+        # relying on `continue-on-error` to read the (masked) step outcome.
+        run: |
+          set +e
+          pnpm tsx scripts/check-supabase-advisors.ts 2>&1 | tee /tmp/advisor-out.txt
+          exit "${PIPESTATUS[0]}"
         continue-on-error: true
 
       - name: Open / update tracked issue on findings
