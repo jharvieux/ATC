@@ -9,6 +9,14 @@ on:
     branches:
       - dev
       - "release/*"
+  # merge_group fires when GitHub's merge queue builds a speculative merge
+  # commit for a PR queued into `dev`. Every required CI check must run on this
+  # event or the queue can never merge (a required check that never reports is
+  # treated as failing). Additive — the pull_request/push triggers above are
+  # unchanged, so today's non-queue flow is unaffected. The deploy-* jobs stay
+  # inert on merge_group: they gate on push/workflow_dispatch + a dev/release
+  # ref, none of which a merge_group event satisfies. (#1896 groundwork.)
+  merge_group:
   workflow_dispatch: # manual re-trigger for release/* when push didn't fire deploy.yml
 
 jobs:
@@ -299,6 +307,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes]
     if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    # Serialize every job that touches the shared test DB (this repo's single
+    # main + rag CI databases) so no two runs — across PRs, dev pushes,
+    # merge-queue builds, and the nightly suite — reset/push/read it at the
+    # same time. cancel-in-progress: false is deliberate: cancelling a run
+    # mid-reset would leave the DB half-rebuilt for the next holder. Also
+    # mitigates #1904 (nightly RAG push vs a concurrent dev-merge push).
+    #
+    # KNOWN LIMITATION: a GitHub concurrency group keeps only ONE pending run
+    # per group; if a third run is queued while one is running and one pending,
+    # the older pending run is superseded (cancelled) and its required checks
+    # would need a re-run. Under today's manual one-PR-at-a-time train that
+    # 3-way contention is rare; the merge queue with "max entries to build = 1"
+    # is the real serializer and removes it entirely — which is the point of
+    # this groundwork. See the PR body.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     permissions:
       contents: read
       # issues: write — the dev-push drift backstop below opens/reuses a tracked issue.
@@ -348,6 +373,26 @@ jobs:
           pnpm tsx scripts/check-migration-ledger.ts --target=main
           pnpm tsx scripts/check-migration-ledger.ts --target=rag
 
+      - name: Reset main test DB before apply (#1660 / #1896)
+        # Return the shared MAIN test DB to a clean slate so the push below
+        # rebuilds every migration from scratch, regardless of what any
+        # abandoned branch left in the shared ledger. This is what makes the
+        # apply self-contained (the precondition for a safe merge queue) and is
+        # a strict improvement today: it kills the orphan-ledger-row wedge from
+        # docs/runbooks/migrations.md §4. Runs AFTER the ledger collision
+        # pre-check above (which reads the live pre-reset ledger) and BEFORE the
+        # push. Guarded by URL presence + CONFIRM_TEST_DB_RESET, so a
+        # secret-less run (Dependabot) skips gracefully. RAG is not reset here —
+        # deploy.yml never pushes the RAG DB (see PR body follow-up).
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+          # Distinctly-named target var (#1896 audit): the reset script reads
+          # RESET_TARGET_DB_URL, never the generic SUPABASE_DB_URL, so this
+          # destructive step can only ever be pointed at the test DB — never the
+          # prod DB that SUPABASE_DB_URL binds to in prod-drift-check.yml.
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+        run: pnpm db:reset:ci
+
       - name: Apply main app migrations to test DB
         # Brings TEST DB to HEAD before the snapshot check so that a PR which
         # includes a migration + updated snapshot can validate both in one run,
@@ -363,8 +408,11 @@ jobs:
           fi
           npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
 
-      - name: Check RLS drift (fail on PR and release/*)
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+      - name: Check RLS drift (fail on PR, release/*, and merge_group)
+        # merge_group included so the queue actually verifies drift — without it
+        # this step skips on a queue build and the required RLS Snapshot Diff
+        # check would pass green without ever comparing the snapshot (#1896).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
         env:
           # Dependabot-triggered runs don't receive repo secrets, so the
           # DB URLs above are empty and no target can be checked. Allow the
@@ -420,8 +468,10 @@ jobs:
       # The old pre-migration prod gate here was REMOVED: it compared prod BEFORE the
       # release's own migrations applied (deploy-production is downstream), so it
       # false-failed every new-table release. See #1349 for the prod migration-apply path.
-      - name: Check grants drift (fail on PR and release/* — vs test DB)
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+      - name: Check grants drift (fail on PR, release/*, and merge_group — vs test DB)
+        # merge_group included for the same reason as the RLS drift step above:
+        # the queue must verify grants drift, not skip it (#1896).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
@@ -436,6 +486,14 @@ jobs:
   integration-tests-critical:
     name: Integration Tests (RLS + Payments)
     runs-on: ubuntu-latest
+    # Same shared-test-DB serialization as rls-snapshot-diff: this job's RLS +
+    # Stripe-webhook suites write ephemeral rows into the same main test DB, so
+    # it must not run while another run is resetting/pushing it. Within one run
+    # it can't contend with rls-snapshot-diff anyway (needs it), but across runs
+    # the group serializes it. See rls-snapshot-diff's concurrency note.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     # Depends on rls-snapshot-diff rather than running in parallel with it so
     # this job reuses THAT job's already-applied migrations on the shared test
     # DB instead of racing a second `supabase db push` against the same

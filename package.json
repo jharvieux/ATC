@@ -71,6 +71,7 @@
     "fixtures:load": "tsx scripts/load-fixtures.ts",
     "fixtures:dry-run": "tsx scripts/load-fixtures.ts --dry-run",
     "db:reset": "tsx scripts/db-reset.ts",
+    "db:reset:ci": "tsx scripts/ci-reset-test-db.ts",
     "lint:migrations": "tsx scripts/lint-migrations.ts",
     "knip": "knip",
     "knip:prod": "knip --production",

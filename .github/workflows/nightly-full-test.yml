@@ -28,6 +28,14 @@ jobs:
   full-test:
     name: Full vitest suite
     runs-on: ubuntu-latest
+    # Share the `shared-test-db` concurrency group with deploy.yml's DB jobs so
+    # this nightly's `supabase db push` (main AND rag) can never run at the same
+    # time as a dev-merge / merge-queue push against the same databases —
+    # directly mitigating #1904 (nightly RAG push vs concurrent deploy.yml RAG
+    # access). cancel-in-progress: false — never cancel a run mid-DB-rebuild.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
@@ -74,6 +82,20 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Reset main test DB before apply (#1660 / #1896)
+        # Same reset-then-apply as deploy.yml's rls-snapshot-diff: rebuild the
+        # main test DB from scratch so an orphaned ledger row from an abandoned
+        # branch's CI run can't wedge this nightly's push. Serialized against
+        # deploy.yml via the shared-test-db group above.
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+          # Distinctly-named target var (#1896 audit): the reset script reads
+          # RESET_TARGET_DB_URL, never the generic SUPABASE_DB_URL, so this
+          # destructive step can only ever be pointed at the test DB — never the
+          # prod DB that SUPABASE_DB_URL binds to in prod-drift-check.yml.
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+        run: pnpm db:reset:ci
 
       - name: Apply Supabase migrations to test DB
         # Ensures the test DB schema matches dev before running integration tests.
