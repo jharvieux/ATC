@@ -63,4 +63,24 @@ describe("redactSecrets", () => {
     expect(redactSecrets("plain string with postgres://u:p@host/db")).toContain("[redacted]");
     expect(redactSecrets(42)).toBe("42");
   });
+
+  // #1837 — verified against postgres@3.4.9 with node_modules installed:
+  // postgres.js's parseUrl() calls Node's `new URL()` on the raw connection
+  // string; on a malformed URL, Node's TypeError carries the credential on
+  // `.input` (not `.message`/`.stack`), which a bare `console.error(err)`
+  // would print via default Error formatting. redactSecrets() reads only
+  // `.stack`/`.message`, so `.input` is never consumed and the credential
+  // never surfaces — this pins that this genuinely-thrown Node URL error
+  // shape stays safe.
+  it("does not leak a credential Node's URL parser attaches to .input", () => {
+    let err: unknown;
+    try {
+      new URL("postgres://dbuser:s3cr3tpass@");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as { input?: string }).input).toBe("postgres://dbuser:s3cr3tpass@");
+    expect(redactSecrets(err)).not.toContain("s3cr3tpass");
+  });
 });
