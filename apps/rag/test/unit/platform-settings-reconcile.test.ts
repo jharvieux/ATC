@@ -204,10 +204,10 @@ describe("#1885 — platform-settings-reconcile error isolation", () => {
     // mapWithConcurrency (apps/rag/src/lib/async/with-concurrency.ts) has no
     // per-item try/catch — a single fn() rejection fails the shared
     // Promise.all, so the entire reconcile throws instead of returning a
-    // partial tally. This mirrors the documented behavior in
+    // partial tally. This mirrors the accepted design documented in
     // openai-embedding-reconcile.test.ts ("aborts before any status flip
-    // when a chunk write fails"). Follow-up filed to decide if this needs
-    // per-key isolation (see PR description / issue).
+    // when a chunk write fails") — no per-key isolation is intended here,
+    // and there is no pending decision to make.
     mockMainSettings([
       { key: "feedback_adjustment_limit", value: 5, source_revision: 3 }, // will fail
       { key: "feedback_min_signal_count", value: 99, source_revision: 9 }, // would otherwise succeed

@@ -9,8 +9,8 @@
 // idempotency gap: the tenant_usage_metrics upsert is correctly
 // ON CONFLICT DO NOTHING (dedups across reruns), but the 4
 // usage_limit_events audit inserts per tenant have no such guard, so a
-// retry of the same period re-inserts a fresh set of audit rows. Filed as
-// a follow-up issue (see PR description).
+// retry of the same period re-inserts a fresh set of audit rows. Tracked
+// as #1901.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -245,8 +245,8 @@ describe("#1885 — billing-period-rollover idempotent re-run", () => {
   it("KNOWN GAP (tests-only, not fixed here): usage_limit_events is NOT deduped across reruns — a retry doubles the audit rows", async () => {
     // This pins the current (buggy) behavior so a future fix has a failing
     // test to flip green, per #1885's "idempotent re-run" acceptance
-    // criterion surfacing exactly this kind of gap. Tracked as a follow-up
-    // issue rather than fixed in this tests-only PR.
+    // criterion surfacing exactly this kind of gap. Tracked as #1901
+    // rather than fixed in this tests-only PR.
     const state = makeState([makeTenant("t-1")]);
     currentDb = makeDb(state);
     await runRollover();
