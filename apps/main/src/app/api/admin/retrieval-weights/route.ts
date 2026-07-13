@@ -12,15 +12,13 @@
 // with reason="retrieval_weights_change".
 //
 // Note: this updates the MAIN-side canonical row. The rag-side replica
-// (apps/rag/supabase/migrations/0006_platform_settings_replica.sql) needs
-// to be kept in sync. #1826 wired publishPlatformEvent below, but it is
-// currently a no-op for these keys: retrieval_weight_* is not in
-// publish-platform-event.ts's SYNC_ELIGIBLE_KEYS, and the nightly
+// (apps/rag/supabase/migrations/0006_platform_settings_replica.sql) is kept
+// in sync two ways: publishPlatformEvent below (retrieval_weight_* is in
+// publish-platform-event.ts's SYNC_ELIGIBLE_KEYS as of #1887) delivers the
+// change immediately via rag-sync-deliver, and the nightly
 // platform-settings-reconcile cron (apps/rag/src/inngest/
-// platform-settings-reconcile.ts) carries the identical restriction — so
-// NEITHER path syncs these keys today (#1887 tracks adding them to both
-// allowlists). Until #1887 lands, changes here MUST be mirrored manually
-// into the rag DB or composite scoring uses stale weights.
+// platform-settings-reconcile.ts, identical allowlist) catches drift from
+// any dropped delivery.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
@@ -171,6 +169,16 @@ export async function PUT(req: Request): Promise<Response> {
           .filter((s): s is PromiseFulfilledResult<string | undefined> => s.status === "fulfilled")
           .map((s) => s.value)
           .filter((v): v is string => v !== undefined);
+        // Every entry above either threw (caught as a settled rejection) or
+        // returned an updated_at — an empty array here means the update
+        // succeeded with error:null but the row had no updated_at, which
+        // shouldn't happen against the seeded retrieval_weight_* rows. Now
+        // that source_revision reaches rag (#1887), Math.max(...[]) would
+        // silently produce -Infinity and cause the rag-side stale-revision
+        // guard to skip every key forever — fail loud instead.
+        if (updatedAts.length === 0) {
+          throw new Error("retrieval-weights update: no updated_at returned for any key");
+        }
         const sourceRevision = Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)));
 
         // #1826 — enqueue the RAG-sync event after the write commits.
