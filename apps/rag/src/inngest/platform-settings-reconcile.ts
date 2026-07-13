@@ -34,6 +34,12 @@ const SYNC_ELIGIBLE_KEYS: ReadonlySet<string> = new Set([
   "feedback_min_signal_count",
   "feedback_period_days",
   "feedback_decay_halflife_days",
+  // BP22 §6 retrieval composite weights — read by match_knowledge_chunks
+  // (rag migration 0014_composite_weights.sql). #1887.
+  "retrieval_weight_match",
+  "retrieval_weight_authority",
+  "retrieval_weight_recency",
+  "retrieval_weight_feedback",
 ]);
 
 interface MainSetting {
