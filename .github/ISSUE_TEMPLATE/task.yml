@@ -1,0 +1,52 @@
+name: Task / deferred follow-up
+description: A task, or a deliberately deferred item — mirrors CLAUDE.md's "every follow-up or deferral gets a GitHub issue" acceptance bar.
+title: "[Task]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What needs to be done.
+    validations:
+      required: true
+
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: File path(s) or area of the codebase this touches.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How would someone picking this up cold know it's done?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-deferred
+    attributes:
+      label: Why deferred (if applicable)
+      description: If this was scoped out of another PR or session, say why, and link the PR/issue it came from.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: model-tier
+    attributes:
+      label: Suggested model tier (advisory)
+      description: >-
+        Optional hint for whoever triages this, per docs/runbooks/triage.md's rubric.
+        Not binding — triage makes the final call and applies the actual label.
+      options:
+        - Not sure
+        - haiku — single file, no control-flow change (docs/typos/copy/config)
+        - sonnet — default, including large mechanical work
+        - opus — migration, new API route/Inngest fn/cron, webhook/idempotency/state-machine, new service-role path, or permission-matrix/auth logic
+      default: 0
+    validations:
+      required: false
