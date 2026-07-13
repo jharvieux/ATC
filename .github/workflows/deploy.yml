@@ -299,6 +299,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes]
     if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    # Serialize every job that touches the shared test DB (this repo's single
+    # main + rag CI databases) so no two runs — across PRs, dev pushes,
+    # merge-queue builds, and the nightly suite — reset/push/read it at the
+    # same time. cancel-in-progress: false is deliberate: cancelling a run
+    # mid-reset would leave the DB half-rebuilt for the next holder. Also
+    # mitigates #1904 (nightly RAG push vs a concurrent dev-merge push).
+    #
+    # KNOWN LIMITATION: a GitHub concurrency group keeps only ONE pending run
+    # per group; if a third run is queued while one is running and one pending,
+    # the older pending run is superseded (cancelled) and its required checks
+    # would need a re-run. Under today's manual one-PR-at-a-time train that
+    # 3-way contention is rare; the merge queue with "max entries to build = 1"
+    # is the real serializer and removes it entirely — which is the point of
+    # this groundwork. See the PR body.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     permissions:
       contents: read
       # issues: write — the dev-push drift backstop below opens/reuses a tracked issue.
@@ -451,6 +468,14 @@ jobs:
   integration-tests-critical:
     name: Integration Tests (RLS + Payments)
     runs-on: ubuntu-latest
+    # Same shared-test-DB serialization as rls-snapshot-diff: this job's RLS +
+    # Stripe-webhook suites write ephemeral rows into the same main test DB, so
+    # it must not run while another run is resetting/pushing it. Within one run
+    # it can't contend with rls-snapshot-diff anyway (needs it), but across runs
+    # the group serializes it. See rls-snapshot-diff's concurrency note.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     # Depends on rls-snapshot-diff rather than running in parallel with it so
     # this job reuses THAT job's already-applied migrations on the shared test
     # DB instead of racing a second `supabase db push` against the same

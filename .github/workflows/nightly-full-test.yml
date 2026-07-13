@@ -28,6 +28,14 @@ jobs:
   full-test:
     name: Full vitest suite
     runs-on: ubuntu-latest
+    # Share the `shared-test-db` concurrency group with deploy.yml's DB jobs so
+    # this nightly's `supabase db push` (main AND rag) can never run at the same
+    # time as a dev-merge / merge-queue push against the same databases —
+    # directly mitigating #1904 (nightly RAG push vs concurrent deploy.yml RAG
+    # access). cancel-in-progress: false — never cancel a run mid-DB-rebuild.
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
