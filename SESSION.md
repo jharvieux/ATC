@@ -1,24 +1,23 @@
-# Session state — last updated 2026-07-09 22:45 CT (all threads closed)
+# Session state — last updated 2026-07-12 late evening PT
 
 ## Just completed
-- **Second /issue-sweep (D-329) fully terminal**: 19 sweep PRs merged (#1735–#1766 range) + #1772 (RAG client/JWT consolidation, closes #1708 AND #1729 — the "stopped executor" turned out to be a UI artifact; relaunch completed cleanly with both Opus audits verifying JWT semantics unchanged). ~46 issues closed today incl. both P1s.
-- **Skill hardening complete** (D-328/D-330/D-331 + PR #1771): verbatim executor safeguard block, worktree discipline (case-insensitivity), rebind re-audit, ledger-query diagnosis, tool-fix self-gate, mid-sweep supervised approvals, top-20 cap removed (operator direction). Both copies in sync.
-- Follow-ups filed through #1773 (service-JWT iss/aud hardening, from the #1772 audit).
+- Full /issue-sweep (operator-approved "go, 5 concurrent batches"): 15 batches, **16 PRs merged into dev** (#1799 skill update, #1800, #1801, #1802, #1803, #1806, #1807, #1809, #1811, #1817, #1819, #1824, #1827, #1828, plus vendor-cache resolved with no PR), **~45 issues closed** including the entire nightly-failure backlog (16 issues).
+- Highlights: nightly 3-day failure root-caused (postgres-js bigint-as-string, test-only); §23.7 soft-bounce retries fully implemented per operator option (a) (PR #1817, 3 audit rounds, 2 migrations); RAG-sync delivery moved to Inngest per operator decision (PR #1819); pending_host_review→draft transition with double-book safety gate (PR #1807); knip sweep that surfaced 5 unwired-feature bugs instead of deleting them (PR #1824).
+- MEMORY: D-332 through D-339 prepended (this docs PR carries them).
+- Skill hardening: both /issue-sweep copies got mandatory skip/follow-up issue logging (PR #1799, session start), then Closes-per-issue + origin-ref-diff + merge-settle lessons (this PR; global copy updated directly).
+- Follow-up issues filed during/at wrap-up: #1804 #1805 #1808 #1810 #1812 #1813 #1814 #1815 #1816 #1825 #1826 #1829 #1830 #1831 #1832 #1833 #1834 #1835 #1836 #1837 #1838 (executors filed several themselves — the new skill discipline working).
 
 ## In flight
-- Nothing in flight — clean checkpoint. (This SESSION update rides a doc-only PR; merge if found unmerged.)
+- Nothing in flight — clean checkpoint once this docs PR merges.
 
 ## Next step
-- Check tonight's nightly-full-test run (first with the #1746 reporter fix — should finally name the failing test; then diagnose/close the 13-issue nightly cluster #1498–#1692).
-- Then a follow-up sweep over the fresh follow-up range (#1734–#1773) is natural; the plan gate now shows everything (no cap).
+- Merge the wrap-up docs PR (MEMORY D-332..D-339, SESSION.md, Closes-rule runbook/skill edits), then delete .git/issue-sweep-ledger.json.
+- Watch the next nightly: RAG-DB-gated tests run for the first time (PR #1828 / #1758); schema-drift failures there mean #1828's follow-up (RAG test-DB migration-push step) needs action; also #1470 closes on a green run.
 
 ## Blocked on user
-- **Deploys**: atc-rag manual deploy needed for #1772's changes (`cd apps/rag && vercel deploy --prod --yes`); main-app prod migration backlog 12+ deep (#1623; #1754 waits on it).
-- **Session config**: the lowercase `ClaudeCodeProjects/atc` extra working directory is passed at launch (`--add-dir`), not stored in any config — omit it next launch to kill the case-aliasing hazard (D-330).
-- **Secrets/workflow one-liners** (each needs your per-instance approval): #1286 (4 e2e vars in deploy.yml), #1758 (SUPABASE_RAG_TEST_DB_URL in nightly), #1635 (SUPABASE_ACCESS_TOKEN), Resend inbound provisioning (#890/#1728), Supabase leaked-password toggle (#1523).
-- **Decisions**: #1609, #1611, #1585, #1247, #1565, #1742, #1764.
+- **Spec amendments (operator approval required, specs are read-only):** (1) §8.3/§8.7/§8.7a — replace in-request-backoff + pending_rag_sync + retry-cron language with Inngest delivery + nightly-reconcile backstop (implemented in PR #1819 per operator's 2026-07-12 decision); (2) §23.7 — diagram says "retry up to 3 times over 24h" but the implemented (and historically-constant) schedule is cumulative +6h/+18h/+42h — confirm cumulative was intended (as built) or direct a change to absolute offsets.
+- Supervised follow-ups awaiting a go: #1833 (nightly parser), #1825 (contract migration), #1829 (RAG in deploy pipeline), plus the remaining supervised items from the sweep plan (#1797 #1783→partially? no — #1783 untouched, #1782 #1754 #1773 #1778 #1680 #1585 #1523 #1623 #1740 #1247 #1358 #1728 #1565).
 
 ## Open questions
-- GitGuardian non-required failures on test PRs (likely fixture-password pattern) — dismiss in dashboard if recurring.
-- format-mailing-address footer change (~11 email callers, disclosed in #1766) — visual spot-check on next compliance email.
-- Carried: ~16 stale pre-session worktrees + old stashes on the shared checkout (salvage vs delete); phase-2 parked set (#1257–#1262, #444) and #1358/#895/#1686 open by design.
+- knip's "Unused exported types (81)" section was outside #1785's approved scope — queue a future batch or drop?
+- perf-n1 executor self-ran its audit agents (outcome verified sound; skill wording could be strengthened to prevent recurrence).
