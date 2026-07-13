@@ -10,14 +10,18 @@
 //   #/##/### headings   → larger styled Text
 //   - item              → bulleted Text
 //   1. item             → numbered Text
+//   ![alt](/help/...)   → embedded Image, read from public/help on disk
+//                          (#1688 — the export worker has no browser
+//                          origin to resolve a relative src against)
 //   blank line          → paragraph break
 //   anything else       → paragraph Text
 // Inline markdown (bold/italic/links/code) is rendered verbatim — the
 // goal is a readable printout, not a publication-quality typeset.
 
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
+import { Document, Page, Text, View, Image, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import { loadAllDocs, type HelpDoc } from "@/lib/help-ai/docs-loader";
+import { resolveHelpImage } from "./resolve-image";
 
 const styles = StyleSheet.create({
   page: { padding: 36, fontSize: 11, fontFamily: "Helvetica", color: "#111" },
@@ -35,12 +39,15 @@ const styles = StyleSheet.create({
   h3: { fontSize: 12, fontWeight: 700, marginTop: 8, marginBottom: 2 },
   paragraph: { marginBottom: 6, lineHeight: 1.4 },
   bullet: { marginLeft: 14, marginBottom: 2 },
+  image: { maxWidth: 460, marginTop: 4, marginBottom: 8 },
 });
 
 interface MarkdownNode {
-  kind: "h1" | "h2" | "h3" | "p" | "ul" | "ol";
+  kind: "h1" | "h2" | "h3" | "p" | "ul" | "ol" | "img";
   text?: string;
   items?: string[];
+  alt?: string;
+  src?: string;
 }
 
 function parseMarkdownLite(md: string): MarkdownNode[] {
@@ -90,6 +97,12 @@ function parseMarkdownLite(md: string): MarkdownNode[] {
       nodes.push({ kind: "h2", text: line.slice(2).trim() });
       continue;
     }
+    const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      flushParagraph(); flushList();
+      nodes.push({ kind: "img", alt: imgMatch[1] ?? "", src: imgMatch[2]! });
+      continue;
+    }
     const ulMatch = line.match(/^(\s*)-\s+(.+)$/);
     if (ulMatch) {
       flushParagraph();
@@ -117,6 +130,18 @@ function NodeView({ node }: { node: MarkdownNode }): JSX.Element | null {
   if (node.kind === "h2" && node.text) return <Text style={styles.h2}>{node.text}</Text>;
   if (node.kind === "h3" && node.text) return <Text style={styles.h3}>{node.text}</Text>;
   if (node.kind === "p" && node.text) return <Text style={styles.paragraph}>{node.text}</Text>;
+  if (node.kind === "img" && node.src) {
+    const resolved = resolveHelpImage(node.src);
+    if (!resolved) {
+      console.warn(`[help-docs-pdf] image not found, skipping: ${node.src}`);
+      return null;
+    }
+    // react-pdf's <Image> is a PDF layout primitive, not an HTML <img> —
+    // it has no `alt` prop (see @react-pdf/renderer's ImageProps), so
+    // jsx-a11y's alt-text rule false-positives on the component name.
+    // eslint-disable-next-line jsx-a11y/alt-text
+    return <Image src={resolved.data} style={styles.image} />;
+  }
   if ((node.kind === "ul" || node.kind === "ol") && node.items) {
     return (
       <View>
@@ -160,8 +185,12 @@ function HelpDocsDocument({ docs, generatedAt, platformName }: HelpDocsDocumentP
   );
 }
 
-export async function renderHelpDocsPdf(opts?: { platformName?: string }): Promise<Buffer> {
-  const docs = loadAllDocs();
+export async function renderHelpDocsPdf(opts?: {
+  platformName?: string;
+  /** Test-only override — defaults to the real on-disk help corpus. */
+  docs?: HelpDoc[];
+}): Promise<Buffer> {
+  const docs = opts?.docs ?? loadAllDocs();
   const generatedAt = new Date().toISOString().slice(0, 10);
   const platformName = opts?.platformName ?? "AI Travel Concierge";
   return renderToBuffer(

@@ -5,19 +5,36 @@
  * concatenated docs. Each section becomes a Heading 1 + body paragraphs.
  *
  * The conversion is intentionally simple — Markdown nuances (tables,
- * fenced code blocks with syntax highlighting, embedded images) aren't
- * preserved in Word output. The intended use is offline reading + redlining;
- * the canonical viewer is the in-app HTML render.
+ * fenced code blocks with syntax highlighting) flatten to plain text.
+ * `![alt](/help/...)` images ARE embedded (#1688) by reading the file
+ * off `public/help` on disk, since the worker has no browser origin to
+ * resolve a relative src against. The intended use is offline reading +
+ * redlining; the canonical viewer is the in-app HTML render.
  */
 
 import { z } from "zod";
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+import { Document, HeadingLevel, ImageRun, Packer, Paragraph, TextRun } from "docx";
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { loadAllDocs } from "@/lib/help-ai/docs-loader";
 import { env } from "@/lib/env";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { pngDimensions, resolveHelpImage } from "@/lib/help-docs/resolve-image";
+
+const DOCX_MAX_IMAGE_WIDTH = 500;
+
+/** Scale a resolved PNG down to fit DOCX_MAX_IMAGE_WIDTH, preserving
+ *  aspect ratio. Non-PNG formats (docx still supports jpg/gif/bmp) don't
+ *  carry a header we parse, so they get a fixed placeholder box — good
+ *  enough for the v1 help corpus, which ships PNG screenshots. */
+function imageTransformation(data: Buffer): { width: number; height: number } {
+  const dims = pngDimensions(data);
+  if (!dims) return { width: DOCX_MAX_IMAGE_WIDTH, height: 300 };
+  if (dims.width <= DOCX_MAX_IMAGE_WIDTH) return dims;
+  const scale = DOCX_MAX_IMAGE_WIDTH / dims.width;
+  return { width: DOCX_MAX_IMAGE_WIDTH, height: Math.round(dims.height * scale) };
+}
 
 const ExportPayloadSchema = z.object({
   tenant_id: z.string(),
@@ -32,18 +49,42 @@ type ExportPayload = z.infer<typeof ExportPayloadSchema>;
  * This is a minimal converter — it recognizes:
  *   - lines starting with `#`  → Heading levels (counts the #)
  *   - lines starting with `-` or `*` → bullet paragraph
+ *   - `![alt](/help/...)` → embedded ImageRun, read from disk
  *   - blank lines → paragraph breaks
  *   - everything else → plain Paragraph
  *
  * Tables, code fences, blockquotes flatten to plain text. Good enough
  * for the v1 help corpus.
  */
-function markdownToParagraphs(md: string): Paragraph[] {
+export function markdownToParagraphs(md: string): Paragraph[] {
   const out: Paragraph[] = [];
   for (const rawLine of md.split("\n")) {
     const line = rawLine.trimEnd();
     if (line.length === 0) {
       out.push(new Paragraph({}));
+      continue;
+    }
+    const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      const alt = imgMatch[1] ?? "";
+      const src = imgMatch[2]!;
+      const resolved = resolveHelpImage(src);
+      if (!resolved) {
+        console.warn(`[help-docs-docx-generate] image not found, skipping: ${src}`);
+        continue;
+      }
+      out.push(
+        new Paragraph({
+          children: [
+            new ImageRun({
+              type: resolved.type,
+              data: resolved.data,
+              transformation: imageTransformation(resolved.data),
+              altText: { name: alt || "help doc image", description: alt },
+            }),
+          ],
+        }),
+      );
       continue;
     }
     const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
