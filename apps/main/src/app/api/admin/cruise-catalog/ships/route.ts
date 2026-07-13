@@ -7,7 +7,8 @@ import { assertPlatformAdminArea, PlatformAdminError, type PlatformAdminContext 
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
-const SHIP_COLS = "id, cruise_line_id, slug, canonical_name, ship_class, is_active, cruisemapper_slug, created_at";
+const SHIP_COLS =
+  "id, cruise_line_id, slug, canonical_name, ship_class, is_active, cruisemapper_slug, guest_capacity, decks, built_year, signature_feature, created_at";
 
 export async function GET(req: Request): Promise<Response> {
   let ctx: PlatformAdminContext;
