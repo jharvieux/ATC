@@ -10,9 +10,13 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 const THRESHOLD = 20;
 const WINDOW_MINUTES = 5;
+// #1789 — one alert per offending user, each independent; bounded concurrency
+// so a multi-user spike doesn't serialize N Resend round-trips.
+const ALERT_CONCURRENCY = 10;
 
 export async function runPermissionDeniedMonitor() {
   const svc = createServiceRoleClient();
@@ -33,13 +37,13 @@ export async function runPermissionDeniedMonitor() {
   }
   const offenders = [...byUser.entries()].filter(([, n]) => n >= THRESHOLD);
 
-  for (const [user, count] of offenders) {
-    await sendOperatorAlert({
+  await mapWithConcurrency(offenders, ALERT_CONCURRENCY, ([user, count]) =>
+    sendOperatorAlert({
       severity: "medium",
       signal: "permission_denied_spike",
       detail: `${count} permission-denied events from user ${user} in the last ${WINDOW_MINUTES} minutes`,
       payload: { actor_user_id: user, count, window_minutes: WINDOW_MINUTES },
-    });
-  }
+    }),
+  );
   return { offenders_count: offenders.length };
 }

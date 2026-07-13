@@ -25,14 +25,16 @@ export function TenantOfRecordDisclosure({
       <p>
         This booking will be made through{" "}
         <strong>{hostAgency.legal_name}</strong>. Your sub-host:{" "}
-        <strong>{tenant.name}</strong>. Customer service contact:{" "}
-        <a
-          href={`mailto:${tenant.support_email}`}
-          className="underline"
-        >
-          {tenant.support_email}
-        </a>
-        .
+        <strong>{tenant.name}</strong>.
+        {tenant.support_email && (
+          <>
+            {" "}Customer service contact:{" "}
+            <a href={`mailto:${tenant.support_email}`} className="underline">
+              {tenant.support_email}
+            </a>
+            .
+          </>
+        )}
       </p>
     </div>
   );

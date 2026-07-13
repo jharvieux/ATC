@@ -9,10 +9,12 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 
 const InviteeSchema = z
   .object({
@@ -24,7 +26,11 @@ const InviteeSchema = z
 
 const BodySchema = z
   .object({
-    invitees: z.array(InviteeSchema).min(1).max(50),
+    // #1680 — same 50-cap constant as the create + single-invite paths (no
+    // per-path literal to drift). This is a per-request batch bound; the
+    // cumulative group cap is enforced atomically below via the
+    // reserve_group_invitations RPC (#1875).
+    invitees: z.array(InviteeSchema).min(1).max(MAX_INVITEES_PER_GROUP),
   })
   .strict();
 
@@ -51,6 +57,7 @@ export async function POST(
     // Verify the group exists in this tenant before any mutation. RLS hides
     // cross-tenant rows, so a 404 here covers both missing and other-tenant.
     const { data: groupRow, error: groupErr } = await db
+      // d091-allow:service-role-tenant — this is the tenantClient proxy (not the raw service-role client below), which auto-injects .eq("tenant_id", ctx.tenant_id) on select.
       .from("groups")
       .select("id")
       .eq("id", id)
@@ -80,7 +87,6 @@ export async function POST(
         const invitationId = randomUUID();
         return {
           id: invitationId,
-          group_id: id,
           invitee_email: inv.email,
           invitee_name: inv.name ?? null,
           personal_note: inv.personal_note ?? null,
@@ -89,12 +95,36 @@ export async function POST(
       }),
     );
 
-    // invitations has no tenant_id column (PLATFORM_READABLE, #1054) — the
-    // proxy injects no tenant filter. Isolation holds via group_id: id, which
-    // was verified tenant-owned by the tenant-scoped groups query above.
-    const { error: insertErr } = await db.from("invitations").insert(rows);
-    if (insertErr) {
-      return dbErrorResponse(insertErr);
+    // #1875 — enforce the cumulative 50-active-invitee cap atomically. This
+    // batch insert previously had NO cap check (only the per-request Zod .max),
+    // so repeated calls could push a group past 50. The reserve RPC takes a
+    // group-scoped advisory lock, re-counts active invitees, and inserts the
+    // whole batch in one transaction — rejecting when existing + batch would
+    // exceed the cap (same atomic reserve that closes #1680's single-invite
+    // TOCTOU). invitations has no tenant_id column (PLATFORM_READABLE, #1054);
+    // isolation holds via group_id, verified tenant-owned by the tenant-scoped
+    // groups query above.
+    const svc = createServiceRoleClient();
+    const { data: reserve, error: reserveErr } = await svc.rpc(
+      "reserve_group_invitations",
+      { p_group_id: id, p_invitations: rows, p_max: MAX_INVITEES_PER_GROUP },
+    );
+    if (reserveErr) {
+      return dbErrorResponse(reserveErr);
+    }
+    const reserveStatus = (reserve as { status?: string } | null)?.status;
+    if (reserveStatus === "cap_exceeded") {
+      return Response.json(
+        { error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` },
+        { status: 400 },
+      );
+    }
+    // Fail loud on any unexpected verdict — never fall through to 201 having
+    // possibly inserted nothing (mirrors the single-invite route).
+    if (reserveStatus !== "ok") {
+      return dbErrorResponse(
+        new Error(`reserve_group_invitations returned unexpected status: ${String(reserveStatus)}`),
+      );
     }
 
     return Response.json(
