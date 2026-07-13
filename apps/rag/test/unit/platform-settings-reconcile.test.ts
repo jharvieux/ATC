@@ -120,8 +120,9 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-// Only 4 keys are sync-eligible (SYNC_ELIGIBLE_KEYS): feedback_adjustment_limit,
-// feedback_min_signal_count, feedback_period_days, feedback_decay_halflife_days.
+// This test exercises a fixed subset of SYNC_ELIGIBLE_KEYS — the four feedback_*
+// keys (feedback_adjustment_limit, feedback_min_signal_count, feedback_period_days,
+// feedback_decay_halflife_days) — regardless of how many keys the allowlist holds in total.
 
 describe("#1885 — platform-settings-reconcile outcome tallies", () => {
   it("tallies insert/update/unchanged/skipped_not_eligible correctly per key", async () => {
