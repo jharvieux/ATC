@@ -885,6 +885,14 @@ jobs:
     # failed (enabled) does, via !failure(). The `production` GitHub environment's
     # required-reviewer gate remains the per-instance operator approval; no prod
     # migration or deploy happens without it.
+    #
+    # #1851 audit finding 3 — integration-tests-critical (#1797, RLS + Stripe-
+    # webhook suites) was added as a CI gate but not listed here, so this job's
+    # own every-gate-is-a-direct-needs convention above didn't actually cover
+    # it: a failing RLS/payments regression wouldn't block prod. Added below.
+    # Not yet promoted to dev's branch-protection required-status-checks list
+    # (#1797's own deferral, unresolved) — that promotion is still the
+    # operator's morning action once the job has a few clean runs on `dev`.
     if: |
       always() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -898,6 +906,7 @@ jobs:
         secret-scan,
         cve-scan,
         rls-snapshot-diff,
+        integration-tests-critical,
         cross-tenant-probe,
         contract-tests,
         deploy-staging,
