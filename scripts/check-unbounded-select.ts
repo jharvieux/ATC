@@ -38,6 +38,8 @@ const WATCHED_EXACT = new Set([
   "auth_attempts",
   "ai_tool_calls",
   "booking_line_items",
+  "contacts",
+  "quote_options",
 ]);
 const WATCHED_PREFIXES = ["forum_"];
 
