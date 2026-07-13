@@ -601,10 +601,42 @@ function Stage3Options({ bookingId }: { bookingId: string }): React.ReactElement
   );
 }
 
+type TenantOfRecordData = {
+  tenant: { name: string; support_email: string };
+  hostAgency: { legal_name: string };
+};
+
 // Stage 4: Review with TenantOfRecordDisclosure — §20.7.
 function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [disclosure, setDisclosure] = useState<TenantOfRecordData | null>(null);
+  const [disclosureError, setDisclosureError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}/tenant-of-record`);
+        if (!res.ok) {
+          if (!cancelled) setDisclosureError(true);
+          return;
+        }
+        const data = (await res.json()) as {
+          tenant: { name: string; support_email: string };
+          host_agency: { legal_name: string };
+        };
+        if (!cancelled) {
+          setDisclosure({ tenant: data.tenant, hostAgency: data.host_agency });
+        }
+      } catch {
+        if (!cancelled) setDisclosureError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId]);
 
   async function handleSubmit(): Promise<void> {
     setSubmitting(true);
@@ -638,12 +670,18 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
         <p className="text-muted-foreground text-[13px]">Review your trip details and passenger information before submitting.</p>
       </div>
 
-      {/* §20.7 — Tenant-of-record disclosure (required on Review stage) */}
+      {/* §20.7 — Tenant-of-record disclosure (required on Review stage). Fail-closed:
+          never fall back to placeholder legal names — block submission instead. */}
       <div className="mb-5">
-        <TenantOfRecordDisclosure
-          tenant={{ name: "Your Agency", support_email: "support@youragency.com" }}
-          hostAgency={{ legal_name: "Host Agency" }}
-        />
+        {disclosure ? (
+          <TenantOfRecordDisclosure tenant={disclosure.tenant} hostAgency={disclosure.hostAgency} />
+        ) : disclosureError ? (
+          <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[13px]">
+            Couldn&apos;t load the tenant-of-record disclosure. Refresh the page before submitting.
+          </div>
+        ) : (
+          <p className="text-muted-foreground text-[13px]">Loading disclosure…</p>
+        )}
       </div>
 
       {error && (
@@ -659,7 +697,7 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
         <Button
           type="button"
           onClick={() => void handleSubmit()}
-          disabled={submitting}
+          disabled={submitting || !disclosure}
           className="font-bold"
         >
           {submitting ? "Submitting…" : "Confirm & Submit Booking"}
