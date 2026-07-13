@@ -40,6 +40,20 @@ Newest entries on top.
 
 ---
 
+## D-355 — 2026-07-13 — #444 tier-lookup family shipped (PR #1917): phantom tier codes were silently killing the AI hero-image gate; update_seats gained the missing §15.15 agency-only gate
+
+**Decision.** Executed the only unblocked slice of EPIC #444 (Phase 2 deferrals): the bundled "tier lookup is a missing helper" TODOs. Introduced `lib/tenancy/get-tenant-tier-code.ts` (tenants → `tier_definitions.code`, both D-265 embed shapes, error → log + null least-privilege) and wired it into the groups create route and `request-tenant-tier.ts`; `GET /api/tenant/billing` now returns server-resolved `is_agency` (page had `isAgency = true` hardcoded).
+
+**Two real defects found under the TODOs:**
+1. `AI_ELIGIBLE_TIERS` in `hero-image.ts` held phantom codes (`sub_host_pro`/`sub_host_agency`; real: `sub_pro`/`sub_agency`) and the caller passed phantom `sub_host_starter` — the §18.3 tier-gated AI hero-image path could NEVER trigger for sub-host tenants. Fixed; a consistency test now pins every gate entry to a real §3.3 code (`hero-image-tier-gate.test.ts`) so a phantom can't return. Lesson: tier-code literals outside `tier-code-map.ts` are a bug class — gate sets must be tested ⊆ `CODE_TO_TIER_MAP` keys.
+2. `update_seats` had no tier gate — any tenant could attach the agency seat price to its own subscription. Now agency-only, fail-closed (lookup error → 500, non-agency → 422).
+
+**Rejected.** Routing the billing route's existing inline `tier_definitions`-by-`tier_id` lookups through the new helper (it takes `tenant_id` and would redundantly re-join `tenants`; both audit agents accepted the rationale). Fixing `TODO(rbac-tenant-admin)` in `user-data-purge-after-grace.ts` — still gated on the §26 `tenant_admin` role, which doesn't exist.
+
+**Related.** PR #1917; epic #444 status comment (sub-issues #1257/#1260 operator-blocked, #1258/#1259 attorney-blocked #427, #1262 launch gate); D-265 (embed shapes); D-341 (tier gates deny-on-null).
+
+---
+
 ## D-354 — 2026-07-13 — GitHub hardening applied: main protected, Dependency Review required, GHAS discipline runbook'd; merge queue BLOCKED (user-owned repo) but its groundwork kills the test-DB ledger-orphan class
 
 **Decision:** From the #1896 audit walkthrough (operator decisions per item): `main` now has classic protection + a `main-pr-only` ruleset (PR-required, 0 approvals — pipeline-compatible; NOTE: discovered no workflow promotes main at all, contradicting CLAUDE.md's description — open question #1911 item 4). `Dependency Review` (actions/dependency-review-action, fail-on-severity high, dev + release/*) is the 11th required check. Issue forms adopted. GHAS-comment disposition is now a runbook step (pr-workflow.md/triage.md, PR #1908). docs/cicd/github-features-audit.md records adopt/reject for all 11 features.
