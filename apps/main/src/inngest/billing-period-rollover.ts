@@ -10,6 +10,13 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — up to 5000 tenants per monthly run; bounded concurrency turns a
+// worst-case 25,000 sequential round-trips (upsert + 4 audit inserts per
+// tenant) into ~5000/20 batches.
+const ROLLOVER_CONCURRENCY = 20;
+const USAGE_DIMENSIONS = ["ai_cost", "chat_volume", "email_volume", "group_invite"] as const;
 
 function newPeriodRange(): string {
   const now = new Date();
@@ -59,9 +66,10 @@ export const billingPeriodRollover = inngest.createFunction(
           () => { skippedNonPaying++; },
         );
 
-        let createdRows = 0;
-        let rolloverEvents = 0;
-        for (const t of tenants) {
+        // Each tenant's rollover (upsert + 4 dimension audit inserts) is
+        // independent of every other tenant's — bounded-concurrency fan out
+        // instead of one tenant at a time.
+        const perTenant = await mapWithConcurrency(tenants, ROLLOVER_CONCURRENCY, async (t) => {
           // INSERT … ON CONFLICT DO NOTHING via upsert + ignoreDuplicates.
           const { error: upsertErr } = await db
             .from("tenant_usage_metrics")
@@ -80,22 +88,27 @@ export const billingPeriodRollover = inngest.createFunction(
               },
               { onConflict: "tenant_id,billing_period", ignoreDuplicates: true },
             );
-          if (!upsertErr) createdRows++;
 
-          // Audit rollover for each dimension (any monotonic resets are visible
-          // in the events table).
-          for (const dim of ["ai_cost", "chat_volume", "email_volume", "group_invite"]) {
-            await safeAwait(db.from("usage_limit_events").insert({
-              tenant_id: t.id,
-              dimension: dim,
-              from_state: "rollover",
-              to_state: "ok",
-              metric_value: "0",
-              threshold_crossed: "0",
-            }), "usage_limit_events.insert");
-            rolloverEvents++;
-          }
-        }
+          // Audit rollover for each dimension (any monotonic resets are
+          // visible in the events table). The 4 dimensions are independent
+          // rows — fan out within the tenant too.
+          await Promise.all(
+            USAGE_DIMENSIONS.map((dim) =>
+              safeAwait(db.from("usage_limit_events").insert({
+                tenant_id: t.id,
+                dimension: dim,
+                from_state: "rollover",
+                to_state: "ok",
+                metric_value: "0",
+                threshold_crossed: "0",
+              }), "usage_limit_events.insert"),
+            ),
+          );
+
+          return { created: !upsertErr };
+        });
+        const createdRows = perTenant.filter((r) => r.created).length;
+        const rolloverEvents = tenants.length * USAGE_DIMENSIONS.length;
 
         recordQuery({ op: "insert", table: "tenant_usage_metrics", row_count: createdRows });
         recordQuery({ op: "insert", table: "usage_limit_events", row_count: rolloverEvents });

@@ -27,6 +27,12 @@ import { sendEmail } from "@/lib/email/send";
 import { InactivityReminder, type InactivityNudgeLevel } from "@/emails/InactivityReminder";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — this cron iterates every active tenant with no cap; bounded
+// concurrency keeps a platform-wide fan-out from hammering the DB while
+// still cutting nightly runtime from O(tenants) sequential round-trips.
+const NIGHTLY_CONCURRENCY = 20;
 
 type NudgeLevel = "30d" | "60d" | "90d" | "180d";
 
@@ -108,10 +114,14 @@ export const complianceNightly = inngest.createFunction(
       (tenantsRaw ?? []) as unknown as TenantContactRow[],
     );
 
+    // Each tenant's inactivity check is independent — bounded-concurrency
+    // fan out instead of one tenant at a time.
+    const inactivityResults = await mapWithConcurrency(tenants, NIGHTLY_CONCURRENCY, (tenant) =>
+      checkInactivity(db, tenant, now),
+    );
     let sentEmails = 0;
     let levelLoggedNoEmail = 0;
-    for (const tenant of tenants) {
-      const result = await checkInactivity(db, tenant, now);
+    for (const result of inactivityResults) {
       if (result === "email_sent") sentEmails++;
       else if (result === "level_logged_no_email") levelLoggedNoEmail++;
     }
@@ -154,27 +164,33 @@ async function checkIcaVersionDrift(
     .eq("status", "active")
     .eq("requires_ica_reacceptance", false);
 
-  let flagged = 0;
-  for (const t of ((tenants ?? []) as Array<{ id: string }>)) {
-    const { data: consentRows } = await db
-      .from("legal_consents")
-      .select("document_version")
-      .eq("tenant_id", t.id)
-      .eq("document_type", "ica_subhost")
-      .eq("action", "accepted")
-      .order("acted_at", { ascending: false })
-      .limit(1);
-    const accepted = (consentRows ?? [])[0] as { document_version: number } | undefined;
-    const acceptedVersion = accepted?.document_version ?? 0;
-    if (acceptedVersion < latest.version) {
-      await safeAwait(db
-        .from("tenants")
-        .update({ requires_ica_reacceptance: true })
-        .eq("id", t.id), "tenants.update");
-      flagged++;
-    }
-  }
-  return flagged;
+  // Each tenant's consent check + flag update is independent — bounded
+  // concurrency fan out instead of one tenant at a time.
+  const flaggedResults = await mapWithConcurrency(
+    (tenants ?? []) as Array<{ id: string }>,
+    NIGHTLY_CONCURRENCY,
+    async (t) => {
+      const { data: consentRows } = await db
+        .from("legal_consents")
+        .select("document_version")
+        .eq("tenant_id", t.id)
+        .eq("document_type", "ica_subhost")
+        .eq("action", "accepted")
+        .order("acted_at", { ascending: false })
+        .limit(1);
+      const accepted = (consentRows ?? [])[0] as { document_version: number } | undefined;
+      const acceptedVersion = accepted?.document_version ?? 0;
+      if (acceptedVersion < latest.version) {
+        await safeAwait(db
+          .from("tenants")
+          .update({ requires_ica_reacceptance: true })
+          .eq("id", t.id), "tenants.update");
+        return true;
+      }
+      return false;
+    },
+  );
+  return flaggedResults.filter(Boolean).length;
 }
 
 type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" | "email_sent" | "level_logged_no_email";

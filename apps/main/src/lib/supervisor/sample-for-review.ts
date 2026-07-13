@@ -78,24 +78,26 @@ export async function maybeSampleForReview(input: SampleForReviewInput): Promise
     return;
   }
 
-  // Read retention setting
-  const { data: retentionSetting } = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "supervisor_review_retention_days")
-    .single();
+  // #1792 — the retention setting and the message-context snapshot are
+  // independent reads (neither depends on the other's result); fan out
+  // instead of waiting on them in sequence.
+  const [{ data: retentionSetting }, { data: recentMessages }] = await Promise.all([
+    db
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "supervisor_review_retention_days")
+      .single(),
+    db
+      .from("messages")
+      .select("id, role, content, created_at")
+      .eq("conversation_id", conversation_id)
+      .eq("tenant_id", tenant_id)
+      .order("created_at", { ascending: false })
+      .limit(CONTEXT_MESSAGE_WINDOW),
+  ]);
 
   const retentionDays =
     typeof retentionSetting?.value === "number" ? retentionSetting.value : 90;
-
-  // Fetch last N messages for context snapshot
-  const { data: recentMessages } = await db
-    .from("messages")
-    .select("id, role, content, created_at")
-    .eq("conversation_id", conversation_id)
-    .eq("tenant_id", tenant_id)
-    .order("created_at", { ascending: false })
-    .limit(CONTEXT_MESSAGE_WINDOW);
 
   const purgeAfter = new Date(
     Date.now() + retentionDays * 24 * 60 * 60 * 1000,

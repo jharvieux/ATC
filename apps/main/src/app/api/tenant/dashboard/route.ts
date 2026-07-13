@@ -169,8 +169,12 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   // ── Stats ────────────────────────────────────────────────────────────────
-  const conversationsThisMonth = await countConversations(db, ctx.tenant_id, thisMonth);
-  const conversationsPrevMonth = await countConversations(db, ctx.tenant_id, prevMonth);
+  // #1792 — this-month and prev-month counts are independent queries; fan
+  // out instead of one round-trip at a time.
+  const [conversationsThisMonth, conversationsPrevMonth] = await Promise.all([
+    countConversations(db, ctx.tenant_id, thisMonth),
+    countConversations(db, ctx.tenant_id, prevMonth),
+  ]);
 
   let aiMessagesThisMonth = 0;
   let chatLimitUsed = 0;

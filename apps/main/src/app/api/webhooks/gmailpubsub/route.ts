@@ -130,44 +130,47 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // ── 5. For each new message: fetch + persist + trigger-detect ────────
-  const results: Array<{ message_id: string; qualified: boolean; reason?: string }> = [];
-  for (const messageId of newMessageIds) {
-    const msg = await fetchGmailMessage(accessToken, messageId);
-    if (!msg.ok) {
-      results.push({ message_id: messageId, qualified: false, reason: `fetch_failed:${msg.error}` });
-      continue;
-    }
-    const { subject, from_email, to_email, body_text, body_html, threadId, internalDate } = extractMessageFields(msg.value);
+  // Each message_id is processed independently — processGmailInboundMessage
+  // dedups per-message via the import_queue unique index (23505), so there's
+  // no cross-message ordering dependency. Fan out instead of one Gmail API
+  // round-trip at a time.
+  const results = await Promise.all(
+    newMessageIds.map(async (messageId) => {
+      const msg = await fetchGmailMessage(accessToken, messageId);
+      if (!msg.ok) {
+        return { message_id: messageId, qualified: false, reason: `fetch_failed:${msg.error}` };
+      }
+      const { subject, from_email, to_email, body_text, body_html, threadId, internalDate } = extractMessageFields(msg.value);
 
-    await safeAwait(svc
-      .from("gmail_inbound_messages")
-      .upsert({
-        message_id: messageId,
+      await safeAwait(svc
+        .from("gmail_inbound_messages")
+        .upsert({
+          message_id: messageId,
+          tenant_id: tokenRow.tenant_id,
+          thread_id: threadId,
+          from_email,
+          to_email,
+          subject,
+          body_text,
+          body_html,
+          received_at: new Date(internalDate).toISOString(),
+          raw_payload: msg.value,
+          qualifies_for_import: false, // updated by processGmailInboundMessage if it triggers
+        }), "gmail_inbound_messages.upsert");
+
+      const procResult = await processGmailInboundMessage({
         tenant_id: tokenRow.tenant_id,
-        thread_id: threadId,
-        from_email,
-        to_email,
-        subject,
-        body_text,
-        body_html,
-        received_at: new Date(internalDate).toISOString(),
-        raw_payload: msg.value,
-        qualifies_for_import: false, // updated by processGmailInboundMessage if it triggers
-      }), "gmail_inbound_messages.upsert");
-
-    const procResult = await processGmailInboundMessage({
-      tenant_id: tokenRow.tenant_id,
-      message_id: messageId,
-      subject: subject ?? "",
-      body_text: body_text ?? "",
-      svc,
-    });
-    if (procResult.qualified) {
-      results.push({ message_id: messageId, qualified: true });
-    } else {
-      results.push({ message_id: messageId, qualified: false, reason: procResult.reason });
-    }
-  }
+        message_id: messageId,
+        subject: subject ?? "",
+        body_text: body_text ?? "",
+        svc,
+      });
+      if (procResult.qualified) {
+        return { message_id: messageId, qualified: true };
+      }
+      return { message_id: messageId, qualified: false, reason: procResult.reason };
+    }),
+  );
 
   // ── 6. Update the stored history pointer ─────────────────────────────
   await safeAwait(svc

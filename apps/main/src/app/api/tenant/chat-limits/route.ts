@@ -98,8 +98,12 @@ export async function PUT(req: Request): Promise<Response> {
       booking_bonus_percent?: number;
     };
 
-    const ceiling = await loadPlatformInt(db, "customer_chat_limit_hard_ceiling", 200);
-    const floor   = await loadPlatformInt(db, "customer_chat_limit_hard_floor", 15);
+    // #1792 — two independent platform_settings keys; fan out instead of
+    // one round-trip at a time.
+    const [ceiling, floor] = await Promise.all([
+      loadPlatformInt(db, "customer_chat_limit_hard_ceiling", 200),
+      loadPlatformInt(db, "customer_chat_limit_hard_floor", 15),
+    ]);
 
     const s1 = Number(body.soft1_cap);
     const s2 = Number(body.soft2_cap);

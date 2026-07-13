@@ -22,6 +22,9 @@ vi.mock("@supabase/supabase-js", () => ({
         eq: () => ({
           maybeSingle: async () => ({ data: null, error: null }),
         }),
+        // platform-settings-events batches the stale-revision check into a
+        // single .in() read (#1792) instead of one .eq().maybeSingle() per key.
+        in: async () => ({ data: [], error: null }),
       }),
       upsert: async () => ({ error: null }),
     }),

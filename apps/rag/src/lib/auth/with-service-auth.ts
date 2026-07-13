@@ -22,8 +22,10 @@ type RouteContext = { params: Promise<Record<string, string>> };
 export function withServiceAuth(handler: AuthedHandler) {
   return async (req: Request, routeCtx: RouteContext): Promise<Response> => {
     try {
-      const ctx = await verifyServiceJwt(req);
-      const params = await routeCtx.params;
+      // #1792 — JWT verification and route-param resolution are
+      // independent (neither reads the other's result); fan out instead of
+      // waiting in sequence. Both stay under the same try/catch below.
+      const [ctx, params] = await Promise.all([verifyServiceJwt(req), routeCtx.params]);
       return handler(req, ctx, params);
     } catch (err) {
       if (err instanceof ServiceAuthError) {

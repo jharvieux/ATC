@@ -66,13 +66,16 @@ export const dobEstimateRepromptEligible = inngest.createFunction(
       return { status: "ok", flagged: 0 };
     }
 
-    // Filter: user must have been active in the last 90 days.
-    const activeUserIds = await getActiveUserIds(db, activeWindowCutoff);
-
-    // §11.5 D-087 — Filter: user must NOT have an active booking with
-    // sailing_date inside the imminent-booking window. The §20.5 submit
-    // gate handles those; chat re-prompting would be redundant noise.
-    const usersWithImminentBookings = await getUsersWithImminentBookings(db);
+    // #1792 — both filters are independent reads (neither depends on the
+    // other); fan out instead of waiting on them in sequence.
+    const [activeUserIds, usersWithImminentBookings] = await Promise.all([
+      // Filter: user must have been active in the last 90 days.
+      getActiveUserIds(db, activeWindowCutoff),
+      // §11.5 D-087 — Filter: user must NOT have an active booking with
+      // sailing_date inside the imminent-booking window. The §20.5 submit
+      // gate handles those; chat re-prompting would be redundant noise.
+      getUsersWithImminentBookings(db),
+    ]);
 
     let flaggedCount = 0;
     let skippedImminent = 0;

@@ -7,8 +7,13 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 const BULK_THRESHOLD = 10;
+// #1787 — was fully sequential to avoid hammering the RAG service with
+// parallel JWT calls. Bounded concurrency keeps that ceiling while cutting
+// latency for larger batches instead of one round-trip at a time.
+const APPROVE_CONCURRENCY = 5;
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -41,8 +46,9 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // The individual approve call orchestrates the RAG calls, audit, and
-    // status transition. Loop with per-item error capture (sequential to
-    // avoid hammering the RAG service with parallel JWT calls).
+    // status transition. Bounded-concurrency fan out with per-item error
+    // capture (APPROVE_CONCURRENCY in flight at once, to avoid hammering
+    // the RAG service with unbounded parallel JWT calls).
     //
     // CodeQL js/request-forgery: derive the origin from a trusted env var,
     // not from req.url (a forged Host header could otherwise redirect the
@@ -50,8 +56,7 @@ export async function POST(req: Request): Promise<Response> {
     // path are UUIDs validated by the per-item handler.
     const baseUrl =
       process.env.NEXT_PUBLIC_APP_URL ?? `https://${process.env.PLATFORM_PRIMARY_DOMAIN}`;
-    const results: Array<{ id: string; ok: boolean; chunk_id?: string; error?: string }> = [];
-    for (const id of ids) {
+    const results = await mapWithConcurrency(ids, APPROVE_CONCURRENCY, async (id) => {
       const res = await fetch(`${baseUrl}/api/rag/queue/${encodeURIComponent(id)}/approve`, {
         method: "POST",
         headers: {
@@ -65,12 +70,11 @@ export async function POST(req: Request): Promise<Response> {
       });
       if (res.ok) {
         const j = (await res.json()) as { chunk_id?: string };
-        results.push({ id, ok: true, ...(j.chunk_id !== undefined && { chunk_id: j.chunk_id }) });
-      } else {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        results.push({ id, ok: false, error: j.error ?? `status_${res.status}` });
+        return { id, ok: true, ...(j.chunk_id !== undefined && { chunk_id: j.chunk_id }) };
       }
-    }
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      return { id, ok: false, error: j.error ?? `status_${res.status}` };
+    });
 
     void db; // Used by the per-item handler via assertPermission; nothing else here.
     const succeeded = results.filter((r) => r.ok).length;

@@ -2,6 +2,13 @@
 // Renders the current ai_disclaimer legal document.
 // Includes state-specific appendix sections.
 
+// #1792 — legal_documents has no tenant_id (platform-wide, not
+// tenant-scoped or personalized) and changes only on an infrequent admin
+// publish action, so a short ISR window trades a few minutes of staleness
+// for cutting a DB read on every request. Same pattern as
+// apps/main/src/app/agents/[slug]/page.tsx.
+export const revalidate = 300;
+
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { formatDate } from "@/lib/format-date";
 

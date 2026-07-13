@@ -148,22 +148,26 @@ export async function POST(
               <p>If you believe this is in error, reply to this email within
               the 90-day window to appeal.</p>
             `;
-            for (const owner of owners) {
-              await sendTenantNotification({
-                db,
-                tenant_id: tenantId,
-                to: owner.email,
-                subject: "Your account has been terminated",
-                html,
-                category: "transactional",
-                template_id: "tenant_termination_notice",
-                template_variables: {
-                  kind: body.kind,
-                  reason: body.reason,
-                  termination_at: suspensionEndAt,
-                },
-              });
-            }
+            // Owners are independent sends (category "transactional" bypasses
+            // the per-recipient rate limiter, so no shared-counter race).
+            await Promise.all(
+              owners.map((owner) =>
+                sendTenantNotification({
+                  db,
+                  tenant_id: tenantId,
+                  to: owner.email,
+                  subject: "Your account has been terminated",
+                  html,
+                  category: "transactional",
+                  template_id: "tenant_termination_notice",
+                  template_variables: {
+                    kind: body.kind,
+                    reason: body.reason,
+                    termination_at: suspensionEndAt,
+                  },
+                }),
+              ),
+            );
           }
         } catch (notifyErr) {
           console.warn(
