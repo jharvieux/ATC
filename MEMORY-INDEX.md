@@ -18,6 +18,8 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-354 — 2026-07-13 — GH hardening: main protected, Dependency Review required check, GHAS runbook'd; merge queue blocked (user-owned repo) but PR #1915's test-DB reset kills the ledger-orphan class and the migration merge-train ordering constraint.
+- D-353 — 2026-07-13 — Follow-up sweep: 10 PRs merged / 11 issues closed; §6.10 spec-bounds violation caught pre-merge (#1906); disclosure family fail-closed on all existing surfaces; flake #1912 filed.
 - D-352 — 2026-07-13 — GHAS PR comments dispositioned before every merge; custom sanitizers must be CodeQL-recognizable (sanitize.ts literal \r\n replace is load-bearing; #1896).
 - D-351 — 2026-07-13 — #1680 accepted-race superseded: atomic reserve_group_invitations RPC (advisory lock) enforces 50-cap; also fixed #1875 members bypass (PR #1894).
 - D-350 — 2026-07-13 — Sweep #3: 15 PRs merged / 14 issues closed; audits caught 5 real pre-merge defects incl. the #1855 phantom-bug (mechanism-verify pattern-matched issues).
