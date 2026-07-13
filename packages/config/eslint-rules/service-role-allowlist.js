@@ -236,6 +236,8 @@ module.exports = [
   "/inngest/precruise-generate-and-send.ts",
   // BP23: Soft bounce retry — reads email_log, writes suppressions. §23.7.
   "/inngest/email-soft-bounce-retry.ts",
+  // #1611: Soft-bounce retry-content purge cron — deletes expired stored HTML (PII). §23.7.
+  "/inngest/email-retry-content-purge.ts",
   // BP23: Resend webhook handler — writes email_log + suppressions outside user session. §23.7.
   "/app/api/webhooks/resend/route.ts",
   // #890: Resend INBOUND webhook — signature-only auth, resolves the tenant and

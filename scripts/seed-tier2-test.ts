@@ -9,6 +9,7 @@
 //     pnpm tsx scripts/seed-tier2-test.ts
 
 import postgres from "postgres";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const TENANT_ID = "22222222-0000-0000-0000-0000000000a1";
 const AUTH_USER_ID = "a0000000-0000-0000-0000-0000000000a1";
@@ -89,6 +90,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error("seed-tier2-test crashed:", redactSecrets(err));
   process.exit(1);
 });

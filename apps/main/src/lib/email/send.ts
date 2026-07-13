@@ -64,7 +64,21 @@ export interface SendEmailInput {
   // call, which would defeat the dedup. Optional: sends without one behave
   // exactly as before (no header sent).
   idempotencyKey?: string;
+  // §23.7/#1611 — set to the ORIGINAL email_log id when this send is itself a
+  // soft-bounce re-send. Two effects: the row is stamped email_log.retry_of so
+  // the Resend webhook won't start a fresh retry chain for it, and sendEmail
+  // does NOT persist a new email_retry_content row (the original send owns the
+  // stored payload; re-sends must not spawn their own retry chains). Absent for
+  // normal sends.
+  retry_of?: string;
 }
+
+// §23.7/#1611 — how long a stored rendered-HTML payload lives before the purge
+// cron deletes it. Must exceed Resend's soft-bounce-arrival window plus the full
+// +6h/+12h/+24h retry chain (+ terminal grace) so content is never purged out
+// from under an in-flight retry. 7 days is a comfortable margin; rendered emails
+// are PII, so this is deliberately short.
+const RETRY_CONTENT_TTL_DAYS = 7;
 
 export interface EmailSendResult {
   status: "sent" | "suppressed" | "rate_limited" | "failed";
@@ -232,6 +246,7 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     status: sendStatus === "sent" ? "sent" : "rejected",
     sent_at: sendStatus === "sent" ? new Date().toISOString() : null,
     resend_message_id: resendMessageId ?? null,
+    ...(input.retry_of ? { retry_of: input.retry_of } : {}),
     ...(input.user_id ? { user_id: input.user_id } : {}),
     ...(input.contact_id ? { contact_id: input.contact_id } : {}),
     ...(input.reply_to ? { reply_to: input.reply_to } : {}),
@@ -249,6 +264,36 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
 
   if (sendStatus === "failed") {
     return { status: "failed", reason: sendFailReason ?? null, email_log_id: emailLogId ?? null };
+  }
+
+  // §23.7/#1611 — persist the rendered payload so a soft bounce can re-send it
+  // verbatim (option (a)). Only for ORIGINAL sends (not re-sends — the original
+  // owns the retry chain) and only once we have an email_log id to key on.
+  // Written AFTER dispatch (D-091 #10) and non-fatal: the email is already with
+  // the vendor, so a failed content insert must NOT flip a delivered send to
+  // failed — it only means this particular send can't be retried on a bounce.
+  if (!input.retry_of && emailLogId) {
+    try {
+      const expiresAt = new Date(Date.now() + RETRY_CONTENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const { error: retryErr } = await db.from("email_retry_content").insert({
+        email_log_id: emailLogId,
+        tenant_id: tenant.id,
+        to_email: to,
+        subject,
+        template_id,
+        email_category: category,
+        html,
+        expires_at: expiresAt,
+        ...(input.reply_to ? { reply_to: input.reply_to } : {}),
+        ...(input.related_booking_id ? { related_booking_id: input.related_booking_id } : {}),
+        ...(input.related_group_id ? { related_group_id: input.related_group_id } : {}),
+        ...(input.user_id ? { user_id: input.user_id } : {}),
+        ...(input.contact_id ? { contact_id: input.contact_id } : {}),
+      });
+      if (retryErr) console.warn(`[email/send] email_retry_content insert failed (non-fatal): ${retryErr.message}`);
+    } catch (err) {
+      console.warn(`[email/send] email_retry_content insert threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // BP27 §27.4 — bump the email-sent counter so the daily soft1/soft2/hard

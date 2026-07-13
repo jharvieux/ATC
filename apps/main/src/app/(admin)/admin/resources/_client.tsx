@@ -76,7 +76,11 @@ interface DashboardData {
 // NOT a candidate for lib/money.ts formatCents consolidation — intentionally
 // distinct display rules: sub-cent "<$0.01" convention + magnitude-based
 // precision (2 decimals for <$100, 0 for ≥$100). Used for cost/spend summaries.
+// Always USD (platform-internal cost accounting, no currency param) so the
+// #1658 zero-decimal-currency bug formatCents guards against can't occur
+// here; reaffirmed on #1779's audit.
 function formatDollars(cents: number): string {
+  // eslint-disable-next-line atc/no-money-math -- see design-intent comment above (#1779)
   const dollars = cents / 100;
   if (dollars < 0.01 && dollars > 0) return "<$0.01";
   return `$${dollars.toFixed(dollars < 10 ? 2 : dollars < 100 ? 2 : 0)}`;

@@ -14,7 +14,7 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
 import { TenantTheme } from "@/components/branding/TenantTheme";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 // §16.2 — tenant subdomains show the tenant's name + favicon on the quote page.
@@ -69,7 +69,7 @@ type QuoteOptionRow = {
 function money(amount: number | bigint | null | undefined, currency: string | null): string {
   if (amount === null || amount === undefined) return "—";
   const cents = typeof amount === "bigint" ? amount : BigInt(amount);
-  return `${currency ?? "USD"} ${fromCents(cents as Cents)}`;
+  return `${currency ?? "USD"} ${fromCents(cents)}`;
 }
 
 export default async function CustomerQuoteViewPage(props: PageProps): Promise<JSX.Element> {

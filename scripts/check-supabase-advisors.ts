@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_FILE = path.join(ROOT, ".github/supabase-advisor-config.json");
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
-    console.error("Supabase advisor check errored:", err instanceof Error ? err.message : err);
+    console.error("Supabase advisor check errored:", redactSecrets(err));
     process.exit(1);
   });
 }

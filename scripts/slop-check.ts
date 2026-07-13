@@ -22,7 +22,7 @@ import * as path from "node:path";
 const BASE_REF = process.env.SLOP_CHECK_BASE_REF ?? "origin/dev";
 const SCAN_EXT = [".ts", ".tsx", ".js", ".jsx"];
 
-interface Finding {
+export interface Finding {
   file: string;
   line: number;
   kind: "orphan-todo" | "narrating-comment" | "rethrow-catch" | "wrapper-fn";
@@ -93,7 +93,7 @@ function getAddedLinesForFile(file: string): Map<number, string> {
   return lines;
 }
 
-function scanFile(file: string, addedLines: Map<number, string>, findings: Finding[]): void {
+export function scanFile(file: string, addedLines: Map<number, string>, findings: Finding[]): void {
   // Orphan TODO + narrating-comment checks are line-local.
   for (const [lineNum, content] of addedLines) {
     const trimmed = content.trim();
@@ -127,6 +127,11 @@ function scanFile(file: string, addedLines: Map<number, string>, findings: Findi
       .slice(i, i + 6)
       .map(([, c]) => c)
       .join("\n");
+    // A match spanning multiple lines is still visible in the NEXT window
+    // (which starts one line later but still contains the same construct),
+    // so without skipping past it a single rethrow/wrapper produces one
+    // duplicate finding per line it spans. Advance `i` past the match.
+    let skip = 0;
     const rethrowMatch = window.match(RETHROW_CATCH_RE);
     if (rethrowMatch) {
       findings.push({
@@ -136,6 +141,7 @@ function scanFile(file: string, addedLines: Map<number, string>, findings: Findi
         message: "try/catch that just re-throws is a no-op. Delete it; let the error propagate.",
         snippet: rethrowMatch[0].slice(0, 100),
       });
+      skip = Math.max(skip, rethrowMatch[0].split("\n").length - 1);
     }
     const wrapperMatch = window.match(WRAPPER_FN_RE);
     if (wrapperMatch) {
@@ -146,11 +152,13 @@ function scanFile(file: string, addedLines: Map<number, string>, findings: Findi
         message: "Single-expression wrapper function. Consider inlining at the call site if used only once.",
         snippet: wrapperMatch[0].slice(0, 100),
       });
+      skip = Math.max(skip, wrapperMatch[0].split("\n").length - 1);
     }
+    i += skip;
   }
 }
 
-function emitMarkdown(findings: Finding[]): string {
+export function emitMarkdown(findings: Finding[]): string {
   if (findings.length === 0) {
     return "## Slop check — clean\n\nNo slop patterns detected in this PR diff. ✓\n";
   }
@@ -193,4 +201,9 @@ function main(): void {
   process.stdout.write(emitMarkdown(findings));
 }
 
-main();
+// #1795 — guard so importing this module for unit tests (scanFile/emitMarkdown)
+// doesn't also run main()'s git subprocess calls. Mirrors the same guard in
+// scripts/check-d091-anti-patterns.ts.
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

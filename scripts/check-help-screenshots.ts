@@ -108,10 +108,18 @@ function main(): void {
     docs.set(f, fs.readFileSync(path.join(DOCS_DIR, f), "utf8"));
   }
 
+  // public/help/test-fixtures/ is a reserved exception (#1688): unit-test
+  // fixture images for the PDF/Word export path (resolveHelpImage reads
+  // real files off this exact tree). They're never referenced by a help
+  // doc and never captured by `pnpm help:screenshots`, so they're exempt
+  // from the manifest-lockstep invariant this gate otherwise enforces.
   const images = new Set<string>();
   if (fs.existsSync(IMG_ROOT)) {
     const walk = (dir: string): void => {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "test-fixtures" && path.join(dir, e.name) === path.join(IMG_ROOT, "test-fixtures")) {
+          continue;
+        }
         const abs = path.join(dir, e.name);
         if (e.isDirectory()) walk(abs);
         else images.add(path.relative(IMG_ROOT, abs).split(path.sep).join("/"));
