@@ -65,6 +65,34 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("itinerary");
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState<{ code: string; message: string } | null>(null);
+
+  async function resolveReview() {
+    if (!booking) return;
+    setResolving(true);
+    setResolveError(null);
+    try {
+      const res = await fetch(`/api/bookings/${booking.id}/resolve-review`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as {
+        status?: string;
+        error?: string;
+        message?: string;
+      };
+      if (res.ok) {
+        setBooking((prev) => (prev ? { ...prev, status: body.status ?? "draft" } : prev));
+        return;
+      }
+      setResolveError({
+        code: body.error ?? `status_${res.status}`,
+        message: body.message ?? body.error ?? `Failed with status ${res.status}`,
+      });
+    } catch (e) {
+      setResolveError({ code: "network_error", message: e instanceof Error ? e.message : "resolve_failed" });
+    } finally {
+      setResolving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +164,16 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColor} capitalize`}>
                 {booking.status.replace(/_/g, " ")}
               </span>
+              {booking.status === "pending_host_review" && (
+                <button
+                  type="button"
+                  onClick={() => void resolveReview()}
+                  disabled={resolving}
+                  className="text-xs px-2 py-0.5 rounded border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {resolving ? "Resolving…" : "Resolve for editing"}
+                </button>
+              )}
             </div>
             <h1 className="text-2xl font-semibold truncate">
               {booking.cruise_line ?? "Cruise"} {booking.ship_name ?? ""}
@@ -169,6 +207,19 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
             }
           />
         </dl>
+
+        {resolveError && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+            <p className="font-medium">Could not resolve for editing</p>
+            <p className="mt-1">{resolveError.message}</p>
+            {resolveError.code === "host_booking_may_exist" && (
+              <p className="mt-1">
+                A host-side booking may already exist for this trip — do not re-submit it. Investigate
+                the host reservation before taking further action.
+              </p>
+            )}
+          </div>
+        )}
       </header>
 
       <nav className="border-b border-gray-200 flex gap-1">
