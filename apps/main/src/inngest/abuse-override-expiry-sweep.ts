@@ -47,23 +47,47 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
         // bounded-concurrency fan out instead of one row at a time.
         const touchedTenants = new Set<string>();
         await mapWithConcurrency(rows, SWEEP_CONCURRENCY, async (r) => {
+          // D-091 #22 — this pair is dependent (the stamp means "expiry fully
+          // processed, audit included") but neither atomic nor individually
+          // retriable as originally ordered (stamp-then-audit): a crash between
+          // them left the row un-reselectable (stamped) with the audit insert
+          // permanently lost. Reordered to audit-first, stamp-last: a crash
+          // before the stamp leaves expiry_notified_at null, so the next sweep
+          // re-selects the row. The existence check below then makes the
+          // re-insert a no-op instead of a duplicate audit row.
+          //
+          // This SELECT-then-INSERT dedup isn't backed by a DB uniqueness
+          // constraint (D-091 #24 would normally want one) — deliberately
+          // deferred to avoid a migration in this fix, since the sweep is a
+          // singleton daily cron and this check only needs to survive a
+          // sequential crash-then-retry, not true concurrent double-invocation.
+          // Tracked as a follow-up: #1844 (add UNIQUE(resolution_action) on
+          // usage_limit_events + a 23505 handler).
+          const resolutionAction = `override_expired:${r.id}`;
+          const { data: existingEvent } = await db
+            .from("usage_limit_events")
+            .select("id")
+            .eq("resolution_action", resolutionAction)
+            .maybeSingle();
+          if (!existingEvent) {
+            // Audit the expiry as a state-transition-like event so admins see
+            // it in usage_limit_events history.
+            await safeAwait(db.from("usage_limit_events").insert({
+              tenant_id: r.tenant_id,
+              dimension: r.dimension,
+              from_state: "override_active",
+              to_state: "override_expired",
+              metric_value: "0",
+              threshold_crossed: "0",
+              resolution_action: resolutionAction,
+            }), "usage_limit_events.insert");
+          }
+
           await safeAwait(db
             .from("tenant_usage_overrides")
             .update({ expiry_notified_at: new Date().toISOString() })
             .eq("id", r.id), "tenant_usage_overrides.update");
           touchedTenants.add(r.tenant_id);
-
-          // Audit the expiry as a state-transition-like event so admins see
-          // it in usage_limit_events history.
-          await safeAwait(db.from("usage_limit_events").insert({
-            tenant_id: r.tenant_id,
-            dimension: r.dimension,
-            from_state: "override_active",
-            to_state: "override_expired",
-            metric_value: "0",
-            threshold_crossed: "0",
-            resolution_action: `override_expired:${r.id}`,
-          }), "usage_limit_events.insert");
         });
 
         // Recompute state for each touched tenant (revert to tier caps).
