@@ -10,12 +10,14 @@
 // effects) plus a documented behavior-object shape that test files import
 // and wire into their vi.mock callbacks.
 //
-// #1821 — none of the 8 existing probes actually import makeFailingDbClient;
-// each hand-shapes its own DB mock because a generic per-verb-fail factory
-// can't express a real handler's branch-specific chain shape (see
-// README.md's "Actual handler test pattern" section). Verify shape fit
-// against your handler before reaching for it — don't assume it's proven.
-// The non-DB helpers below (Stripe/Inngest) don't have this problem.
+// #1821 / retrofit #1860 — most probes hand-shape their own DB mock because
+// a generic per-verb-fail factory can't express a real handler's
+// branch-specific chain shape (see README.md's "Actual handler test
+// pattern" section). ai-pricing-cache-refresh.error.test.ts is the one
+// probe with a simple enough shape (one read, one write, no branching) to
+// use this factory directly — verify shape fit against your handler before
+// reaching for it elsewhere. The non-DB helpers below (Stripe/Inngest)
+// don't have this problem.
 //
 // See ./README.md for the actual, working pattern used by real probes.
 
