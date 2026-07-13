@@ -85,7 +85,30 @@ export function extractUnhandledSection(consoleLogText) {
   return `\n**Unhandled errors (console output)**:\n\`\`\`\n${unhandled}\n\`\`\`\n`;
 }
 
+const MIGRATE_TAIL_LINES = 40;
+const MIGRATE_MAX_CHARS = 4000;
+
+// The teed `supabase db push` output for the RAG test-DB apply (#1893). No
+// structured JSON to parse — the useful signal (which migration/statement
+// errored) is the tail of the console output. Strip ANSI and cap length; the
+// caller redacts before this reaches the public issue body.
+export function extractMigrateFailure(consoleLogText) {
+  const cleaned = consoleLogText.replace(ANSI, "").trimEnd();
+  if (!cleaned) return "(no migration output captured; see run logs)";
+  const tail = cleaned.split("\n").slice(-MIGRATE_TAIL_LINES).join("\n").slice(-MIGRATE_MAX_CHARS);
+  return "```\n" + tail + "\n```";
+}
+
 function main() {
+  // `migrate` subcommand: redact + section-ify the RAG migration-apply log
+  // (#1893). Distinct from the vitest flow's 4-positional-arg contract below.
+  if (process.argv[2] === "migrate") {
+    const [, , , logPath = "rag-migrate-console.log", sectionOut = "nightly-rag-migrate-section.md"] = process.argv;
+    const section = existsSync(logPath) ? extractMigrateFailure(readFileSync(logPath, "utf-8")) : "(no migration log; see run logs)";
+    writeFileSync(sectionOut, redact(section));
+    return;
+  }
+
   const [, , reportPath = "vitest-report.json", consoleLogPath = "vitest-console.log", failingOut = "nightly-failing-list.md", unhandledOut = "nightly-unhandled-section.md"] =
     process.argv;
 

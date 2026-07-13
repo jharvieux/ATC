@@ -128,6 +128,42 @@ jobs:
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Apply Supabase migrations to RAG test DB
+        id: rag-migrate
+        # Mirrors the "Apply Supabase migrations to test DB" step above, but for
+        # the RAG app's own DB and migration set (apps/rag/supabase/migrations),
+        # so the RAG suite below runs against a schema matching dev instead of
+        # drifted/stale schema (#1893). No ledger pre-check like deploy.yml's
+        # rls-snapshot-diff job: that guards a race between two un-diffed PR
+        # BRANCHES; this runs on already-merged `dev` where every migration is
+        # applied, so the push is idempotent.
+        #
+        # SUPABASE_RAG_DB_URL is the RAG-suite activation secret (job env). When
+        # it's unset the RAG suite describe.skips, so skip the push too (a push
+        # to no DB would error) — skip-with-notice, exit_status=0, same posture
+        # as deploy.yml's apply step.
+        #
+        # On a real push failure we capture the exit code (set +e + PIPESTATUS,
+        # D-349 — same idiom as the vitest steps, which is why the output is
+        # teed) and hand it to the issue-open step as a DISTINCT signal, instead
+        # of letting `bash -e` hard-fail the job with a bare red X and no issue.
+        # That's what makes an apply/drift failure distinguishable from a test
+        # regression in the nightly issue body (#1893 acceptance criterion). The
+        # teed log is redacted through parse-nightly-failures.mjs before any of
+        # it reaches the PUBLIC issue body (#1851).
+        working-directory: apps/rag
+        run: |
+          if [ -z "$SUPABASE_RAG_DB_URL" ]; then
+            echo "SUPABASE_RAG_DB_URL not set — skipping RAG migration apply; the RAG suite describe.skips without it."
+            echo "exit_status=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          npx supabase db push --include-all --db-url "$SUPABASE_RAG_DB_URL" 2>&1 | tee rag-migrate-console.log
+          STATUS=${PIPESTATUS[0]}
+          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Run apps/rag vitest suite
         id: vitest-rag
         # The root vitest.config.ts only includes tests/** and apps/main/test/**
@@ -145,11 +181,12 @@ jobs:
           exit 0
 
       - name: Open issue on failure
-        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0'
+        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAIN_STATUS: ${{ steps.vitest.outputs.exit_status }}
           RAG_STATUS: ${{ steps.vitest-rag.outputs.exit_status }}
+          RAG_MIGRATE_STATUS: ${{ steps.rag-migrate.outputs.exit_status }}
         run: |
           set -euo pipefail
           DATE=$(date -u +%Y-%m-%d)
@@ -182,6 +219,16 @@ jobs:
           else
             RAG_SECTION=""
           fi
+          # A non-zero RAG migration apply is a schema/infra failure, NOT a test
+          # regression — surface it as its own section so triage doesn't chase a
+          # phantom test bug (#1893). The teed push log is redacted (public repo,
+          # #1851) via the parser's `migrate` mode before it lands here.
+          if [ "$RAG_MIGRATE_STATUS" != "0" ] && [ -n "$RAG_MIGRATE_STATUS" ]; then
+            node scripts/parse-nightly-failures.mjs migrate apps/rag/rag-migrate-console.log nightly-rag-migrate-section.md
+            RAG_MIGRATE_SECTION="### apps/rag — test DB migration apply FAILED (exit $RAG_MIGRATE_STATUS)"$'\n\n'"\`supabase db push\` to the RAG test DB failed before the suite ran, so any RAG results below ran against a stale or absent schema. Triage this as a schema/infra failure, not a test regression."$'\n\n'"$(cat nightly-rag-migrate-section.md)"
+          else
+            RAG_MIGRATE_SECTION=""
+          fi
 
           BODY=$(cat <<EOF
           ## Nightly full-test failure — $DATE
@@ -196,6 +243,7 @@ jobs:
           **Failing tests**:
           $MAIN_SECTION
           $RAG_SECTION
+          $RAG_MIGRATE_SECTION
 
           Triage by re-running the workflow once. If it stays red, it's a real regression — bisect across commits to \`dev\` since the last green nightly.
 
