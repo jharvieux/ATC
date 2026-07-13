@@ -29,58 +29,72 @@ interface ProfileData {
   is_owner: boolean;
 }
 
+interface PageState {
+  data: ProfileData | null;
+  loadErr: string | null;
+  forbidden: boolean;
+}
+
+interface SampleFormState {
+  newBody: string;
+  newLabel: string;
+  isHouseStyle: boolean;
+  saving: boolean;
+  saveErr: string | null;
+}
+
+interface OverrideFormState {
+  overrideText: string;
+  savingOverride: boolean;
+  overrideStatus: string | null;
+}
+
 export default function VoiceProfilePage(): React.JSX.Element {
-  const [data, setData] = useState<ProfileData | null>(null);
-  const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [forbidden, setForbidden] = useState(false);
-
-  // New-sample form
-  const [newBody, setNewBody] = useState("");
-  const [newLabel, setNewLabel] = useState("");
-  const [isHouseStyle, setIsHouseStyle] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-
-  // Card override form
-  const [overrideText, setOverrideText] = useState("");
-  const [savingOverride, setSavingOverride] = useState(false);
-  const [overrideStatus, setOverrideStatus] = useState<string | null>(null);
+  // #1812 — the 11 useState hooks (page load, add-sample form, card-override
+  // form) are grouped into 3 state objects by concern, one useState each,
+  // matching the pattern established in #1791.
+  const [page, setPage] = useState<PageState>({ data: null, loadErr: null, forbidden: false });
+  const [sampleForm, setSampleForm] = useState<SampleFormState>({
+    newBody: "", newLabel: "", isHouseStyle: false, saving: false, saveErr: null,
+  });
+  const [overrideForm, setOverrideForm] = useState<OverrideFormState>({
+    overrideText: "", savingOverride: false, overrideStatus: null,
+  });
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/voice-profiles/samples");
-      if (res.status === 403) { setForbidden(true); return; }
-      if (!res.ok) { setLoadErr(`Load failed (HTTP ${res.status})`); return; }
+      if (res.status === 403) { setPage((p) => ({ ...p, forbidden: true })); return; }
+      if (!res.ok) { setPage((p) => ({ ...p, loadErr: `Load failed (HTTP ${res.status})` })); return; }
       const d = (await res.json()) as ProfileData;
-      setData(d);
-      setOverrideText(d.profile?.card_override ?? "");
+      setPage((p) => ({ ...p, data: d }));
+      setOverrideForm((f) => ({ ...f, overrideText: d.profile?.card_override ?? "" }));
     } catch (e) {
-      setLoadErr(e instanceof Error ? e.message : String(e));
+      setPage((p) => ({ ...p, loadErr: e instanceof Error ? e.message : String(e) }));
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   async function addSample(): Promise<void> {
-    const body = newBody.trim();
-    if (body.length < 50) { setSaveErr("Paste at least 50 characters."); return; }
-    setSaving(true);
-    setSaveErr(null);
+    const body = sampleForm.newBody.trim();
+    if (body.length < 50) { setSampleForm((f) => ({ ...f, saveErr: "Paste at least 50 characters." })); return; }
+    setSampleForm((f) => ({ ...f, saving: true, saveErr: null }));
     try {
       const res = await fetch("/api/voice-profiles/samples", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body, source_label: newLabel, is_house_style: isHouseStyle }),
+        body: JSON.stringify({ body, source_label: sampleForm.newLabel, is_house_style: sampleForm.isHouseStyle }),
       });
       if (!res.ok) {
         const e = (await res.json()) as { error?: string };
-        setSaveErr(e.error ?? `HTTP ${res.status}`);
+        setSampleForm((f) => ({ ...f, saveErr: e.error ?? `HTTP ${res.status}` }));
         return;
       }
-      setNewBody(""); setNewLabel("");
+      setSampleForm((f) => ({ ...f, newBody: "", newLabel: "" }));
       await load();
     } finally {
-      setSaving(false);
+      setSampleForm((f) => ({ ...f, saving: false }));
     }
   }
 
@@ -90,28 +104,30 @@ export default function VoiceProfilePage(): React.JSX.Element {
   }
 
   async function saveOverride(): Promise<void> {
-    setSavingOverride(true);
-    setOverrideStatus(null);
+    setOverrideForm((f) => ({ ...f, savingOverride: true, overrideStatus: null }));
     try {
       const res = await fetch("/api/voice-profiles/card", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ card_override: overrideText || null, is_house_style: isHouseStyle }),
+        body: JSON.stringify({ card_override: overrideForm.overrideText || null, is_house_style: sampleForm.isHouseStyle }),
       });
-      setOverrideStatus(res.ok ? "Saved." : "Failed to save.");
+      setOverrideForm((f) => ({ ...f, overrideStatus: res.ok ? "Saved." : "Failed to save." }));
     } finally {
-      setSavingOverride(false);
+      setOverrideForm((f) => ({ ...f, savingOverride: false }));
     }
   }
 
-  if (forbidden) return (
+  if (page.forbidden) return (
     <div className="p-8 max-w-lg mx-auto text-center mt-12">
       <p className="text-muted-foreground text-sm">Voice profiles are available to team members (Owner or Agent role).</p>
     </div>
   );
-  if (loadErr) return <div className="p-8"><p className="text-red-700 dark:text-red-400 text-sm">{loadErr}</p></div>;
-  if (!data) return <div className="p-8"><p className="text-muted-foreground text-sm">Loading…</p></div>;
+  if (page.loadErr) return <div className="p-8"><p className="text-red-700 dark:text-red-400 text-sm">{page.loadErr}</p></div>;
+  if (!page.data) return <div className="p-8"><p className="text-muted-foreground text-sm">Loading…</p></div>;
 
+  const data = page.data;
+  const { newBody, newLabel, isHouseStyle, saving, saveErr } = sampleForm;
+  const { overrideText, savingOverride, overrideStatus } = overrideForm;
   const card = data.profile;
   const cardSummary = card?.card_override || (
     card?.style_card && Object.keys(card.style_card).length > 0
@@ -153,7 +169,7 @@ export default function VoiceProfilePage(): React.JSX.Element {
           <div className="mt-2">
             <Textarea
               value={overrideText}
-              onChange={(e) => setOverrideText(e.target.value)}
+              onChange={(e) => setOverrideForm((f) => ({ ...f, overrideText: e.target.value }))}
               rows={4}
               placeholder="e.g. Start with 'Hi {first},' — warm but professional. Short paragraphs. End with 'Safe travels,' followed by my name."
               className="text-[12px] mb-2"
@@ -176,7 +192,7 @@ export default function VoiceProfilePage(): React.JSX.Element {
             <input
               type="checkbox"
               checked={isHouseStyle}
-              onChange={(e) => setIsHouseStyle(e.target.checked)}
+              onChange={(e) => setSampleForm((f) => ({ ...f, isHouseStyle: e.target.checked }))}
             />
             House style (applies to all agents who haven&apos;t added their own samples)
           </label>
@@ -184,13 +200,13 @@ export default function VoiceProfilePage(): React.JSX.Element {
         <input
           type="text"
           value={newLabel}
-          onChange={(e) => setNewLabel(e.target.value)}
+          onChange={(e) => setSampleForm((f) => ({ ...f, newLabel: e.target.value }))}
           placeholder="Optional label (e.g. 'Inquiry response', 'Price update')"
           className="w-full border border-border rounded-md px-3 py-1.5 text-[12px] mb-2"
         />
         <Textarea
           value={newBody}
-          onChange={(e) => setNewBody(e.target.value)}
+          onChange={(e) => setSampleForm((f) => ({ ...f, newBody: e.target.value }))}
           rows={6}
           placeholder="Paste an email you sent to a client (min 50 chars)…"
           className="text-[12px] mb-2"

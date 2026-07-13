@@ -44,51 +44,67 @@ const BUTTON_OUTLINE =
 const BUTTON_DANGER =
   "rounded-[var(--cruise-radius-pill)] border border-[var(--cruise-coral)] bg-transparent px-3 py-1 text-xs font-semibold text-[var(--cruise-coral)] transition-opacity hover:opacity-80 disabled:opacity-60";
 
+interface ListState {
+  invitations: Invitation[];
+  counts: Partial<Record<RsvpState, number>>;
+  loading: boolean;
+  error: string | null;
+}
+
+interface RevokeState {
+  revoking: string | null;
+  revokeError: string | null;
+}
+
+interface InviteFormState {
+  inviteEmail: string;
+  inviteName: string;
+  personalNote: string;
+  visibilityChoice: string;
+  inviting: boolean;
+  inviteError: string | null;
+}
+
+const INITIAL_INVITE_FORM: InviteFormState = {
+  inviteEmail: "", inviteName: "", personalNote: "", visibilityChoice: "no_opinion", inviting: false, inviteError: null,
+};
+
 export function InviteesTabClient({ groupId }: { groupId: string }) {
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
-  const [counts, setCounts] = useState<Partial<Record<RsvpState, number>>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [revoking, setRevoking] = useState<string | null>(null);
-  const [revokeError, setRevokeError] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteName, setInviteName] = useState("");
-  const [personalNote, setPersonalNote] = useState("");
-  const [visibilityChoice, setVisibilityChoice] = useState("no_opinion");
-  const [inviting, setInviting] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
+  // #1812 — the 12 useState hooks (list/counts, revoke action, invite form)
+  // are grouped into 3 state objects by concern, one useState each, matching
+  // the pattern established in #1791.
+  const [list, setList] = useState<ListState>({ invitations: [], counts: {}, loading: true, error: null });
+  const [revokeState, setRevokeState] = useState<RevokeState>({ revoking: null, revokeError: null });
+  const [inviteForm, setInviteForm] = useState<InviteFormState>(INITIAL_INVITE_FORM);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setList((s) => ({ ...s, loading: true, error: null }));
     try {
       const [invRes, grpRes] = await Promise.all([
         fetch(`/api/groups/${groupId}/invitations`),
         fetch(`/api/groups/${groupId}`),
       ]);
       if (!invRes.ok) {
-        setError(`Failed to load invitees (${invRes.status})`);
+        setList((s) => ({ ...s, error: `Failed to load invitees (${invRes.status})` }));
         return;
       }
       const invData: { invitations: Invitation[] } = await invRes.json();
-      setInvitations(invData.invitations ?? []);
 
-      if (grpRes.ok) {
-        const grpData: { invitation_counts: Partial<Record<RsvpState, number>> } = await grpRes.json();
-        setCounts(grpData.invitation_counts ?? {});
-      }
+      const counts = grpRes.ok
+        ? ((await grpRes.json()) as { invitation_counts: Partial<Record<RsvpState, number>> }).invitation_counts ?? {}
+        : undefined;
+      setList((s) => ({ ...s, invitations: invData.invitations ?? [], counts: counts ?? s.counts }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setList((s) => ({ ...s, error: err instanceof Error ? err.message : "Failed to load" }));
     } finally {
-      setLoading(false);
+      setList((s) => ({ ...s, loading: false }));
     }
   }, [groupId]);
 
   useEffect(() => { void load(); }, [load]);
 
   async function revoke(invitationId: string) {
-    setRevoking(invitationId);
-    setRevokeError(null);
+    setRevokeState({ revoking: invitationId, revokeError: null });
     try {
       const res = await fetch(`/api/groups/${groupId}/invitations`, {
         method: "POST",
@@ -97,51 +113,47 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
       });
       if (!res.ok) {
         const d: { error?: string } = await res.json();
-        setRevokeError(d.error ?? `Error ${res.status}`);
+        setRevokeState((s) => ({ ...s, revokeError: d.error ?? `Error ${res.status}` }));
         return;
       }
       await load();
     } catch (err) {
-      setRevokeError(err instanceof Error ? err.message : "Revoke failed");
+      setRevokeState((s) => ({ ...s, revokeError: err instanceof Error ? err.message : "Revoke failed" }));
     } finally {
-      setRevoking(null);
+      setRevokeState((s) => ({ ...s, revoking: null }));
     }
   }
 
   async function inviteSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setInviting(true);
-    setInviteError(null);
+    setInviteForm((f) => ({ ...f, inviting: true, inviteError: null }));
     try {
       const res = await fetch(`/api/groups/${groupId}/invitations`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "invite",
-          invitee_email: inviteEmail,
-          invitee_name: inviteName || undefined,
-          personal_note: personalNote || undefined,
-          visibility_choice: visibilityChoice,
+          invitee_email: inviteForm.inviteEmail,
+          invitee_name: inviteForm.inviteName || undefined,
+          personal_note: inviteForm.personalNote || undefined,
+          visibility_choice: inviteForm.visibilityChoice,
         }),
       });
       if (!res.ok) {
         const d: { error?: string } = await res.json();
-        setInviteError(d.error ?? `Error ${res.status}`);
+        setInviteForm((f) => ({ ...f, inviteError: d.error ?? `Error ${res.status}` }));
         return;
       }
-      setInviteEmail("");
-      setInviteName("");
-      setPersonalNote("");
-      setVisibilityChoice("no_opinion");
+      setInviteForm(INITIAL_INVITE_FORM);
       await load();
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Invite failed");
+      setInviteForm((f) => ({ ...f, inviteError: err instanceof Error ? err.message : "Invite failed" }));
     } finally {
-      setInviting(false);
+      setInviteForm((f) => ({ ...f, inviting: false }));
     }
   }
 
-  if (loading) {
+  if (list.loading) {
     return (
       <section className="flex flex-col gap-4">
         <h2 className={HEADING}>Invitees</h2>
@@ -149,6 +161,10 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
       </section>
     );
   }
+
+  const { invitations, counts, error, loading } = list;
+  const { revoking, revokeError } = revokeState;
+  const { inviteEmail, inviteName, personalNote, visibilityChoice, inviting, inviteError } = inviteForm;
 
   const activeInvites = invitations.filter((i) => !i.token_revoked_at);
   const revokedInvites = invitations.filter((i) => i.token_revoked_at);
@@ -174,28 +190,28 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
             required
             placeholder="Email address"
             value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
+            onChange={(e) => setInviteForm((f) => ({ ...f, inviteEmail: e.target.value }))}
             className={`${INPUT} flex-1`}
           />
           <input
             type="text"
             placeholder="Name (optional)"
             value={inviteName}
-            onChange={(e) => setInviteName(e.target.value)}
+            onChange={(e) => setInviteForm((f) => ({ ...f, inviteName: e.target.value }))}
             className={`${INPUT} flex-1`}
           />
         </div>
         <textarea
           placeholder="Personal note (optional)"
           value={personalNote}
-          onChange={(e) => setPersonalNote(e.target.value)}
+          onChange={(e) => setInviteForm((f) => ({ ...f, personalNote: e.target.value }))}
           rows={2}
           className={`${INPUT} h-auto w-full resize-none py-2`}
         />
         <div className="flex items-center gap-3">
           <select
             value={visibilityChoice}
-            onChange={(e) => setVisibilityChoice(e.target.value)}
+            onChange={(e) => setInviteForm((f) => ({ ...f, visibilityChoice: e.target.value }))}
             className={INPUT}
           >
             <option value="no_opinion">No preference</option>

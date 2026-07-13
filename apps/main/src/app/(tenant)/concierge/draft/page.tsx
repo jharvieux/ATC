@@ -17,6 +17,27 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+// #1812 — the 13 useState hooks (inquiry form fields + draft-generation
+// result) are grouped into 2 state objects by concern, one useState each,
+// matching the pattern established in #1791.
+interface FormState {
+  inquiry: string;
+  subject: string;
+  customerName: string;
+  personaSlug: string;
+  personaTouched: boolean;
+  inquiryLoadError: boolean;
+}
+
+interface DraftResultState {
+  generating: boolean;
+  draft: string;
+  voiceMissing: boolean;
+  error: string | null;
+  forbidden: boolean;
+  copied: boolean;
+}
+
 export default function DraftReplyPage(): React.JSX.Element {
   // useSearchParams needs a Suspense boundary (Next.js). #1728 — the CRM
   // timeline's "Draft reply" action deep-links here with the inbound body
@@ -32,12 +53,17 @@ function DraftReplyForm(): React.JSX.Element {
   const search = useSearchParams();
   const contactId = search.get("contactId");
   const messageId = search.get("messageId");
-  const [inquiry, setInquiry] = useState(() => search.get("inquiry") ?? "");
-  const [subject, setSubject] = useState(() => search.get("subject") ?? "");
-  const [customerName, setCustomerName] = useState(() => search.get("customerName") ?? "");
-  const [personaSlug, setPersonaSlug] = useState<string>(AGENT_CATALOG[0]!.slug);
-  const [personaTouched, setPersonaTouched] = useState(false);
-  const [inquiryLoadError, setInquiryLoadError] = useState(false);
+  const [form, setForm] = useState<FormState>(() => ({
+    inquiry: search.get("inquiry") ?? "",
+    subject: search.get("subject") ?? "",
+    customerName: search.get("customerName") ?? "",
+    personaSlug: AGENT_CATALOG[0]!.slug,
+    personaTouched: false,
+    inquiryLoadError: false,
+  }));
+  const [result, setResult] = useState<DraftResultState>({
+    generating: false, draft: "", voiceMissing: false, error: null, forbidden: false, copied: false,
+  });
 
   // #1756 — the CRM deep link passes contactId/messageId instead of the full
   // body (a long inbound email can exceed browser/proxy URL length limits
@@ -50,73 +76,66 @@ function DraftReplyForm(): React.JSX.Element {
       try {
         const res = await fetch(`/api/crm/contacts/${contactId}/messages/${messageId}`);
         if (!res.ok) {
-          if (!cancelled) setInquiryLoadError(true);
+          if (!cancelled) setForm((f) => ({ ...f, inquiryLoadError: true }));
           return;
         }
         const data = (await res.json()) as { content?: string };
-        if (!cancelled && data.content) setInquiry(data.content);
+        if (!cancelled && data.content) setForm((f) => ({ ...f, inquiry: data.content! }));
       } catch {
-        if (!cancelled) setInquiryLoadError(true);
+        if (!cancelled) setForm((f) => ({ ...f, inquiryLoadError: true }));
       }
     })();
     return () => { cancelled = true; };
   }, [contactId, messageId]);
 
-  const [generating, setGenerating] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [voiceMissing, setVoiceMissing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [forbidden, setForbidden] = useState(false);
-  const [copied, setCopied] = useState(false);
-
   // D-193 decision 4 — system suggests, TA confirms. The suggestion only
   // auto-selects until the TA touches the picker.
-  const suggestion = useMemo(() => suggestPersona(inquiry), [inquiry]);
-  const effectivePersona = personaTouched ? personaSlug : (suggestion?.slug ?? personaSlug);
+  const suggestion = useMemo(() => suggestPersona(form.inquiry), [form.inquiry]);
+  const effectivePersona = form.personaTouched ? form.personaSlug : (suggestion?.slug ?? form.personaSlug);
 
   function applyParsed(p: ParsedInquiry): void {
-    if (p.body) setInquiry(p.body);
-    if (p.subject) setSubject(p.subject);
     const name = deriveGreetingName(p.from_name, p.from_email);
-    setCustomerName(name ?? "");
+    setForm((f) => ({
+      ...f,
+      inquiry: p.body ?? f.inquiry,
+      subject: p.subject ?? f.subject,
+      customerName: name ?? "",
+    }));
   }
 
   async function generate(): Promise<void> {
-    setGenerating(true);
-    setError(null);
-    setCopied(false);
+    setResult((r) => ({ ...r, generating: true, error: null, copied: false }));
     try {
       const res = await fetch("/api/draft-reply", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          inquiry,
-          subject: subject || null,
-          customer_name: customerName || null,
+          inquiry: form.inquiry,
+          subject: form.subject || null,
+          customer_name: form.customerName || null,
           persona_slug: effectivePersona,
         }),
       });
-      if (res.status === 403) { setForbidden(true); return; }
+      if (res.status === 403) { setResult((r) => ({ ...r, forbidden: true })); return; }
       const data = (await res.json()) as { draft?: string; error?: string; voice_profile_missing?: boolean };
       if (!res.ok || !data.draft) {
-        setError(data.error ?? `HTTP ${res.status}`);
+        setResult((r) => ({ ...r, error: data.error ?? `HTTP ${res.status}` }));
         return;
       }
-      setDraft(data.draft);
-      setVoiceMissing(Boolean(data.voice_profile_missing));
+      setResult((r) => ({ ...r, draft: data.draft!, voiceMissing: Boolean(data.voice_profile_missing) }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setResult((r) => ({ ...r, error: e instanceof Error ? e.message : String(e) }));
     } finally {
-      setGenerating(false);
+      setResult((r) => ({ ...r, generating: false }));
     }
   }
 
   async function copyDraft(): Promise<void> {
-    await navigator.clipboard.writeText(draft);
-    setCopied(true);
+    await navigator.clipboard.writeText(result.draft);
+    setResult((r) => ({ ...r, copied: true }));
   }
 
-  if (forbidden) {
+  if (result.forbidden) {
     return (
       <div className="p-8 max-w-lg mx-auto text-center mt-16">
         <h1 className="text-xl font-semibold mb-2">Access restricted</h1>
@@ -142,8 +161,8 @@ function DraftReplyForm(): React.JSX.Element {
           Customer first name (for the greeting)
           <input
             type="text"
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
+            value={form.customerName}
+            onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
             placeholder="[name] placeholder if left blank"
             className="w-full border border-border rounded-md px-3 py-1.5 text-[13px] mt-1 text-foreground"
           />
@@ -152,14 +171,14 @@ function DraftReplyForm(): React.JSX.Element {
           Subject (optional)
           <input
             type="text"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
+            value={form.subject}
+            onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
             className="w-full border border-border rounded-md px-3 py-1.5 text-[13px] mt-1 text-foreground"
           />
         </label>
       </div>
 
-      {inquiryLoadError && (
+      {form.inquiryLoadError && (
         <p className="text-[12px] text-red-700 dark:text-red-400 mb-3">
           Couldn&apos;t load the email body — paste it in below.
         </p>
@@ -168,8 +187,8 @@ function DraftReplyForm(): React.JSX.Element {
       <label className="text-[12px] text-muted-foreground block mb-4">
         Customer inquiry
         <Textarea
-          value={inquiry}
-          onChange={(e) => setInquiry(e.target.value)}
+          value={form.inquiry}
+          onChange={(e) => setForm((f) => ({ ...f, inquiry: e.target.value }))}
           rows={8}
           placeholder="…or paste the customer's email here"
           className="text-[13px] mt-1"
@@ -180,7 +199,7 @@ function DraftReplyForm(): React.JSX.Element {
         <span className="text-[12px] text-muted-foreground whitespace-nowrap">Answer as</span>
         <Select
           value={effectivePersona}
-          onValueChange={(v) => { setPersonaSlug(v); setPersonaTouched(true); }}
+          onValueChange={(v) => setForm((f) => ({ ...f, personaSlug: v, personaTouched: true }))}
         >
           <SelectTrigger className="h-8 text-[12px] w-56"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -191,38 +210,38 @@ function DraftReplyForm(): React.JSX.Element {
             ))}
           </SelectContent>
         </Select>
-        {suggestion && !personaTouched && (
+        {suggestion && !form.personaTouched && (
           <span className="text-[11px] text-muted-foreground">
             Suggested: {suggestion.name} ({suggestion.specialty})
           </span>
         )}
         <Button
           onClick={() => void generate()}
-          disabled={generating || !inquiry.trim()}
+          disabled={result.generating || !form.inquiry.trim()}
           className="ml-auto h-8 px-4 text-[13px]"
         >
-          {generating ? "Drafting…" : draft ? "Regenerate" : "Generate draft"}
+          {result.generating ? "Drafting…" : result.draft ? "Regenerate" : "Generate draft"}
         </Button>
       </div>
 
-      {error && <p className="text-[12px] text-red-700 dark:text-red-400 mb-3">{error}</p>}
+      {result.error && <p className="text-[12px] text-red-700 dark:text-red-400 mb-3">{result.error}</p>}
 
-      {draft && (
+      {result.draft && (
         <section>
-          {voiceMissing && (
+          {result.voiceMissing && (
             <p className="text-[12px] text-amber-700 dark:text-amber-400 mb-2">
               No voice profile yet — this draft uses a neutral tone.{" "}
               <a href="/settings/voice" className="underline">Add samples</a> so drafts sound like you.
             </p>
           )}
           <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            value={result.draft}
+            onChange={(e) => setResult((r) => ({ ...r, draft: e.target.value }))}
             rows={14}
             className="text-[13px] mb-2"
           />
           <Button onClick={() => void copyDraft()} variant="outline" className="h-8 px-4 text-[13px]">
-            {copied ? "Copied ✓" : "Copy draft"}
+            {result.copied ? "Copied ✓" : "Copy draft"}
           </Button>
         </section>
       )}
