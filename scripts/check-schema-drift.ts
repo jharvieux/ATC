@@ -132,7 +132,7 @@ export async function checkTarget(
   } catch (err) {
     return {
       status: "drift",
-      message: `[${target}] ERROR connecting to DB: ${(err as Error).message}`,
+      message: `[${target}] ERROR connecting to DB: ${redactSecrets(err)}`,
     };
   }
 
