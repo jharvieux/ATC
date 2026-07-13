@@ -150,6 +150,9 @@ GRANT INSERT, SELECT, UPDATE ON public.destination_images_cache TO service_role;
 GRANT SELECT ON public.email_log TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.email_log TO service_role;
 
+-- TABLE: public.email_retry_content
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.email_retry_content TO service_role;
+
 -- TABLE: public.email_suppressions
 GRANT SELECT ON public.email_suppressions TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.email_suppressions TO service_role;
