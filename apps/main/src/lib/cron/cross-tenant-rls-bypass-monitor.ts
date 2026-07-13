@@ -13,6 +13,12 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — up to 100 independent per-row alerts (distinct audit_log ids, no
+// ordering or shared state between them); bounded concurrency instead of
+// one-at-a-time so a busy window doesn't serialize 100 Resend round-trips.
+const ALERT_CONCURRENCY = 10;
 
 export async function runCrossTenantRlsBypassMonitor(): Promise<{ detected: number }> {
   const svc = createServiceRoleClient();
@@ -35,13 +41,13 @@ export async function runCrossTenantRlsBypassMonitor(): Promise<{ detected: numb
   if (error) throw new Error(`cross-tenant-rls-bypass-monitor: audit_log read failed: ${error.message}`);
 
   const rows = (data ?? []) as Array<{ id: string; tenant_id: string | null }>;
-  for (const row of rows) {
-    await sendOperatorAlert({
+  await mapWithConcurrency(rows, ALERT_CONCURRENCY, (row) =>
+    sendOperatorAlert({
       severity: "critical",
       signal: "cross_tenant_rls_bypass_attempt",
       detail: `RLS bypass attempt detected (audit_log id ${row.id})`,
       payload: { audit_log_id: row.id, tenant_id: row.tenant_id },
-    });
-  }
+    }),
+  );
   return { detected: rows.length };
 }

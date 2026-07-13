@@ -9,9 +9,13 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 const THRESHOLD = 50;
 const WINDOW_MINUTES = 5;
+// #1789 — one alert per offending IP, each independent; bounded concurrency
+// so a multi-IP spike doesn't serialize N Resend round-trips.
+const ALERT_CONCURRENCY = 10;
 
 export async function runAuthFailureMonitor() {
   const svc = createServiceRoleClient();
@@ -31,13 +35,13 @@ export async function runAuthFailureMonitor() {
   }
   const offenders = [...byIp.entries()].filter(([, n]) => n >= THRESHOLD);
 
-  for (const [ip, count] of offenders) {
-    await sendOperatorAlert({
+  await mapWithConcurrency(offenders, ALERT_CONCURRENCY, ([ip, count]) =>
+    sendOperatorAlert({
       severity: "medium",
       signal: "auth_failure_spike",
       detail: `${count} auth failures from ${ip} in the last ${WINDOW_MINUTES} minutes`,
       payload: { ip, count, window_minutes: WINDOW_MINUTES },
-    });
-  }
+    }),
+  );
   return { offenders_count: offenders.length };
 }

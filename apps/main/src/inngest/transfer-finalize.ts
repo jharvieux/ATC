@@ -194,19 +194,17 @@ export const transferFinalize = inngest.createFunction(
       return (data ?? []).map((c: { id: string }) => c.id);
     });
 
+    // #1792 — memory-extraction emit and contact-bind are independent steps
+    // (neither reads the other's result; each is its own memoized Inngest
+    // step, so concurrent execution doesn't change the exactly-once /
+    // retry-safety guarantees described below), so fan out instead of
+    // waiting on one before starting the other.
+    //
     // Emit memory extraction for each transferred conversation. Its own step:
-    // once it completes it is memoized and never re-emits, even if a later
-    // step (contact bind) fails and forces a retry — exactly-once emission.
-    if (convIds.length > 0) {
-      await step.sendEvent(
-        "emit-memory-extractions",
-        convIds.map((conversation_id: string) => ({
-          name: "conversation.memory_extract_requested" as const,
-          data: { tenant_id, conversation_id, user_id },
-        })),
-      );
-    }
-
+    // once it completes it is memoized and never re-emits, even if the
+    // sibling step (contact bind) fails and forces a retry — exactly-once
+    // emission.
+    //
     // §35.2.2 — bind a CRM contact to the now-identified user and write an
     // attribution touch. Its own step so it runs on the already-committed
     // path even when a prior invocation committed but died here; a failure
@@ -214,19 +212,30 @@ export const transferFinalize = inngest.createFunction(
     // — it looks the contact up before creating). Pending UTM cookie is not
     // available in this Inngest path (transfer fires 24h after the user
     // identified); we attribute as 'direct' on the touch.
-    const bindResult = await step.run("bind-contact", async () => {
-      const r = await bindContactOnIdentification({
-        svc: createServiceRoleClient(),
-        tenant_id,
-        user_id,
-        source_origin: "utm_parsed", // representative of an organic identification path
-        pending_payload: null,
-      });
-      if (!r.ok) {
-        throw new Error(`transfer-finalize: bindContactOnIdentification failed — ${r.error}`);
-      }
-      return r;
-    });
+    const [, bindResult] = await Promise.all([
+      convIds.length > 0
+        ? step.sendEvent(
+            "emit-memory-extractions",
+            convIds.map((conversation_id: string) => ({
+              name: "conversation.memory_extract_requested" as const,
+              data: { tenant_id, conversation_id, user_id },
+            })),
+          )
+        : Promise.resolve(),
+      step.run("bind-contact", async () => {
+        const r = await bindContactOnIdentification({
+          svc: createServiceRoleClient(),
+          tenant_id,
+          user_id,
+          source_origin: "utm_parsed", // representative of an organic identification path
+          pending_payload: null,
+        });
+        if (!r.ok) {
+          throw new Error(`transfer-finalize: bindContactOnIdentification failed — ${r.error}`);
+        }
+        return r;
+      }),
+    ]);
 
     // TODO(pre-cruise-emails): schedule pre-cruise emails for active bookings.
 
