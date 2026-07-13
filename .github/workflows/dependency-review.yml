@@ -10,10 +10,15 @@ name: Dependency Review
 # manifest/lockfile (nothing to diff), so doc-only PRs are unaffected
 # without needing a filter — unlike CI/CodeQL, which run real work that
 # doc-only PRs must skip.
+#
+# Triggers on release/* too (matching ci.yml/e2e.yml/deploy.yml) so a
+# dependency bump landing in a hotfix PR doesn't skip the vuln gate.
 
 on:
   pull_request:
-    branches: [dev]
+    branches:
+      - dev
+      - "release/*"
 
 permissions:
   contents: read
