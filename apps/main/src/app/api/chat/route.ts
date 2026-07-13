@@ -466,7 +466,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   console.info(
     "[chat:perf] config_db_reads=%d conversation_id=%s",
     configDbReads,
-    conversationId,
+    sanitizeForLog(conversationId),
   );
 
   // ── 8b. Generation + supervisor regen loop (#1016 — see runGenerationLoop).
