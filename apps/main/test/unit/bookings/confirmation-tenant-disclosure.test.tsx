@@ -6,9 +6,11 @@
 //
 // 1. The disclosure renders the REAL sub-host + host-agency legal name from
 //    /api/bookings/[id]/tenant-of-record (the #1878 route) — never a placeholder.
-// 2. Fail-closed: a fetch failure or a null legal/tenant name renders NO
-//    disclosure at all (never a fabricated legal name), and the rest of the
-//    confirmation page still renders.
+// 2. Fail-closed on the legal names: a fetch failure or a null legal/tenant name
+//    never renders a fabricated disclosure. But because this is a required §20.7
+//    legal surface, the failure is surfaced as a visible load-failure notice
+//    (matching the sibling Review-stage flow page) rather than silently omitted,
+//    and the rest of the confirmation page still renders.
 
 import React from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
@@ -73,9 +75,11 @@ describe("BookingConfirmationPage — tenant-of-record disclosure (#1876)", () =
     expect(screen.getByText("help@coralcove.example")).toBeDefined();
     expect(screen.queryByText("Host Agency")).toBeNull();
     expect(screen.queryByText("Sub-host")).toBeNull();
+    // Happy path shows no load-failure notice.
+    expect(screen.queryByText(/Couldn't load the tenant-of-record disclosure/i)).toBeNull();
   });
 
-  it("fails closed — renders NO disclosure (no placeholder) when the route returns a null legal name", async () => {
+  it("null legal name — no fabricated disclosure, but a visible load-failure notice (never silently omitted)", async () => {
     await renderPage((url) => {
       if (url.includes("/tenant-of-record")) {
         return jsonResponse(200, {
@@ -86,15 +90,17 @@ describe("BookingConfirmationPage — tenant-of-record disclosure (#1876)", () =
       return jsonResponse(200, { booking: BOOKING });
     });
 
-    // No disclosure block, no fabricated placeholder — but the booking summary is intact.
+    // The load-failure notice appears in place of the disclosure — but no
+    // fabricated legal name, and the booking summary is intact.
     await waitFor(() => {
-      expect(screen.queryByText(/This booking will be made through/i)).toBeNull();
+      expect(screen.queryByText(/Couldn't load the tenant-of-record disclosure/i)).not.toBeNull();
     });
+    expect(screen.queryByText(/This booking will be made through/i)).toBeNull();
     expect(screen.queryByText("Host Agency")).toBeNull();
     expect(screen.getByText("Trip details")).toBeDefined();
   });
 
-  it("fails closed — renders NO disclosure when the tenant-of-record fetch fails", async () => {
+  it("fetch failure — no disclosure, but a visible load-failure notice (never silently omitted)", async () => {
     await renderPage((url) => {
       if (url.includes("/tenant-of-record")) {
         return jsonResponse(500, { error: "internal" });
@@ -103,8 +109,9 @@ describe("BookingConfirmationPage — tenant-of-record disclosure (#1876)", () =
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Trip details")).toBeDefined();
+      expect(screen.queryByText(/Couldn't load the tenant-of-record disclosure/i)).not.toBeNull();
     });
+    expect(screen.getByText("Trip details")).toBeDefined();
     expect(screen.queryByText(/This booking will be made through/i)).toBeNull();
     expect(screen.queryByText("Host Agency")).toBeNull();
   });

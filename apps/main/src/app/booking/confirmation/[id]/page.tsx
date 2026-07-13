@@ -100,6 +100,7 @@ export default function BookingConfirmationPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [disclosure, setDisclosure] = useState<TenantOfRecordData | null>(null);
+  const [disclosureError, setDisclosureError] = useState(false);
 
   useEffect(() => {
     void params.then((p) => setId(p.id));
@@ -130,20 +131,28 @@ export default function BookingConfirmationPage({
   }, [id]);
 
   // §20.7 (#1876) — tenant-of-record disclosure on the confirmation surface.
-  // Fail-closed: a fetch failure or a null legal/tenant name renders NO
-  // disclosure (never a fabricated placeholder), reusing the #1878 route.
+  // Fail-closed on the legal names (never fabricate a placeholder), but a
+  // failure to load them is surfaced as a visible notice rather than silently
+  // omitted — this is a required §20.7 legal surface. Matches the sibling
+  // Review-stage flow page. Post-submission, so nothing is blocked.
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/bookings/${id}/tenant-of-record`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setDisclosureError(true);
+          return;
+        }
         const data = (await res.json()) as {
           tenant: { name: string | null; support_email: string };
           host_agency: { legal_name: string | null };
         };
-        if (!data.tenant.name || !data.host_agency.legal_name) return;
+        if (!data.tenant.name || !data.host_agency.legal_name) {
+          if (!cancelled) setDisclosureError(true);
+          return;
+        }
         if (!cancelled) {
           setDisclosure({
             tenant: { name: data.tenant.name, support_email: data.tenant.support_email },
@@ -151,7 +160,7 @@ export default function BookingConfirmationPage({
           });
         }
       } catch {
-        // Fail-closed: no disclosure rendered.
+        if (!cancelled) setDisclosureError(true);
       }
     })();
     return () => {
@@ -226,11 +235,17 @@ export default function BookingConfirmationPage({
         </dl>
       </section>
 
-      {disclosure && (
+      {disclosure ? (
         <section className="mb-8">
           <TenantOfRecordDisclosure tenant={disclosure.tenant} hostAgency={disclosure.hostAgency} />
         </section>
-      )}
+      ) : disclosureError ? (
+        <section className="mb-8">
+          <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[13px]">
+            Couldn&apos;t load the tenant-of-record disclosure. Contact your travel agent if you need it.
+          </div>
+        </section>
+      ) : null}
 
       <section className="border-t border-border pt-5 text-muted-foreground text-[13px]">
         <p className="m-0">
