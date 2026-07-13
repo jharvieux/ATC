@@ -106,9 +106,10 @@ jobs:
         # db/rls-snapshot-<app>.sql in the same PR. DB-free early-catch for the
         # #1486-class drift; the DB-based rls-snapshot-diff job is the backstop.
         env:
+          BASE_REF: ${{ github.base_ref || 'dev' }}
           POLICY_SNAPSHOT_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: |
-          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          git fetch --no-tags --quiet origin "$BASE_REF"
           pnpm check:policy-snapshot
 
       - name: Migration-collision guard (#1660/#1661)
@@ -119,9 +120,10 @@ jobs:
         # ledger pre-check (deploy.yml) is the authoritative backstop for the
         # residual cross-machine race this can't see.
         env:
+          BASE_REF: ${{ github.base_ref || 'dev' }}
           MIGRATION_COLLISION_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: |
-          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          git fetch --no-tags --quiet origin "$BASE_REF"
           pnpm check:migration-collision
 
       - name: Memory-decision collision guard (#1661)
@@ -132,9 +134,10 @@ jobs:
         # merge-conflict resolution — the append-only PreToolUse hook only
         # covers Edit/Write tool calls, not a rebase's filesystem writes.
         env:
+          BASE_REF: ${{ github.base_ref || 'dev' }}
           MEMORY_COLLISION_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: |
-          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          git fetch --no-tags --quiet origin "$BASE_REF"
           pnpm check:memory-decision-collision
 
       - name: Dropped-column reader guard (BP38/#137)
