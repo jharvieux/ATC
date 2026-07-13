@@ -109,9 +109,14 @@ jobs:
         # abuse-recompute) that touch every tenant; running them concurrently
         # with the rls suite's ephemeral tenants corrupts its teardown. Serial
         # execution isolates them. Acceptable cost for a nightly.
+        # Tee console output (default reporter) to a file so the issue-open step
+        # can grep it for vitest's unhandled-error banner (#1833) — the JSON
+        # reporter's output has no field for those, they only ever reach stdout.
+        # `$?` below still reflects the vitest exit code because GH Actions runs
+        # `run:` blocks with `-o pipefail` by default (only `-e` is disabled).
         run: |
           set +e
-          pnpm vitest run --reporter=default --reporter=json --outputFile=vitest-report.json --no-file-parallelism
+          pnpm vitest run --reporter=default --reporter=json --outputFile=vitest-report.json --no-file-parallelism 2>&1 | tee vitest-console.log
           STATUS=$?
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
@@ -126,26 +131,49 @@ jobs:
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
           # Extract failing test names from the vitest JSON report.
-          # Format: each test result has `.testResults[].name` (file path)
-          # and `.testResults[].assertionResults[]` with `status` and
-          # `fullName` / `ancestorTitles + title`. We list every failed.
+          # Format: each test result has `.testResults[].name` (file path),
+          # `.testResults[].status`/`.message` (suite-level — set when the
+          # whole file fails to load or a hook throws with no per-assertion
+          # detail, #1833), and `.testResults[].assertionResults[]` with
+          # `status` and `fullName` / `ancestorTitles + title`.
           FAILING_LIST=""
           if [ -f vitest-report.json ]; then
             FAILING_LIST=$(node -e "
               const r = JSON.parse(require('fs').readFileSync('vitest-report.json', 'utf-8'));
               const failing = [];
               for (const tr of r.testResults || []) {
-                for (const a of tr.assertionResults || []) {
-                  if (a.status === 'failed') {
-                    const full = [...(a.ancestorTitles || []), a.title].join(' › ');
-                    failing.push('- \`' + tr.name + '\` › ' + full);
-                  }
+                const failedAssertions = (tr.assertionResults || []).filter(a => a.status === 'failed');
+                for (const a of failedAssertions) {
+                  const full = [...(a.ancestorTitles || []), a.title].join(' › ');
+                  failing.push('- \`' + tr.name + '\` › ' + full);
+                }
+                if (tr.status === 'failed' && failedAssertions.length === 0) {
+                  const msg = (tr.message || '').split('\\n')[0].slice(0, 300) || '(no message captured)';
+                  failing.push('- \`' + tr.name + '\` — suite failed: ' + msg);
                 }
               }
               console.log(failing.length ? failing.join('\\n') : '(no per-test detail captured; see run logs)');
             ")
           else
             FAILING_LIST="(no JSON report; see run logs)"
+          fi
+
+          # vitest's unhandled-error list (uncaught exceptions/rejections not
+          # attached to any test) never lands in the JSON reporter output —
+          # it's console-only. Pull it from the teed console log (#1833).
+          UNHANDLED_SECTION=""
+          if [ -f vitest-console.log ]; then
+            UNHANDLED=$(sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' vitest-console.log | grep -A 60 "Vitest caught .* unhandled error" | head -c 4000 || true)
+            if [ -n "$UNHANDLED" ]; then
+              UNHANDLED_SECTION=$(cat <<UNHANDLED_EOF
+
+          **Unhandled errors (console output)**:
+          \`\`\`
+          $UNHANDLED
+          \`\`\`
+          UNHANDLED_EOF
+              )
+            fi
           fi
 
           BODY=$(cat <<EOF
@@ -160,6 +188,7 @@ jobs:
 
           **Failing tests**:
           $FAILING_LIST
+          $UNHANDLED_SECTION
 
           Triage by re-running the workflow once. If it stays red, it's a real regression — bisect across commits to \`dev\` since the last green nightly.
 
