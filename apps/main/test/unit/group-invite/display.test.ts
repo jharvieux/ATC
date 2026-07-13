@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { avatarInitials, firstNameOnly, daysUntil, routeSummary } from "@/components/group-invite/display";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { avatarInitials, firstNameOnly, daysUntil, formatSailDate, routeSummary } from "@/components/group-invite/display";
 import type { RosterEntry, ItineraryStop } from "@/components/group-invite/types";
 
 function entry(overrides: Partial<RosterEntry>): RosterEntry {
@@ -32,6 +32,22 @@ describe("daysUntil", () => {
     const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     expect(daysUntil(future)).toBeGreaterThanOrEqual(29);
     expect(daysUntil(future)).toBeLessThanOrEqual(30);
+  });
+});
+
+describe("formatSailDate — #1808: date-only string under a negative-UTC-offset timezone", () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "Pacific/Honolulu"; // UTC-10, no DST
+  });
+
+  afterEach(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it("renders the same calendar date as stored, not the day before", () => {
+    expect(formatSailDate("2026-07-06")).toBe("July 6, 2026");
   });
 });
 

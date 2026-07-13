@@ -129,6 +129,7 @@ export async function PATCH(
           .from("booking_line_items")
           .select("id, item_type, description, supplier_name, start_date, end_date, include_in_itinerary")
           .eq("booking_id", r.booking_id)
+          .order("start_date", { ascending: true, nullsFirst: false })
           .limit(MAX_BOOKING_LINE_ITEMS);
         if (liErr && liErr.code !== "42P01") {
           console.warn("[itinerary-send] booking_line_items load failed:", liErr.message);

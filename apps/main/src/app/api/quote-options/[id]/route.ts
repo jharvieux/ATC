@@ -7,6 +7,8 @@ import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { safeAwait } from "@/lib/db/safe-mutation";
+import { resolveQuoteKind, NO_HOST_INTEGRATION_ADAPTER } from "@/lib/quotes/kind-resolver";
 
 const OptionPatchSchema = z.object({
   label: z.string().optional(),
@@ -75,6 +77,36 @@ export async function PATCH(
       .select()
       .single();
     if (error) return dbErrorResponse(error);
+
+    // #1804 — re-pricing an option (total_amount_cents changes) must
+    // re-stamp the parent quote's priced_at/price_kind, mirroring the
+    // POST /api/quotes/:id/options wiring. Unlike creation, a PATCH that
+    // touches pricing always re-stamps — the freshness window (§21.10.1)
+    // is meant to track the most recent pricing action, not just the
+    // first one.
+    if (typeof parsed.data.total_amount_cents === "number") {
+      const quoteId = (data as { quote_id: string }).quote_id;
+      try {
+        const pricedAt = new Date().toISOString();
+        await safeAwait(
+          db.from("quotes").update({
+            priced_at: pricedAt,
+            price_kind: resolveQuoteKind(
+              { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
+              NO_HOST_INTEGRATION_ADAPTER,
+            ),
+          }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
+          "quotes.update.price_kind_from_option_patch",
+        );
+      } catch (stampErr) {
+        console.error("quote_options.PATCH: priced_at stamp failed, continuing", {
+          quoteId,
+          tenantId: ctx.tenant_id,
+          err: stampErr,
+        });
+      }
+    }
+
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);

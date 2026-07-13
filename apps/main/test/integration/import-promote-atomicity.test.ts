@@ -166,11 +166,13 @@ describeIf("promote_import RPC atomicity (DB integration)", () => {
       expect(queue?.promoted_contact_id).toBe(res.contact_id);
       expect(queue?.promoted_booking_id).toBe(res.booking_id);
 
-      // gross_commission_cents is BIGINT; postgres-js returns int8 as a string.
-      const [comm] = await sql<{ gross_commission_cents: string }[]>`
-        SELECT gross_commission_cents FROM public.commissions WHERE id = ${res.commission_id}
+      // gross_commission_cents is BIGINT; postgres-js returns int8 as a string
+      // unless cast SQL-side (#1834 — unify on the ::int cast countChildren()
+      // above already uses, rather than a JS-side Number() coercion).
+      const [comm] = await sql<{ gross_commission_cents: number }[]>`
+        SELECT gross_commission_cents::int AS gross_commission_cents FROM public.commissions WHERE id = ${res.commission_id}
       `;
-      expect(Number(comm?.gross_commission_cents)).toBe(Math.round(500000 * 0.15)); // 75000
+      expect(comm?.gross_commission_cents).toBe(Math.round(500000 * 0.15)); // 75000
     },
     60000,
   );

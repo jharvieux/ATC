@@ -65,7 +65,7 @@ function parseSampleParams(get: (key: string) => string | undefined): SamplePara
     customer_name: get("customer_name") || "Jordan",
     ship_name: get("ship_name") || "Norwegian Bliss",
     cruise_line: get("cruise_line") || "Norwegian Cruise Line",
-    sailing_date: get("sailing_date") || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+    sailing_date: get("sailing_date") || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }),
     ports,
     destination_region: (get("destination_region") as DestinationRegion | undefined) ?? "caribbean",
     companion_page_url: get("companion_page_url") || "https://example.com/companion",
