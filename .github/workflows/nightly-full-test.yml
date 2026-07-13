@@ -128,10 +128,28 @@ jobs:
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Run apps/rag vitest suite
+        id: vitest-rag
+        # The root vitest.config.ts only includes tests/** and apps/main/test/**
+        # (same reason ci.yml's separate "RAG unit tests (#792)" step exists) —
+        # the step above never touches apps/rag, so SUPABASE_RAG_DB_URL (set on
+        # this job for #1758) was wired to nothing (#1863). Run apps/rag's own
+        # suite the same way `pnpm test:rag` does (`pnpm --dir apps/rag run
+        # test`), with the same reporter flags + PIPESTATUS capture as the main
+        # suite above (D-349 — no `shell:` key here either).
+        run: |
+          set +e
+          pnpm --dir apps/rag run test -- --reporter=default --reporter=json --outputFile=rag-vitest-report.json --no-file-parallelism 2>&1 | tee apps/rag/rag-vitest-console.log
+          STATUS=${PIPESTATUS[0]}
+          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Open issue on failure
-        if: steps.vitest.outputs.exit_status != '0'
+        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIN_STATUS: ${{ steps.vitest.outputs.exit_status }}
+          RAG_STATUS: ${{ steps.vitest-rag.outputs.exit_status }}
         run: |
           set -euo pipefail
           DATE=$(date -u +%Y-%m-%d)
@@ -147,14 +165,28 @@ jobs:
           # in scripts/parse-nightly-failures.mjs /
           # tests/unit/scripts/parse-nightly-failures.test.ts (#1851 audit
           # finding 2 — this used to be untested inline shell/node).
-          node scripts/parse-nightly-failures.mjs vitest-report.json vitest-console.log nightly-failing-list.md nightly-unhandled-section.md
-          FAILING_LIST=$(cat nightly-failing-list.md)
-          UNHANDLED_SECTION=$(cat nightly-unhandled-section.md)
+          #
+          # Run once per suite (main, rag) and only include a suite's section
+          # when THAT suite's own exit code was non-zero (#1863) — either
+          # suite can fail independently, and a passing suite's "no per-test
+          # detail" fallback would otherwise read as a false failure.
+          if [ "$MAIN_STATUS" != "0" ]; then
+            node scripts/parse-nightly-failures.mjs vitest-report.json vitest-console.log nightly-failing-list.md nightly-unhandled-section.md
+            MAIN_SECTION="### apps/main"$'\n\n'"$(cat nightly-failing-list.md)"$'\n'"$(cat nightly-unhandled-section.md)"
+          else
+            MAIN_SECTION=""
+          fi
+          if [ "$RAG_STATUS" != "0" ]; then
+            node scripts/parse-nightly-failures.mjs apps/rag/rag-vitest-report.json apps/rag/rag-vitest-console.log nightly-rag-failing-list.md nightly-rag-unhandled-section.md
+            RAG_SECTION="### apps/rag"$'\n\n'"$(cat nightly-rag-failing-list.md)"$'\n'"$(cat nightly-rag-unhandled-section.md)"
+          else
+            RAG_SECTION=""
+          fi
 
           BODY=$(cat <<EOF
           ## Nightly full-test failure — $DATE
 
-          Full vitest suite failed on \`dev\`. The affected-test path in PR CI didn't catch this — it's either:
+          Full vitest suite (apps/main and/or apps/rag) failed on \`dev\`. The affected-test path in PR CI didn't catch this — it's either:
           - A test that depends on cross-cutting state (env, schema, fixtures) not in any PR's diff
           - A flake (re-run before chasing)
           - A regression in code the affected-tests heuristic missed (deep utility / dynamic import / etc.)
@@ -162,8 +194,8 @@ jobs:
           **Run**: $RUN_URL
 
           **Failing tests**:
-          $FAILING_LIST
-          $UNHANDLED_SECTION
+          $MAIN_SECTION
+          $RAG_SECTION
 
           Triage by re-running the workflow once. If it stays red, it's a real regression — bisect across commits to \`dev\` since the last green nightly.
 
