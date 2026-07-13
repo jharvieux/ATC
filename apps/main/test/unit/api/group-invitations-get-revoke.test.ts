@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   inviteCountQuery: vi.fn(),
   inviteFreqQuery: vi.fn(),
   inviteInsertQuery: vi.fn(),
+  reserveRpc: vi.fn(),
   inviteEmailSingleQuery: vi.fn(),
   inviteRsvpSelectQuery: vi.fn(),
   inviteClaimQuery: vi.fn(),
@@ -140,6 +141,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       return {};
     },
+    // #1680 — the single-invite cap is enforced by the reserve RPC (advisory
+    // lock + count + insert in one transaction), replacing the old
+    // count-then-insert.
+    rpc: (name: string, args: unknown) => mocks.reserveRpc(name, args),
   }),
 }));
 
@@ -299,6 +304,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     mocks.inviteFreqQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteInsertQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
+    mocks.reserveRpc.mockResolvedValue({ data: { status: "ok", inserted: 1 }, error: null });
     mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
     mocks.incrementGroupInvitees.mockResolvedValue(undefined);
     mocks.inviteEmailSingleQuery.mockResolvedValue({
@@ -401,11 +407,14 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     );
   });
 
-  // #1600/#1680 — the two tests below pin the cap boundary from BOTH sides so a
-  // future off-by-one (>= vs >, or a drifted literal) can't silently pass: the
-  // 50th invitee is allowed, the 51st is rejected before any insert.
-  it("allows the 50th invitee when 49 are active — the cap is inclusive of 50 (#1680)", async () => {
-    mocks.inviteCountQuery.mockResolvedValue({ count: 49, error: null });
+  // #1600/#1680 — the cap is now enforced atomically inside the
+  // reserve_group_invitations RPC (advisory lock + count + insert in one
+  // transaction; the 49-active + 1 = 50 vs 50-active + 1 = 51 arithmetic lives
+  // in SQL, exercised by the DB-apply CI). Here we pin the ROUTE's handling of
+  // the RPC's verdict: an "ok" reservation is a successful invite; a
+  // "cap_exceeded" verdict is a 400 with no counter increment.
+  it("succeeds when the reserve RPC accepts the invite (status=ok) (#1680)", async () => {
+    mocks.reserveRpc.mockResolvedValue({ data: { status: "ok", inserted: 1 }, error: null });
 
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(
@@ -414,11 +423,17 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mocks.inviteInsertQuery).toHaveBeenCalledOnce();
+    expect(mocks.reserveRpc).toHaveBeenCalledOnce();
+    const [name, args] = mocks.reserveRpc.mock.calls[0] as [string, { p_max: number }];
+    expect(name).toBe("reserve_group_invitations");
+    expect(args.p_max).toBe(50);
   });
 
-  it("returns 400 without inserting when the group is already at the 50-invitee cap (#1600)", async () => {
-    mocks.inviteCountQuery.mockResolvedValue({ count: 50, error: null });
+  it("returns 400 without incrementing when the reserve RPC reports cap_exceeded (#1680)", async () => {
+    mocks.reserveRpc.mockResolvedValue({
+      data: { status: "cap_exceeded", active_count: 50 },
+      error: null,
+    });
 
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(
@@ -427,8 +442,8 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     );
 
     expect(res.status).toBe(400);
-    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
     expect(mocks.incrementGroupInvitees).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
   it("returns 429 without inserting when the invite frequency gate trips (#1654)", async () => {
@@ -445,7 +460,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     expect(res.status).toBe(429);
     const body = await res.json() as { error: string };
     expect(body.error).toBe("invite_rate_limited");
-    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -459,11 +474,13 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     );
 
     expect(res.status).toBe(429);
-    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
   it("returns 409 when the invitee_email already has an active invitation (dedup, #1600)", async () => {
-    mocks.inviteInsertQuery.mockResolvedValue({
+    // The RPC's insert hits invitations_group_active_email_uniq_idx; PostgREST
+    // surfaces the unique_violation as error.code '23505'.
+    mocks.reserveRpc.mockResolvedValue({
       data: null,
       error: { code: "23505", message: "duplicate key value violates unique constraint" },
     });

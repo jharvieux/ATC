@@ -313,6 +313,13 @@ module.exports = [
   "/app/api/auth/signup/complete/route.ts",
   "/app/api/groups/route.ts",
   "/app/api/groups/[id]/invitations/route.ts",
+  // #1875 — the batch-add-members route verifies group ownership via the
+  // tenant-scoped proxy, then calls the reserve_group_invitations RPC to
+  // enforce the cumulative 50-invitee cap atomically. tenantClient refuses
+  // .rpc() (it bypasses the from()-proxy), so this route needs a raw
+  // service-role client for that one call; isolation still holds via the
+  // group_id verified tenant-owned by the proxy query above.
+  "/app/api/groups/[id]/members/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
   "/app/api/groups/invite/[token]/rsvp/route.ts",
   // §19.x — anonymous invitee forum access (group-landing redesign PR6).
