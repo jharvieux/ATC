@@ -293,6 +293,11 @@ type PassengerForm = {
   passport_expiry: string;
   passport_country: string;
   is_lead_passenger: boolean;
+  // #1813 — "Remove passenger" filters by index, so a middle-row delete
+  // shifts every later index. A stable client-only key keeps each row's DOM
+  // identity (and mid-edit focus) attached to the right passenger; stripped
+  // before the POST payload so it never reaches the server.
+  _key: string;
 };
 
 function emptyPassenger(isLead = false): PassengerForm {
@@ -305,6 +310,7 @@ function emptyPassenger(isLead = false): PassengerForm {
     passport_expiry: "",
     passport_country: "",
     is_lead_passenger: isLead,
+    _key: crypto.randomUUID(),
   };
 }
 
@@ -341,6 +347,7 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
               passport_expiry: p.passport_expiry ?? "",
               passport_country: p.passport_country ?? "",
               is_lead_passenger: p.is_lead_passenger,
+              _key: crypto.randomUUID(),
             })));
           }
         }
@@ -379,7 +386,7 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
       const res = await fetch(`/api/bookings/${bookingId}/passengers`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passengers }),
+        body: JSON.stringify({ passengers: passengers.map(({ _key: _drop, ...p }) => p) }),
       });
       const body = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok) {
@@ -407,7 +414,7 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
       )}
 
       {passengers.map((p, idx) => (
-        <div key={idx} className="mb-6 p-5 border border-border rounded-lg">
+        <div key={p._key} className="mb-6 p-5 border border-border rounded-lg">
           <h3 className="text-[14px] font-semibold mb-4">
             Passenger {idx + 1} {p.is_lead_passenger ? "(Lead)" : ""}
           </h3>

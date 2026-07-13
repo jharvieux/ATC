@@ -15,10 +15,24 @@ type Resources = {
   packing_checklist: string | null;
 };
 
+// #1813 — links support mid-list removal (removeLink filters by index), so
+// index-as-key would misassign focus/DOM identity across rows on delete.
+// _key is a client-only render identity; stripped before the PATCH payload
+// so it never reaches the server or gets persisted into the JSONB column.
+type EditableLinkRow = LinkRow & { _key: string };
+type EditableSection = { section_label: string; links: EditableLinkRow[] };
+
+function withKeys(sections: Section[] | null | undefined): EditableSection[] {
+  return (sections ?? []).map((sec) => ({
+    ...sec,
+    links: sec.links.map((link) => ({ ...link, _key: crypto.randomUUID() })),
+  }));
+}
+
 export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
   const [res, setRes] = useState<Resources | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sections, setSections] = useState<Section[]>([]);
+  const [sections, setSections] = useState<EditableSection[]>([]);
   const [packing, setPacking] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +45,7 @@ export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
       if (!r.ok) return;
       const data = (await r.json()) as { resources: Resources | null };
       setRes(data.resources);
-      setSections(data.resources?.sections ?? []);
+      setSections(withKeys(data.resources?.sections));
       setPacking(data.resources?.packing_checklist ?? "");
     } finally {
       setLoading(false);
@@ -52,7 +66,7 @@ export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
       }
       const data = (await r.json()) as { resources: Resources };
       setRes(data.resources);
-      setSections(data.resources.sections ?? []);
+      setSections(withKeys(data.resources.sections));
     } finally {
       setBusy(false);
     }
@@ -65,7 +79,14 @@ export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
       const r = await fetch(`/api/resources/${res.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections, packing_checklist: packing, publish }),
+        body: JSON.stringify({
+          sections: sections.map((sec) => ({
+            section_label: sec.section_label,
+            links: sec.links.map(({ _key: _drop, ...link }) => link),
+          })),
+          packing_checklist: packing,
+          publish,
+        }),
       });
       if (!r.ok) {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
@@ -94,7 +115,7 @@ export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
     setSections((prev) => {
       const next = [...prev];
       const sec = { ...next[sIdx]! };
-      sec.links = [...sec.links, { label: "", url: "", source: "agent" }];
+      sec.links = [...sec.links, { label: "", url: "", source: "agent", _key: crypto.randomUUID() }];
       next[sIdx] = sec;
       return next;
     });
@@ -143,7 +164,7 @@ export function ResourcesEditor(props: { booking_id: string }): JSX.Element {
           <div className="font-medium text-sm mb-2">{sec.section_label}</div>
           {sec.links.length === 0 && <div className="text-xs text-gray-400 mb-2">No links yet.</div>}
           {sec.links.map((link, lIdx) => (
-            <div key={lIdx} className="flex gap-2 mb-2">
+            <div key={link._key} className="flex gap-2 mb-2">
               <input
                 type="text"
                 placeholder="Label"
