@@ -13,11 +13,14 @@
 //
 // Note: this updates the MAIN-side canonical row. The rag-side replica
 // (apps/rag/supabase/migrations/0006_platform_settings_replica.sql) needs
-// to be kept in sync. #1826: this now calls publishPlatformEvent after a
-// successful write, so sync is webhook-speed for any retrieval_weight_*
-// key once it's added to publish-platform-event.ts's SYNC_ELIGIBLE_KEYS
-// (not yet — see that file's comment); until then the publish is a
-// harmless no-op and the nightly reconcile (§8.3) stays the backstop.
+// to be kept in sync. #1826 wired publishPlatformEvent below, but it is
+// currently a no-op for these keys: retrieval_weight_* is not in
+// publish-platform-event.ts's SYNC_ELIGIBLE_KEYS, and the nightly
+// platform-settings-reconcile cron (apps/rag/src/inngest/
+// platform-settings-reconcile.ts) carries the identical restriction — so
+// NEITHER path syncs these keys today (#1887 tracks adding them to both
+// allowlists). Until #1887 lands, changes here MUST be mirrored manually
+// into the rag DB or composite scoring uses stale weights.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
@@ -40,7 +43,12 @@ interface PlatformDb {
       in: (col: string, vals: string[]) => Promise<{ data: Array<{ key: string; value: unknown }> | null; error: unknown }>;
     };
     update: (row: Record<string, unknown>) => {
-      eq: (col: string, val: string) => Promise<{ error: unknown }>;
+      eq: (
+        col: string,
+        val: string,
+      ) => {
+        select: (cols: string) => Promise<{ data: Array<{ updated_at: string }> | null; error: unknown }>;
+      };
     };
   };
 }
@@ -136,11 +144,13 @@ export async function PUT(req: Request): Promise<Response> {
         const settled = await Promise.allSettled(
           entries.map(async ([w, value]) => {
             recordQuery({ op: "update", table: "platform_settings" });
-            const { error } = await (db as unknown as PlatformDb)
+            const { data, error } = await (db as unknown as PlatformDb)
               .from("platform_settings")
               .update({ value })
-              .eq("key", settingKey(w));
+              .eq("key", settingKey(w))
+              .select("updated_at");
             if (error) throw new Error(`update ${settingKey(w)} failed: ${String(error)}`);
+            return data?.[0]?.updated_at;
           }),
         );
         const failedKeys = entries
@@ -154,19 +164,24 @@ export async function PUT(req: Request): Promise<Response> {
             `retrieval-weights update partial failure — failed: [${failedKeys.join(", ")}], applied: [${appliedKeys.join(", ")}]`,
           );
         }
-        // #1826 — enqueue the RAG-sync event after the write commits. The
-        // weight update above already succeeded, so a publish failure must
-        // not fail this response — catch and log; the nightly reconcile
-        // (§8.3) is the backstop for whatever RAG missed.
-        try {
-          await publishPlatformEvent({
-            event_type: "platform_settings.updated",
-            source_revision: Math.floor(Date.now() / 1000),
-            payload: { changes: entries.map(([w, value]) => ({ key: settingKey(w), value })) },
-          });
-        } catch (err) {
-          console.error("[retrieval-weights] publishPlatformEvent failed:", err);
-        }
+        // source_revision mirrors the platform-settings GET route: the DB
+        // row's updated_at, not wall-clock at call time, so RAG-side
+        // stale-write detection compares against the actual DB write.
+        const updatedAts = settled
+          .filter((s): s is PromiseFulfilledResult<string | undefined> => s.status === "fulfilled")
+          .map((s) => s.value)
+          .filter((v): v is string => v !== undefined);
+        const sourceRevision = Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)));
+
+        // #1826 — enqueue the RAG-sync event after the write commits.
+        // publishPlatformEvent never throws (enqueue failures alert
+        // internally); bare-await, matching every other publish*Event
+        // caller (e.g. activate-tenant.ts, signup/complete/route.ts).
+        await publishPlatformEvent({
+          event_type: "platform_settings.updated",
+          source_revision: sourceRevision,
+          payload: { changes: entries.map(([w, value]) => ({ key: settingKey(w), value })) },
+        });
 
         const updated: WeightKey[] = entries.map(([w]) => w);
         const values = await loadCurrent(db as unknown as PlatformDb);

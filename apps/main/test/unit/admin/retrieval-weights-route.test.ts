@@ -36,12 +36,14 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
     const db = {
       from: (_table: string) => ({
         update: (payload: { value: unknown }) => ({
-          eq: async (_col: string, key: string) => {
-            h.updates.push({ key, value: payload.value });
-            return h.failKeys.has(key)
-              ? { error: { message: `write failed for ${key}` } }
-              : { error: null };
-          },
+          eq: (_col: string, key: string) => ({
+            select: async (_cols: string) => {
+              h.updates.push({ key, value: payload.value });
+              return h.failKeys.has(key)
+                ? { data: null, error: { message: `write failed for ${key}` } }
+                : { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
+            },
+          }),
         }),
         select: () => ({
           in: async () => ({ data: h.currentRows, error: null }),
@@ -129,24 +131,17 @@ describe("PUT /api/admin/retrieval-weights — RAG-sync publish (#1826)", () => 
     expect(h.publishPlatformEvent).toHaveBeenCalledTimes(1);
     const event = h.publishPlatformEvent.mock.calls[0]![0] as {
       event_type: string;
+      source_revision: number;
       payload: { changes: Array<{ key: string; value: unknown }> };
     };
     expect(event.event_type).toBe("platform_settings.updated");
+    // source_revision comes from the updated row's updated_at (DB write
+    // time), not Date.now() at call time — see route.ts's PUT handler.
+    expect(event.source_revision).toBe(Math.floor(new Date("2026-07-13T00:00:00.000Z").getTime() / 1000));
     expect(event.payload.changes.slice().sort((a, b) => a.key.localeCompare(b.key))).toEqual([
       { key: "retrieval_weight_feedback", value: 0.5 },
       { key: "retrieval_weight_match", value: 2 },
     ]);
-  });
-
-  it("still saves successfully when publishPlatformEvent rejects", async () => {
-    h.currentRows = [{ key: "retrieval_weight_match", value: 3 }];
-    h.publishPlatformEvent.mockRejectedValueOnce(new Error("enqueue exploded"));
-
-    const res = await PUT(req({ match: 3 }));
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { updated: string[] };
-    expect(body.updated).toEqual(["match"]);
   });
 
   it("does not call publishPlatformEvent when the DB write fails", async () => {
