@@ -90,12 +90,10 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
       }
       const invData: { invitations: Invitation[] } = await invRes.json();
 
-      let counts: Partial<Record<RsvpState, number>> = {};
-      if (grpRes.ok) {
-        const grpData: { invitation_counts: Partial<Record<RsvpState, number>> } = await grpRes.json();
-        counts = grpData.invitation_counts ?? {};
-      }
-      setList((s) => ({ ...s, invitations: invData.invitations ?? [], counts }));
+      const counts = grpRes.ok
+        ? ((await grpRes.json()) as { invitation_counts: Partial<Record<RsvpState, number>> }).invitation_counts ?? {}
+        : undefined;
+      setList((s) => ({ ...s, invitations: invData.invitations ?? [], counts: counts ?? s.counts }));
     } catch (err) {
       setList((s) => ({ ...s, error: err instanceof Error ? err.message : "Failed to load" }));
     } finally {
