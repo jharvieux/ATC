@@ -1,4 +1,4 @@
-# Session state — last updated 2026-07-12 late evening PT
+# Session state — last updated 2026-07-12 end of session
 
 ## Just completed
 - Full /issue-sweep (operator-approved "go, 5 concurrent batches"): 15 batches, **16 PRs merged into dev** (#1799 skill update, #1800, #1801, #1802, #1803, #1806, #1807, #1809, #1811, #1817, #1819, #1824, #1827, #1828, plus vendor-cache resolved with no PR), **~45 issues closed** including the entire nightly-failure backlog (16 issues).
@@ -11,12 +11,12 @@
 - Nothing in flight — clean checkpoint once this docs PR merges.
 
 ## Next step
-- Merge the wrap-up docs PR (MEMORY D-332..D-339, SESSION.md, Closes-rule runbook/skill edits), then delete .git/issue-sweep-ledger.json.
+- Sweep fully terminal: 18 PRs merged (incl. wrap-up #1839 + spec amendments #1840), ledger deleted.
 - Watch the next nightly: RAG-DB-gated tests run for the first time (PR #1828 / #1758); schema-drift failures there mean #1828's follow-up (RAG test-DB migration-push step) needs action; also #1470 closes on a green run.
 
 ## Blocked on user
-- **Spec amendments (operator approval required, specs are read-only):** (1) §8.3/§8.7/§8.7a — replace in-request-backoff + pending_rag_sync + retry-cron language with Inngest delivery + nightly-reconcile backstop (implemented in PR #1819 per operator's 2026-07-12 decision); (2) §23.7 — diagram says "retry up to 3 times over 24h" but the implemented (and historically-constant) schedule is cumulative +6h/+18h/+42h — confirm cumulative was intended (as built) or direct a change to absolute offsets.
-- Supervised follow-ups awaiting a go: #1833 (nightly parser), #1825 (contract migration), #1829 (RAG in deploy pipeline), plus the remaining supervised items from the sweep plan (#1797 #1783→partially? no — #1783 untouched, #1782 #1754 #1773 #1778 #1680 #1585 #1523 #1623 #1740 #1247 #1358 #1728 #1565).
+- Nothing. (Both spec amendments approved and merged: PR #1840 — §8.3/§8.7a Inngest delivery, §23.7 cumulative schedule.)
+- Supervised follow-ups awaiting a go when convenient: #1833 (nightly parser), #1825 (contract migration), #1829 (RAG in deploy pipeline), plus the sweep plan's remaining supervised list (#1797 #1782 #1754 #1773 #1778 #1680 #1585 #1523 #1623 #1740 #1247 #1358 #1728 #1565 #1783).
 
 ## Open questions
 - knip's "Unused exported types (81)" section was outside #1785's approved scope — queue a future batch or drop?
