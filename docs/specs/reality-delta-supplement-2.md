@@ -175,7 +175,7 @@ Items I verified ARE closed but not marked in audit-followups:
 For completeness — items I checked during this re-sweep that are properly wired (in addition to the supplement's TICK list):
 
 - §6.10 feedback knobs sync to RAG via `apps/main/src/lib/rag-sync/publish-platform-event.ts` (all 4 keys)
-- §8.7a `pending_rag_sync` table + `source_revision` column (RAG migration 0007)
+- §8.7a `pending_rag_sync` table + `source_revision` column (RAG migration 0007) — *table dropped 2026-07-13 in main migration `20260722000019` after RAG-sync delivery moved to Inngest (PR #1819/#1850); `source_revision` remains the RAG-side ordering guard*
 - §10.1a regen budget columns (`regen_tokens_consumed`, `regen_count_total`, `regen_budget_exhausted_at`) + env caps
 - §9.10.3 `background_ai_enabled` column + tenant UI toggle
 - §13.5 boot-time validation of `APP_ENCRYPTION_KEY_CURRENT` to 32 bytes + `FORENSICS_ENCRYPTION_KEY_CURRENT` distinctness check

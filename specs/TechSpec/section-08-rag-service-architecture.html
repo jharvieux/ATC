@@ -128,7 +128,7 @@ CREATE INDEX tenant_registry_shadow_status_idx
 <h2 id="s8-7">8.7 POST /api/tenant-events <a class="anchor-link" href="#s8-7" aria-label="Permalink">¶</a></h2>
 <p>Webhook receiver for tenant lifecycle events from main app: create, update status, terminate. Keeps tenant_registry in sync.</p>
 <h2 id="s8-7a">8.7a Main-App Reliable Delivery for RAG Sync <a class="anchor-link" href="#s8-7a" aria-label="Permalink">¶</a></h2>
-<p><em>Amended 2026-07-12 (operator-approved; implemented in PR #1819). This section previously specified a <code>pending_rag_sync</code> queue table plus a 5-minute <code>rag-sync-retry</code> cron; both are retired in favor of Inngest-owned delivery. The table's contract-phase drop is tracked in issue #1825.</em></p>
+<p><em>Amended 2026-07-12 (operator-approved; implemented in PR #1819). This section previously specified a <code>pending_rag_sync</code> queue table plus a 5-minute <code>rag-sync-retry</code> cron; both are retired in favor of Inngest-owned delivery. The table was dropped in migration <code>20260722000019</code> (PR #1850; was issue #1825).</em></p>
 <p>The main app must deliver tenant lifecycle events to the RAG service reliably before falling back to the nightly reconcile (which remains the safety net per <a class="xref" href="#s8-3">§8.3</a>). Delivery is owned by Inngest.</p>
 <h3>Flow</h3>
 <ol>

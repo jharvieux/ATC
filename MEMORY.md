@@ -4,6 +4,104 @@ Newest entries on top.
 
 ---
 
+## D-348 — 2026-07-13 — Frontend sweep discipline: tests-first for untested god components; verify-before-fix for static-analysis perf flags (#1810/#1812/#1813, PR #1857)
+
+**Decision**: For #1812's highest-risk item (email-templates settings page: 28 hooks, 954 lines, zero tests), shipped characterization tests ONLY (template-switch 13-field reset, sailing cascade, search debounce) and deferred the reducer rewrite — the tests are the safety net a future rewrite requires; #1812 stays open with the remainder enumerated. For #1813, re-verified each flagged site before touching it: 2 of ~16 re-examined were real (index-as-key on mid-list-removable rows with row state — passenger rows, resource links; fixed with client-only `_key` UUIDs stripped from payloads, pinned by DOM-node-IDENTITY regression tests that mutation-testing confirmed fail under `key={idx}`); the rest documented as false positives on the issue. #1810 shipped the resolve-review console action surfacing the `host_booking_may_exist` refusal with do-not-resubmit guidance.
+
+**Why**: A reducer rewrite of an untested 954-line component with interdependent async cascades is exactly the regression shape D-091 exists to prevent; index-as-key is only a real bug when lists reorder/shrink mid-list with row-carried state — bulk-fixing static-analysis flags adds churn without benefit (consistent with D-335's 4/4-false-positive sample).
+
+**Rejected**: attempting the rewrite in the same batch as its safety net; bulk key fixes without per-site verification; value-only test assertions (controlled inputs render correctly under either key strategy — only node identity discriminates).
+
+**Related artifacts**: PR #1857; issues #1812 (open, remainder), #1813 (closed with evidence), #1856 (legal-disclosure placeholder bug found while disproving a flag).
+
+---
+
+## D-347 — 2026-07-13 — Stripe webhook staleness+CAS core extracted; per-case differences stay inline (#1778, PR #1853)
+
+**Decision**: `applyStaleGuardedSubscriptionUpdate()` consolidates only the byte-identical staleness-early-out + `.or()` CAS UPDATE + 0-row-check core across the three subscription handlers; per-case SELECT columns and `updates` construction stay inline (they genuinely differ). CAS-lost → `unhandled` conflation deliberately preserved (behavior-preserving mandate); #1854 tracks giving it a distinct outcome like #1677 did for stale.
+
+**Why**: Money-critical drift risk — CAS/staleness fixes previously had to land in 3 places. Extract-identical-core-only avoids parameterizing over real semantic differences.
+
+**Related artifacts**: PR #1853; `apps/main/src/lib/stripe/webhook-handler.ts`; issue #1854.
+
+---
+
+## D-346 — 2026-07-13 — Nightly failure triage hardened: tested parser script + public-issue redaction; RAG deploys automated; RLS/payments tests per-PR (#1783/#1833/#1797/#1829, PR #1851)
+
+**Decision**: Nightly issue-filing now goes through `scripts/parse-nightly-failures.mjs` (fixture-tested) which surfaces suite-level crashes and vitest's unhandled-error banner AND redacts postgres URLs/Bearer tokens/known secret env values before anything reaches the PUBLIC issue body. 7 `${{ }}`-in-run injection sites moved to env indirection. New `integration-tests-critical` PR job (rls + stripe-webhook suites) sequenced `needs: rls-snapshot-diff` to avoid the shared-test-DB double-push ledger race, and wired into `deploy-production.needs`. atc-rag deploys automated: change-detection-gated beta on dev-merge; prod steps INSIDE the existing `deploy-production` job so one approval click covers both apps. Preconditions on the operator: `VERCEL_RAG_PROJECT_ID` secret (jobs fail loudly until set), required-check promotion in branch protection.
+
+**Why**: 13 nightly issues were un-triageable from the parser gap; the public repo made unredacted console embedding a permanent credential-leak path; RAG fixes were silently undeployed (#1740's failure class).
+
+**Rejected**: separate prod RAG job with its own environment gate (second approval click); parallel test-DB push (ledger race); RAG staging tier (pipeline disabled repo-wide, #533).
+
+**Related artifacts**: PR #1851; `.github/workflows/{ci,deploy,release,nightly-full-test}.yml`; `scripts/parse-nightly-failures.mjs`; issues #1858, #1859.
+
+---
+
+## D-345 — 2026-07-13 — Contract migration ...019: pending_rag_sync dropped; rls-exceptions entries are append-only-history artifacts (#1754/#1825, PR #1850)
+
+**Decision**: One contract migration drops `pending_rag_sync`, adds the `email_log(retry_of)` partial index, fixes ...017's daily→hourly comments via `COMMENT ON` (never editing the applied file), and removes `'promoting'` from `import_queue_status_check`. Key lesson: `db/rls-exceptions.{txt,sql}` entries for DROPPED tables must be RETAINED with a "DROPPED in ..." note — the static migration-lint scans the append-only migration history where the original CREATE lives forever.
+
+**Related artifacts**: PR #1850; migration `20260722000019`; D-337 (the deferral this resolves).
+
+---
+
+## D-344 — 2026-07-13 — Small-fixes batch judgments: quote-stamp writes are best-effort non-fatal; README-fix over risky retrofit (#1808/#1804/#1836/#1834/#1821, PR #1852)
+
+**Decision**: The #1804 `priced_at`/`price_kind` stamps in BOTH quote_options routes are try/catch non-fatal (primary write committed = client gets its 2xx; a failed stamp logs and self-heals via the PATCH route's unconditional re-stamp; POST adds an `.is("priced_at", null)` CAS). #1821 resolved by correcting the error-injection README's "canonical pattern" claim instead of retrofitting 8 security/financial-critical probes onto a generic mock that can't express their per-handler CAS branching.
+
+**Why**: A 500 after a durable primary write invites duplicate-row-creating retries — the audit caught this in POST, then its sibling in PATCH (three audit rounds total). Forcing helper adoption across payment/webhook probes traded real regression risk for a doc-drift fix.
+
+**Related artifacts**: PR #1852; issues #1855 (daysUntil date bug, found adjacent), #1858-adjacent; D-332 (creation-time rule followed).
+
+---
+
+## D-343 — 2026-07-13 — Secret-redaction completed across ops scripts; db-reset credential provably out of argv (#1814/#1837/#1835/#1815, PR #1849)
+
+**Decision**: All remaining crash handlers route through `redactSecrets()`; `db-reset.ts` invokes psql via `execFileSync` with non-secret flags + `PGPASSWORD` env through the testable `scripts/lib/psql-invocation.ts` (first "env var" attempt was cosmetic — the shell still expanded the secret into psql's argv; the auditor proved it with a live `ps` capture, and the re-audit re-proved the fix the same way). #1837 verified against installed postgres@3.4.9: the only credential-bearing error surface is Node's `URL` `.input` property, which `redactSecrets` never reads — recorded in the header + pinned by a fixture test. Chat delivery's service-role updates gained the `tenant_id` second layer, suppressions removed (#1815).
+
+**Why**: Empirical verification beat plausible-looking fixes twice in one PR; the recorded conclusion stops future re-litigation.
+
+**Related artifacts**: PR #1849; `scripts/lib/psql-invocation.ts`; `scripts/lib/redact-secrets.ts`; issue #1814's trail.
+
+---
+
+## D-342 — 2026-07-12 — Inngest/email retry-safety residuals closed (#1832/#1831/#1830/#1816, PR #1848)
+
+**Decision**: Soft-bounce chain: send and its record-write split into separate `step.run` boundaries (`send:` / `record-send-log:`) so a transient record failure retries only the record — D-333's three dedup layers become four. Abuse-override sweep (#1830): dependent writes reordered audit-insert-first/stamp-last with a SELECT-before-INSERT idempotency check but deliberately NO backing UNIQUE constraint (migration out of batch scope; safe for the singleton daily cron's sequential crash-retry; true-concurrency residual tracked in #1844). Help-docs exporters wrapped in per-phase `step.run` (render/upload/update), Buffers base64-round-tripped across step boundaries.
+
+**Why**: The Resend Idempotency-Key dedupes only vendor delivery — email_log rows and counters are NOT covered by it, so any un-stepped re-execution after a successful send duplicated bookkeeping. The reorder beats a transactional RPC (also needs a migration) and beats accepting permanent audit-row loss.
+
+**Rejected**: transactional RPC for #1830 (migration); leaving the stamp-then-audit order (silent, undetectable audit loss).
+
+**Related artifacts**: PR #1848; `apps/main/src/lib/email/soft-bounce-retry.ts`; `apps/main/src/inngest/abuse-override-expiry-sweep.ts`; issue #1844.
+
+---
+
+## D-341 — 2026-07-12 — Unwired-feature wirings (#1822/#1818/#1820/#1823) + tier gates unified fail-closed (PR #1845)
+
+**Decision**: Wired the four features the knip sweep surfaced as built-but-dead: `assertSequencesAvailable` into the sequence engine's single firing chokepoint; `LegalPageAttribution` via a shared `/legal` layout; `GmailHealthBanner` via a CRM layout with a new `request-tenant-tier.ts` service-role helper (allowlisted: read-only, non-PII tier code, no route ctx at layout render — mirrors fetch-tenant-branding); customer-toned bug-flow wording via `source_surface` dispatch. Audit round unified ALL tier gates on deny-on-null/deny-on-error (the sequences gate was default-allow — an entitlement leak during tier-lookup outages), with the deliberate trade documented: withhold sequences during an outage (recoverable) rather than leak the byo_research block (not recoverable).
+
+**Why**: "Unused export" was the only symptom of four real product gaps; deleting them would have masked enforcement and spec obligations (§16.7.1, BP34 §34.2.4, BP32 §32.10.3).
+
+**Rejected**: allowlisting the layout file directly for service-role (keeps service-role out of route/layout files); mounting the Gmail banner tier-unconditionally (wasted fetch, violates the component contract).
+
+**Related artifacts**: PR #1845; `apps/main/src/lib/tasks/tier-gate.ts`; `apps/main/src/lib/tenancy/request-tenant-tier.ts`; issues #1846 (attorney wording), #1847 (second gate awaits its route).
+
+---
+
+## D-340 — 2026-07-12 — Service-JWT iss/aud: tolerant-then-strict rollout in one PR (#1773, PR #1842)
+
+**Decision**: Signer sets `iss='atc-main'`/`aud='atc-rag'` unconditionally (protocol constants in `@atc/contracts`, not env vars); verifier rejects present-but-MISMATCHING claims (fail-closed, after signature verification so claim-stripping is not exploitable without an accepted key) but tolerates ABSENT claims with a warn-log during the deploy window. Strict flip (hard-reject absence) is #1843, which also carries: warn-log correlation fields (kid/tenant/service), the warn-spy test pair, and code-comment retargeting. #1773 stays open until #1843 lands.
+
+**Why**: atc-main (signer) auto-deploys on dev-merge; atc-rag (verifier) deploys manually (#1829) — they never ship from the same commit, so a verifier that hard-required the claims first would 401 in-flight short-TTL (5-min) tokens and break cross-service auth.
+
+**Rejected**: immediate hard-require (cross-service outage risk); env-tunable iss/aud values (drift risk between services + touches the secrets path).
+
+**Related artifacts**: PR #1842; `packages/contracts/src/service-jwt.ts`; `apps/main/src/lib/rag-auth/sign-service-jwt.ts`; `apps/rag/src/lib/auth/verify-service-jwt.ts`; issues #1773 (open), #1843, #1829.
+
+---
+
 ## D-339 — 2026-07-12 — Bounded-concurrency convention for N+1 fixes (per-app helper, no shared package, no p-limit)
 
 **Decision**: Serial-await fixes use per-app `mapWithConcurrency` copies (`apps/main` and `apps/rag` each have `src/lib/async/with-concurrency.ts`) rather than a shared workspace package. Defaults: unbounded `Promise.all` only for small/bounded collections; limit 5–20 for unbounded or service-hammering loops; `Promise.allSettled` with applied/failed reporting where the writes form a cohesive config read together downstream. Each copy carries its own drift-pin test.
