@@ -28,6 +28,30 @@ Newest entries on top.
 
 ---
 
+## D-353 — 2026-07-13 — Follow-up sweep: 10 PRs merged, 11 issues closed; §20.7 disclosure family fail-closed end-to-end; §6.10 spec-bounds violation caught pre-merge
+
+**Decision:** Operator directive "Work in the follow ups" executed: PRs #1899 #1900 #1902 #1903 #1905 #1906 #1907 #1908 #1910 #1915 merged; issues closed: #1895 #1887 #1826 #1885 #1893 #1873 #1888 #1877 #1882 #1883 (+#1856 family complete except #1876's nonexistent confirmation-email surface). Operator decisions recorded per-item on the issues (#1888 admin editor; #1826/#1887 sync-path completion).
+
+**Notable audit catches:** #1906 shipped validation bounds up to 10× looser than §6.10's range table (adjustment cap 1.0 vs spec 0.5) — caught by pre-pr reading the spec, fixed with inside-old-outside-spec boundary tests; #1907's quote-accept gate ordering verified writes-after-gate (no stranded quotes). New issues from findings: #1901 (rollover audit-row dedup, needs migration), #1904, #1909 (zero-row UPDATE no-op in both settings routes), #1912 (email-templates flake — 3 CI/local sightings in one day), #1913, #1914.
+
+**Rejected:** closing #1876 with 3 of 4 surfaces (email template doesn't exist — remainder tracked); per-key error isolation in reconcile (pins the accepted abort-on-first-failure design instead).
+
+**Related:** D-350 (sweep #3), #1911 (operator manual steps).
+
+---
+
+## D-354 — 2026-07-13 — GitHub hardening applied: main protected, Dependency Review required, GHAS discipline runbook'd; merge queue BLOCKED (user-owned repo) but its groundwork kills the test-DB ledger-orphan class
+
+**Decision:** From the #1896 audit walkthrough (operator decisions per item): `main` now has classic protection + a `main-pr-only` ruleset (PR-required, 0 approvals — pipeline-compatible; NOTE: discovered no workflow promotes main at all, contradicting CLAUDE.md's description — open question #1911 item 4). `Dependency Review` (actions/dependency-review-action, fail-on-severity high, dev + release/*) is the 11th required check. Issue forms adopted. GHAS-comment disposition is now a runbook step (pr-workflow.md/triage.md, PR #1908). docs/cicd/github-features-audit.md records adopt/reject for all 11 features.
+
+**Merge queue:** GitHub rejects the merge_queue ruleset rule on user-owned repos — enabling it requires transferring the repo to an organization (operator decision, no urgency). The groundwork merged anyway (PR #1915): test-DB reset-per-run via the RESET_TARGET_DB_URL contract (the env var NAME is the safety boundary — only ever bind it to SUPABASE_TEST_DB_URL; the script hard-stops without CONFIRM_TEST_DB_RESET), shared-test-db concurrency group (mitigates #1904), and merge_group triggers (inert, ready). **The reset removes the migration-PR merge-train ordering constraint entirely** — sibling migration PRs no longer fail on each other's ledger rows.
+
+**Rejected:** enabling auto-merge for agent PRs (would bypass the GHAS/audit-review checkpoint); artifact attestations (Vercel-CLI deploy model has no attachable artifact); generic secret patterns (false-positive cost).
+
+**Related:** #1896 (stays open pending operator items in #1911), D-352, PRs #1908 #1910 #1915.
+
+---
+
 ## D-352 — 2026-07-13 — GHAS PR comments are now dispositioned before every merge; custom sanitizers must be CodeQL-recognizable
 
 **Decision:** Operator surfaced that the merge flow gated on check statuses only and ignored `github-advanced-security[bot]` inline comments. New discipline (durable change tracked in #1896): before merging, list the bot's comments on the PR and disposition each (fix in-PR, or dismiss the alert with a reason per triage-runbook location policy). Immediately caught: predictable `/tmp` output paths for operator-applied SQL (#1890, alerts 101/102) and a CodeQL-unrecognized sanitizer (#1897 — `sanitizeForLog`'s `String.fromCharCode`-built control-char class is invisible to CodeQL's taint tracking; appended a literal `.replace(/[\r\n]+/g, " ")` no-op so the heuristic recognizes it — the WHY comment in sanitize.ts is load-bearing, do not "clean it up").

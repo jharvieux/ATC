@@ -1,26 +1,29 @@
-# Session state — last updated 2026-07-13 ~14:00 UTC (issue-sweep #3 complete)
+# Session state — last updated 2026-07-13 ~16:15 UTC (sweep #3 + follow-up sweep + GH hardening complete)
 
 ## Just completed
-- **Third /issue-sweep**: 15 batches → **15 PRs merged** (#1872 #1874 #1878 #1879 #1880 #1881 #1884 #1886 #1889 #1890 #1891 #1892 #1894 #1897 + fix rounds), **14 issues closed** (#1854 #1844 #1856 #1862 #1860 #1855 #1866 #1865 #1863 #1680 #1875 #1565, plus #1871 dup and alert #100 path). Operator approvals recorded per-item in-session (supervised "all", migrations approved, concurrency 5).
-- Highlights: P1 booking disclosure fail-closed end-to-end (#1878 + follow-ups #1876/#1882/#1883); atomic invitee-cap RPC supersedes the accepted race (#1894, D-351); CI exit-code masking family fixed + RAG suite finally wired into nightly (#1892); 3 migrations landed (unique-index dedup, 4 FK indexes, reserve RPC); #1855 proven a phantom — real GroupInviteView TZ bug fixed instead; GHAS-comment discipline added mid-sweep at operator request (D-352, #1896) and immediately caught 2 real items.
-- Ops issues created from the morning list: #1868 (VERCEL_RAG_PROJECT_ID secret), #1869 (promote integration-tests-critical to required), #1870 (GitGuardian resolutions).
-- Code-scanning: #100 fixed (PR #1897), #97–#99 dismissed with reasons, 101/102 fixed in #1890.
-- MEMORY: D-350–D-352 prepended (this PR).
+- **Sweep #3** (D-350–D-352): 16 PRs merged, 14 issues closed, 5 real defects caught pre-merge. GHAS-comment discipline added mid-sweep at operator request.
+- **Follow-up sweep** (D-353): 10 more PRs merged (#1899 #1900 #1902 #1903 #1905 #1906 #1907 #1908 #1910 #1915), 11 issues closed. Operator decisions executed: #1888 feedback-settings admin editor, #1826/#1887 rag-sync completion, §20.7 disclosure family fail-closed on all existing surfaces.
+- **GH hardening** (D-354, from the #1896 audit walkthrough): `main` protected (classic + main-pr-only ruleset); **Dependency Review is the 11th required check on dev**; issue forms live; GHAS-comment disposition in pr-workflow.md/triage.md; docs/cicd/github-features-audit.md records all 11 adopt/reject calls.
+- **Merge queue: platform-blocked** (user-owned repo — needs an org transfer), but PR #1915's groundwork merged: test-DB reset-per-run (RESET_TARGET_DB_URL contract) **removes the migration merge-train ordering constraint**, shared-test-db concurrency group, merge_group triggers (inert, ready).
+- Day total: **26 PRs merged, ~25 issues closed.**
 
 ## In flight
-- Nothing in flight — clean checkpoint once this docs PR merges. Sweep ledger deleted after.
+- Nothing in flight — clean checkpoint once this docs PR merges.
 
 ## Next step
-1. Operator: work the morning-list ops issues #1868 / #1869 / #1870 (all manual).
-2. Watch the FIRST nightly run with the RAG suite active (#1892): schema-drift risk tracked in #1893 (no migration-push step for the RAG test DB yet).
-3. Prod apply of the three new migrations is operator-gated (runbook §6): 20260722000020/21/22 merged to dev but not applied to prod.
+1. Operator works #1911 (validity-checks UI toggle, Copilot Autofix check, optional Vercel env sanity check, and the main-promotion decision: vestigial-doc-fix vs pipeline promotion step).
+2. Operator ops issues #1868/#1869/#1870 (RAG deploy secret, promote integration-tests-critical, GitGuardian resolutions).
+3. Watch tonight's nightly: first run with the RAG suite + RAG DB migration-push + reset-per-run active (#1892/#1903/#1915). Schema-drift vs test-failure now separated in the issue body.
+4. Prod apply of the day's four migrations is operator-gated (runbook §6): 20260722000020/21/22/23.
 
 ## Blocked on user
-- #1868/#1869/#1870 (ops, manual).
-- Decision issues still open: #1888 (feedback_* admin writer or DB-edit-only), #1812 convention canon (destructure-before-return vs #1791 style — comment on issue), #1858 deferred until real payments, #1805 deferred.
-- Remaining supervised/dedicated-session backlog unchanged: #1585 #1523 #1623 #1740 #1247 #1358 #1728 #1724 #1782(210-index audit remainder).
+- #1911 (manual GH settings + main decision), #1868–#1870 (ops).
+- Merge-queue adoption now = org-transfer decision (no urgency; recorded on #1896).
+- Open decision issues: #1858 (deferred until real payments), #1805 (deferred).
+- Dedicated-session backlog unchanged: #1585 #1523 #1623 #1740 #1247 #1358 #1728 #1724 #1782(210-index audit).
 
 ## Open questions
-- #1470 stays open pending proof the nightly actually executes the RAG suite post-#1892 (then close).
-- #1887 gates #1826's closure (SYNC_ELIGIBLE_KEYS expansion; source_revision guard note recorded on the issue).
-- #1896: GHAS-comment runbook change + unused-GitHub-features audit (merge queue would replace the manual update-branch merge train — biggest win).
+- #1876 stays open: booking-confirmation EMAIL template doesn't exist yet — when authored it must carry the §20.7 disclosure fail-closed.
+- #1912: email-templates characterization test flaked 3× on 2026-07-13 (blocks CI randomly) — worth early attention; it's the #1812 rewrite's safety net.
+- #1901 (rollover audit-row dedup migration), #1909 (settings routes zero-row UPDATE no-op), #1913/#1914 (post-#1915 optional hardening).
+- #1812 convention canon question (destructure-before-return vs #1791 style) still awaits a call — comment on the issue.
