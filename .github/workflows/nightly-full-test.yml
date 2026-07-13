@@ -112,13 +112,19 @@ jobs:
         # Tee console output (default reporter) to a file so the issue-open step
         # can grep it for vitest's unhandled-error banner (#1833) — the JSON
         # reporter's output has no field for those, they only ever reach stdout.
-        # `$?` below still reflects the vitest exit code because GH Actions runs
-        # `run:` blocks with `-eo pipefail` by default (only the explicit
-        # `set +e` below disables errexit; pipefail from `$?` stays intact).
+        # This workflow has no `shell:` key, so GH Actions runs `run:` blocks
+        # with the implicit default `bash -e {0}` — NOT `-eo pipefail`
+        # (`shell: bash` would add `-o pipefail`, but we don't declare it).
+        # Without pipefail, `$?` after a pipe reflects `tee`'s exit code, not
+        # vitest's, so a failing suite piped through `tee` always looks like
+        # success. Read `${PIPESTATUS[0]}` instead — the bash array holding
+        # each pipeline component's exit status, index 0 = vitest — so a
+        # green `tee` can never mask a red test run (regression: tonight's
+        # run 29227645576 reported success on a real 1-failed suite).
         run: |
           set +e
           pnpm vitest run --reporter=default --reporter=json --outputFile=vitest-report.json --no-file-parallelism 2>&1 | tee vitest-console.log
-          STATUS=$?
+          STATUS=${PIPESTATUS[0]}
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
 
