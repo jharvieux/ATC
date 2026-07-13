@@ -18,7 +18,11 @@
 //   7. Any other error                         → internal          500
 
 import { importSPKI, jwtVerify, type JWTPayload } from "jose";
-import type { ServiceJwtClaims } from "@atc/contracts";
+import {
+  SERVICE_JWT_AUDIENCE,
+  SERVICE_JWT_ISSUER,
+  type ServiceJwtClaims,
+} from "@atc/contracts";
 import { getRagDb } from "@/lib/db/supabase";
 import { getRedis } from "@/lib/redis/client";
 
@@ -130,6 +134,38 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
   } catch (err) {
     if (err instanceof ServiceAuthError) throw err;
     throw new ServiceAuthError("signature_invalid", 401);
+  }
+
+  // Step 2.5: iss/aud defense-in-depth (#1773)
+  // A present claim MUST match the expected value — this is the fail-closed
+  // half: a key reused to mint tokens for another service carries that
+  // service's iss/aud (or none) and is rejected here. Absent claims are
+  // tolerated during the rollout window: the signer (atc-main) and this
+  // verifier (atc-rag) are separate Vercel apps deploying at different times,
+  // so short-TTL tokens minted by a not-yet-upgraded signer can still be in
+  // flight when this code goes live. The strict flip — hard-reject absence —
+  // is the #1773 follow-up, done once both services carry the claims.
+  // Read as widened strings: payload is untrusted, so the mismatch branches
+  // must stay live (the schema's literal iss/aud types would otherwise narrow
+  // these to the trusted values and make the checks statically dead).
+  const issClaim: string | undefined = payload.iss;
+  const audClaim: string | string[] | undefined = payload.aud;
+  const audValues = Array.isArray(audClaim)
+    ? audClaim
+    : audClaim !== undefined
+      ? [audClaim]
+      : [];
+  if (issClaim !== undefined && issClaim !== SERVICE_JWT_ISSUER) {
+    throw new ServiceAuthError("signature_invalid", 401, "iss mismatch");
+  }
+  if (audValues.length > 0 && !audValues.includes(SERVICE_JWT_AUDIENCE)) {
+    throw new ServiceAuthError("signature_invalid", 401, "aud mismatch");
+  }
+  if (issClaim === undefined || audValues.length === 0) {
+    console.warn(
+      "[verifyServiceJwt] token missing iss/aud claims — allowing during #1773 rollout; " +
+        "will hard-reject once the strict flip lands",
+    );
   }
 
   // Step 3: Verify exp/iat within ±5-minute window

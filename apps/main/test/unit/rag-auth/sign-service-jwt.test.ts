@@ -10,7 +10,11 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { ServiceJwtClaimsSchema } from "@atc/contracts";
+import {
+  ServiceJwtClaimsSchema,
+  SERVICE_JWT_AUDIENCE,
+  SERVICE_JWT_ISSUER,
+} from "@atc/contracts";
 import {
   signServiceJwt,
   _resetSigningKeyCacheForTests,
@@ -94,6 +98,22 @@ describe("signServiceJwt", () => {
       user_id: "user-1",
       persona_id: null,
     });
+  });
+
+  it("sets iss='atc-main' and aud='atc-rag' on every token (#1773)", async () => {
+    // Defense-in-depth: the rag verifier rejects a token whose iss/aud don't
+    // match. If the signer ever stopped stamping these (or stamped the wrong
+    // values), cross-service auth would silently fail once the verifier's
+    // strict flip lands — this pins the exact protocol constants.
+    const jwt = await signServiceJwt({
+      tenant_id: "00000000-0000-0000-0000-000000000001",
+      scope: "read",
+    });
+    const payload = JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString("utf8"));
+    expect(payload.iss).toBe(SERVICE_JWT_ISSUER);
+    expect(payload.iss).toBe("atc-main");
+    expect(payload.aud).toBe(SERVICE_JWT_AUDIENCE);
+    expect(payload.aud).toBe("atc-rag");
   });
 
   it("respects ttl_seconds override", async () => {
