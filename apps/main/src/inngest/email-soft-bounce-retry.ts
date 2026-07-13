@@ -34,7 +34,17 @@ export const emailSoftBounceRetry = inngest.createFunction(
         sendEmail,
         sleep: (id, hours) => step.sleep(id, `${hours}h`),
         scheduleNext: (payload) =>
-          inngest.send({ name: "email/soft.bounce.retry", data: payload }).then(() => undefined),
+          inngest
+            .send({
+              // Deterministic id → a duplicate scheduleNext for the same attempt
+              // (crash-resume re-running the post-claim work) is dropped by Inngest,
+              // so the escalation chain can't compound. Distinct attempts carry
+              // distinct ids, so legitimate progression is never deduped.
+              id: `soft-retry:${payload.email_log_id}:attempt:${payload.attempt}`,
+              name: "email/soft.bounce.retry",
+              data: payload,
+            })
+            .then(() => undefined),
       },
       parsed.data,
     );

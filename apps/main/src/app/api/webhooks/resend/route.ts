@@ -109,6 +109,12 @@ export async function POST(req: Request): Promise<Response> {
           .eq("id", logId), "email_log.update");
         if (!isRetrySend) {
           await inngest.send({
+            // Deterministic id → Inngest dedupes a Svix REDELIVERY of this bounce to
+            // a single retry-chain start (installed inngest@4 MinimalEventPayload.id:
+            // "if an event with the same ID is sent again, it will not invoke
+            // functions"). Without it, two concurrent attempt-1 runs would race the
+            // completion marker and compound scheduleNext down the whole chain.
+            id: `soft-retry:${logId}:attempt:1`,
             name: "email/soft.bounce.retry",
             data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
           });

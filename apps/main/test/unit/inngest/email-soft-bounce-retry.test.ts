@@ -44,6 +44,7 @@ interface ContentRow {
   user_id: string | null;
   contact_id: string | null;
   claimed_attempt: number;
+  completed_attempt: number | null;
   last_send_log_id: string | null;
 }
 interface LogRow { id: string; status: string; retry_of: string | null }
@@ -71,6 +72,7 @@ function makeState(overrides: Partial<ContentRow> = {}): State {
         user_id: "u-1",
         contact_id: null,
         claimed_attempt: 0,
+        completed_attempt: null,
         last_send_log_id: null,
         ...overrides,
       },
@@ -330,26 +332,25 @@ describe("§23.7 soft-bounce retry — terminal write ordering (crash recovery)"
 });
 
 describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim resume", () => {
-  // The CAS claim is RE-ENTRANT, not a hard skip. A duplicate delivery of the
-  // same attempt re-enters the post-claim work rather than short-circuiting on
-  // claim_lost — because a hard skip strands the chain forever if the ORIGINAL
-  // run crashed after advancing the claim but before scheduling the next attempt
-  // (no next attempt, no terminal suppress: the escalation silently dies). No
-  // customer double-send results: every re-send for a given attempt carries the
-  // SAME deterministic Idempotency-Key, which Resend no-ops on replay. D-091 #23
-  // (the idempotency key) is the authoritative send-dedup; the CAS claim only
-  // orders attempts, it is not the delivery guard.
-  it("a duplicate attempt event re-enters with the identical Idempotency-Key (Resend dedups the replay)", async () => {
+  // The CAS claim ORDERS attempts; completed_attempt is the completion marker that
+  // decides what a zero-row claim means. A duplicate of an attempt that already ran
+  // to completion (completed_attempt >= attempt) must return claim_lost WITHOUT
+  // re-sending — a re-send would insert an orphaned email_log row and bump the sent
+  // counter, neither of which the Resend Idempotency-Key dedupes (it dedupes only
+  // the vendor delivery). This is the round-2 audit fix: the old re-entrant path
+  // re-ran sendEmail on every such duplicate.
+  it("a completed attempt's duplicate event returns claim_lost with NO second send", async () => {
     const state = makeState();
     const { deps, calls } = makeDeps(state, ["soft_bounced", "soft_bounced"]);
     const payload = { email_log_id: "orig", tenant_id: "t-1", attempt: 1 };
     const first = await runSoftBounceRetryAttempt(deps, payload);
-    // Redeliver the SAME attempt-1 event (webhook double-fire / Inngest replay).
+    // Redeliver the SAME attempt-1 event AFTER it fully completed.
     const second = await runSoftBounceRetryAttempt(deps, payload);
     expect(first).toBe("resent");
-    expect(second).toBe("resent");
-    // Both re-sends carry the SAME per-attempt key → Resend delivers at most once.
-    expect(calls.map((c) => c.idempotencyKey)).toEqual(["soft-retry:orig:1", "soft-retry:orig:1"]);
+    expect(second).toBe("claim_lost");
+    // Exactly one real send — the completion marker stops the orphaned re-send.
+    expect(calls).toHaveLength(1);
+    expect(state.content[0]!.completed_attempt).toBe(1);
   });
 
   // Finding 2 — the crash this re-entrancy exists to survive. A run advances the

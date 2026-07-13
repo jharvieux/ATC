@@ -11,9 +11,22 @@
 // status on the re-send rows (which the chain reads) and, crucially, does NOT
 // start a fresh chain for re-send rows (gated on email_log.retry_of). Re-sends
 // go back through sendEmail so they inherit suppression / rate-limit / staging
-// isolation, and carry a deterministic Idempotency-Key per attempt so a crash /
-// duplicate event can't double-send (D-091 #23). A DB CAS claim on
-// claimed_attempt is the belt-and-suspenders (D-091 #21).
+// isolation.
+//
+// Duplicate-send defense is TWO layers, because they cover DIFFERENT things:
+//   - The deterministic per-attempt Resend Idempotency-Key dedupes only the
+//     VENDOR DELIVERY (D-091 #23) — Resend won't physically re-transmit the
+//     message. It does NOT cover sendEmail's own DB bookkeeping: a re-run still
+//     inserts a fresh email_log row and bumps incrementEmailSent. So the key
+//     alone does not make a re-run harmless.
+//   - completed_attempt (written AFTER scheduleNext succeeds) is the completion
+//     marker that stops a re-run of an ALREADY-FINISHED attempt from reaching
+//     sendEmail again — that's what prevents the orphaned email_log row + spurious
+//     counter bump. claimed_attempt (D-091 #21) orders attempts and identifies the
+//     genuine crash-mid-attempt case that MUST resume. Concurrent duplicates of the
+//     same attempt (a Svix webhook redelivery, a compounded scheduleNext) are
+//     collapsed upstream by a deterministic Inngest event id, so the completion
+//     marker only ever arbitrates sequential Inngest function-retries.
 //
 // This module holds the pure logic (dependency-injected sleep / send / schedule)
 // so it's testable without the Inngest step runtime; inngest/email-soft-bounce-retry.ts
@@ -221,23 +234,27 @@ export async function runSoftBounceRetryAttempt(
     .eq("claimed_attempt", attempt - 1)
     .select("email_log_id");
   if (!Array.isArray(claimedRows) || claimedRows.length === 0) {
-    // Zero-row claim is ambiguous: either a genuine duplicate/out-of-order event
-    // (another run owns a LATER attempt), or a re-entrant resume — a prior run for
-    // THIS attempt advanced claimed_attempt then crashed before finishing the send
-    // and scheduleNext, so the CAS predicate (claimed_attempt == attempt-1) no
-    // longer matches. Re-read to tell them apart. If this exact attempt is already
-    // claimed, fall through and re-run the post-claim work: sendEmail is idempotent
-    // (deterministic per-attempt Idempotency-Key → no-op re-send at Resend) and the
-    // last_send_log_id update is idempotent, so resuming is safe — and it MUST
-    // resume, else scheduleNext never fires and the escalation chain dies silently.
+    // Zero-row claim is ambiguous. Two DB signals disambiguate it — completed_attempt
+    // (written only AFTER scheduleNext lands) and claimed_attempt:
+    //   - completed_attempt >= this attempt → the attempt (or a later one) already
+    //     ran to completion. Re-running would insert an orphaned email_log row and
+    //     bump the sent counter, neither of which the Resend Idempotency-Key dedupes,
+    //     so we must NOT re-send → claim_lost.
+    //   - claimed_attempt == this attempt but completed_attempt < it → genuine
+    //     crash-resume: a prior run claimed this attempt then died before finishing
+    //     the send + scheduleNext. Resume, or the escalation chain dies silently.
+    //   - otherwise another run owns a different attempt → claim_lost.
     const { data: freshRow } = await db
       // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
       .from("email_retry_content")
-      .select("claimed_attempt")
+      .select("claimed_attempt, completed_attempt")
       .eq("email_log_id", email_log_id)
       .maybeSingle();
-    const currentAttempt = (freshRow as { claimed_attempt?: number } | null)?.claimed_attempt ?? -1;
-    if (currentAttempt !== attempt) return "claim_lost";
+    const fresh = freshRow as { claimed_attempt?: number; completed_attempt?: number | null } | null;
+    const claimedNow = fresh?.claimed_attempt ?? -1;
+    const completedNow = fresh?.completed_attempt ?? -1;
+    if (completedNow >= attempt) return "claim_lost";
+    if (claimedNow !== attempt) return "claim_lost";
   }
 
   const tenant = await loadTenantForSend(db, tenant_id);
@@ -251,7 +268,10 @@ export async function runSoftBounceRetryAttempt(
     template_id: content.template_id,
     category: content.email_category as EmailCategory,
     html: content.html,
-    // Deterministic per attempt so a replay/duplicate dedups at Resend (#23).
+    // Deterministic per attempt: dedupes the Resend DELIVERY only (#23) — the
+    // email_log row + sent counter this call writes are NOT deduped by the key;
+    // completed_attempt (written below, after scheduleNext) is what keeps a
+    // finished attempt from re-running and orphaning a row.
     idempotencyKey: `soft-retry:${email_log_id}:${attempt}`,
     // Mark as a re-send: no new retry chain, no new stored payload.
     retry_of: email_log_id,
@@ -283,5 +303,18 @@ export async function runSoftBounceRetryAttempt(
   // we still advance the chain so a later attempt can try again.
 
   await scheduleNext({ email_log_id, tenant_id, attempt: attempt + 1 });
+  // Completion marker — written LAST, only once the next attempt is scheduled. A
+  // re-entrant duplicate of this attempt then reads completed_attempt >= attempt
+  // and returns claim_lost instead of re-sending. Ordering is load-bearing: a
+  // crash before scheduleNext leaves completed_attempt < attempt, preserving the
+  // crash-resume path above.
+  await safeAwait(
+    db
+      // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
+      .from("email_retry_content")
+      .update({ completed_attempt: attempt })
+      .eq("email_log_id", email_log_id),
+    "email_retry_content.update.completed_attempt",
+  );
   return "resent";
 }

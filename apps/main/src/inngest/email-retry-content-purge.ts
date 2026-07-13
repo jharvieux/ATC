@@ -37,6 +37,7 @@ export const emailRetryContentPurge = inngest.createFunction(
     // work per run; the remainder is caught on the next hourly run.
     const cutoff = new Date().toISOString();
     let purged = 0;
+    let capped = false;
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const { data: rows, error: selErr } = await svc
         // d091-allow:service-role-tenant global TTL retention sweep — deliberately cross-tenant (purge every tenant's expired PII); service-role only, PK-projected.
@@ -60,6 +61,16 @@ export const emailRetryContentPurge = inngest.createFunction(
       }
       purged += count ?? ids.length;
       if (ids.length < DELETE_BATCH) break;
+      // Reached the batch bound with a still-full final batch → backlog remains.
+      if (batch === MAX_BATCHES - 1) capped = true;
+    }
+    if (capped) {
+      // Persistent capping means expired PII is outliving its TTL window across
+      // hourly runs — operators should alert on this, not just watch it recur.
+      console.warn(
+        `[email-retry-content-purge] hit MAX_BATCHES=${MAX_BATCHES} (purged=${purged}); expired rows remain past TTL. The next hourly run continues, but a persistent cap means PII is outliving its retention window.`,
+      );
+      return { purged, capped: true };
     }
     return { purged };
   },
