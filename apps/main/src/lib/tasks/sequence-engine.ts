@@ -8,12 +8,15 @@
 // Status: the engine is complete and downstream task-sequence-step-fire
 // Inngest job consumes its emitted events. The CRM-side TRIGGER call
 // sites (contact create, quote send/accept, booking create/confirm)
-// don't yet call this — that fan-out is the remaining BP37 work,
-// scheduled alongside CRM pipeline-transition refactors. Don't delete
-// the file; it's the destination of those future trigger calls.
+// call this via triggerMatchingSequences.
+//
+// §37.10 tier gate: sequences are unavailable to the byo_research tier.
+// The gate is enforced here in the firing path (fail-closed) so every
+// trigger call site is covered by construction.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
+import { assertSequencesAvailable } from "@/lib/tasks/tier-gate";
 
 export type TriggerRecordRef =
   | { contact_id: string }
@@ -51,6 +54,9 @@ export async function triggerMatchingSequences(args: {
   svc: Pick<SupabaseClient, "from">;
 }): Promise<{ runs_started: number }> {
   const { tenant_id, trigger, record, triggered_by_user_id, svc } = args;
+
+  const gate = await assertSequencesAvailable(tenant_id, svc);
+  if (!gate.ok) return { runs_started: 0 };
 
   const { data: sequences, error } = await svc
     .from("task_sequences")

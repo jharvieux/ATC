@@ -33,6 +33,11 @@ export const emailSoftBounceRetry = inngest.createFunction(
         db,
         sendEmail,
         sleep: (id, hours) => step.sleep(id, `${hours}h`),
+        // step.run's real return type is Promise<Jsonify<T>> (the durable
+        // boundary round-trips through JSON) — structurally compatible with our
+        // plain-JSON EmailSendResult, but not nominally Promise<T>. Cast confined
+        // to this one Inngest-coupled line; the pure lib stays Inngest-free.
+        runStep: (id, fn) => step.run(id, fn) as unknown as ReturnType<typeof fn>,
         scheduleNext: (payload) =>
           inngest
             .send({

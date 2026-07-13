@@ -1,0 +1,16 @@
+stdout | apps/main/test/unit/lib/some-suite.test.ts > example test
+  [32m✓[39m passes fine (3ms)
+
+[31mVitest caught 1 unhandled error during the test run[39m
+[31mThis error originated in "apps/main/test/unit/lib/some-suite.test.ts" test file.[39m
+[31mIt likely means the error was thrown, while the test was not waiting for this error.[39m
+Error: connect failed for postgres://ci_user:not_a_real_password_1234@fake-db.example.internal:5432/testdb
+  Authorization: Bearer fake-test-token-abcdef123456 rejected by upstream
+    at Object.connect (apps/main/src/lib/db/client.ts:42:11)
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at processTicksAndRejections (node:internal/process/task_queues:96:5)
+
+ [2mThis error originated in "apps/main/test/unit/lib/some-suite.test.ts".[22m
+
+Test Files  1 failed (1)
+     Tests  0 failed | 3 passed (3)

@@ -1,0 +1,25 @@
+{
+  "numTotalTestSuites": 1,
+  "numTotalTests": 2,
+  "testResults": [
+    {
+      "name": "apps/main/test/unit/lib/example.test.ts",
+      "status": "failed",
+      "message": "",
+      "assertionResults": [
+        {
+          "ancestorTitles": ["exampleFn"],
+          "fullName": "exampleFn returns the expected value",
+          "title": "returns the expected value",
+          "status": "passed"
+        },
+        {
+          "ancestorTitles": ["exampleFn", "edge cases"],
+          "fullName": "exampleFn edge cases throws on invalid input",
+          "title": "throws on invalid input",
+          "status": "failed"
+        }
+      ]
+    }
+  ]
+}

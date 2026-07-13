@@ -1,0 +1,12 @@
+{
+  "numTotalTestSuites": 1,
+  "numTotalTests": 0,
+  "testResults": [
+    {
+      "name": "apps/main/test/unit/lib/broken-hook.test.ts",
+      "status": "failed",
+      "message": "Error: beforeAll hook failed: connection refused\n    at setup (broken-hook.test.ts:5:3)\n    at runHook (vitest/dist/entry.js:120:11)",
+      "assertionResults": []
+    }
+  ]
+}
