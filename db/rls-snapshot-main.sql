@@ -44,6 +44,7 @@
 -- public.destination_images (rls_enabled)
 -- public.destination_images_cache (rls_enabled)
 -- public.email_log (rls_enabled)
+-- public.email_retry_content (rls_enabled)
 -- public.email_suppressions (rls_enabled)
 -- public.escalation_topics (rls_enabled)
 -- public.feature_requests (rls_enabled)
@@ -586,6 +587,20 @@ CREATE POLICY "email_log_select" ON public.email_log
    FROM users
   WHERE users.id = (( SELECT auth.uid() AS uid)))));
 CREATE POLICY "email_log_update_service" ON public.email_log
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.email_retry_content
+CREATE POLICY "email_retry_content_delete_service" ON public.email_retry_content
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "email_retry_content_insert_service" ON public.email_retry_content
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "email_retry_content_select_service" ON public.email_retry_content
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "email_retry_content_update_service" ON public.email_retry_content
   FOR UPDATE TO PUBLIC
   USING (false);
 

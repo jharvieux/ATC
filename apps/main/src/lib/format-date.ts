@@ -13,6 +13,13 @@ const STYLE_OPTIONS: Record<DateDisplayStyle, Intl.DateTimeFormatOptions | undef
   long: { weekday: "long", month: "long", day: "numeric" }, // e.g. "Monday, January 5"
 };
 
+// Date-only strings ("2026-07-06", a Postgres DATE column like sailing_date)
+// parse as UTC midnight per the ISO 8601 spec, but toLocaleDateString renders
+// in the browser's local timezone — a negative-UTC-offset browser rolls that
+// back to the previous calendar day. Render these in UTC so the displayed
+// date matches the stored date everywhere (#1768).
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 export function formatDate(
   iso: string | number | Date | null | undefined,
   style: DateDisplayStyle = "numeric",
@@ -20,5 +27,8 @@ export function formatDate(
   if (iso == null) return "—";
   const date = iso instanceof Date ? iso : new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", STYLE_OPTIONS[style]);
+  const options = typeof iso === "string" && DATE_ONLY.test(iso)
+    ? { ...STYLE_OPTIONS[style], timeZone: "UTC" }
+    : STYLE_OPTIONS[style];
+  return date.toLocaleDateString("en-US", options);
 }

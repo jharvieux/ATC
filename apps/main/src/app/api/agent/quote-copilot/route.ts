@@ -14,7 +14,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
-import { fromCents, type Cents } from "@/lib/money";
+import { fromCents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -176,7 +176,7 @@ export async function POST(req: Request): Promise<Response> {
 function money(amount: number | bigint | null | undefined, currency: string | null): string {
   if (amount === null || amount === undefined) return "—";
   const cents = typeof amount === "bigint" ? amount : BigInt(amount);
-  return `${currency ?? "USD"} ${fromCents(cents as Cents)}`;
+  return `${currency ?? "USD"} ${fromCents(cents)}`;
 }
 
 function strOrDash(s: string | null | undefined): string {

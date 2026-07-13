@@ -156,6 +156,7 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["bookings", "modify"],
   ["bookings", "submit"],
   ["bookings", "update"],
+  ["bookings", "resolve_review"],
   ["quotes", "accept"],
   ["quotes", "create"],
   ["quotes", "send"],

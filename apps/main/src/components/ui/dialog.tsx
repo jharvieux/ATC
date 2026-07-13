@@ -21,13 +21,23 @@ function Dialog({ open: controlledOpen, onOpenChange, children }: DialogProps) {
   const [internalOpen, setInternalOpen] = React.useState(false);
   const open = controlledOpen ?? internalOpen;
 
-  function setOpen(next: boolean) {
-    onOpenChange?.(next);
-    if (controlledOpen === undefined) setInternalOpen(next);
-  }
+  // #1793 — stable identity so DialogContent's escape-key effect doesn't
+  // re-register on every render, and so the provider value below is stable.
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      onOpenChange?.(next);
+      if (controlledOpen === undefined) setInternalOpen(next);
+    },
+    [controlledOpen, onOpenChange],
+  );
+
+  // #1793 — was a fresh object literal every render, so every dialog
+  // consumer (DialogTrigger/Content/Close) re-rendered on unrelated parent
+  // updates. Memoized so context identity only changes when open/setOpen do.
+  const value = React.useMemo(() => ({ open, setOpen }), [open, setOpen]);
 
   return (
-    <DialogContext.Provider value={{ open, setOpen }}>
+    <DialogContext.Provider value={value}>
       {children}
     </DialogContext.Provider>
   );
@@ -63,8 +73,8 @@ function DialogContent({
   const { open, setOpen } = React.useContext(DialogContext);
 
   // open in deps: cleanup fires when the dialog closes, removing the listener.
-  // setOpen changes identity each render but is always functionally equivalent;
-  // the re-registration on each open-state change is harmless.
+  // setOpen has a stable identity (see Dialog's useCallback), so this only
+  // re-registers on actual open-state changes.
   React.useEffect(() => {
     if (!open) return;
     function handleKey(e: KeyboardEvent) {

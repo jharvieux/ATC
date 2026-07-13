@@ -10,6 +10,15 @@
 //   net_commission_cents   = subtractFee(gross_commission_cents, host_booking_fee_cents)
 //   platform_retained_cents = multiplyRate(net_commission_cents, platform_split_rate)
 //   subhost_payable_cents   = subtractFee(net_commission_cents, platform_retained_cents)
+//
+// #1777 — submitBooking() below orchestrates the pipeline as a sequence of named
+// steps (load+lock → DOB gate → tenant/split → adapter/rate → rate gate →
+// commission compute → quote pricing → host dispatch → persist+commit → side
+// effects). The draft→submitting lock is reverted ONLY on the pre-host-call
+// failure steps (DOB gate, tenant lookup, host dispatch), each via the single
+// revertSubmitLock helper; post-host failures route to pending_host_review and
+// MUST NOT revert (see #1577). Keeping each step small confines the
+// "did this branch forget to revert?" question to a few lines instead of 499.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -61,6 +70,21 @@ type FeeConfigRow = {
   percent_of_commission: number | string | null;
 };
 
+type Db = ReturnType<typeof tenantClient>;
+type AdminDb = ReturnType<typeof createServiceRoleClient>;
+type SelectedAdapter = Awaited<ReturnType<typeof selectAdapterForCall>>;
+
+// §14.3 commission money bundle, computed once and threaded into the commit RPC.
+type CommissionComputation = {
+  fare: Cents;
+  gross_commission_cents: Cents;
+  host_booking_fee_cents: Cents;
+  host_booking_fee_rule_ref: string | null;
+  net_commission_cents: Cents;
+  platform_retained_cents: Cents;
+  subhost_payable_cents: Cents;
+};
+
 // §12.6 host booking fee, locked at submission (§14.3). `flat` is a dollar
 // amount (NUMERIC dollars → cents via dollarsToCents); `percent` is a fraction OF THE GROSS
 // COMMISSION (not the fare). `none` → 0. `tiered` + minimum_commission_threshold
@@ -85,11 +109,7 @@ function resolveHostFeeCents(
 // and the commission-write-failed path, which route to pending_host_review).
 // The .eq("status","submitting") guard makes this a no-op if a concurrent path
 // already moved the row on.
-async function revertSubmitLock(
-  db: ReturnType<typeof tenantClient>,
-  bookingId: string,
-  label: string,
-): Promise<void> {
+async function revertSubmitLock(db: Db, bookingId: string, label: string): Promise<void> {
   await safeAwait(
     db
       // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
@@ -101,203 +121,179 @@ async function revertSubmitLock(
   );
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
-  try {
-    const { ctx, user } = await assertPermission(req, { resource: "bookings", action: "submit" });
-    const { id: bookingId } = await params;
+// Step 1 — load the booking (404 if missing, 422 if not draft) and acquire the
+// D-091 Round-3 #51 CAS lock (draft → submitting) so concurrent submits can't
+// both reach the host adapter call. 0 rows matched → another submit holds the
+// lock → 409. Nothing to revert on any of these exits: the lock isn't held yet.
+// If the process later dies mid-flight the bookings-stuck-submitting-reconcile
+// cron routes the stuck row to 'pending_host_review' (reason 'host_state_unknown'),
+// NEVER back to 'draft', because it cannot prove no live host booking exists (#1577).
+async function loadAndLockBooking(
+  db: Db,
+  bookingId: string,
+): Promise<{ response: Response } | { booking: BookingRow }> {
+  const { data: bookingData, error: bookingError } = await db
+    .from("bookings")
+    .select(
+      "id, tenant_id, status, host_adapter, commissionable_fare_cents, total_amount_cents, currency, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, primary_contact_id",
+    )
+    .eq("id", bookingId)
+    .single();
 
-    // §7.9 — Idempotency-Key support. Wraps the rest of the handler.
-    // If the client sends the same key for the same (route, user) within
-    // 24h, the cached response is replayed and the handler does NOT
-    // re-run. Defends against a retry that lands after the original
-    // network call completed but before the client saw the response.
-    // Bookings/submit is the highest-impact mutation (real money + host
-    // adapter call); this is the first proof-point route to wrap.
-    return await withIdempotencyKey(
-      req,
-      {
-        route: "bookings.submit",
-        auth_user_id: user.id,
-        tenant_id: ctx.tenant_id,
-      },
-      () => submitBooking(req, bookingId, ctx, user),
-    );
-  } catch (err) {
-    return respondToAuthError(err);
+  if (bookingError || !bookingData) {
+    return { response: Response.json({ error: "Booking not found." }, { status: 404 }) };
   }
+  const booking = bookingData as BookingRow;
+  if (booking.status !== "draft") {
+    return { response: Response.json({ error: "Only draft bookings can be submitted." }, { status: 422 }) };
+  }
+
+  const { data: lockRows } = await db
+    .from("bookings")
+    .update({ status: "submitting", updated_at: new Date().toISOString() })
+    .eq("id", bookingId)
+    .eq("status", "draft")
+    .select("id");
+  if (!lockRows || (lockRows as Array<{ id: string }>).length === 0) {
+    return {
+      response: Response.json(
+        { error: "Booking submission already in flight or status changed." },
+        { status: 409 },
+      ),
+    };
+  }
+  return { booking };
 }
 
-async function submitBooking(
-  req: Request,
-  bookingId: string,
-  ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"],
-  user: Awaited<ReturnType<typeof assertPermission>>["user"],
-): Promise<Response> {
+// Step 2 — §20.5 DOB confirmation gate, must clear before the host adapter call.
+// Pre-host exit: release the lock so the agent can resubmit after resolving DOBs
+// (#1577). Non-DOB errors propagate to the outer catch (500, no revert).
+async function runDobGate(db: Db, bookingId: string): Promise<Response | null> {
+  const { assertNoEstimatedDOBs, DOBEstimateUnresolvedError } = await import("@/lib/booking/dob-gate");
   try {
-
-    const db = tenantClient(ctx);
-    const adminDb = createServiceRoleClient();
-
-    // Load the booking
-    const { data: bookingData, error: bookingError } = await db
-      .from("bookings")
-      .select(
-        "id, tenant_id, status, host_adapter, commissionable_fare_cents, total_amount_cents, currency, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, primary_contact_id",
-      )
-      .eq("id", bookingId)
-      .single();
-
-    if (bookingError || !bookingData) {
-      return Response.json({ error: "Booking not found." }, { status: 404 });
-    }
-
-    const booking = bookingData as BookingRow;
-    if (booking.status !== "draft") {
-      return Response.json({ error: "Only draft bookings can be submitted." }, { status: 422 });
-    }
-
-    // D-091 Round-3 #51 — CAS lock to prevent concurrent submits from
-    // both reaching the host adapter call.
-    // Transition draft → submitting atomically; if 0 rows match, another
-    // submit holds the lock. Returns 409 so the client can retry later.
-    // On host-call success the ref is persisted immediately (below) and the
-    // lock transitions to 'submitted'; on host-call failure we revert to
-    // 'draft' so a retry can pick it up. If the process dies mid-flight the
-    // bookings-stuck-submitting-reconcile cron (Vercel, every 5min) routes the
-    // stuck row to 'pending_host_review' (reason 'host_state_unknown') — NEVER
-    // back to 'draft' — because it cannot prove no live host booking exists, and
-    // a resubmit would double-book (#1577). See lib/cron/bookings-stuck-submitting-reconcile.ts.
-    const { data: lockRows } = await db
-      .from("bookings")
-      .update({ status: "submitting", updated_at: new Date().toISOString() })
-      .eq("id", bookingId)
-      .eq("status", "draft")
-      .select("id");
-    if (!lockRows || (lockRows as Array<{ id: string }>).length === 0) {
+    await assertNoEstimatedDOBs(bookingId);
+    return null;
+  } catch (err) {
+    if (err instanceof DOBEstimateUnresolvedError) {
+      await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_dob_gate");
       return Response.json(
-        { error: "Booking submission already in flight or status changed." },
+        { error: "estimated_dob_unresolved", affected_passengers: err.affectedPassengers },
         { status: 409 },
       );
     }
+    throw err;
+  }
+}
 
-    // §20.5 DOB confirmation gate — must clear before host adapter call
-    const { assertNoEstimatedDOBs, DOBEstimateUnresolvedError } = await import("@/lib/booking/dob-gate");
-    try {
-      await assertNoEstimatedDOBs(bookingId);
-    } catch (err) {
-      if (err instanceof DOBEstimateUnresolvedError) {
-        // Pre-host early exit — release the lock so the agent can resubmit
-        // after resolving DOBs (#1577); no host call has happened yet.
-        await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_dob_gate");
-        return Response.json({
-          error: "estimated_dob_unresolved",
-          affected_passengers: err.affectedPassengers,
-        }, { status: 409 });
-      }
-      throw err;
-    }
+// Step 3 — load the tenant (prong, tier, §15.12 sandbox) and resolve
+// platform_split_rate from its tier. Fail CLOSED on read error per D-091 — a
+// null/errored tenant must not silently default to non-sandbox posture (would
+// let a sandboxed tenant's booking reach a real host adapter). Pre-host exit:
+// release the lock (#1577); no host call yet.
+async function loadTenantAndSplitRate(
+  adminDb: AdminDb,
+  db: Db,
+  bookingId: string,
+  tenantId: string,
+): Promise<{ response: Response } | { tenant: TenantRow; platform_split_rate: number | null }> {
+  const { data: tenantData, error: tenantErr } = await adminDb
+    // #1190: the column is tenant_type, not prong (prong was never a column).
+    .from("tenants")
+    .select("id, tenant_type, tier_id, is_sandbox")
+    .eq("id", tenantId)
+    .single();
 
-    // Load the tenant (to determine prong, tier, and §15.12 sandbox state).
-    // Fail CLOSED on read error per D-091 fail-closed doctrine — a null/errored
-    // tenant must not silently default to non-sandbox posture (would let a
-    // sandboxed tenant's booking reach a real host adapter).
-    const { data: tenantData, error: tenantErr } = await adminDb
-      .from("tenants")
-      // #1190: the column is tenant_type, not prong (prong was never a column).
-      .select("id, tenant_type, tier_id, is_sandbox")
-      .eq("id", ctx.tenant_id)
+  if (tenantErr || !tenantData) {
+    await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_tenant_lookup");
+    if (tenantErr) return { response: dbErrorResponse(tenantErr) };
+    return { response: Response.json({ error: "tenant_lookup_failed" }, { status: 500 }) };
+  }
+
+  const tenant = tenantData as TenantRow;
+  let platform_split_rate: number | null = null;
+  if (tenant.tier_id) {
+    const { data: tierData } = await adminDb
+      .from("tier_definitions")
+      .select("id, platform_split_rate, hold_period_days")
+      .eq("id", tenant.tier_id)
       .single();
+    if (tierData) platform_split_rate = (tierData as TierRow).platform_split_rate;
+  }
+  return { tenant, platform_split_rate };
+}
 
-    if (tenantErr || !tenantData) {
-      // Pre-host early exit — release the lock (#1577); no host call yet.
-      await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_tenant_lookup");
-      if (tenantErr) return dbErrorResponse(tenantErr);
-      return Response.json({ error: "tenant_lookup_failed" }, { status: 500 });
+// Step 4 — select the adapter (with decrypted per-tenant credentials in ctx;
+// Audit pass 2 Finding 8), health-check it, and resolve commission_rate from the
+// adapter's stored config. No early exit — the fail-closed decision is Step 5.
+async function selectAdapterAndCommissionRate(
+  tenantId: string,
+  tenant: TenantRow,
+  adminDb: AdminDb,
+): Promise<{
+  adapter: SelectedAdapter["adapter"];
+  hostCtx: SelectedAdapter["ctx"];
+  health: { ok: boolean };
+  commission_rate: number | null;
+}> {
+  const correlation_id = crypto.randomUUID();
+  const { adapter, ctx: hostCtx } = await selectAdapterForCall(
+    { id: tenantId, prong: tenant.tenant_type, is_sandbox: tenant.is_sandbox },
+    { tenant_id: tenantId, user_id: null, correlation_id },
+  );
+
+  const health = await adapter.healthCheck();
+
+  let commission_rate: number | null = null;
+  if (health.ok && adapter.capabilities.supports_commission_api) {
+    const { data: adapterRow } = await adminDb
+      .from("host_adapters")
+      .select("config")
+      .eq("adapter_id", adapter.adapterId)
+      .maybeSingle();
+    if (adapterRow) {
+      const config = adapterRow.config as Record<string, unknown>;
+      const rawRate = config["default_commission_rate"];
+      if (typeof rawRate === "number") commission_rate = rawRate;
     }
+  }
+  return { adapter, hostCtx, health, commission_rate };
+}
 
-    const tenant = tenantData as TenantRow;
-
-    // Step 1: Resolve platform_split_rate from tier
-    let platform_split_rate: number | null = null;
-
-    if (tenant.tier_id) {
-      const { data: tierData } = await adminDb
-        .from("tier_definitions")
-        .select("id, platform_split_rate, hold_period_days")
-        .eq("id", tenant.tier_id)
-        .single();
-
-      if (tierData) {
-        const tier = tierData as TierRow;
-        platform_split_rate = tier.platform_split_rate;
-      }
-    }
-
-    // Step 2: Select adapter (with decrypted per-tenant credentials in ctx)
-    // and check health. Audit pass 2, Finding 8: callers must use
-    // selectAdapterForCall so the ctx passed to adapter methods carries
-    // the tenant's actual credentials.
-    const correlation_id = crypto.randomUUID();
-    const { adapter, ctx: hostCtx } = await selectAdapterForCall(
-      {
-        id: ctx.tenant_id,
-        prong: tenant.tenant_type,
-        is_sandbox: tenant.is_sandbox,
-      },
-      { tenant_id: ctx.tenant_id, user_id: null, correlation_id },
-    );
-
-    const health = await adapter.healthCheck();
-
-    // Step 3: Resolve commission_rate from adapter config or platform default
-    let commission_rate: number | null = null;
-    if (health.ok && adapter.capabilities.supports_commission_api) {
-      // Try to get rate from the adapter's config stored in host_adapters
-      const { data: adapterRow } = await adminDb
-        .from("host_adapters")
-        .select("config")
-        .eq("adapter_id", adapter.adapterId)
-        .maybeSingle();
-      if (adapterRow) {
-        const config = adapterRow.config as Record<string, unknown>;
-        const rawRate = config["default_commission_rate"];
-        if (typeof rawRate === "number") {
-          commission_rate = rawRate;
-        }
-      }
-    }
-
-    // Host booking fee is resolved in §14.3 below — a `percent` fee is a
-    // percentage of the gross commission, so it must be computed after gross.
-
-    // §14.4 Fail-closed: if commission_rate or platform_split_rate is unresolvable, do NOT proceed
-    if (commission_rate === null || !health.ok) {
-      await safeAwait(db
+// Step 5 — §14.4 fail-closed rate gate. If commission_rate or platform_split_rate
+// is unresolvable (or the adapter is unhealthy), park the booking in
+// pending_host_review with a structured reason, alert platform admin via audit
+// log, and return 503. No lock revert — the booking is deliberately parked, not
+// re-submittable (the #1764 resolve-review path is the sanctioned exit). On
+// success, returns the now-non-null rates for the commission computation.
+async function assertRatesResolved(
+  db: Db,
+  bookingId: string,
+  tenantId: string,
+  userId: string,
+  health: { ok: boolean },
+  commission_rate: number | null,
+  platform_split_rate: number | null,
+): Promise<{ response: Response } | { commission_rate: number; platform_split_rate: number }> {
+  if (commission_rate === null || !health.ok) {
+    const reason = health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy";
+    await safeAwait(
+      db
         .from("bookings")
-        .update({
-          status: "pending_host_review",
-          review_reason: health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", bookingId), "bookings.update");
-
-      await writeAuditLog({
-        tenant_id: ctx.tenant_id,
-        actor_type: "user",
-        actor_user_id: user.id,
-        action: "booking.commission_rate_resolution",
-        resource_type: "booking",
-        resource_id: bookingId,
-        changes: {
-          outcome: "failed",
-          reason: health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy",
-        },
-      });
-
-      return Response.json(
+        .update({ status: "pending_host_review", review_reason: reason, updated_at: new Date().toISOString() })
+        .eq("id", bookingId),
+      "bookings.update",
+    );
+    await writeAuditLog({
+      tenant_id: tenantId,
+      actor_type: "user",
+      actor_user_id: userId,
+      action: "booking.commission_rate_resolution",
+      resource_type: "booking",
+      resource_id: bookingId,
+      changes: { outcome: "failed", reason },
+    });
+    return {
+      response: Response.json(
         {
           error:
             "Commission rate could not be resolved for this booking. " +
@@ -305,174 +301,212 @@ async function submitBooking(
           status: "pending_host_review",
         },
         { status: 503 },
-      );
-    }
+      ),
+    };
+  }
 
-    if (platform_split_rate === null) {
-      await safeAwait(db
+  if (platform_split_rate === null) {
+    await safeAwait(
+      db
         .from("bookings")
         .update({
           status: "pending_host_review",
           review_reason: "missing_platform_split",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", bookingId), "bookings.update");
-
-      await writeAuditLog({
-        tenant_id: ctx.tenant_id,
-        actor_type: "user",
-        actor_user_id: user.id,
-        action: "booking.commission_rate_resolution",
-        resource_type: "booking",
-        resource_id: bookingId,
-        changes: { outcome: "failed", reason: "missing_platform_split" },
-      });
-
-      return Response.json(
-        {
-          error:
-            "Platform commission split rate is not configured. " +
-            "Your booking is pending review.",
-          status: "pending_host_review",
-        },
-        { status: 503 },
-      );
-    }
-
-    // §14.3 Commission computation
-    const fare = BigInt(booking.commissionable_fare_cents ?? 0) as Cents;
-    const commissionRate = toRate(commission_rate);
-    const platformSplitRate = toRate(platform_split_rate);
-
-    const gross_commission_cents = multiplyRate(fare, commissionRate);
-
-    // §12.6 / §14.3 — host booking fee snapshot, locked at submission. A tenant
-    // override supersedes the platform-wide adapter config. Persist the cents +
-    // the rule id so the math is auditable without re-derivation.
-    let host_booking_fee_cents = 0n as Cents;
-    let host_booking_fee_rule_ref: string | null = null;
-
-    const { data: feeConfig } = await adminDb
-      .from("host_booking_fee_configs")
-      .select("id, fee_type, flat_fee_amount, percent_of_commission")
-      .eq("host_adapter", adapter.adapterId)
-      .maybeSingle();
-    if (feeConfig) {
-      ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } =
-        resolveHostFeeCents(feeConfig as FeeConfigRow, gross_commission_cents));
-    }
-
-    const { data: feeOverride } = await db
-      .from("tenant_host_fee_overrides")
-      .select("id, fee_type, flat_fee_amount, percent_of_commission")
-      .eq("host_adapter", adapter.adapterId)
-      .maybeSingle();
-    if (feeOverride) {
-      ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } =
-        resolveHostFeeCents(feeOverride as FeeConfigRow, gross_commission_cents));
-    }
-
-    const net_commission_cents = subtractFee(gross_commission_cents, host_booking_fee_cents);
-    const platform_retained_cents = multiplyRate(net_commission_cents, platformSplitRate);
-    const subhost_payable_cents = subtractFee(net_commission_cents, platform_retained_cents);
-
+        .eq("id", bookingId),
+      "bookings.update",
+    );
     await writeAuditLog({
-      tenant_id: ctx.tenant_id,
+      tenant_id: tenantId,
       actor_type: "user",
-      actor_user_id: user.id,
+      actor_user_id: userId,
       action: "booking.commission_rate_resolution",
       resource_type: "booking",
       resource_id: bookingId,
-      changes: {
-        outcome: "success",
-        commission_rate,
-        platform_split_rate,
-        gross_commission_cents: gross_commission_cents.toString(),
-        net_commission_cents: net_commission_cents.toString(),
-        platform_retained_cents: platform_retained_cents.toString(),
-      },
+      changes: { outcome: "failed", reason: "missing_platform_split" },
     });
-
-    // §21.10.1 — Quote pricing discipline.
-    //
-    // Look up the underlying accepted quote (if any). For ESTIMATE quotes,
-    // call adapter.getCurrentPrice() and compare against the customer-accepted
-    // variance. Outside variance → pending_customer_reconfirmation (no host
-    // submission). CONFIRMED quotes proceed at the locked price.
-    const { data: quoteData } = await db
-      .from("quotes")
-      .select(
-        "id, price_kind, price_lock_token, price_lock_expires_at, locked_price_cents, estimate_price_cents, customer_accepted_variance_cents, customer_accepted_audit_id",
-      )
-      .eq("converted_to_booking_id", bookingId)
-      .maybeSingle();
-
-    const submitReqBase: BookingSubmissionRequest = {
-      contact_id: booking.primary_contact_id ?? "unknown",
-      cruise_line: booking.cruise_line ?? "",
-      ship_name: booking.ship_name ?? "",
-      sailing_date: booking.sailing_date ?? new Date().toISOString().slice(0, 10),
-      duration_nights: booking.duration_nights ?? 0,
-      cabin_category: booking.cabin_category ?? "",
-      passengers: [],
-      commissionable_fare_cents: Number(booking.commissionable_fare_cents ?? 0),
-      total_amount_cents: Number(booking.total_amount_cents ?? 0),
-      currency: booking.currency,
+    return {
+      response: Response.json(
+        {
+          error: "Platform commission split rate is not configured. Your booking is pending review.",
+          status: "pending_host_review",
+        },
+        { status: 503 },
+      ),
     };
-    let submitReq: BookingSubmissionRequest = submitReqBase;
+  }
 
-    if (quoteData) {
-      const quote = quoteData as {
-        id: string;
-        price_kind: "estimate" | "confirmed" | null;
-        price_lock_token: string | null;
-        price_lock_expires_at: string | null;
-        locked_price_cents: number | null;
-        estimate_price_cents: number | null;
-        customer_accepted_variance_cents: number | null;
-        customer_accepted_audit_id: string | null;
-      };
+  return { commission_rate, platform_split_rate };
+}
 
-      if (quote.price_kind === "confirmed"
-        && quote.price_lock_expires_at
-        && new Date(quote.price_lock_expires_at) >= new Date()
-        && quote.locked_price_cents != null
-      ) {
-        // CONFIRMED quote: submit at locked price.
-        submitReq = { ...submitReqBase, total_amount_cents: quote.locked_price_cents };
-      } else if (quote.price_kind === "estimate" && adapter.getCurrentPrice) {
-        const priceResult = await adapter.getCurrentPrice(submitReqBase, hostCtx);
-        if (priceResult.ok) {
-          const hostCents = priceResult.value.total_cents;
-          const estimateCents = quote.estimate_price_cents ?? submitReqBase.total_amount_cents;
-          const allowedVariance = quote.customer_accepted_variance_cents ?? 0;
-          const variance = Math.abs(hostCents - estimateCents);
-          if (variance > allowedVariance) {
-            // Pause for customer reconfirmation; do NOT submit to host.
-            await safeAwait(db
+// Step 6 — §14.3 commission computation. Resolves the §12.6 host booking fee
+// (tenant override supersedes platform-wide adapter config), computes the money
+// bundle, and writes the success audit row. Persists cents + the rule id so the
+// math is auditable without re-derivation.
+async function computeCommission(
+  booking: BookingRow,
+  commission_rate: number,
+  platform_split_rate: number,
+  adapter: SelectedAdapter["adapter"],
+  db: Db,
+  adminDb: AdminDb,
+  tenantId: string,
+  userId: string,
+): Promise<CommissionComputation> {
+  const fare = BigInt(booking.commissionable_fare_cents ?? 0) as Cents;
+  const commissionRate = toRate(commission_rate);
+  const platformSplitRate = toRate(platform_split_rate);
+
+  const gross_commission_cents = multiplyRate(fare, commissionRate);
+
+  let host_booking_fee_cents = 0n as Cents;
+  let host_booking_fee_rule_ref: string | null = null;
+
+  const { data: feeConfig } = await adminDb
+    .from("host_booking_fee_configs")
+    .select("id, fee_type, flat_fee_amount, percent_of_commission")
+    .eq("host_adapter", adapter.adapterId)
+    .maybeSingle();
+  if (feeConfig) {
+    ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } = resolveHostFeeCents(
+      feeConfig as FeeConfigRow,
+      gross_commission_cents,
+    ));
+  }
+
+  const { data: feeOverride } = await db
+    .from("tenant_host_fee_overrides")
+    .select("id, fee_type, flat_fee_amount, percent_of_commission")
+    .eq("host_adapter", adapter.adapterId)
+    .maybeSingle();
+  if (feeOverride) {
+    ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } = resolveHostFeeCents(
+      feeOverride as FeeConfigRow,
+      gross_commission_cents,
+    ));
+  }
+
+  const net_commission_cents = subtractFee(gross_commission_cents, host_booking_fee_cents);
+  const platform_retained_cents = multiplyRate(net_commission_cents, platformSplitRate);
+  const subhost_payable_cents = subtractFee(net_commission_cents, platform_retained_cents);
+
+  await writeAuditLog({
+    tenant_id: tenantId,
+    actor_type: "user",
+    actor_user_id: userId,
+    action: "booking.commission_rate_resolution",
+    resource_type: "booking",
+    resource_id: booking.id,
+    changes: {
+      outcome: "success",
+      commission_rate,
+      platform_split_rate,
+      gross_commission_cents: gross_commission_cents.toString(),
+      net_commission_cents: net_commission_cents.toString(),
+      platform_retained_cents: platform_retained_cents.toString(),
+    },
+  });
+
+  return {
+    fare,
+    gross_commission_cents,
+    host_booking_fee_cents,
+    host_booking_fee_rule_ref,
+    net_commission_cents,
+    platform_retained_cents,
+    subhost_payable_cents,
+  };
+}
+
+// Step 7 — §21.10.1 quote pricing discipline. For ESTIMATE quotes, re-fetch the
+// current host price and compare against the customer-accepted variance: outside
+// variance → pending_customer_reconfirmation (no host submission, 409). CONFIRMED
+// quotes submit at the locked price. No quote → submit at the booking's own
+// amount. Returns the request to dispatch, or a reconfirmation Response.
+async function applyQuotePricing(
+  db: Db,
+  booking: BookingRow,
+  adapter: SelectedAdapter["adapter"],
+  hostCtx: SelectedAdapter["ctx"],
+  tenantId: string,
+  userId: string,
+): Promise<{ response: Response } | { submitReq: BookingSubmissionRequest }> {
+  const { data: quoteData } = await db
+    .from("quotes")
+    .select(
+      "id, price_kind, price_lock_token, price_lock_expires_at, locked_price_cents, estimate_price_cents, customer_accepted_variance_cents, customer_accepted_audit_id",
+    )
+    .eq("converted_to_booking_id", booking.id)
+    .maybeSingle();
+
+  const submitReqBase: BookingSubmissionRequest = {
+    contact_id: booking.primary_contact_id ?? "unknown",
+    cruise_line: booking.cruise_line ?? "",
+    ship_name: booking.ship_name ?? "",
+    sailing_date: booking.sailing_date ?? new Date().toISOString().slice(0, 10),
+    duration_nights: booking.duration_nights ?? 0,
+    cabin_category: booking.cabin_category ?? "",
+    passengers: [],
+    commissionable_fare_cents: Number(booking.commissionable_fare_cents ?? 0),
+    total_amount_cents: Number(booking.total_amount_cents ?? 0),
+    currency: booking.currency,
+  };
+  let submitReq: BookingSubmissionRequest = submitReqBase;
+
+  if (quoteData) {
+    const quote = quoteData as {
+      id: string;
+      price_kind: "estimate" | "confirmed" | null;
+      price_lock_token: string | null;
+      price_lock_expires_at: string | null;
+      locked_price_cents: number | null;
+      estimate_price_cents: number | null;
+      customer_accepted_variance_cents: number | null;
+      customer_accepted_audit_id: string | null;
+    };
+
+    if (
+      quote.price_kind === "confirmed" &&
+      quote.price_lock_expires_at &&
+      new Date(quote.price_lock_expires_at) >= new Date() &&
+      quote.locked_price_cents != null
+    ) {
+      submitReq = { ...submitReqBase, total_amount_cents: quote.locked_price_cents };
+    } else if (quote.price_kind === "estimate" && adapter.getCurrentPrice) {
+      const priceResult = await adapter.getCurrentPrice(submitReqBase, hostCtx);
+      if (priceResult.ok) {
+        const hostCents = priceResult.value.total_cents;
+        const estimateCents = quote.estimate_price_cents ?? submitReqBase.total_amount_cents;
+        const allowedVariance = quote.customer_accepted_variance_cents ?? 0;
+        const variance = Math.abs(hostCents - estimateCents);
+        if (variance > allowedVariance) {
+          // Pause for customer reconfirmation; do NOT submit to host.
+          await safeAwait(
+            db
               .from("bookings")
-              .update({
-                status: "pending_customer_reconfirmation",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", bookingId), "bookings.update");
-            await writeAuditLog({
-              tenant_id: ctx.tenant_id,
-              actor_type: "user",
-              actor_user_id: user.id,
-              action: "quote.reconfirmation_requested",
-              resource_type: "quote",
-              resource_id: quote.id,
-              changes: {
-                booking_id: bookingId,
-                estimate_cents: estimateCents,
-                host_cents: hostCents,
-                variance_cents: variance,
-                allowed_variance_cents: allowedVariance,
-                prior_audit_id: quote.customer_accepted_audit_id,
-              },
-            });
-            return Response.json(
+              .update({ status: "pending_customer_reconfirmation", updated_at: new Date().toISOString() })
+              .eq("id", booking.id),
+            "bookings.update",
+          );
+          await writeAuditLog({
+            tenant_id: tenantId,
+            actor_type: "user",
+            actor_user_id: userId,
+            action: "quote.reconfirmation_requested",
+            resource_type: "quote",
+            resource_id: quote.id,
+            changes: {
+              booking_id: booking.id,
+              estimate_cents: estimateCents,
+              host_cents: hostCents,
+              variance_cents: variance,
+              allowed_variance_cents: allowedVariance,
+              prior_audit_id: quote.customer_accepted_audit_id,
+            },
+          });
+          return {
+            response: Response.json(
               {
                 status: "pending_customer_reconfirmation",
                 estimate_cents: estimateCents,
@@ -481,141 +515,242 @@ async function submitBooking(
                 allowed_variance_cents: allowedVariance,
               },
               { status: 409 },
-            );
-          }
-          // Within variance: submit at host price.
-          submitReq = { ...submitReqBase, total_amount_cents: hostCents };
+            ),
+          };
         }
-        // If adapter.getCurrentPrice failed, fall through with the estimate
-        // price as-is. The reconciliation cron catches drift after submit.
+        // Within variance: submit at host price.
+        submitReq = { ...submitReqBase, total_amount_cents: hostCents };
       }
+      // If adapter.getCurrentPrice failed, fall through with the estimate price
+      // as-is. The reconciliation cron catches drift after submit.
     }
+  }
 
-    const submitResult = await adapter.submitBooking(submitReq, hostCtx);
+  return { submitReq };
+}
 
-    if (!submitResult.ok) {
-      // D-091 R3 #51 — revert the CAS lock so a retry can pick this up. The host
-      // call reported failure, so no live booking exists → reverting to 'draft'
-      // is safe. Previously this path left the booking in 'submitting'
-      // indefinitely and any subsequent attempt got the 409 above.
-      await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_host_failure");
-      const ref = crypto.randomUUID();
-      console.error("[bookings/submit] ref=%s host_adapter_error", ref, submitResult.error);
-      return Response.json({ error: "host_adapter_error", code: submitResult.error.code, ref }, { status: 502 });
-    }
+// Step 8 — dispatch to the host adapter. On host-reported failure the host call
+// did NOT create a booking, so revert the CAS lock (#1577) and 502. Previously
+// this path left the row in 'submitting' indefinitely.
+async function dispatchToHost(
+  db: Db,
+  adapter: SelectedAdapter["adapter"],
+  submitReq: BookingSubmissionRequest,
+  hostCtx: SelectedAdapter["ctx"],
+  bookingIdStr: string,
+): Promise<{ response: Response } | { provider_booking_ref: string }> {
+  const submitResult = await adapter.submitBooking(submitReq, hostCtx);
+  if (!submitResult.ok) {
+    await revertSubmitLock(db, bookingIdStr, "bookings.update.revert_lock_on_host_failure");
+    const ref = crypto.randomUUID();
+    console.error("[bookings/submit] ref=%s host_adapter_error", ref, submitResult.error);
+    return {
+      response: Response.json(
+        { error: "host_adapter_error", code: submitResult.error.code, ref },
+        { status: 502 },
+      ),
+    };
+  }
+  return { provider_booking_ref: submitResult.value.provider_booking_ref };
+}
 
-    const { provider_booking_ref } = submitResult.value;
+// Step 9 — the host booking is now REAL. Persist provider_booking_ref FIRST in
+// its own update (#1577) so a crash leaves the ref on the row, then fold the
+// commission insert + final status flip into ONE SECURITY DEFINER RPC (#1693).
+// The insert is idempotent (commissions_booking_id_uidx, #1575); the status
+// flips only if still 'submitting'. commit error → pending_host_review
+// (commission_write_failed); 0 rows flipped → a concurrent path (reconcile) owns
+// the row → 409. NEITHER reverts to 'draft' (host booking is real → would double-book).
+async function persistRefAndCommit(
+  db: Db,
+  adminDb: AdminDb,
+  booking: BookingRow,
+  adapter: SelectedAdapter["adapter"],
+  tenant: TenantRow,
+  provider_booking_ref: string,
+  commission_rate: number,
+  platform_split_rate: number,
+  comp: CommissionComputation,
+): Promise<{ response: Response } | { ok: true }> {
+  await safeAwait(
+    db
+      // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
+      .from("bookings")
+      .update({ provider_booking_ref, host_adapter: adapter.adapterId, updated_at: new Date().toISOString() })
+      .eq("id", booking.id),
+    "bookings.update.persist_host_ref",
+  );
 
-    // #1577 — the host booking is now REAL. Persist provider_booking_ref in its
-    // own update immediately, BEFORE the commissions insert, so a crash after
-    // this point leaves the ref on the row. That is what lets the reconcile
-    // cron route the stuck row to review instead of reverting it to a
-    // resubmittable state (which would produce a SECOND live cruise-line booking).
+  const { data: committedCount, error: commitError } = await adminDb.rpc("submit_commit_booking", {
+    p_booking_id: booking.id,
+    p_tenant_id: tenant.id,
+    p_provider_booking_ref: provider_booking_ref,
+    p_host_adapter: adapter.adapterId,
+    p_is_sandbox: tenant.is_sandbox,
+    p_commissionable_fare_cents: comp.fare.toString(),
+    p_commission_rate: commission_rate,
+    p_platform_split_rate: platform_split_rate,
+    p_gross_commission_cents: comp.gross_commission_cents.toString(),
+    p_host_booking_fee_cents: comp.host_booking_fee_cents.toString(),
+    p_host_booking_fee_rule_ref: comp.host_booking_fee_rule_ref,
+    p_net_commission_cents: comp.net_commission_cents.toString(),
+    p_platform_retained_cents: comp.platform_retained_cents.toString(),
+    p_subhost_payable_cents: comp.subhost_payable_cents.toString(),
+    p_currency: booking.currency,
+  });
+
+  if (commitError) {
     await safeAwait(
       db
         // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
         .from("bookings")
         .update({
-          provider_booking_ref,
-          host_adapter: adapter.adapterId,
+          status: "pending_host_review",
+          review_reason: "commission_write_failed",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", bookingId),
-      "bookings.update.persist_host_ref",
+        .eq("id", booking.id),
+      "bookings.update.commission_write_failed",
+    );
+    return { response: dbErrorResponse(commitError) };
+  }
+
+  if (!committedCount) {
+    const ref = crypto.randomUUID();
+    console.error("[bookings/submit] ref=%s commit_lost_race booking=%s", ref, booking.id);
+    return { response: Response.json({ error: "booking_state_changed", ref }, { status: 409 }) };
+  }
+
+  return { ok: true };
+}
+
+// Step 10 — post-commit side effects. Both are NON-FATAL: a failure here must not
+// unwind the host-system commit. §35.6 conversion-touch attribution (read fresh,
+// §35.6.2) + §37.4.2 booking_confirmed task-sequence fan-out.
+async function runPostCommitSideEffects(
+  db: Db,
+  adminDb: AdminDb,
+  booking: BookingRow,
+  tenantId: string,
+  userId: string,
+): Promise<void> {
+  if (booking.primary_contact_id) {
+    const { populateConversionTouch } = await import("@/lib/attribution/populate-conversion-touch");
+    await populateConversionTouch({
+      tenant_id: tenantId,
+      contact_id: booking.primary_contact_id,
+      target_table: "bookings",
+      target_id: booking.id,
+      svc: adminDb,
+    });
+  }
+
+  try {
+    const { triggerMatchingSequences } = await import("@/lib/tasks/sequence-engine");
+    await triggerMatchingSequences({
+      tenant_id: tenantId,
+      trigger: "booking_confirmed",
+      record: { booking_id: booking.id },
+      triggered_by_user_id: userId,
+      svc: db,
+    });
+  } catch (seqErr) {
+    console.warn("[bookings/submit] sequence fan-out failed:", seqErr);
+  }
+}
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  try {
+    const { ctx, user } = await assertPermission(req, { resource: "bookings", action: "submit" });
+    const { id: bookingId } = await params;
+
+    // §7.9 — Idempotency-Key support. Wraps the rest of the handler. If the
+    // client sends the same key for the same (route, user) within 24h, the
+    // cached response is replayed and the handler does NOT re-run. Bookings/submit
+    // is the highest-impact mutation (real money + host adapter call).
+    return await withIdempotencyKey(
+      req,
+      { route: "bookings.submit", auth_user_id: user.id, tenant_id: ctx.tenant_id },
+      () => submitBooking(req, bookingId, ctx, user),
+    );
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
+
+async function submitBooking(
+  _req: Request,
+  bookingIdStr: string,
+  ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"],
+  user: Awaited<ReturnType<typeof assertPermission>>["user"],
+): Promise<Response> {
+  try {
+    const db = tenantClient(ctx);
+    const adminDb = createServiceRoleClient();
+
+    const loaded = await loadAndLockBooking(db, bookingIdStr);
+    if ("response" in loaded) return loaded.response;
+    const { booking } = loaded;
+
+    const dobResponse = await runDobGate(db, bookingIdStr);
+    if (dobResponse) return dobResponse;
+
+    const tenantResult = await loadTenantAndSplitRate(adminDb, db, bookingIdStr, ctx.tenant_id);
+    if ("response" in tenantResult) return tenantResult.response;
+    const { tenant, platform_split_rate } = tenantResult;
+
+    const { adapter, hostCtx, health, commission_rate } = await selectAdapterAndCommissionRate(
+      ctx.tenant_id,
+      tenant,
+      adminDb,
     );
 
-    // #1693 (deferred from #1577) — the commission insert and the final status
-    // flip were two separate service-role writes; a crash between them left a
-    // booking with a persisted host ref + a commission row but status still
-    // 'submitting', which the reconcile cron then routed to pending_host_review
-    // (manual-review toil). Fold both into ONE transaction via a SECURITY DEFINER
-    // RPC. §15.12: the RPC no-ops the commission insert for sandbox tenants (the
-    // booking still flips to 'submitted'). The commission insert is idempotent
-    // (commissions_booking_id_uidx, #1575) and status only flips if the row is
-    // still 'submitting'; the RPC returns the number of booking rows flipped, so 0
-    // means a concurrent path (e.g. reconcile) moved the row on first — a lost race
-    // that leaves the idempotent 'expected' commission in place (benign, nothing
-    // paid) for the manual pending_host_review path to tolerate (#1755).
-    const { data: committedCount, error: commitError } = await adminDb.rpc("submit_commit_booking", {
-      p_booking_id: bookingId,
-      p_tenant_id: ctx.tenant_id,
-      p_provider_booking_ref: provider_booking_ref,
-      p_host_adapter: adapter.adapterId,
-      p_is_sandbox: tenant.is_sandbox,
-      p_commissionable_fare_cents: fare.toString(),
-      p_commission_rate: commission_rate,
-      p_platform_split_rate: platform_split_rate,
-      p_gross_commission_cents: gross_commission_cents.toString(),
-      p_host_booking_fee_cents: host_booking_fee_cents.toString(),
-      p_host_booking_fee_rule_ref: host_booking_fee_rule_ref,
-      p_net_commission_cents: net_commission_cents.toString(),
-      p_platform_retained_cents: platform_retained_cents.toString(),
-      p_subhost_payable_cents: subhost_payable_cents.toString(),
-      p_currency: booking.currency,
-    });
+    const rates = await assertRatesResolved(
+      db,
+      bookingIdStr,
+      ctx.tenant_id,
+      user.id,
+      health,
+      commission_rate,
+      platform_split_rate,
+    );
+    if ("response" in rates) return rates.response;
 
-    if (commitError) {
-      // #1577 — the host booking succeeded and the ref is persisted, so we must
-      // NOT leave the row in 'submitting' (the sweep/retry would re-book) nor
-      // revert to 'draft'. Route to manual review; the host record is real and
-      // the commission just needs to be reconciled by hand.
-      await safeAwait(
-        db
-          // d091-allow:service-role-tenant — db is tenantClient(ctx), RLS-scoped to ctx.tenant_id; not a service-role write.
-          .from("bookings")
-          .update({
-            status: "pending_host_review",
-            review_reason: "commission_write_failed",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", bookingId),
-        "bookings.update.commission_write_failed",
-      );
-      return dbErrorResponse(commitError);
-    }
+    const comp = await computeCommission(
+      booking,
+      rates.commission_rate,
+      rates.platform_split_rate,
+      adapter,
+      db,
+      adminDb,
+      ctx.tenant_id,
+      user.id,
+    );
 
-    if (!committedCount) {
-      // CAS flip matched 0 rows: a concurrent path (the reconcile cron) moved the
-      // row off 'submitting' between our lock and this commit. The host record is
-      // real and the RPC transaction committed any commission row, so the row is
-      // safely owned by the reconcile path now — surface 409 rather than falsely
-      // report 'submitted'.
-      const ref = crypto.randomUUID();
-      console.error("[bookings/submit] ref=%s commit_lost_race booking=%s", ref, bookingId);
-      return Response.json({ error: "booking_state_changed", ref }, { status: 409 });
-    }
+    const priced = await applyQuotePricing(db, booking, adapter, hostCtx, ctx.tenant_id, user.id);
+    if ("response" in priced) return priced.response;
 
-    // §35.6 — populate conversion_touch_* on the booking from the
-    // contact's most recent attribution touch. Per §35.6.2 this is read
-    // fresh, NOT copied from any related quote (a booking weeks after
-    // the quote should attribute to the most recent touch). Non-fatal.
-    if (booking.primary_contact_id) {
-      const { populateConversionTouch } = await import("@/lib/attribution/populate-conversion-touch");
-      await populateConversionTouch({
-        tenant_id: ctx.tenant_id,
-        contact_id: booking.primary_contact_id,
-        target_table: "bookings",
-        target_id: bookingId,
-        svc: adminDb,
-      });
-    }
+    const dispatched = await dispatchToHost(db, adapter, priced.submitReq, hostCtx, bookingIdStr);
+    if ("response" in dispatched) return dispatched.response;
+    const { provider_booking_ref } = dispatched;
 
-    // §37.4.2 — fan-out task sequences whose trigger_event='booking_confirmed'.
-    // submit transitions the booking to status='submitted', which is the
-    // confirmed-with-host state. Non-fatal — a fan-out failure must not
-    // unwind the host-system commit.
-    try {
-      const { triggerMatchingSequences } = await import("@/lib/tasks/sequence-engine");
-      await triggerMatchingSequences({
-        tenant_id: ctx.tenant_id,
-        trigger: "booking_confirmed",
-        record: { booking_id: bookingId },
-        triggered_by_user_id: user.id,
-        svc: db,
-      });
-    } catch (seqErr) {
-      console.warn("[bookings/submit] sequence fan-out failed:", seqErr);
-    }
+    const committed = await persistRefAndCommit(
+      db,
+      adminDb,
+      booking,
+      adapter,
+      tenant,
+      provider_booking_ref,
+      rates.commission_rate,
+      rates.platform_split_rate,
+      comp,
+    );
+    if ("response" in committed) return committed.response;
+
+    await runPostCommitSideEffects(db, adminDb, booking, ctx.tenant_id, user.id);
 
     return Response.json({ ok: true, provider_booking_ref, status: "submitted" });
   } catch (err) {
