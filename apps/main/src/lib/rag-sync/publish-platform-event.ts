@@ -25,9 +25,12 @@ const SYNC_ELIGIBLE_KEYS: ReadonlySet<string> = new Set([
   "feedback_min_signal_count",
   "feedback_period_days",
   "feedback_decay_halflife_days",
-  // BP22 §6 retrieval composite weights — added to this allowlist when the
-  // BP22 rag migration that reads them lands. Until then, keep them out so
-  // the rag-side row doesn't accumulate orphan data.
+  // BP22 §6 retrieval composite weights — read by match_knowledge_chunks
+  // (rag migration 0014_composite_weights.sql). #1887.
+  "retrieval_weight_match",
+  "retrieval_weight_authority",
+  "retrieval_weight_recency",
+  "retrieval_weight_feedback",
 ]);
 
 export function isSyncEligibleKey(key: string): boolean {

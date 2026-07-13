@@ -276,6 +276,10 @@ export async function handleStripeWebhook(
         // Re-delivery with same cumulative amount_reversed and no previous_attributes:
         // delta is zero — nothing new to process.
         if (thisReversalCents <= 0) {
+          // #1873 — same healthy-no-op class as the 0-row RPC result below: a
+          // re-delivery with no new reversed amount, not a coverage gap. Record
+          // 'no_op', not the default 'unhandled'.
+          processingOutcome = "no_op";
           console.warn(
             "[stripe-webhook] transfer.reversed: zero/negative delta for %s (possible re-delivery with same amount_reversed); skipping RPC",
             transfer.id,
@@ -293,6 +297,19 @@ export async function handleStripeWebhook(
         if ((processedCount as number) > 0) {
           processingOutcome = "success";
         } else {
+          // #1873 — a 0-row RPC result is a healthy no-op, not a coverage gap.
+          // process_transfer_reversal returns 0 in two cases, both benign: the
+          // transfer isn't ours (no matching payout_records row), or this exact
+          // (transfer, event) was already applied (the recovery-row idempotency
+          // anchor already exists). Record 'no_op' so a dashboard over
+          // processing_outcome doesn't conflate it with 'unhandled' (= no handler
+          // for the event type at all, a real gap). The two 0-row reasons are NOT
+          // distinguished here: telling them apart needs an extra payout_records
+          // read that is itself imperfect (a row in a non-paid/non-reversed status
+          // for this transfer id would misclassify), and both are the same healthy
+          // no-op to a dashboard, so a single value is correct. Outcome recording
+          // only — idempotency/ordering unchanged (D-091 #10/#26).
+          processingOutcome = "no_op";
           console.warn(
             "[stripe-webhook] transfer.reversed: no reversal applied for transfer %s — not ours or already processed",
             transfer.id,
