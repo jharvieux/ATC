@@ -18,6 +18,9 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-352 — 2026-07-13 — GHAS PR comments dispositioned before every merge; custom sanitizers must be CodeQL-recognizable (sanitize.ts literal \r\n replace is load-bearing; #1896).
+- D-351 — 2026-07-13 — #1680 accepted-race superseded: atomic reserve_group_invitations RPC (advisory lock) enforces 50-cap; also fixed #1875 members bypass (PR #1894).
+- D-350 — 2026-07-13 — Sweep #3: 15 PRs merged / 14 issues closed; audits caught 5 real pre-merge defects incl. the #1855 phantom-bug (mechanism-verify pattern-matched issues).
 - D-349 — 2026-07-13 — GH Actions implicit run: shell has NO pipefail — pipe gates capture ${PIPESTATUS[0]}; green-but-lying nightly incident (PR #1864; #1862/#1863/#1865/#1866).
 - D-348 — 2026-07-13 — Frontend discipline: tests-first before god-component rewrites (#1812 stays open); verify-before-fix for perf flags (2 real of ~16); node-identity tests for key fixes (PR #1857).
 - D-347 — 2026-07-13 — Stripe webhook staleness+CAS core extracted (identical-core-only); CAS-lost outcome conflation preserved, #1854 tracks (PR #1853).

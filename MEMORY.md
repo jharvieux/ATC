@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-350 — 2026-07-13 — Sweep #3: 15 batches / 15 PRs merged, 14 issues closed; adversarial audits caught 5 real defects pre-merge
+
+**Decision:** Third /issue-sweep of the day executed with operator approvals recorded per-item (supervised "all", #1858 deferred until real payments, #1860 retrofit, #1805 deferred, #1826 wire-the-publisher, #1565 LLM-draft + admin editor, "Migrations approved" for the #1680 RPC, concurrency raised to 5). Merged: #1872 #1874 #1878 #1879 #1880 #1881 #1884 #1886 #1889 #1890 #1891 #1892 #1894 #1897 (+#1889's fix round). Closed: #1854 #1844 #1856 #1862 #1860 #1855 #1866 #1865 #1863 #1680 #1875 #1565 (+#1871 dup).
+
+**Why it matters:** the audit loop caught, pre-merge: a fail-open placeholder on a legal disclosure (#1878), a false "nightly reconcile backstop" claim (#1886), a UI counts-reset regression in a "behavior-preserving" refactor (#1889), missing Closes lines + an untested SQL cap boundary (#1894), and a wholly phantom bug premise (#1855 — daysUntil epoch math is TZ-invariant; the REAL #1808-class bug was GroupInviteView's local getters, fixed instead). Lesson: pattern-matched sibling-bug issues need mechanism verification, not shape matching.
+
+**Rejected:** merging on green CI without dispositioning auditor warnings; shipping the #1855 placebo fix.
+
+**Related:** ledger deleted post-wrap; follow-ups #1873 #1876 #1877 #1882 #1883 #1885 #1893 #1895 #1896; ops issues #1868–#1870.
+
+---
+
+## D-351 — 2026-07-13 — #1680 accepted-race decision superseded: atomic reserve_group_invitations RPC (advisory lock) enforces the 50-invitee cap
+
+**Decision:** Operator approved the migration mid-sweep ("Migrations approved"). `reserve_group_invitations` (SECURITY DEFINER, `pg_advisory_xact_lock(hashtext(group_id))`, count+insert in one transaction, cap passed as parameter so `MAX_INVITEES_PER_GROUP` stays canonical in TS) replaces count-then-insert in the invitations route AND adds the previously-missing cumulative gate in the members route (#1875 — a straight bypass, worse than the race). Nightly-gated live-DB test proves boundary + serialization (PR #1894).
+
+**Why:** PR #1874's earlier "accepted low-severity race" stance is void — no migration-free atomic fix exists under PostgREST autocommit.
+
+**Rejected:** app-level double-check (still racy); UNIQUE constraint (wrong shape for a count cap).
+
+**Related:** #1895 tracks members-route 23505→409 alignment.
+
+---
+
+## D-352 — 2026-07-13 — GHAS PR comments are now dispositioned before every merge; custom sanitizers must be CodeQL-recognizable
+
+**Decision:** Operator surfaced that the merge flow gated on check statuses only and ignored `github-advanced-security[bot]` inline comments. New discipline (durable change tracked in #1896): before merging, list the bot's comments on the PR and disposition each (fix in-PR, or dismiss the alert with a reason per triage-runbook location policy). Immediately caught: predictable `/tmp` output paths for operator-applied SQL (#1890, alerts 101/102) and a CodeQL-unrecognized sanitizer (#1897 — `sanitizeForLog`'s `String.fromCharCode`-built control-char class is invisible to CodeQL's taint tracking; appended a literal `.replace(/[\r\n]+/g, " ")` no-op so the heuristic recognizes it — the WHY comment in sanitize.ts is load-bearing, do not "clean it up").
+
+**Why:** below-threshold GHAS comments never fail a check, so they merge past unread automation.
+
+**Rejected:** dismissing #100 as false-positive (the scanner should be satisfied, not overridden); per-call-site JSON.stringify wrapping (helper-level fix covers all call sites).
+
+**Related:** #1896 (runbook change + audit of unused GH features: merge queue, push protection, dependency review, rulesets, CODEOWNERS); alerts #97–#99 dismissed with reasons; #100 fixed via PR #1897.
+
+---
+
 ## D-349 — 2026-07-13 — GH Actions implicit `run:` shell has NO pipefail — `| tee` gates must capture `${PIPESTATUS[0]}`
 
 **Decision**: Any workflow step that pipes a load-bearing command through `tee` (or any pipe) and branches on its exit code must capture `${PIPESTATUS[0]}` explicitly, never `$?`. GitHub's implicit `run:` shell is `bash -e {0}` — `-o pipefail` applies ONLY with an explicit `shell: bash` declaration.
