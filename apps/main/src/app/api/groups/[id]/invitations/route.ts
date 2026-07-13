@@ -120,15 +120,18 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       }
 
       // #1600 — the create path caps at 50 active invitees per group
-      // (groups/route.ts); the single-invite path must enforce the same cap.
+      // (groups/route.ts); the single-invite path enforces the same cap via the
+      // shared MAX_INVITEES_PER_GROUP constant.
       // #1680: this count-then-insert is NOT atomic — two concurrent invites to
       // the same group can both read count=49 and both insert, overshooting the
       // cap. Accepted as low-severity: the actor is an authenticated
       // coordinator, the race requires two invites to the SAME group within one
       // request window, and the blast radius is a handful of invitees over 50.
-      // The TOCTOU cap fix is deliberately deferred to #1680 — it needs its own
-      // advisory-lock/RPC design (a DB-side atomic reserve), not something to
-      // bolt on here. Tracked on #1680.
+      // A true atomic fix needs a DB migration (an advisory-lock RPC that
+      // count-checks + inserts in one transaction, or a partial exclusion
+      // constraint) — not expressible through PostgREST's autocommit-per-call.
+      // The migration is not yet approved, so the race stays accepted here and
+      // the atomic reserve remains tracked on #1680.
       const { count: activeCount, error: countErr } = await svc
         // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
         .from("invitations")

@@ -13,6 +13,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 
 const InviteeSchema = z
   .object({
@@ -24,7 +25,10 @@ const InviteeSchema = z
 
 const BodySchema = z
   .object({
-    invitees: z.array(InviteeSchema).min(1).max(50),
+    // #1680 — same 50-cap constant as the create + single-invite paths (no
+    // per-path literal to drift). This is a per-request batch bound; it does
+    // NOT enforce the cumulative group cap (tracked separately — see #1680).
+    invitees: z.array(InviteeSchema).min(1).max(MAX_INVITEES_PER_GROUP),
   })
   .strict();
 
