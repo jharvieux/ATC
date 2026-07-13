@@ -9,6 +9,14 @@ on:
     branches:
       - dev
       - "release/*"
+  # merge_group fires when GitHub's merge queue builds a speculative merge
+  # commit for a PR queued into `dev`. Every required CI check must run on this
+  # event or the queue can never merge (a required check that never reports is
+  # treated as failing). Additive — the pull_request/push triggers above are
+  # unchanged, so today's non-queue flow is unaffected. The deploy-* jobs stay
+  # inert on merge_group: they gate on push/workflow_dispatch + a dev/release
+  # ref, none of which a merge_group event satisfies. (#1896 groundwork.)
+  merge_group:
   workflow_dispatch: # manual re-trigger for release/* when push didn't fire deploy.yml
 
 jobs:
@@ -395,8 +403,11 @@ jobs:
           fi
           npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
 
-      - name: Check RLS drift (fail on PR and release/*)
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+      - name: Check RLS drift (fail on PR, release/*, and merge_group)
+        # merge_group included so the queue actually verifies drift — without it
+        # this step skips on a queue build and the required RLS Snapshot Diff
+        # check would pass green without ever comparing the snapshot (#1896).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
         env:
           # Dependabot-triggered runs don't receive repo secrets, so the
           # DB URLs above are empty and no target can be checked. Allow the
@@ -452,8 +463,10 @@ jobs:
       # The old pre-migration prod gate here was REMOVED: it compared prod BEFORE the
       # release's own migrations applied (deploy-production is downstream), so it
       # false-failed every new-table release. See #1349 for the prod migration-apply path.
-      - name: Check grants drift (fail on PR and release/* — vs test DB)
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+      - name: Check grants drift (fail on PR, release/*, and merge_group — vs test DB)
+        # merge_group included for the same reason as the RLS drift step above:
+        # the queue must verify grants drift, not skip it (#1896).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}

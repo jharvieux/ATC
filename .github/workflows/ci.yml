@@ -5,6 +5,10 @@ on:
     branches:
       - dev
       - "release/*"
+  # merge_group so the required "Guards & Build" check runs on merge-queue
+  # builds too — a required check with no merge_group trigger would block the
+  # queue forever. Additive; the pull_request trigger is unchanged. (#1896.)
+  merge_group:
 
 jobs:
   # Doc-only detection (PR-only trigger, so base_ref is always set). Lets the
@@ -29,8 +33,17 @@ jobs:
         id: f
         env:
           BASE: ${{ github.base_ref }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -uo pipefail
+          # On a non-PR event (merge_group), base_ref is empty and there's no PR
+          # diff to scope against — the queue must run the full guard suite, so
+          # short-circuit to code=true. Mirrors deploy.yml's detect-changes.
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "workflows_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Fail SAFE: any uncertainty (fetch/diff error) => code=true => run the
           # full guard suite. code=false (skip) only on a CONFIRMED doc-only diff.
           # NOT set -e: a git failure must fall through to code=true, not abort the

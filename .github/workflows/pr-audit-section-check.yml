@@ -33,10 +33,26 @@
 #     edit just burns Sonnet tokens to learn there's nothing to review.
 #
 name: pr-audit-section-check
+#
+# merge_group support (#1896): this is a required check, so it MUST also run
+# and pass on merge-queue builds or the queue can never merge. A merge_group
+# event carries no `pull_request` object, but its head ref is
+# `refs/heads/gh-readonly-queue/dev/pr-<N>-<sha>`, so the PR number is
+# recoverable from the ref. The "Resolve PR context" step below extracts <N>
+# for both event types, and every downstream step keys off that resolved
+# number — so the SAME marker logic runs on the queue as on the PR.
+#
+# The hash binding is PRESERVED, not weakened, on merge_group: the diff hash is
+# computed from `repos/<repo>/pulls/<N>/files` (the PR's own three-dot diff),
+# NOT from the merge-group synthetic commit. That API returns the identical
+# file set the pull_request run hashed, so the marker posted during the PR flow
+# still matches. Any post-audit commit to the PR would dequeue it, so the head
+# the queue builds is always the audited head.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
 
 permissions:
   contents: read
@@ -56,10 +72,42 @@ jobs:
     # (not the workflow `name:`), so this is named `pr-audit-section-check`
     # to match the required-status-check entry added via gh api.
     steps:
+      # Resolve the PR number + author for BOTH event types. On pull_request
+      # they come straight off the event payload; on merge_group we parse the
+      # PR number out of the queue head ref and look the author up via the API.
+      # Everything downstream keys off these outputs so the two paths share one
+      # code path.
+      - name: Resolve PR context (pull_request or merge_group)
+        id: ctx
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          AUTHOR_FROM_EVENT: ${{ github.event.pull_request.user.login }}
+          # e.g. refs/heads/gh-readonly-queue/dev/pr-1234-<sha>
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "merge_group" ]; then
+            PR_NUMBER=$(printf '%s' "$MG_HEAD_REF" | grep -oE 'pr-[0-9]+' | head -1 | sed 's/^pr-//')
+            if [ -z "$PR_NUMBER" ]; then
+              echo "::error::Could not parse a PR number from merge_group head ref '$MG_HEAD_REF' — the audit gate can't tell which PR's markers to check."
+              exit 1
+            fi
+            AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq '.author.login')
+          else
+            PR_NUMBER="$PR_FROM_EVENT"
+            AUTHOR="$AUTHOR_FROM_EVENT"
+          fi
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #$PR_NUMBER (author: $AUTHOR) for event '$EVENT'"
+
       - name: Detect bot author (auto-pass)
         id: bot-check
         env:
-          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR: ${{ steps.ctx.outputs.author }}
         run: |
           case "$AUTHOR" in
             dependabot\[bot\]|github-actions\[bot\]|claude\[bot\]|claude-code-action\[bot\])
@@ -82,7 +130,7 @@ jobs:
         if: steps.bot-check.outputs.is_bot != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.ctx.outputs.pr_number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -158,7 +206,7 @@ jobs:
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.ctx.outputs.pr_number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
