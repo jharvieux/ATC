@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-349 — 2026-07-13 — GH Actions implicit run: shell has NO pipefail — pipe gates capture ${PIPESTATUS[0]}; green-but-lying nightly incident (PR #1864; #1862/#1863/#1865/#1866).
 - D-348 — 2026-07-13 — Frontend discipline: tests-first before god-component rewrites (#1812 stays open); verify-before-fix for perf flags (2 real of ~16); node-identity tests for key fixes (PR #1857).
 - D-347 — 2026-07-13 — Stripe webhook staleness+CAS core extracted (identical-core-only); CAS-lost outcome conflation preserved, #1854 tracks (PR #1853).
 - D-346 — 2026-07-13 — Nightly triage hardened (tested parser + public-issue redaction); RAG deploys automated (one prod approval gate); RLS/payments tests per-PR; operator preconditions: VERCEL_RAG_PROJECT_ID + required-check promotion (PR #1851).
