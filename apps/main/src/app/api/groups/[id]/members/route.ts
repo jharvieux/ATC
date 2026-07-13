@@ -110,6 +110,14 @@ export async function POST(
       { p_group_id: id, p_invitations: rows, p_max: MAX_INVITEES_PER_GROUP },
     );
     if (reserveErr) {
+      // #1895 — invitations_group_active_email_uniq_idx (partial, active rows
+      // only) rejects a repeat invite to an already-invited address; the RPC's
+      // insert surfaces that as SQLSTATE 23505. Mirrors the single-invite
+      // route (invitations/route.ts) so both surfaces return the same 409
+      // shape instead of this route falling through to a generic 500.
+      if (reserveErr.code === "23505") {
+        return Response.json({ error: "invitee_already_invited" }, { status: 409 });
+      }
       return dbErrorResponse(reserveErr);
     }
     const reserveStatus = (reserve as { status?: string } | null)?.status;
