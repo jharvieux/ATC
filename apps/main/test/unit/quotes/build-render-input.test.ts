@@ -311,19 +311,63 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     }
   });
 
-  it("falls back to defaults when tenant + host lookups return null rows", async () => {
+  // §20.7 fail-closed (#1877/#1883): the rendered PDF carries the
+  // tenant-of-record legal disclosure. A missing tenant display_name or
+  // host-agency legal name must fail loud (500), NEVER render a fabricated
+  // "Sub-host" / "Host Agency" placeholder into a customer-facing legal
+  // document. This is the same fail-open-disclosure class #1856 fixed for the
+  // Review stage — the test fails if a placeholder fallback is reintroduced.
+  it("fails closed (500, no placeholder) when the host-agency legal name is missing", async () => {
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: null, error: null },
+        tenant: { data: { display_name: "Acme Travel" }, error: null },
         host: { data: null, error: null },
         options: { data: [BASE_OPTION], error: null },
       }),
       quote: BASE_QUOTE,
     });
-    if (result.ok) {
-      expect(result.input.tenant_name).toBe("Sub-host");
-      expect(result.input.host_agency_legal_name).toBe("Host Agency");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(500);
+      expect(result.message).toMatch(/host_agency_legal_name/);
+      // The message must never be the fabricated legal name.
+      expect(result.message).not.toBe("Host Agency");
+    }
+  });
+
+  it("fails closed (500, no placeholder) when the tenant display_name is missing", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({
+        tenant: { data: null, error: null },
+        host: { data: { value: "Travel Pros LLC" }, error: null },
+        options: { data: [BASE_OPTION], error: null },
+      }),
+      quote: BASE_QUOTE,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(500);
+      expect(result.message).toMatch(/display_name/);
+      expect(result.message).not.toBe("Sub-host");
+    }
+  });
+
+  it("returns null (never a placeholder) when platform_settings.value is a malformed object", async () => {
+    const result = await buildRenderInputFromQuote({
+      ctx: CTX,
+      adminDb: makeAdminDb({
+        tenant: { data: { display_name: "Acme Travel" }, error: null },
+        host: { data: { value: {} }, error: null },
+        options: { data: [BASE_OPTION], error: null },
+      }),
+      quote: BASE_QUOTE,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(500);
+      expect(result.message).toMatch(/host_agency_legal_name/);
     }
   });
 

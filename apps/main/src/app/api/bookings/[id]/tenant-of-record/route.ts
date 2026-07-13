@@ -10,26 +10,11 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
 
 interface TenantRow {
   display_name: string | null;
   support_email: string | null;
-}
-
-// platform_settings.value ships as either a bare string or a JSON object
-// with .value — both forms are in the wild on dev (see build-render-input.ts,
-// api/quotes/[id]/accept/route.ts for the same unwrap).
-//
-// Fail-closed (#1856 audit): null means "no legal name available" — never a
-// placeholder. The caller must treat null as a disclosure failure, not a
-// displayable value.
-function unwrapHostAgencyName(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (typeof raw === "object" && raw !== null) {
-    const value = (raw as { value?: unknown }).value;
-    return typeof value === "string" ? value : null;
-  }
-  return null;
 }
 
 export async function GET(
@@ -73,7 +58,7 @@ export async function GET(
       support_email: tenant?.support_email ?? "",
     },
     host_agency: {
-      legal_name: unwrapHostAgencyName((hostRow as { value?: unknown } | null)?.value),
+      legal_name: resolveHostAgencyLegalName((hostRow as { value?: unknown } | null)?.value),
     },
   });
 }
