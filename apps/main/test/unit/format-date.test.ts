@@ -9,7 +9,7 @@
 // toLocaleDateString (which uses the runtime's local timezone) would shift
 // the displayed day whenever the CI runner's TZ has a negative UTC offset.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { formatDate } from "@/lib/format-date";
 
 const JAN_5_2026 = new Date(2026, 0, 5); // Monday
@@ -46,5 +46,36 @@ describe("formatDate", () => {
 
   it("accepts an epoch-milliseconds number (Stripe timestamp * 1000 pattern)", () => {
     expect(formatDate(JAN_5_2026.getTime())).toBe("1/5/2026");
+  });
+
+  // #1768: a date-only column (e.g. sailing_date, a Postgres DATE) parses as
+  // UTC midnight. Rendering it in the browser's local timezone rolls a
+  // negative-UTC-offset browser back to the previous calendar day — the
+  // sailing date shown wouldn't match the sailing date stored. Pin the fix
+  // by rendering under a real negative-offset zone (UTC-10) so the test
+  // fails if the UTC-anchoring regresses.
+  describe("date-only strings under a negative-UTC-offset timezone", () => {
+    const originalTz = process.env.TZ;
+
+    beforeEach(() => {
+      process.env.TZ = "Pacific/Honolulu"; // UTC-10, no DST
+    });
+
+    afterEach(() => {
+      process.env.TZ = originalTz;
+    });
+
+    it("renders the same calendar date as stored, not the day before", () => {
+      expect(formatDate("2026-07-06", "medium")).toBe("Jul 6, 2026");
+      expect(formatDate("2026-07-06")).toBe("7/6/2026");
+    });
+
+    it("still renders full timestamps in local time (not forced to UTC)", () => {
+      // A genuine instant (has a time component) should keep local-time
+      // rendering — only bare date-only strings get UTC-anchored. 5am UTC
+      // is still July 5 in UTC-10; if the fix over-broadly forced every
+      // input to UTC, this would wrongly render July 6.
+      expect(formatDate("2026-07-06T05:00:00Z")).toBe("7/5/2026");
+    });
   });
 });

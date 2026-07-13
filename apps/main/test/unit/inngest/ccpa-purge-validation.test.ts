@@ -132,6 +132,34 @@ describe("userDataPurgeAfterGrace — Zod validation (#742)", () => {
     expect(mocks.purgeUser).not.toHaveBeenCalled();
   });
 
+  it("skips as undo_delete when the DB deleted_at is null (user undid the deletion)", async () => {
+    // #1794: the null-deleted_at case is the crucial complement to the "stale"
+    // test above — it's what happens after a SUCCESSFUL undo (deleted_at
+    // cleared), not just a mismatched retry. Purging here would delete data
+    // for a user who is no longer scheduled for deletion.
+    const deleted_at = daysAgo(30);
+    const purge_at = new Date(new Date(deleted_at).getTime() + 30 * 86_400_000).toISOString();
+
+    const usersChain = chainable({
+      maybeSingle: async () => ({ data: { deleted_at: null, status: "active" }, error: null }),
+    });
+    mocks.serviceClient.mockReturnValue({ from: () => ({ select: () => usersChain }) });
+
+    const result = await fn.handler({
+      event: {
+        data: {
+          auth_user_id: "00000000-0000-0000-0000-000000000001",
+          user_id: "00000000-0000-0000-0000-000000000002",
+          deleted_at,
+          purge_at,
+        },
+      },
+      step: { sleepUntil: mocks.sleepUntil },
+    });
+    expect(result).toMatchObject({ skipped: true, reason: "undo_delete" });
+    expect(mocks.purgeUser).not.toHaveBeenCalled();
+  });
+
   it("passes the DB-sourced deleted_at to purgeUserDataPerRetention, not the payload value", async () => {
     // Verifies the DB-sourced value is used — regression guard against reverting
     // to event payload, which is attacker-controllable.
