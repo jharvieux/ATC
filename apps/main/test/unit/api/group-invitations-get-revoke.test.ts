@@ -401,6 +401,22 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     );
   });
 
+  // #1600/#1680 — the two tests below pin the cap boundary from BOTH sides so a
+  // future off-by-one (>= vs >, or a drifted literal) can't silently pass: the
+  // 50th invitee is allowed, the 51st is rejected before any insert.
+  it("allows the 50th invitee when 49 are active — the cap is inclusive of 50 (#1680)", async () => {
+    mocks.inviteCountQuery.mockResolvedValue({ count: 49, error: null });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.inviteInsertQuery).toHaveBeenCalledOnce();
+  });
+
   it("returns 400 without inserting when the group is already at the 50-invitee cap (#1600)", async () => {
     mocks.inviteCountQuery.mockResolvedValue({ count: 50, error: null });
 
