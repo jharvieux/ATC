@@ -1,14 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// §8.7 (#1609) — publishTenantEvent now enqueues to Inngest (rag-sync-deliver
+// owns delivery). Intent under test:
+//   1. It enqueues a rag-sync/tenant.event carrying the event verbatim, under a
+//      DETERMINISTIC id derived from (tenant_id, event_type, source_revision) so
+//      a double-enqueue dedups to one delivery — the idempotency contract.
+//   2. It never throws: callers commit the lifecycle row first and must not roll
+//      back if Inngest is briefly unreachable (an enqueue failure is alerted).
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  insert: vi.fn(() => ({ data: null, error: null })),
-  from: vi.fn(),
+  send: vi.fn(async (_send: unknown) => ({ ids: ["evt_1"] })),
+  alert: vi.fn(async (_input: unknown) => undefined),
 }));
-mocks.from.mockImplementation(() => ({ insert: mocks.insert }));
-
-vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({ from: mocks.from }),
-}));
+vi.mock("@/inngest/client", () => ({ inngest: { send: mocks.send } }));
+vi.mock("@/lib/monitoring/send-operator-alert", () => ({ sendOperatorAlert: mocks.alert }));
 
 import { publishTenantEvent, type TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 
@@ -19,34 +24,32 @@ const EVENT: TenantEvent = {
   payload: { status: "active", tenant_type: "byo_host", display_name: "Lisa Travel" },
 };
 
-const ORIG = { url: process.env.RAG_SERVICE_URL, secret: process.env.RAG_WEBHOOK_SECRET };
-
 beforeEach(() => {
-  mocks.from.mockClear();
-  mocks.insert.mockClear();
-});
-afterEach(() => {
-  process.env.RAG_SERVICE_URL = ORIG.url;
-  process.env.RAG_WEBHOOK_SECRET = ORIG.secret;
+  mocks.send.mockClear();
+  mocks.send.mockResolvedValue({ ids: ["evt_1"] });
+  mocks.alert.mockClear();
 });
 
-describe("publishTenantEvent — missing config", () => {
-  it("queues the event to pending_rag_sync instead of silently dropping it", async () => {
-    delete process.env.RAG_SERVICE_URL;
-    delete process.env.RAG_WEBHOOK_SECRET;
-
+describe("publishTenantEvent", () => {
+  it("enqueues rag-sync/tenant.event with the event and a deterministic dedup id", async () => {
     await publishTenantEvent(EVENT);
 
-    // The whole point of the fix: an unconfigured RAG URL must not lose the
-    // event — the rag-sync-retry cron redelivers it once config is restored.
-    expect(mocks.from).toHaveBeenCalledWith("pending_rag_sync");
-    expect(mocks.insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenant_id: EVENT.tenant_id,
-        event_type: "tenant.status_changed",
-        source_revision: EVENT.source_revision,
-        last_error: "RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set",
-      }),
-    );
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.send).toHaveBeenCalledWith({
+      // Deterministic id: re-enqueuing the same event dedups to one delivery.
+      id: `rag-sync:tenant:${EVENT.tenant_id}:tenant.status_changed:${EVENT.source_revision}`,
+      name: "rag-sync/tenant.event",
+      data: { event: EVENT },
+    });
+  });
+
+  it("never throws when the enqueue fails — the committed lifecycle op must not roll back", async () => {
+    mocks.send.mockRejectedValueOnce(new Error("inngest unreachable"));
+
+    await expect(publishTenantEvent(EVENT)).resolves.toBeUndefined();
+    // Not silently dropped — an operator alert fires so the drop is visible;
+    // the nightly reconcile heals the shadow.
+    expect(mocks.alert).toHaveBeenCalledTimes(1);
+    expect(mocks.alert.mock.calls[0]![0]).toMatchObject({ signal: "rag_sync_enqueue_failed" });
   });
 });
