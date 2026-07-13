@@ -28,8 +28,12 @@ import "server-only";
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 const STUCK_THRESHOLD_MINUTES = 5;
+// #1789 — up to 500 independent per-row CAS updates (distinct booking ids);
+// bounded concurrency instead of one-at-a-time.
+const RECONCILE_CONCURRENCY = 20;
 
 export async function runBookingsStuckSubmittingReconcile(): Promise<{
   flagged: number;
@@ -63,31 +67,36 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
   // CAS flag: only move the row if it is STILL in 'submitting'. A legitimate
   // completion (status='submitted' or 'pending_host_review') that landed
   // between the select and the update will safely not match.
-  let flagged = 0;
-  for (const row of stuck as Array<{ id: string; tenant_id: string }>) {
-    // safeAwait unwraps { data, error } and throws on truthy error. For
-    // a CAS update with .select("id"), the returned value is the
-    // affected-row array directly (NOT { data: ... }).
-    const updated = (await safeAwait(
-      db
-        .from("bookings")
-        .update({
-          status: "pending_host_review",
-          review_reason: "host_state_unknown",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id)
-        .eq("status", "submitting")
-        .select("id"),
-      "bookings.update.flag_stuck_submitting",
-    )) as Array<{ id: string }> | null;
-    if (updated && updated.length > 0) {
-      flagged++;
-      console.info(
-        `[bookings-stuck-submitting-reconcile] flagged booking ${row.id} (tenant ${row.tenant_id}) submitting → pending_host_review (host_state_unknown)`,
-      );
-    }
-  }
+  const results = await mapWithConcurrency(
+    stuck as Array<{ id: string; tenant_id: string }>,
+    RECONCILE_CONCURRENCY,
+    async (row) => {
+      // safeAwait unwraps { data, error } and throws on truthy error. For
+      // a CAS update with .select("id"), the returned value is the
+      // affected-row array directly (NOT { data: ... }).
+      const updated = (await safeAwait(
+        db
+          .from("bookings")
+          .update({
+            status: "pending_host_review",
+            review_reason: "host_state_unknown",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id)
+          .eq("status", "submitting")
+          .select("id"),
+        "bookings.update.flag_stuck_submitting",
+      )) as Array<{ id: string }> | null;
+      const wasFlagged = !!updated && updated.length > 0;
+      if (wasFlagged) {
+        console.info(
+          `[bookings-stuck-submitting-reconcile] flagged booking ${row.id} (tenant ${row.tenant_id}) submitting → pending_host_review (host_state_unknown)`,
+        );
+      }
+      return wasFlagged;
+    },
+  );
+  const flagged = results.filter(Boolean).length;
 
   return { flagged, total_stuck: stuck.length };
 }

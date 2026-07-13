@@ -17,6 +17,13 @@ import { inngest } from "./client";
 import { getRagDb } from "@/lib/db/supabase";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each sync-eligible key is an independent insert/update (distinct
+// platform_settings rows, no ordering between keys); bounded concurrency
+// instead of one-at-a-time. SYNC_ELIGIBLE_KEYS is a handful of keys today,
+// so this is mostly headroom for the allowlist growing.
+const RECONCILE_CONCURRENCY = 10;
 
 // Keep this list in sync with apps/main/src/lib/rag-sync/publish-platform-event.ts
 // SYNC_ELIGIBLE_KEYS. Two copies because rag can't import from main; a
@@ -96,14 +103,9 @@ export const platformSettingsReconcile = inngest.createFunction(
       (shadowRows ?? []).map((r) => [r.key, r as ShadowSetting]),
     );
 
-    let inserted = 0;
-    let updated = 0;
-    let skipped_not_eligible = 0;
-
-    for (const setting of mainSettings) {
+    const outcomes = await mapWithConcurrency(mainSettings, RECONCILE_CONCURRENCY, async (setting) => {
       if (!SYNC_ELIGIBLE_KEYS.has(setting.key)) {
-        skipped_not_eligible++;
-        continue;
+        return "skipped_not_eligible" as const;
       }
       const shadow = shadowMap.get(setting.key);
 
@@ -115,8 +117,7 @@ export const platformSettingsReconcile = inngest.createFunction(
           last_reconcile_sync_at: new Date().toISOString(),
         }), "platform_settings.insert");
         console.warn("[platform-settings-reconcile] inserted missing key", { key: setting.key });
-        inserted++;
-        continue;
+        return "inserted" as const;
       }
 
       const drifted =
@@ -133,14 +134,18 @@ export const platformSettingsReconcile = inngest.createFunction(
           })
           .eq("key", setting.key), "platform_settings.update");
         console.warn("[platform-settings-reconcile] corrected drifted key", { key: setting.key });
-        updated++;
-      } else {
-        await safeAwait(db
-          .from("platform_settings")
-          .update({ last_reconcile_sync_at: new Date().toISOString() })
-          .eq("key", setting.key), "platform_settings.update");
+        return "updated" as const;
       }
-    }
+      await safeAwait(db
+        .from("platform_settings")
+        .update({ last_reconcile_sync_at: new Date().toISOString() })
+        .eq("key", setting.key), "platform_settings.update");
+      return "unchanged" as const;
+    });
+
+    const inserted = outcomes.filter((o) => o === "inserted").length;
+    const updated = outcomes.filter((o) => o === "updated").length;
+    const skipped_not_eligible = outcomes.filter((o) => o === "skipped_not_eligible").length;
 
     // Shadow keys absent from main — usually fine for allowlist-filtered
     // keys (means main removed a key). Log so an operator can investigate
