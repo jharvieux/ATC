@@ -30,21 +30,36 @@ interface Article {
 
 const inputCls = "px-2 py-1.5 border border-border rounded text-[14px] w-full box-border";
 
+interface DataState {
+  feeds: Feed[];
+  articles: Article[];
+  hiddenArticles: Article[];
+  feedError: string | null;
+}
+
+interface AddFeedFormState {
+  newName: string;
+  newUrl: string;
+  adding: boolean;
+  addError: string | null;
+}
+
+interface RefreshState {
+  refreshing: boolean;
+  refreshMsg: string | null;
+}
+
 export default function TravelNewsPage(): JSX.Element {
-  const [feeds, setFeeds] = useState<Feed[]>([]);
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [hiddenArticles, setHiddenArticles] = useState<Article[]>([]);
+  // #1812 — the 12 useState hooks (feed/article data, add-feed form, manual
+  // refresh) are grouped into 3 state objects by concern, one useState each,
+  // matching the pattern established in #1791. `showHidden` stays a single
+  // hook — it's a standalone UI toggle, not part of a cluster.
+  const [data, setData] = useState<DataState>({ feeds: [], articles: [], hiddenArticles: [], feedError: null });
   const [showHidden, setShowHidden] = useState(false);
-
-  const [newName, setNewName] = useState("");
-  const [newUrl, setNewUrl] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-
-  const [feedError, setFeedError] = useState<string | null>(null);
-
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [addFeedForm, setAddFeedForm] = useState<AddFeedFormState>({
+    newName: "", newUrl: "", adding: false, addError: null,
+  });
+  const [refreshState, setRefreshState] = useState<RefreshState>({ refreshing: false, refreshMsg: null });
 
   const loadData = useCallback(async () => {
     const [feedsRes, articlesRes] = await Promise.all([
@@ -53,12 +68,11 @@ export default function TravelNewsPage(): JSX.Element {
     ]);
     if (feedsRes.ok) {
       const { feeds: f } = await feedsRes.json() as { feeds: Feed[] };
-      setFeeds(f);
+      setData((d) => ({ ...d, feeds: f }));
     }
     if (articlesRes.ok) {
       const { visible, hidden } = await articlesRes.json() as { visible: Article[]; hidden: Article[] };
-      setArticles(visible);
-      setHiddenArticles(hidden);
+      setData((d) => ({ ...d, articles: visible, hiddenArticles: hidden }));
     }
   }, []);
 
@@ -68,32 +82,30 @@ export default function TravelNewsPage(): JSX.Element {
 
   async function addFeed(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    setAdding(true);
-    setAddError(null);
+    setAddFeedForm((f) => ({ ...f, adding: true, addError: null }));
     const res = await fetch("/api/admin/travel-news/feeds", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), url: newUrl.trim() }),
+      body: JSON.stringify({ name: addFeedForm.newName.trim(), url: addFeedForm.newUrl.trim() }),
     });
     if (res.ok) {
-      setNewName("");
-      setNewUrl("");
+      setAddFeedForm((f) => ({ ...f, newName: "", newUrl: "" }));
       await loadData();
     } else {
       const body = await res.json() as { error?: string };
-      setAddError(body.error ?? "Failed to add feed");
+      setAddFeedForm((f) => ({ ...f, addError: body.error ?? "Failed to add feed" }));
     }
-    setAdding(false);
+    setAddFeedForm((f) => ({ ...f, adding: false }));
   }
 
   async function deleteFeed(id: string): Promise<void> {
     const res = await fetch(`/api/admin/travel-news/feeds/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const body = await res.json() as { error?: string };
-      setFeedError(body.error ?? "Failed to delete feed");
+      setData((d) => ({ ...d, feedError: body.error ?? "Failed to delete feed" }));
       return;
     }
-    setFeedError(null);
+    setData((d) => ({ ...d, feedError: null }));
     await loadData();
   }
 
@@ -105,29 +117,30 @@ export default function TravelNewsPage(): JSX.Element {
     });
     if (!res.ok) {
       const body = await res.json() as { error?: string };
-      setFeedError(body.error ?? "Failed to update feed");
+      setData((d) => ({ ...d, feedError: body.error ?? "Failed to update feed" }));
       return;
     }
-    setFeedError(null);
+    setData((d) => ({ ...d, feedError: null }));
     await loadData();
   }
 
   async function triggerRefresh(): Promise<void> {
-    setRefreshing(true);
-    setRefreshMsg(null);
+    setRefreshState({ refreshing: true, refreshMsg: null });
     const res = await fetch("/api/admin/travel-news/feeds/refresh", { method: "POST" });
-    setRefreshMsg(res.ok ? "Refresh queued — check back in a minute." : "Failed to queue refresh.");
-    setRefreshing(false);
+    setRefreshState({
+      refreshing: false,
+      refreshMsg: res.ok ? "Refresh queued — check back in a minute." : "Failed to queue refresh.",
+    });
   }
 
   async function hideArticle(id: string): Promise<void> {
     const res = await fetch(`/api/admin/travel-news/articles/${id}/hide`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json() as { error?: string };
-      setFeedError(body.error ?? "Failed to hide article");
+      setData((d) => ({ ...d, feedError: body.error ?? "Failed to hide article" }));
       return;
     }
-    setFeedError(null);
+    setData((d) => ({ ...d, feedError: null }));
     await loadData();
   }
 
@@ -135,10 +148,10 @@ export default function TravelNewsPage(): JSX.Element {
     const res = await fetch(`/api/admin/travel-news/articles/${id}/rag`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json() as { error?: string };
-      setFeedError(body.error ?? "Failed to send to RAG");
+      setData((d) => ({ ...d, feedError: body.error ?? "Failed to send to RAG" }));
       return;
     }
-    setFeedError(null);
+    setData((d) => ({ ...d, feedError: null }));
     await loadData();
   }
 
@@ -146,6 +159,10 @@ export default function TravelNewsPage(): JSX.Element {
     if (!iso) return "—";
     return new Date(iso).toLocaleString();
   }
+
+  const { feeds, articles, hiddenArticles, feedError } = data;
+  const { newName, newUrl, adding, addError } = addFeedForm;
+  const { refreshing, refreshMsg } = refreshState;
 
   return (
     <main className="px-6 py-10 max-w-[900px] mx-auto">
@@ -229,7 +246,7 @@ export default function TravelNewsPage(): JSX.Element {
             <Input
               className={inputCls}
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={(e) => setAddFeedForm((f) => ({ ...f, newName: e.target.value }))}
               placeholder="Travel Weekly"
               required
             />
@@ -239,7 +256,7 @@ export default function TravelNewsPage(): JSX.Element {
             <Input
               className={inputCls}
               value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
+              onChange={(e) => setAddFeedForm((f) => ({ ...f, newUrl: e.target.value }))}
               placeholder="https://example.com/rss"
               type="url"
               required
@@ -356,10 +373,10 @@ export default function TravelNewsPage(): JSX.Element {
                           });
                           if (!res.ok) {
                             const body = await res.json() as { error?: string };
-                            setFeedError(body.error ?? "Failed to unhide article");
+                            setData((d) => ({ ...d, feedError: body.error ?? "Failed to unhide article" }));
                             return;
                           }
-                          setFeedError(null);
+                          setData((d) => ({ ...d, feedError: null }));
                           await loadData();
                         }}
                         className="text-[12px] text-primary hover:underline"

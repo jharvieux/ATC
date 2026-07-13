@@ -39,117 +39,137 @@ interface InviteeRow {
   name: string;
 }
 
+interface CatalogState {
+  lines: CruiseLine[];
+  ships: CruiseShip[];
+  sailings: CruiseSailing[];
+}
+
+interface SelectionState {
+  selectedLineId: string;
+  selectedShipId: string;
+  selectedSailingId: string;
+  selectedSailing: CruiseSailing | null;
+}
+
+interface FormState {
+  maxCabins: string;
+  coordinatorMessage: string;
+  invitees: InviteeRow[];
+}
+
+interface UiState {
+  loadingShips: boolean;
+  loadingSailings: boolean;
+  submitting: boolean;
+  error: string | null;
+}
+
 export function CreateGroupClient(): React.ReactElement {
   const router = useRouter();
 
-  const [lines, setLines] = useState<CruiseLine[]>([]);
-  const [ships, setShips] = useState<CruiseShip[]>([]);
-  const [sailings, setSailings] = useState<CruiseSailing[]>([]);
-
-  const [selectedLineId, setSelectedLineId] = useState<string>("");
-  const [selectedShipId, setSelectedShipId] = useState<string>("");
-  const [selectedSailingId, setSelectedSailingId] = useState<string>("");
-  const [selectedSailing, setSelectedSailing] = useState<CruiseSailing | null>(null);
-
-  const [maxCabins, setMaxCabins] = useState<string>("");
-  const [coordinatorMessage, setCoordinatorMessage] = useState<string>("");
-  const [invitees, setInvitees] = useState<InviteeRow[]>([{ email: "", name: "" }]);
-
-  const [loadingShips, setLoadingShips] = useState(false);
-  const [loadingSailings, setLoadingSailings] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // #1812 — the 15 useState hooks (fetched catalog data, cascading line/ship/
+  // sailing selection, group-settings form, loading/submit UI) are grouped
+  // into 4 state objects by concern, one useState each, matching the pattern
+  // established in #1791.
+  const [catalog, setCatalog] = useState<CatalogState>({ lines: [], ships: [], sailings: [] });
+  const [selection, setSelection] = useState<SelectionState>({
+    selectedLineId: "", selectedShipId: "", selectedSailingId: "", selectedSailing: null,
+  });
+  const [form, setForm] = useState<FormState>({
+    maxCabins: "", coordinatorMessage: "", invitees: [{ email: "", name: "" }],
+  });
+  const [ui, setUi] = useState<UiState>({
+    loadingShips: false, loadingSailings: false, submitting: false, error: null,
+  });
 
   const loadLines = useCallback(async () => {
     const res = await fetch("/api/cruise-lines");
-    if (!res.ok) { setError(`Could not load cruise lines (${res.status})`); return; }
+    if (!res.ok) { setUi((u) => ({ ...u, error: `Could not load cruise lines (${res.status})` })); return; }
     const json = await res.json() as { lines: CruiseLine[] };
-    setLines(json.lines ?? []);
+    setCatalog((c) => ({ ...c, lines: json.lines ?? [] }));
   }, []);
 
   useEffect(() => { void loadLines(); }, [loadLines]);
 
   const loadShips = useCallback(async (lineId: string) => {
-    if (!lineId) { setShips([]); return; }
-    setLoadingShips(true);
+    if (!lineId) { setCatalog((c) => ({ ...c, ships: [] })); return; }
+    setUi((u) => ({ ...u, loadingShips: true }));
     try {
       const res = await fetch(`/api/cruise-ships?cruise_line_id=${encodeURIComponent(lineId)}`);
-      if (!res.ok) { setError(`Could not load ships (${res.status})`); return; }
+      if (!res.ok) { setUi((u) => ({ ...u, error: `Could not load ships (${res.status})` })); return; }
       const json = await res.json() as { ships: CruiseShip[] };
-      setShips(json.ships ?? []);
+      setCatalog((c) => ({ ...c, ships: json.ships ?? [] }));
     } finally {
-      setLoadingShips(false);
+      setUi((u) => ({ ...u, loadingShips: false }));
     }
   }, []);
 
   const loadSailings = useCallback(async (shipId: string) => {
-    if (!shipId) { setSailings([]); return; }
-    setLoadingSailings(true);
+    if (!shipId) { setCatalog((c) => ({ ...c, sailings: [] })); return; }
+    setUi((u) => ({ ...u, loadingSailings: true }));
     try {
       const res = await fetch(`/api/cruise-sailings?cruise_ship_id=${encodeURIComponent(shipId)}`);
-      if (!res.ok) { setError(`Could not load sailings (${res.status})`); return; }
+      if (!res.ok) { setUi((u) => ({ ...u, error: `Could not load sailings (${res.status})` })); return; }
       const json = await res.json() as { sailings: CruiseSailing[] };
-      setSailings(json.sailings ?? []);
+      setCatalog((c) => ({ ...c, sailings: json.sailings ?? [] }));
     } finally {
-      setLoadingSailings(false);
+      setUi((u) => ({ ...u, loadingSailings: false }));
     }
   }, []);
 
   function handleLineChange(lineId: string): void {
-    setSelectedLineId(lineId);
-    setSelectedShipId("");
-    setSelectedSailingId("");
-    setSelectedSailing(null);
-    setShips([]);
-    setSailings([]);
+    setSelection({ selectedLineId: lineId, selectedShipId: "", selectedSailingId: "", selectedSailing: null });
+    setCatalog((c) => ({ ...c, ships: [], sailings: [] }));
     void loadShips(lineId);
   }
 
   function handleShipChange(shipId: string): void {
-    setSelectedShipId(shipId);
-    setSelectedSailingId("");
-    setSelectedSailing(null);
-    setSailings([]);
+    setSelection((s) => ({ ...s, selectedShipId: shipId, selectedSailingId: "", selectedSailing: null }));
+    setCatalog((c) => ({ ...c, sailings: [] }));
     void loadSailings(shipId);
   }
 
   function handleSailingChange(sailingId: string): void {
-    setSelectedSailingId(sailingId);
-    const found = sailings.find((s) => s.id === sailingId) ?? null;
-    setSelectedSailing(found);
+    const found = catalog.sailings.find((s) => s.id === sailingId) ?? null;
+    setSelection((s) => ({ ...s, selectedSailingId: sailingId, selectedSailing: found }));
   }
 
   function addInvitee(): void {
-    setInvitees((prev) => [...prev, { email: "", name: "" }]);
+    setForm((f) => ({ ...f, invitees: [...f.invitees, { email: "", name: "" }] }));
   }
 
   function removeInvitee(idx: number): void {
-    setInvitees((prev) => prev.filter((_, i) => i !== idx));
+    setForm((f) => ({ ...f, invitees: f.invitees.filter((_, i) => i !== idx) }));
   }
 
   function updateInvitee(idx: number, field: keyof InviteeRow, value: string): void {
-    setInvitees((prev) => prev.map((row, i) => i === idx ? { ...row, [field]: value } : row));
+    setForm((f) => ({
+      ...f,
+      invitees: f.invitees.map((row, i) => i === idx ? { ...row, [field]: value } : row),
+    }));
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
-    setError(null);
+    setUi((u) => ({ ...u, error: null }));
 
-    const selectedLine = lines.find((l) => l.id === selectedLineId);
-    const selectedShip = ships.find((s) => s.id === selectedShipId);
+    const selectedLine = catalog.lines.find((l) => l.id === selection.selectedLineId);
+    const selectedShip = catalog.ships.find((s) => s.id === selection.selectedShipId);
+    const { selectedSailing } = selection;
 
     if (!selectedLine || !selectedShip || !selectedSailing) {
-      setError("Please select a cruise line, ship, and sailing.");
+      setUi((u) => ({ ...u, error: "Please select a cruise line, ship, and sailing." }));
       return;
     }
 
-    const validInvitees = invitees.filter((r) => r.email.trim().length > 0);
+    const validInvitees = form.invitees.filter((r) => r.email.trim().length > 0);
     if (validInvitees.length > MAX_INVITEES_PER_GROUP) {
-      setError(`Maximum ${MAX_INVITEES_PER_GROUP} invitees per group.`);
+      setUi((u) => ({ ...u, error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group.` }));
       return;
     }
 
-    setSubmitting(true);
+    setUi((u) => ({ ...u, submitting: true }));
     try {
       const res = await fetch("/api/groups", {
         method: "POST",
@@ -160,8 +180,8 @@ export function CreateGroupClient(): React.ReactElement {
           sailing_date: selectedSailing.departure_date,
           departure_port: selectedSailing.departure_port,
           sailing_id: selectedSailing.id,
-          ...(maxCabins.trim() !== "" && { max_cabins: Number(maxCabins) }),
-          ...(coordinatorMessage.trim() !== "" && { coordinator_message: coordinatorMessage.trim() }),
+          ...(form.maxCabins.trim() !== "" && { max_cabins: Number(form.maxCabins) }),
+          ...(form.coordinatorMessage.trim() !== "" && { coordinator_message: form.coordinatorMessage.trim() }),
           invitees: validInvitees.map((r) => ({
             email: r.email.trim(),
             ...(r.name.trim() !== "" && { name: r.name.trim() }),
@@ -171,18 +191,23 @@ export function CreateGroupClient(): React.ReactElement {
 
       if (!res.ok) {
         const json = await res.json() as { error?: string };
-        setError(json.error ?? `Error ${res.status}`);
+        setUi((u) => ({ ...u, error: json.error ?? `Error ${res.status}` }));
         return;
       }
 
       const json = await res.json() as { group_id: string };
       router.push(`/groups/${json.group_id}/coordinate/overview`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error");
+      setUi((u) => ({ ...u, error: err instanceof Error ? err.message : "Unexpected error" }));
     } finally {
-      setSubmitting(false);
+      setUi((u) => ({ ...u, submitting: false }));
     }
   }
+
+  const { lines, ships, sailings } = catalog;
+  const { selectedLineId, selectedShipId, selectedSailingId, selectedSailing } = selection;
+  const { maxCabins, coordinatorMessage, invitees } = form;
+  const { loadingShips, loadingSailings, submitting, error } = ui;
 
   return (
     <form onSubmit={(e) => { void handleSubmit(e); }} className="flex flex-col gap-6 max-w-2xl">
@@ -276,7 +301,7 @@ export function CreateGroupClient(): React.ReactElement {
             min={1}
             max={500}
             value={maxCabins}
-            onChange={(e) => setMaxCabins(e.target.value)}
+            onChange={(e) => setForm((f) => ({ ...f, maxCabins: e.target.value }))}
             placeholder="e.g. 20"
             className="max-w-[160px]"
           />
@@ -288,7 +313,7 @@ export function CreateGroupClient(): React.ReactElement {
             id="coordinator_message"
             rows={3}
             value={coordinatorMessage}
-            onChange={(e) => setCoordinatorMessage(e.target.value)}
+            onChange={(e) => setForm((f) => ({ ...f, coordinatorMessage: e.target.value }))}
             placeholder="Message shown on the invitation page…"
           />
         </div>
@@ -323,7 +348,7 @@ export function CreateGroupClient(): React.ReactElement {
               <Button
                 type="button"
                 variant="ghost"
-                                onClick={() => removeInvitee(idx)}
+                onClick={() => removeInvitee(idx)}
                 className="mt-0.5 text-muted-foreground"
               >
                 ✕

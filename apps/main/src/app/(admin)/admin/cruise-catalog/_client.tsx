@@ -28,6 +28,10 @@ interface CruiseShip {
   ship_class: string | null;
   is_active: boolean;
   cruisemapper_slug: string;
+  guest_capacity: number | null;
+  decks: number | null;
+  built_year: number | null;
+  signature_feature: string | null;
 }
 
 interface Port {
@@ -232,6 +236,7 @@ function ShipsTab(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
     adminFetch("/api/admin/cruise-catalog/lines")
@@ -246,6 +251,7 @@ function ShipsTab(): JSX.Element {
   useEffect(() => {
     if (!selectedLine) return;
     setLoading(true);
+    setEditingId(null);
     adminFetch(`/api/admin/cruise-catalog/ships?line_id=${selectedLine}`)
       .then((r) => r.json())
       .then((d) => { setShips((d as { ships: CruiseShip[] }).ships); setLoading(false); });
@@ -263,6 +269,24 @@ function ShipsTab(): JSX.Element {
       setShips((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     } else {
       setError("Toggle failed");
+    }
+    setBusy(null);
+  }
+
+  async function saveShip(id: string, patch: Record<string, unknown>) {
+    setBusy(id);
+    setError(null);
+    const res = await adminFetch(`/api/admin/cruise-catalog/ships/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      const updated = ((await res.json()) as { ship: CruiseShip }).ship;
+      setShips((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setEditingId(null);
+    } else {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(d.error ?? "Save failed");
     }
     setBusy(null);
   }
@@ -290,35 +314,164 @@ function ShipsTab(): JSX.Element {
             <tr className="bg-muted text-left">
               <th className="px-3 py-2 border-b border-border">Ship</th>
               <th className="px-3 py-2 border-b border-border">Class</th>
+              <th className="px-3 py-2 border-b border-border">Capacity</th>
+              <th className="px-3 py-2 border-b border-border">Decks</th>
+              <th className="px-3 py-2 border-b border-border">Built</th>
+              <th className="px-3 py-2 border-b border-border">Signature feature</th>
               <th className="px-3 py-2 border-b border-border">Active</th>
               <th className="px-3 py-2 border-b border-border"></th>
             </tr>
           </thead>
           <tbody>
             {ships.map((ship) => (
-              <tr key={ship.id} className="border-b border-muted">
-                <td className="px-3 py-2 font-medium">{ship.canonical_name}</td>
-                <td className="px-3 py-2 text-muted-foreground">{ship.ship_class ?? "—"}</td>
-                <td className="px-3 py-2">
-                  <span className={ship.is_active ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}>
-                    {ship.is_active ? "Yes" : "No"}
-                  </span>
-                </td>
-                <td className="px-3 py-2">
-                  <button
-                    disabled={busy === ship.id}
-                    onClick={() => void toggleActive(ship)}
-                    className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
-                  >
-                    {ship.is_active ? "Disable" : "Enable"}
-                  </button>
-                </td>
-              </tr>
+              editingId === ship.id ? (
+                <ShipEditRow
+                  key={ship.id}
+                  ship={ship}
+                  busy={busy === ship.id}
+                  onSave={(patch) => void saveShip(ship.id, patch)}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <tr key={ship.id} className="border-b border-muted">
+                  <td className="px-3 py-2 font-medium">{ship.canonical_name}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{ship.ship_class ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{ship.guest_capacity ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{ship.decks ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{ship.built_year ?? "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground max-w-[220px] truncate" title={ship.signature_feature ?? undefined}>
+                    {ship.signature_feature ?? "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={ship.is_active ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}>
+                      {ship.is_active ? "Yes" : "No"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <button
+                      disabled={busy === ship.id}
+                      onClick={() => { setError(null); setEditingId(ship.id); }}
+                      className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 mr-1"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      disabled={busy === ship.id}
+                      onClick={() => void toggleActive(ship)}
+                      className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
+                    >
+                      {ship.is_active ? "Disable" : "Enable"}
+                    </button>
+                  </td>
+                </tr>
+              )
             ))}
           </tbody>
         </table>
       )}
     </div>
+  );
+}
+
+// Inline editor for a ship's RAG-populated stat fields (#1565). Empty number
+// inputs clear the field (null); the signature feature is free text.
+function ShipEditRow({
+  ship,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  ship: CruiseShip;
+  busy: boolean;
+  onSave: (patch: Record<string, unknown>) => void;
+  onCancel: () => void;
+}): JSX.Element {
+  const [guestCapacity, setGuestCapacity] = useState(ship.guest_capacity?.toString() ?? "");
+  const [decks, setDecks] = useState(ship.decks?.toString() ?? "");
+  const [builtYear, setBuiltYear] = useState(ship.built_year?.toString() ?? "");
+  const [signatureFeature, setSignatureFeature] = useState(ship.signature_feature ?? "");
+
+  function numOrNull(v: string): number | null {
+    const t = v.trim();
+    return t === "" ? null : Number(t);
+  }
+
+  function submit() {
+    onSave({
+      guest_capacity: numOrNull(guestCapacity),
+      decks: numOrNull(decks),
+      built_year: numOrNull(builtYear),
+      signature_feature: signatureFeature.trim() === "" ? null : signatureFeature.trim(),
+    });
+  }
+
+  return (
+    <tr className="border-b border-muted bg-muted/40">
+      <td className="px-3 py-2 font-medium align-top">{ship.canonical_name}</td>
+      <td className="px-3 py-2 text-muted-foreground align-top">{ship.ship_class ?? "—"}</td>
+      <td className="px-3 py-2 align-top">
+        <input
+          type="number"
+          min={1}
+          value={guestCapacity}
+          onChange={(e) => setGuestCapacity(e.target.value)}
+          className="w-20 border border-border rounded px-2 py-1 text-sm bg-background"
+          aria-label="Guest capacity"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <input
+          type="number"
+          min={1}
+          value={decks}
+          onChange={(e) => setDecks(e.target.value)}
+          className="w-16 border border-border rounded px-2 py-1 text-sm bg-background"
+          aria-label="Decks"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <input
+          type="number"
+          min={1900}
+          value={builtYear}
+          onChange={(e) => setBuiltYear(e.target.value)}
+          className="w-20 border border-border rounded px-2 py-1 text-sm bg-background"
+          aria-label="Built year"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <input
+          type="text"
+          maxLength={120}
+          value={signatureFeature}
+          onChange={(e) => setSignatureFeature(e.target.value)}
+          placeholder="e.g. Go-Kart track on deck"
+          className="w-56 border border-border rounded px-2 py-1 text-sm bg-background"
+          aria-label="Signature feature"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <span className={ship.is_active ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}>
+          {ship.is_active ? "Yes" : "No"}
+        </span>
+      </td>
+      <td className="px-3 py-2 whitespace-nowrap align-top">
+        <button
+          disabled={busy}
+          onClick={submit}
+          className="text-xs px-2 py-1 rounded bg-foreground text-background hover:opacity-90 disabled:opacity-50 mr-1"
+        >
+          Save
+        </button>
+        <button
+          disabled={busy}
+          onClick={onCancel}
+          className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </td>
+    </tr>
   );
 }
 

@@ -78,3 +78,8 @@ headroom_memory.db
 # npm lockfile — this is a pnpm monorepo; an npm lockfile must never be committed
 # (a stray one generates phantom Dependabot alerts against unused dep versions).
 package-lock.json
+
+# scripts/draft-signature-features.ts (#1565) — operator-run drafting output.
+# Repo-local (not shared OS /tmp) so the emitted apply-SQL isn't sitting at a
+# predictable, world-writable path an operator hand-applies via psql.
+/scripts/.signature-drafts/

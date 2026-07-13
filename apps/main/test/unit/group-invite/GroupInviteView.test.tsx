@@ -55,6 +55,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("GroupInviteView sailing year — #1808-class: date-only string under a negative-UTC-offset timezone", () => {
+  const originalTz = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "Pacific/Honolulu"; // UTC-10, no DST
+  });
+
+  afterEach(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it("shows the stored sailing year, not the year before, in the nav header", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const data = baseData();
+    data.group.sailing_date = "2026-01-01"; // UTC-midnight parse shifts to Dec 31 2025 local in Honolulu
+
+    render(<GroupInviteView data={data} token="tok-1" />);
+
+    expect(screen.getByText((_, node) => node?.tagName === "SPAN" && node.textContent === "Norwegian Group Cruise · 2026")).toBeTruthy();
+  });
+});
+
 describe("GroupInviteView coordinator message", () => {
   it("renders the coordinator's message when present", () => {
     vi.stubGlobal("fetch", vi.fn());
