@@ -140,6 +140,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("bookings", "modify"),
   key("bookings", "submit"),
   key("bookings", "update"),
+  // #1764 — resolve a pending_host_review booking back to draft (operator action).
+  key("bookings", "resolve_review"),
   key("bookings.passengers", "write"),
   key("bookings.options", "write"),
   // #1173 — bookings sub-resource reads/writes (staff-only Bookings nav).

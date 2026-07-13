@@ -4,6 +4,8 @@
 // here. The event name is the discriminant; each entry describes the payload
 // shape so TypeScript enforces it at call sites.
 
+import type { TenantEvent, PlatformEvent } from "@atc/contracts";
+
 export interface ConversationMemoryExtractRequestedPayload {
   tenant_id: string;
   conversation_id: string;
@@ -132,5 +134,14 @@ export type InngestEvents = {
       sequence_run_id: string;
       step_index: number;
     };
+  };
+  // §8.7 / §8.7a (#1609) — RAG-sync delivery moved off the in-request retry
+  // sleeps + pending_rag_sync cron onto Inngest. Publishers enqueue; the
+  // rag-sync-deliver function owns delivery with Inngest-managed retries.
+  "rag-sync/tenant.event": {
+    data: { event: TenantEvent };
+  };
+  "rag-sync/platform.event": {
+    data: { event: PlatformEvent };
   };
 };

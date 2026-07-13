@@ -73,6 +73,31 @@ describe("resolveCustomerContext", () => {
     expect(ctx).toContain("Do NOT promise prices");
   });
 
+  it("formats a bigint total_amount_cents the same as a number (#1779)", async () => {
+    // Some drivers return DB bigint columns as native bigint, not number —
+    // the union type on this row reflects that. Money formatting must not
+    // silently mis-render (or throw) when the value arrives as bigint.
+    const db = makeDb({
+      "bookings:b1:t1": {
+        row: {
+          id: "b1",
+          tenant_id: "t1",
+          cruise_line: "Royal Caribbean",
+          ship_name: "Wonder of the Seas",
+          sailing_date: "2026-08-15",
+          duration_nights: 7,
+          cabin_category: "Balcony",
+          departure_port: "Miami",
+          total_amount_cents: 245000n,
+          currency: "USD",
+          status: "draft",
+        },
+      },
+    });
+    const ctx = await resolveCustomerContext({ ref: { type: "booking", id: "b1" }, tenant_id: "t1", db });
+    expect(ctx).toContain("$2,450.00");
+  });
+
   it("returns null when booking belongs to a different tenant (cross-tenant guard)", async () => {
     const db = makeDb({
       // Note: the row only exists under tenant t1, but we're asking for tenant t2.

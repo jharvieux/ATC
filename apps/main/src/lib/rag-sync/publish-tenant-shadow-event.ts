@@ -15,9 +15,9 @@ type ShadowRow = { status: string; tenant_type: string; display_name: string };
 // Best-effort by design — it NEVER throws. The primary lifecycle op (suspend,
 // terminate, profile edit) has already committed; a sync-emit failure must not
 // roll it back or fail a cron's other side-effects. The nightly reconcile
-// backstops any dropped event. (publishTenantEvent itself already queues to
-// pending_rag_sync on delivery failure; this wrapper additionally swallows a
-// failed revision bump.)
+// backstops any dropped event. (publishTenantEvent enqueues to Inngest, which
+// owns delivery + retries and never throws; this wrapper additionally swallows
+// a failed revision bump.)
 export async function publishTenantShadowEvent(
   db: SupabaseClient,
   tenantId: string,

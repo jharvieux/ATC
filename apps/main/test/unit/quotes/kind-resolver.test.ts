@@ -4,7 +4,7 @@
 // risk of variance-pause that wasn't needed.
 
 import { describe, it, expect } from "vitest";
-import { resolveQuoteKind } from "@/lib/quotes/kind-resolver";
+import { resolveQuoteKind, NO_HOST_INTEGRATION_ADAPTER } from "@/lib/quotes/kind-resolver";
 
 const lockSupporting = {
   capabilities: {
@@ -81,6 +81,23 @@ describe("resolveQuoteKind — §21.10.1", () => {
       resolveQuoteKind(
         { priced_at: null, price_lock_token: null, price_lock_expires_at: null },
         lockSupporting,
+      ),
+    ).toBe("estimate");
+  });
+
+  // #1742: manual pricing-entry write paths (e.g. POST /api/quotes) have no
+  // real host adapter to select and can never supply a lock token through
+  // that API anyway. NO_HOST_INTEGRATION_ADAPTER stands in for those callers
+  // — pin that it deterministically resolves to 'estimate' even when freshly
+  // priced, so a future caller can't accidentally wire it somewhere that
+  // expects it to ever produce 'confirmed'.
+  it("NO_HOST_INTEGRATION_ADAPTER always resolves 'estimate', even when freshly priced", () => {
+    const now = new Date("2026-05-22T12:00:00Z");
+    expect(
+      resolveQuoteKind(
+        { priced_at: now.toISOString(), price_lock_token: null, price_lock_expires_at: null },
+        NO_HOST_INTEGRATION_ADAPTER,
+        now,
       ),
     ).toBe("estimate");
   });

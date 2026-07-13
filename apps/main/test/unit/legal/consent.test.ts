@@ -245,20 +245,18 @@ describe("POST /api/admin/legal-docs — publish flow (§17.5)", () => {
   });
 });
 
-describe.skip("CCPA deletion grace period (§17.10) — awaiting implementation", () => {
-  it.todo("undo is valid within 30 days");
-  it.todo("undo is invalid after 30 days");
-  it.todo("purge job with mismatched deleted_at is skipped (stale)");
-  it.todo("purge job with null deleted_at is skipped (undo was called)");
-});
-
-describe.skip("CCPA export rate limit (§17.9) — awaiting implementation", () => {
-  it.todo("first export request within 30d is not rate-limited");
-  it.todo("second request within 30d is rate-limited");
-  it.todo("request older than 30d does not block a new request");
-});
-
-describe.skip("CCPA staging propagation threshold (§17.10) — awaiting implementation", () => {
-  it.todo("alert fires when last refresh is 25+ days ago");
-  it.todo("no alert when last refresh is < 25 days ago");
-});
+// #1794 — the three CCPA blocks that used to live here (deletion grace period
+// §17.10, export rate limit §17.9, staging propagation threshold §17.10) were
+// `describe.skip` with `it.todo` stubs labeled "awaiting implementation" long
+// after the underlying code shipped, leaving these compliance paths with zero
+// real coverage. Real tests now live next to the route/cron they exercise,
+// matching where every other route/cron test in this repo lives:
+//   - undo-delete grace-period boundary (valid within 30d / expired after):
+//     test/unit/user/consent-data-routes.test.ts ("data/undo-delete")
+//   - export-request 30-day rate-limit boundary (inside/outside window):
+//     test/unit/user/consent-data-routes.test.ts ("data/export-request")
+//   - purge-after-grace cron skip semantics (stale deleted_at mismatch,
+//     null deleted_at after undo):
+//     test/unit/inngest/ccpa-purge-validation.test.ts
+//   - staging-refresh-overdue alert threshold (25+ days / under 25 days):
+//     test/unit/inngest/ccpa-staging-propagation-monitor.test.ts

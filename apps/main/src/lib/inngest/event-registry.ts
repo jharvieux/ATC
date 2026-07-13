@@ -61,6 +61,12 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   "tenant.rag_pii_recurring_pattern_detected": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.rag_submission_rejected": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
+  // RAG-sync webhook delivery (#1609) — platform infrastructure: the handler
+  // signs + POSTs the event to the RAG service and touches no tenant DB. The
+  // tenant_id (tenant events) rides nested in `data.event`, not top-level.
+  "rag-sync/tenant.event": { kind: "platform_admin", payload_shape: platformAdminShape },
+  "rag-sync/platform.event": { kind: "platform_admin", payload_shape: platformAdminShape },
+
   // Email (BP23)
   "precruise/email.due": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "email/soft.bounce.retry": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
