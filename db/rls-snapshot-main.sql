@@ -76,7 +76,6 @@
 -- public.notifications (rls_enabled)
 -- public.payout_balances (rls_enabled)
 -- public.payout_records (rls_enabled)
--- public.pending_rag_sync (rls_enabled)
 -- public.persona_addendums (rls_enabled)
 -- public.persona_safety_config (rls_enabled)
 -- public.personal_access_tokens (rls_enabled)
