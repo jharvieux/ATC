@@ -543,6 +543,9 @@ pnpm verify = typecheck + lint + test + slop-check + check:auth-error +
 
 **New project notes:** Apply to any project where some integration tests are too slow or too destructive for PR CI. The dedicated-test-project requirement is non-negotiable once real data exists.
 
+**Convention — postgres-js bigint/numeric columns come back as strings (#1834):** tests in `apps/main/test/integration/*.test.ts` that query via the raw `postgres` client (not `@supabase/supabase-js`) will get a JS `string`, not `number`, for any `BIGINT`/`NUMERIC` column (e.g. `commissions.gross_commission_cents`) — postgres-js doesn't coerce int8 by default, since it can exceed `Number.MAX_SAFE_INTEGER`. A test that does `expect(row.some_bigint_col).toBe(75000)` silently compares `"75000"` to `75000` and fails, or worse, gets loosely coerced by a careless assertion and passes vacuously. This is exactly what let #1798 sit undetected for 3 nights (DB-gated tests run only in the nightly suite, not per-PR).
+Prefer casting SQL-side over coercing in JS: `SELECT some_bigint_col::int AS some_bigint_col` (see `countChildren()` in `import-promote-atomicity.test.ts`) — the cast fails loudly if the value ever exceeds int4 range, whereas a JS-side `Number(...)` coercion silently accepts anything. Reserve `Number()` for values you also need to compare against `BigInt`-range inputs.
+
 ---
 
 ### 29. Dependency Ignore Watch (Monthly Cron)
