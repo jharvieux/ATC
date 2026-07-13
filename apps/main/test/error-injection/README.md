@@ -29,17 +29,17 @@ real module to intercept.
 The probe runs in its own CI step (alongside the regular `pnpm -r test`
 step) so a flaky resource-mocked test doesn't block unrelated PRs.
 
-## Actual handler test pattern (#1821)
+## Actual handler test pattern (#1821, retrofit #1860)
 
-`_helpers.ts` exports a generic `makeFailingDbClient` factory, but **no
-existing probe imports it** — every `*.error.test.ts` file rolls its own
-inline `vi.mock("@/lib/db/service-role-client", ...)` with a per-table chain
+`_helpers.ts` exports a generic `makeFailingDbClient` factory. Every
+`*.error.test.ts` file except one rolls its own inline
+`vi.mock("@/lib/db/service-role-client", ...)` with a per-table chain
 hand-shaped to that handler. That's not drift to fix; it's the real
-convention, and it's the right one: each handler queries a different set of
-tables with a different chain shape (single-row lookups, CAS
-`.update().eq().select()`, multi-row `.in()` fetches, sequential mutations
-that must return different rows depending on the payload). A generic
-one-size-fits-all DB mock can express "fail this verb" but not "this
+convention, and it's the right one for most of them: each handler queries a
+different set of tables with a different chain shape (single-row lookups,
+CAS `.update().eq().select()`, multi-row `.in()` fetches, sequential
+mutations that must return different rows depending on the payload). A
+generic one-size-fits-all DB mock can express "fail this verb" but not "this
 handler's specific branch structure" — every attempt to force a handler onto
 a shared factory either loses test fidelity or needs so much per-handler
 special-casing that it stops being shared. See
@@ -48,12 +48,19 @@ special-casing that it stops being shared. See
 branches, keyed off the update payload — `makeFailingDbClient` has no way to
 express that.
 
-**When adding a new probe:** copy the existing probe file whose handler
-shape is closest to yours (DB-heavy cron vs. webhook-signature handler vs.
-Stripe-calling cron — see the Coverage table below) and adapt its inline
-mocks. Don't start from `_helpers.ts`'s `makeFailingDbClient` — it has not
-been proven to fit any production handler's actual query shape, despite
-being documented here as canonical until #1821.
+`ai-pricing-cache-refresh.error.test.ts` is the exception: one read
+(`select().eq().maybeSingle()`) + one `upsert()`, no branching — the shape
+`makeFailingDbClient` was built for. It's wired in there (`vi.mock`'s
+factory does `await import("./_helpers")` to fetch it, since the plain
+top-level import would be affected by vi.mock hoisting). That probe is the
+proof the helper actually works end-to-end; it fails if the helper breaks.
+
+**When adding a new probe:** if your handler has a genuinely simple
+one-read/one-write shape like `ai-pricing-cache-refresh`, reach for
+`makeFailingDbClient` first. Otherwise copy the existing probe file whose
+handler shape is closest to yours (DB-heavy cron vs. webhook-signature
+handler vs. Stripe-calling cron — see the Coverage table below) and adapt
+its inline mocks.
 
 `_helpers.ts`'s **non-DB** helpers (`makeMockStripeEvent`,
 `makeThrowingStripeClass`, `makeStripeConnectionError`,
