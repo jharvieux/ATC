@@ -231,8 +231,10 @@ describe("Stripe webhook — header: idempotency insert", () => {
 // The entire ledger unwind (status flip, balance credit, commission update,
 // review queue insert) is now handled by the atomic process_transfer_reversal()
 // RPC. The webhook handler calls db.rpc() once and checks the returned row count.
-// 0 rows → outcome 'unhandled' → 200 (not ours or already reversed; Stripe stops
-// retrying). RPC error → throws → outcome 'error' → 500 → Stripe retries.
+// 0 rows → outcome 'no_op' → 200 (#1873: a healthy no-op — not ours or already
+// reversed — distinct from 'unhandled', which is reserved for event types with
+// no handler branch at all). RPC error → throws → outcome 'error' → 500 → Stripe
+// retries.
 // ---------------------------------------------------------------------------
 
 describe("Stripe webhook — transfer.reversed", () => {
@@ -248,15 +250,40 @@ describe("Stripe webhook — transfer.reversed", () => {
     );
   });
 
-  it("returns 200 with outcome='unhandled' when RPC returns 0 (no paid row matched)", async () => {
+  it("[#1873] returns 200 with outcome='no_op' (NOT 'unhandled') when RPC returns 0 (not ours / already applied)", async () => {
+    // A 0-row process_transfer_reversal is a healthy no-op: the transfer isn't
+    // ours, or this exact (transfer, event) was already applied. 'unhandled' is
+    // reserved for event types with no handler at all (a real coverage gap);
+    // recording both as 'unhandled' (pre-#1873 behavior) makes a dashboard over
+    // processing_outcome unable to tell a benign no-op from a missing handler.
     mockEventType = "transfer.reversed";
+    mockEventData = { id: "tr_1", amount_reversed: 5000 };
     mockRpcResult = { data: 0, error: null };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
-    expect(outcome!.processing_outcome).toBe("unhandled");
+    expect(outcome!.processing_outcome).toBe("no_op");
+    expect(outcome!.processing_outcome).not.toBe("unhandled");
+  });
+
+  it("[#1873] returns 200 with outcome='no_op' (NOT 'unhandled') on zero/negative reversal delta (re-delivery, RPC skipped)", async () => {
+    // A re-delivery carrying the same cumulative amount_reversed yields a
+    // zero delta; the handler skips the RPC entirely. That is also a healthy
+    // no-op, not a coverage gap — same distinction from 'unhandled' as above.
+    mockEventType = "transfer.reversed";
+    mockEventData = { id: "tr_redelivery", amount_reversed: 20000 };
+    mockEventPreviousAttributes = { amount_reversed: 20000 };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    // RPC must NOT be called on the zero-delta path.
+    expect(rpcCalls.some((c) => c.fn === "process_transfer_reversal")).toBe(false);
+    const outcome = dbCalls.find(
+      (c) => c.table === "stripe_webhook_events" && c.op === "update",
+    )?.payload as Record<string, unknown> | undefined;
+    expect(outcome!.processing_outcome).toBe("no_op");
+    expect(outcome!.processing_outcome).not.toBe("unhandled");
   });
 
   it("returns 500 outcome='error' when process_transfer_reversal RPC errors (genuine DB error)", async () => {
