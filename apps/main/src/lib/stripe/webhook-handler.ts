@@ -72,9 +72,11 @@ function isStaleSubscriptionEvent(
 // its own `updates` object (the genuinely different business logic) and the
 // tenant SELECT it needs, then hands the row + updates here so the ordering
 // protection (#1583/#1677) lives in exactly one place and can't drift across
-// the three copies. Returns the processing_outcome to record, or null when the
-// CAS lost the race (caller leaves its outcome unchanged — pre-existing behavior
-// records that as 'unhandled').
+// the three copies. Returns the processing_outcome to record: 'success' on a
+// applied write, or 'stale_discarded' when this event was superseded by a newer
+// one — whether the JS early-out or the DB-level CAS caught it (#1854). Both
+// mean the same thing to a dashboard: a healthy out-of-order discard, NOT the
+// 'unhandled' coverage-gap outcome.
 async function applyStaleGuardedSubscriptionUpdate(
   db: ReturnType<typeof createServiceRoleClient>,
   event: Stripe.Event,
@@ -82,7 +84,7 @@ async function applyStaleGuardedSubscriptionUpdate(
   lastEventAt: string | null,
   eventCreatedIso: string,
   updates: Record<string, unknown>,
-): Promise<"success" | "stale_discarded" | null> {
+): Promise<"success" | "stale_discarded"> {
   if (
     isStaleSubscriptionEvent(event.type, event.id, eventCreatedIso, tenantId, lastEventAt)
   ) {
@@ -93,7 +95,7 @@ async function applyStaleGuardedSubscriptionUpdate(
   }
   // The `.or(...)` WHERE clause is the real correctness layer: it makes the
   // staleness check atomic in the DB. A 0-row result means a concurrent newer
-  // event already won and this write is silently dropped.
+  // event already won and this write is dropped.
   const casRows = await safeAwait(
     db
       .from("tenants")
@@ -104,13 +106,18 @@ async function applyStaleGuardedSubscriptionUpdate(
     `tenants.update.${event.type}`,
   );
   if (!casRows || casRows.length === 0) {
+    // #1854 — the DB CAS lost the race (a concurrent newer event advanced
+    // subscription_status_event_at first). Same condition the JS early-out
+    // catches, just detected atomically in the DB. Record 'stale_discarded' so
+    // a dashboard doesn't conflate this healthy discard with 'unhandled'
+    // (= no handler for the type, a real coverage gap).
     console.warn(
       "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
       event.type,
       tenantId,
       event.id,
     );
-    return null;
+    return "stale_discarded";
   }
   return "success";
 }
@@ -410,7 +417,7 @@ export async function handleStripeWebhook(
           eventCreatedIso,
           updates,
         );
-        if (outcome) processingOutcome = outcome;
+        processingOutcome = outcome;
         break;
       }
 
@@ -455,7 +462,7 @@ export async function handleStripeWebhook(
           eventCreatedIso,
           updates,
         );
-        if (outcome) processingOutcome = outcome;
+        processingOutcome = outcome;
         break;
       }
 
@@ -498,7 +505,7 @@ export async function handleStripeWebhook(
           eventCreatedIso,
           updates,
         );
-        if (outcome) processingOutcome = outcome;
+        processingOutcome = outcome;
         break;
       }
       default:
