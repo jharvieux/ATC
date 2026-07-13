@@ -21,6 +21,7 @@
 
 import postgres from "postgres";
 import { PRICE_ID_ENV_MAP } from "../apps/main/src/lib/stripe/price-id-map";
+import { redactSecrets } from "./lib/redact-secrets";
 
 type Target = "test" | "prod";
 
@@ -105,6 +106,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(redactSecrets(err));
   process.exit(1);
 });

@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { redactSecrets } from "./lib/redact-secrets";
 
 type Target = "main" | "rag";
 const ALL_TARGETS: readonly Target[] = ["main", "rag"];
@@ -190,6 +191,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("check-schema-drift: unexpected error:", (err as Error).message);
+  console.error("check-schema-drift: unexpected error:", redactSecrets(err));
   process.exit(1);
 });

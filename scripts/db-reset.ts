@@ -2,6 +2,7 @@ import postgres from "postgres";
 import { execSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const dbUrl = process.env.SUPABASE_DB_URL;
 const allowed = process.env.ALLOW_DB_RESET === "true";
@@ -55,11 +56,15 @@ async function main(): Promise<void> {
     .sort();
   console.log(`Reapplying ${migrations.length} migrations...`);
   for (const file of migrations) {
-    execSync(`psql "${dbUrl}" -f "${join(migrationsDir, file)}"`, { stdio: "inherit" });
+    // Pass dbUrl via env, not argv — argv is visible to other users via `ps`.
+    execSync(`psql "$DB_RESET_PSQL_URL" -f "${join(migrationsDir, file)}"`, {
+      stdio: "inherit",
+      env: { ...process.env, DB_RESET_PSQL_URL: dbUrl! },
+    });
   }
 }
 
 main().catch((err) => {
-  console.error("Reset failed:", err);
+  console.error("Reset failed:", redactSecrets(err));
   process.exit(1);
 });

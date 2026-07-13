@@ -36,6 +36,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { redactSecrets } from "./lib/redact-secrets";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_REF = process.env.MIGRATION_LEDGER_BASE_REF ?? "origin/dev";
@@ -192,7 +193,7 @@ async function main(): Promise<void> {
 // importing the module for unit tests must NOT trigger argv parsing or a DB call.
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error("check-migration-ledger: unexpected error:", (err as Error).message);
+    console.error("check-migration-ledger: unexpected error:", redactSecrets(err));
     process.exit(1);
   });
 }

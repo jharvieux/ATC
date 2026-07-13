@@ -10,6 +10,12 @@
 // are not redacted. Catching arbitrary secret-shaped substrings risks
 // clobbering legitimate error text; the known leak vectors here are the two
 // patterns below. Don't read a bare-token miss as a bug — it's scope.
+//
+// NON-GOAL: a literal unencoded `@` inside a password leaves the post-@
+// fragment unredacted (`postgres://user:pa@ss@host` → `[redacted]@ss@host`).
+// A greedy match here would break multi-credential redaction (the `/g` pin
+// on CONN_STRING_CREDENTIALS), so the current regex is correct; passwords
+// should be URL-encoded anyway. Accepted gap, not a bug (#1814).
 const CONN_STRING_CREDENTIALS = /(:\/\/)[^:@/\s]*:[^@/\s]+@/g;
 const BEARER_TOKEN = /Bearer\s+\S+/gi;
 
