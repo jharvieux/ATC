@@ -7,6 +7,11 @@
 // - unknown_action → 422 (fail on unexpected input; prevents silent no-op).
 // - change_tier: invalid_tier_for_tenant_type → 422 (unmapped code would corrupt billing).
 // - change_tier: tier_definitions error/missing → 500 (fail-closed; incomplete platform state must not proceed).
+// - update_seats: non-agency tier → 422 (§15.15 seats are Agency-only; a non-agency
+//   tenant must not be able to attach the agency seat price to its subscription; #444).
+// - GET is_agency: resolved server-side from tier_definitions; the page renders the
+//   seat-management UI from it (was hardcoded true), so agency→true / non-agency→false /
+//   lookup-failure→false (degrade, never crash the billing page) must hold (#444).
 // - switch_billing_period: same period → 200 no-op (idempotent; prevents unnecessary Stripe calls).
 // - switch_billing_period: annual→monthly deferred to renewal (§15.15; immediate downgrade is not supported).
 // - switch_billing_period: monthly→annual resolves tier from DB via CODE_TO_TIER, not from request body.
@@ -64,11 +69,19 @@ vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: mockSafeAwait,
 }));
 
+// GET reads tenants + tier_definitions through tenantClient; POST only
+// updates through it. Reads resolve from the same state vars as the srDb mock.
 vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
-    from: () => ({
+    from: (table: string) => ({
       update: () => ({
         eq: () => ({}), // passed to safeAwait (mocked)
+      }),
+      select: () => ({
+        eq: () =>
+          table === "tenants"
+            ? { single: () => Promise.resolve({ data: tenantData, error: tenantError }) }
+            : { maybeSingle: () => Promise.resolve({ data: tierDefCodeData, error: tierDefCodeError }) },
       }),
     }),
   }),
@@ -77,7 +90,7 @@ vi.mock("@/lib/db/tenant-client", () => ({
 type TenantRow = {
   stripe_subscription_id: string | null;
   stripe_customer_id: string | null;
-  tier_id: string;
+  tier_id: string | null;
   seat_count: number;
   billing_period: string;
   status: string;
@@ -134,6 +147,45 @@ function badJsonRequest() {
     body: "not-json{{{",
   });
 }
+
+describe("GET /api/tenant/billing §15.15 — is_agency (#444)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tenantError = null;
+    tierDefCodeError = null;
+    // stripe_customer_id null → invoice fetch skipped; these tests pin tier logic only.
+    tenantData = { ...activeTenant()!, stripe_customer_id: null };
+  });
+
+  async function getIsAgency(): Promise<{ status: number; is_agency: boolean }> {
+    const { GET } = await import("@/app/api/tenant/billing/route");
+    const res = await GET(new Request("http://test/api/tenant/billing"));
+    const body = await res.json() as { is_agency: boolean };
+    return { status: res.status, is_agency: body.is_agency };
+  }
+
+  it("agency tier code → is_agency true (seat-management UI shows)", async () => {
+    tierDefCodeData = { code: "sub_agency" };
+    expect(await getIsAgency()).toEqual({ status: 200, is_agency: true });
+  });
+
+  it("non-agency tier code → is_agency false", async () => {
+    tierDefCodeData = { code: "byo_professional" };
+    expect(await getIsAgency()).toEqual({ status: 200, is_agency: false });
+  });
+
+  it("tier lookup error → is_agency false, page still loads (degrade, don't 500)", async () => {
+    tierDefCodeError = { message: "tier_db_timeout" };
+    tierDefCodeData = null;
+    expect(await getIsAgency()).toEqual({ status: 200, is_agency: false });
+  });
+
+  it("null tier_id (no tier assigned) → is_agency false without a tier lookup", async () => {
+    tenantData = { ...tenantData!, tier_id: null };
+    tierDefCodeData = { code: "sub_agency" }; // must NOT be consulted
+    expect(await getIsAgency()).toEqual({ status: 200, is_agency: false });
+  });
+});
 
 describe("POST /api/tenant/billing §15.15", () => {
   beforeEach(() => {
@@ -261,8 +313,31 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.error).toBe("seat_count required");
   });
 
+  it("update_seats: returns 422 seats_agency_tier_only for a non-agency tier — seat price must not attach to non-agency subscriptions (§15.15, #444)", async () => {
+    tenantData = activeTenant();
+    tierDefCodeData = { code: "byo_professional" };
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
+    expect(res.status).toBe(422);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("seats_agency_tier_only");
+    expect(mockStripeSubscriptionsUpdate).not.toHaveBeenCalled();
+    expect(mockInngestSend).not.toHaveBeenCalled();
+  });
+
+  it("update_seats: tier lookup DB error → 500 fail-closed, not a silent allow", async () => {
+    tenantData = activeTenant();
+    tierDefCodeError = { message: "tier_db_timeout" };
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("tier_lookup_failed");
+  });
+
   it("update_seats: inngest.send fires with change:seats on success", async () => {
     tenantData = activeTenant();
+    tierDefCodeData = { code: "byo_agency" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
     expect(res.status).toBe(200);
@@ -281,6 +356,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     // seat-price calculation would break — wrong price ID or wrong quantity offset
     // would silently mis-bill the tenant.
     tenantData = { ...activeTenant()!, stripe_subscription_id: "sub_test_1" };
+    tierDefCodeData = { code: "byo_agency" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 4 }));
     expect(res.status).toBe(200);

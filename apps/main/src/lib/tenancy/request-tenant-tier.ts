@@ -12,6 +12,7 @@ import "server-only";
 
 import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { getTenantTierCode } from "@/lib/tenancy/get-tenant-tier-code";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 /** Tier code for the tenant resolved by proxy.ts for the current request.
@@ -21,14 +22,5 @@ export async function getRequestTenantTierCode(): Promise<string | null> {
   const tenantId = incoming.get(RESOLVED_TENANT_ID_HEADER);
   if (!tenantId || tenantId === "platform") return null;
 
-  const svc = createServiceRoleClient();
-  const { data } = await svc
-    .from("tenants")
-    .select("tier_definitions!inner(code)")
-    .eq("id", tenantId)
-    .maybeSingle();
-
-  const t = (data as { tier_definitions?: { code?: string } | { code?: string }[] | null } | null)
-    ?.tier_definitions;
-  return Array.isArray(t) ? t[0]?.code ?? null : t?.code ?? null;
+  return getTenantTierCode(createServiceRoleClient(), tenantId);
 }

@@ -65,10 +65,27 @@ export async function GET(req: Request): Promise<Response> {
 
     const isReadOnly = ["pending_review", "suspended"].includes(tenant.status ?? "");
 
+    // #444 — seat management is Agency-only (§15.15); the page needs the
+    // tier resolved server-side. Lookup failure degrades to false (seats UI
+    // hidden), matching the non-fatal invoice-fetch stance above.
+    let isAgency = false;
+    if (tenant.tier_id) {
+      const { data: tierDef, error: tierErr } = await db
+        .from("tier_definitions")
+        .select("code")
+        .eq("id", tenant.tier_id)
+        .maybeSingle();
+      if (tierErr) {
+        console.error(`[billing] tier_code_fetch_failed tenant=${ctx.tenant_id}:`, tierErr.message);
+      }
+      isAgency = CODE_TO_TIER[tierDef?.code as keyof typeof CODE_TO_TIER] === "agency";
+    }
+
     return Response.json({
       tenant,
       invoices,
       read_only: isReadOnly,
+      is_agency: isAgency,
     });
   } catch (err) {
     return respondToAuthError(err);
@@ -156,6 +173,23 @@ export async function POST(req: Request): Promise<Response> {
       await inngest.send({ name: "tenant.subscription_changed", data: { tenant_id: ctx.tenant_id, change: "tier", new_tier: body.tier } });
     } else if (body.action === "update_seats") {
       if (!body.seat_count) return Response.json({ error: "seat_count required" }, { status: 422 });
+
+      // #444 — seat management is Agency-only (§15.15). Without this gate a
+      // non-agency tenant could attach the agency seat price to its own
+      // subscription. Fail-closed: lookup error → 500, non-agency → 422.
+      const { data: seatTierDef, error: seatTierErr } = await srDb
+        .from("tier_definitions")
+        .select("code")
+        .eq("id", tenant.tier_id)
+        .maybeSingle();
+      if (seatTierErr) {
+        const ref = crypto.randomUUID();
+        console.error(`[billing] tier_lookup_failed ref=${ref}:`, seatTierErr.message);
+        return Response.json({ error: "tier_lookup_failed", ref }, { status: 500 });
+      }
+      if (CODE_TO_TIER[seatTierDef?.code as keyof typeof CODE_TO_TIER] !== "agency") {
+        return Response.json({ error: "seats_agency_tier_only" }, { status: 422 });
+      }
 
       const newSeatCount = Math.max(1, body.seat_count);
       const tenantType = tenant.tenant_type as TenantType;
