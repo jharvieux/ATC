@@ -172,6 +172,9 @@ function makeDeps(state: State, sendStatuses: string[]) {
       sendEmail,
       sleep: async (id: string, hours: number) => { sleeps.push({ id, hours }); },
       scheduleNext: async (p: SoftBounceRetryPayload) => { scheduled.push(p); },
+      // Stub does NOT model Inngest's real step.run memoization — it just calls
+      // fn(). That's why the crash-resume test below still observes two sends.
+      runStep: async <T>(_id: string, fn: () => Promise<T>) => fn(),
     },
     calls,
     sleeps,
@@ -306,6 +309,7 @@ describe("§23.7 soft-bounce retry — terminal write ordering (crash recovery)"
       sendEmail,
       sleep: async () => {},
       scheduleNext: async () => {},
+      runStep: async <T>(_id: string, fn: () => Promise<T>) => fn(),
     };
     const run = (attempt: number) =>
       runSoftBounceRetryAttempt(deps, { email_log_id: "orig", tenant_id: "t-1", attempt });
@@ -374,6 +378,13 @@ describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim re
         }
         scheduled.push(p);
       },
+      // This stub does not model real Inngest step.run memoization (see #1832) —
+      // it just invokes fn() every call. That's WHY run 2 below still re-sends:
+      // in production, step.run's memoized result would short-circuit the second
+      // sendEmail call for the same attempt; the pure-logic unit test can't
+      // observe that production-only guarantee, so the accepted trade-off here
+      // is a duplicate real send on this crash-resume path, pinned below.
+      runStep: async <T>(_id: string, fn: () => Promise<T>) => fn(),
     };
     const payload = { email_log_id: "orig", tenant_id: "t-1", attempt: 1 };
 
@@ -389,6 +400,12 @@ describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim re
     const outcome = await runSoftBounceRetryAttempt(deps, payload);
     expect(outcome).toBe("resent");
     expect(scheduled).toEqual([{ email_log_id: "orig", tenant_id: "t-1", attempt: 2 }]);
+    // Accepted trade-off (#1832): this test's runStep stub doesn't memoize, so
+    // resume re-invokes sendEmail — two real sends total. In production the
+    // step.run boundary memoizes the first send and this stays at one. Pinned
+    // so a refactor that makes resume a silent no-op (0 further calls) or a
+    // triple-send fails loudly instead of drifting unnoticed.
+    expect(calls).toHaveLength(2);
   });
 });
 

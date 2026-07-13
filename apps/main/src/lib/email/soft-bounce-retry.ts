@@ -16,9 +16,11 @@
 // Duplicate-send defense is TWO layers, because they cover DIFFERENT things:
 //   - The deterministic per-attempt Resend Idempotency-Key dedupes only the
 //     VENDOR DELIVERY (D-091 #23) — Resend won't physically re-transmit the
-//     message. It does NOT cover sendEmail's own DB bookkeeping: a re-run still
-//     inserts a fresh email_log row and bumps incrementEmailSent. So the key
-//     alone does not make a re-run harmless.
+//     message. It does NOT cover sendEmail's own DB bookkeeping: an un-stepped
+//     re-run would insert a fresh email_log row and bump incrementEmailSent. So
+//     the key alone does not make a re-run harmless; sendEmail + the row it
+//     writes are wrapped in a memoized step.run boundary (Pattern-14) below to
+//     keep a real Inngest function-retry from re-executing them.
 //   - completed_attempt (written AFTER scheduleNext succeeds) is the completion
 //     marker that stops a re-run of an ALREADY-FINISHED attempt from reaching
 //     sendEmail again — that's what prevents the orphaned email_log row + spurious
@@ -59,6 +61,13 @@ export interface SoftBounceRetryDeps {
   // Schedule the next attempt (Inngest event). Absent scheduling in the
   // terminal branch is expected.
   scheduleNext: (payload: SoftBounceRetryPayload) => Promise<void>;
+  // Durable step boundary (Inngest step.run in production, keyed by `id`).
+  // Memoizes fn's return value across whole-function retries, so a retry that
+  // re-enters AFTER this step already completed does not re-invoke sendEmail
+  // and re-write last_send_log_id. Test stubs just call fn() directly — they
+  // don't model Inngest's memoization, which is why the crash-resume test
+  // still observes two sends (see that test's comment).
+  runStep: <T>(id: string, fn: () => Promise<T>) => Promise<T>;
 }
 
 export type SoftBounceRetryOutcome =
@@ -183,7 +192,7 @@ export async function runSoftBounceRetryAttempt(
   deps: SoftBounceRetryDeps,
   payload: SoftBounceRetryPayload,
 ): Promise<SoftBounceRetryOutcome> {
-  const { db, sendEmail, sleep, scheduleNext } = deps;
+  const { db, sendEmail, sleep, scheduleNext, runStep } = deps;
   const { email_log_id, tenant_id, attempt } = payload;
 
   // §15.16 — don't keep retrying for a tenant past its billing grace period.
@@ -240,9 +249,11 @@ export async function runSoftBounceRetryAttempt(
     //     ran to completion. Re-running would insert an orphaned email_log row and
     //     bump the sent counter, neither of which the Resend Idempotency-Key dedupes,
     //     so we must NOT re-send → claim_lost.
-    //   - claimed_attempt == this attempt but completed_attempt < it → genuine
-    //     crash-resume: a prior run claimed this attempt then died before finishing
-    //     the send + scheduleNext. Resume, or the escalation chain dies silently.
+    //   - claimed_attempt == this attempt but completed_attempt < it → a prior run
+    //     claimed this attempt but never finished the send + scheduleNext. The
+    //     trigger isn't only a process crash — ANY un-stepped exception between the
+    //     claim and completed_attempt lands here on the Inngest re-run. Resume, or
+    //     the escalation chain dies silently.
     //   - otherwise another run owns a different attempt → claim_lost.
     const { data: freshRow } = await db
       // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
@@ -260,26 +271,49 @@ export async function runSoftBounceRetryAttempt(
   const tenant = await loadTenantForSend(db, tenant_id);
   if (!tenant) return "tenant_missing";
 
-  const result = await sendEmail({
-    db,
-    tenant,
-    to: content.to_email,
-    subject: content.subject,
-    template_id: content.template_id,
-    category: content.email_category as EmailCategory,
-    html: content.html,
-    // Deterministic per attempt: dedupes the Resend DELIVERY only (#23) — the
-    // email_log row + sent counter this call writes are NOT deduped by the key;
-    // completed_attempt (written below, after scheduleNext) is what keeps a
-    // finished attempt from re-running and orphaning a row.
-    idempotencyKey: `soft-retry:${email_log_id}:${attempt}`,
-    // Mark as a re-send: no new retry chain, no new stored payload.
-    retry_of: email_log_id,
-    ...(content.reply_to ? { reply_to: content.reply_to } : {}),
-    ...(content.related_booking_id ? { related_booking_id: content.related_booking_id } : {}),
-    ...(content.related_group_id ? { related_group_id: content.related_group_id } : {}),
-    ...(content.user_id ? { user_id: content.user_id } : {}),
-    ...(content.contact_id ? { contact_id: content.contact_id } : {}),
+  // Pattern-14: sendEmail + the last_send_log_id write it feeds are wrapped in a
+  // single step boundary (memoized by attempt). Without this, a whole-function
+  // retry that re-enters after a successful send but before completed_attempt
+  // lands would re-invoke sendEmail — the Resend Idempotency-Key dedupes only
+  // the vendor delivery, not sendEmail's own email_log INSERT + sent-counter
+  // bump, so an un-stepped re-run orphans a duplicate row/metric.
+  const result = await runStep(`send-and-record:${email_log_id}:${attempt}`, async () => {
+    const sendResult = await sendEmail({
+      db,
+      tenant,
+      to: content.to_email,
+      subject: content.subject,
+      template_id: content.template_id,
+      category: content.email_category as EmailCategory,
+      html: content.html,
+      // Deterministic per attempt: dedupes the Resend DELIVERY only (#23) — the
+      // email_log row + sent counter this call writes are NOT deduped by the key;
+      // completed_attempt (written below, after scheduleNext) is what keeps a
+      // finished attempt from re-running and orphaning a row.
+      idempotencyKey: `soft-retry:${email_log_id}:${attempt}`,
+      // Mark as a re-send: no new retry chain, no new stored payload.
+      retry_of: email_log_id,
+      ...(content.reply_to ? { reply_to: content.reply_to } : {}),
+      ...(content.related_booking_id ? { related_booking_id: content.related_booking_id } : {}),
+      ...(content.related_group_id ? { related_group_id: content.related_group_id } : {}),
+      ...(content.user_id ? { user_id: content.user_id } : {}),
+      ...(content.contact_id ? { contact_id: content.contact_id } : {}),
+    });
+
+    if (sendResult.status === "sent" && sendResult.email_log_id) {
+      // Record the re-send row so the next attempt reads its delivery status.
+      await safeAwait(
+        db
+          // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
+          .from("email_retry_content")
+          .update({ last_send_log_id: sendResult.email_log_id })
+          .eq("email_log_id", email_log_id),
+        "email_retry_content.update.last_send_log_id",
+      );
+    }
+    // "rate_limited" / "failed" don't update last_send_log_id (no new row landed);
+    // we still advance the chain so a later attempt can try again.
+    return sendResult;
   });
 
   if (result.status === "suppressed") {
@@ -287,20 +321,6 @@ export async function runSoftBounceRetryAttempt(
     await purgeContent(db, email_log_id);
     return "send_suppressed";
   }
-
-  if (result.status === "sent" && result.email_log_id) {
-    // Record the re-send row so the next attempt reads its delivery status.
-    await safeAwait(
-      db
-        // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
-        .from("email_retry_content")
-        .update({ last_send_log_id: result.email_log_id })
-        .eq("email_log_id", email_log_id),
-      "email_retry_content.update.last_send_log_id",
-    );
-  }
-  // "rate_limited" / "failed" don't update last_send_log_id (no new row landed);
-  // we still advance the chain so a later attempt can try again.
 
   await scheduleNext({ email_log_id, tenant_id, attempt: attempt + 1 });
   // Completion marker — written LAST, only once the next attempt is scheduled. A
