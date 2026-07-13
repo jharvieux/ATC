@@ -61,14 +61,13 @@ CREATE INDEX tenant_registry_shadow_status_idx
   ON public.tenant_registry_shadow(status);</code></pre>
 <p>The <code>source_revision</code> increments on every change in the main app and is shipped with the webhook payload. The RAG service uses it to detect out-of-order webhook delivery (a <code>source_revision &lt; shadow.source_revision</code> webhook is ignored as stale).</p>
 <h3>Webhook delivery on failure</h3>
-<p>If the main app's webhook to RAG fails (network error, RAG service down), the main app:</p>
+<p><em>Amended 2026-07-12 (operator-approved; implemented in PR #1819): delivery is Inngest-owned. The earlier in-request backoff (1s/5s/30s), the <code>pending_rag_sync</code> queue table, and the <code>rag-sync-retry</code> cron are retired.</em></p>
 <ol>
-<li>Retries 3 times with exponential backoff (1s, 5s, 30s).</li>
-<li>On final failure: writes to a <code>pending_rag_sync</code> table in the main app (per <a class="xref" href="#s8-7a">§8.7a</a>) and returns success to the originating handler. The tenant lifecycle event is NOT blocked on RAG sync.</li>
-<li>A periodic cron (<code>rag-sync-retry</code>, every 5 minutes) processes <code>pending_rag_sync</code> rows.</li>
-<li>The nightly reconciliation handles anything still stuck.</li>
+<li>The originating handler enqueues a <code>rag-sync/tenant.event</code> (or <code>rag-sync/platform.event</code>) Inngest event with a deterministic event id and returns immediately. The tenant lifecycle event is NOT blocked on RAG sync; an enqueue failure raises a high-severity operator alert rather than throwing.</li>
+<li>The <code>rag-sync-deliver</code> Inngest function performs the signed webhook POST with Inngest-managed retries and backoff (<code>retries: 10</code>). Exhaustion fires the <code>rag_sync_exhausted_retries</code> platform admin alert — the same intervention threshold as the retired queue's <code>attempt_count &gt;= 10</code>.</li>
+<li>The nightly reconciliation handles anything still stuck, in both directions of drift.</li>
 </ol>
-<p>A tenant lifecycle event that cannot reach RAG within 24 hours produces a platform admin alert. This bounds the worst-case inconsistency window.</p>
+<p>The exhaustion alert bounds the worst-case unattended inconsistency window; the nightly reconcile bounds the worst-case total window.</p>
 <h3>Calls Worth Flagging</h3>
 <ul>
 <li><strong>Redis unavailability is treated as service failure, not a bypass condition.</strong> The alternative (allow the request when Redis is down) re-opens the replay-attack window. Operational cost: a Redis outage takes down RAG retrieval. Mitigation: Redis HA + monitoring.</li>
@@ -128,54 +127,23 @@ CREATE INDEX tenant_registry_shadow_status_idx
 <p>Approval endpoints called by main app when a tenant admin (or platform admin for global) approves a queue item. Creates the chunk.</p>
 <h2 id="s8-7">8.7 POST /api/tenant-events <a class="anchor-link" href="#s8-7" aria-label="Permalink">¶</a></h2>
 <p>Webhook receiver for tenant lifecycle events from main app: create, update status, terminate. Keeps tenant_registry in sync.</p>
-<h2 id="s8-7a">8.7a Main-App Retry Queue for RAG Sync <a class="anchor-link" href="#s8-7a" aria-label="Permalink">¶</a></h2>
-<p>The main app retries failed webhook deliveries to the RAG service before falling back to the nightly reconcile (which is the safety net per <a class="xref" href="#s8-3">§8.3</a>). The retry queue is stored in <code>pending_rag_sync</code> table.</p>
-<h3>Schema</h3>
-<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.pending_rag_sync (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
-  event_type TEXT NOT NULL CHECK (event_type IN (
-    'tenant.created', 'tenant.status_changed',
-    'tenant.terminated', 'tenant.metadata_updated'
-  )),
-  payload JSONB NOT NULL,
-  source_revision INTEGER NOT NULL,
-  attempt_count INTEGER NOT NULL DEFAULT 0,
-  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_attempt_at TIMESTAMPTZ,
-  last_error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  delivered_at TIMESTAMPTZ
-);
-
-CREATE INDEX pending_rag_sync_ready_idx
-  ON public.pending_rag_sync(next_retry_at)
-  WHERE delivered_at IS NULL;</code></pre>
+<h2 id="s8-7a">8.7a Main-App Reliable Delivery for RAG Sync <a class="anchor-link" href="#s8-7a" aria-label="Permalink">¶</a></h2>
+<p><em>Amended 2026-07-12 (operator-approved; implemented in PR #1819). This section previously specified a <code>pending_rag_sync</code> queue table plus a 5-minute <code>rag-sync-retry</code> cron; both are retired in favor of Inngest-owned delivery. The table's contract-phase drop is tracked in issue #1825.</em></p>
+<p>The main app must deliver tenant lifecycle events to the RAG service reliably before falling back to the nightly reconcile (which remains the safety net per <a class="xref" href="#s8-3">§8.3</a>). Delivery is owned by Inngest.</p>
 <h3>Flow</h3>
 <ol>
-<li>Tenant lifecycle event occurs in main app.</li>
-<li>Handler tries direct webhook delivery to RAG service.</li>
-<li>If delivery succeeds (HTTP 200): proceed normally; do NOT write to <code>pending_rag_sync</code>.</li>
-<li>If delivery fails: write a <code>pending_rag_sync</code> row with <code>next_retry_at = NOW() + 1 minute</code>.</li>
-<li>Inngest cron <code>rag-sync-retry</code> runs every 5 minutes:</li>
+<li>Tenant lifecycle event occurs in main app; the handler commits its own writes first.</li>
+<li>The publisher enqueues an Inngest event (<code>rag-sync/tenant.event</code> or <code>rag-sync/platform.event</code>) carrying the payload and <code>source_revision</code>, with a deterministic event id derived from tenant id, event type, and <code>source_revision</code> — duplicate enqueues of the same logical state dedupe at the Inngest layer. The publisher never throws; an enqueue failure fires a high-severity <code>rag_sync_enqueue_failed</code> operator alert and relies on the reconcile.</li>
+<li>The <code>rag-sync-deliver</code> Inngest function performs the HMAC-signed POST to the RAG service. Inngest manages retries and backoff (<code>retries: 10</code>). On exhaustion it fires the <code>rag_sync_exhausted_retries</code> platform admin alert — the intervention trigger, equivalent to the retired queue's <code>attempt_count &gt;= 10</code>.</li>
 </ol>
-<ul>
-<li>Selects rows where <code>delivered_at IS NULL</code> AND <code>next_retry_at &lt;= NOW()</code>.</li>
-<li>For each, attempts webhook delivery with the stored payload.</li>
-<li>On success: set <code>delivered_at = NOW()</code>. Row is hard-deleted in nightly cleanup.</li>
-<li>On failure: increment <code>attempt_count</code>; compute backoff; set <code>next_retry_at</code>. Log <code>last_error</code>. 6. If a row reaches <code>attempt_count &gt;= 10</code> (~20 hours of total retry time): alert platform admin.</li>
-</ul>
-<h3>Backoff schedule</h3>
-<div class="table-wrap"><table><thead><tr><th>Attempt</th><th>Delay before next retry</th></tr></thead><tbody><tr><td>1 (after initial failure)</td><td>1 minute</td></tr><tr><td>2</td><td>5 minutes</td></tr><tr><td>3</td><td>15 minutes</td></tr><tr><td>4</td><td>30 minutes</td></tr><tr><td>5</td><td>1 hour</td></tr><tr><td>6</td><td>2 hours</td></tr><tr><td>7+</td><td>4 hours (capped)</td></tr></tbody></table></div>
 <h3>Ordering and source_revision</h3>
-<p>The <code>source_revision</code> column (per Batch 4 B4-E5) is preserved on the retry queue. The RAG service's shadow-table sync logic uses <code>source_revision</code> to detect out-of-order delivery: a webhook with <code>source_revision &lt; shadow.source_revision</code> is acknowledged but ignored. The retry queue does NOT need to deliver events in order.</p>
+<p>The RAG service's shadow-table sync logic uses <code>source_revision</code> to detect out-of-order delivery: a webhook with <code>source_revision &lt; shadow.source_revision</code> is acknowledged but ignored. Delivery does NOT need to be in order, and duplicate delivery is idempotent on the RAG side.</p>
 <h3>Relationship to nightly reconcile</h3>
-<p>The retry queue handles short-term recovery (minutes to hours). The nightly reconcile (per <a class="xref" href="#s8-3">§8.3</a>) is the safety net for cases the retry queue cannot fix (extended RAG service downtime, handler bugs, schema mismatches).</p>
+<p>Inngest delivery handles short-term recovery (seconds to hours). The nightly reconcile (per <a class="xref" href="#s8-3">§8.3</a>) is the safety net for cases delivery cannot fix (extended RAG service downtime, handler bugs, schema mismatches, config outages longer than the retry ladder).</p>
 <h3>Calls Worth Flagging</h3>
 <ul>
-<li><strong><code>pending_rag_sync</code> rows are deleted on success.</strong> No retention beyond active retry.</li>
-<li><strong>Idempotency on the RAG side matters.</strong> The <code>source_revision</code> filter is the primary defense against duplicate processing.</li>
-<li><strong>Platform admin alert at attempt_count &gt;= 10 is a real intervention trigger.</strong></li>
+<li><strong>Idempotency on the RAG side matters.</strong> The <code>source_revision</code> filter is the primary defense against duplicate processing; deterministic Inngest event ids are the secondary layer.</li>
+<li><strong>The exhaustion alert is a real intervention trigger.</strong> A config outage (missing <code>RAG_SERVICE_URL</code>/secret) that outlasts the retry ladder drops the event to the reconcile — the alert is what makes that visible.</li>
 <li><strong>Order independence enables aggressive parallelism.</strong></li>
 </ul>
 <h2 id="s8-8">8.8 PII Redaction at Ingestion <a class="anchor-link" href="#s8-8" aria-label="Permalink">¶</a></h2>
