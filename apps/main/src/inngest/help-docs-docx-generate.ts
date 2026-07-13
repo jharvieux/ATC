@@ -116,7 +116,7 @@ export const helpDocsDocxGenerate = inngest.createFunction(
     id: "help-docs-docx-generate",
     triggers: [{ event: "help/docs.export.docx" }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const parsed = ExportPayloadSchema.safeParse(event.data);
     if (!parsed.success) {
       console.error("[help-docs-docx-generate] invalid event payload: %s", parsed.error.message);
@@ -126,41 +126,53 @@ export const helpDocsDocxGenerate = inngest.createFunction(
     const ctx = tenantContextFromInngestEvent(event);
     const db = tenantClient(ctx);
 
-    const docs = loadAllDocs();
-    const sections: Paragraph[] = [];
-    for (const d of docs) {
-      sections.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_1,
-          children: [new TextRun(d.title)],
-        }),
-      );
-      sections.push(...markdownToParagraphs(d.body_markdown));
-      sections.push(new Paragraph({})); // section break
-    }
-
-    const docxDoc = new Document({
-      sections: [{ properties: {}, children: sections }],
+    // #1816 — render/upload/DB-update each get their own step.run boundary so
+    // a retry resumes instead of re-executing the whole pipeline (rendering
+    // re-reads and re-parses every embedded image, #1811). A Buffer doesn't
+    // survive Inngest's JSON step-state round-trip as a real Buffer instance,
+    // so the step returns base64 and this reconstructs it on the way out.
+    const renderedBase64 = await step.run("render-docx", async () => {
+      const docs = loadAllDocs();
+      const sections: Paragraph[] = [];
+      for (const d of docs) {
+        sections.push(
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            children: [new TextRun(d.title)],
+          }),
+        );
+        sections.push(...markdownToParagraphs(d.body_markdown));
+        sections.push(new Paragraph({})); // section break
+      }
+      const docxDoc = new Document({
+        sections: [{ properties: {}, children: sections }],
+      });
+      const buffer = await Packer.toBuffer(docxDoc);
+      return buffer.toString("base64");
     });
-    const buffer = await Packer.toBuffer(docxDoc);
+    const buffer = Buffer.from(renderedBase64, "base64");
 
     const storage_path = `tenant_${ctx.tenant_id}/help-docs/${data.code_version}-docx.docx`;
-    const { error: uploadErr } = await db.storage
-      .from("help-docs")
-      .upload(storage_path, buffer, {
-        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        upsert: true,
-      });
-    if (uploadErr) {
-      throw new Error(`[help-docs-docx-generate] storage upload failed: ${uploadErr.message}`);
-    }
+    await step.run("upload-docx", async () => {
+      const { error: uploadErr } = await db.storage
+        .from("help-docs")
+        .upload(storage_path, buffer, {
+          contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          upsert: true,
+        });
+      if (uploadErr) {
+        throw new Error(`[help-docs-docx-generate] storage upload failed: ${uploadErr.message}`);
+      }
+    });
 
     const ttl = env().HELP_DOCS_CACHE_TTL_SECONDS;
     const expires_at = new Date(Date.now() + ttl * 1000).toISOString();
-    await safeAwait(db
-      .from("help_doc_versions")
-      .update({ storage_path, expires_at, size_bytes: buffer.length })
-      .eq("id", data.job_id), "help_doc_versions.update");
+    await step.run("update-version-row", () =>
+      safeAwait(db
+        .from("help_doc_versions")
+        .update({ storage_path, expires_at, size_bytes: buffer.length })
+        .eq("id", data.job_id), "help_doc_versions.update"),
+    );
 
     return { job_id: data.job_id, storage_path, size_bytes: buffer.length };
   },
