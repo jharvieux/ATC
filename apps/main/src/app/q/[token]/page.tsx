@@ -16,6 +16,8 @@ import { TenantTheme } from "@/components/branding/TenantTheme";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 import { fromCents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
+import { TenantOfRecordDisclosure } from "@/components/booking/TenantOfRecordDisclosure";
 
 // §16.2 — tenant subdomains show the tenant's name + favicon on the quote page.
 export async function generateMetadata(): Promise<Metadata> {
@@ -44,8 +46,8 @@ type QuoteRow = {
   show_breakdown_to_customer: boolean | null;
   valid_until: string | null;
   tenants:
-    | { display_name: string | null }
-    | { display_name: string | null }[]
+    | { display_name: string | null; support_email: string | null }
+    | { display_name: string | null; support_email: string | null }[]
     | null;
 };
 
@@ -79,7 +81,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
   const { data, error } = await svc
     .from("quotes")
     .select(
-      "id, tenant_id, status, locked_price_cents, estimate_price_cents, custom_notes, customer_facing_intro, recommendation_rationale, show_recommendation, show_breakdown_to_customer, valid_until, tenants(display_name)",
+      "id, tenant_id, status, locked_price_cents, estimate_price_cents, custom_notes, customer_facing_intro, recommendation_rationale, show_recommendation, show_breakdown_to_customer, valid_until, tenants(display_name, support_email)",
     )
     .eq("customer_access_token", token)
     .maybeSingle();
@@ -121,6 +123,23 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
   const currency = rep?.currency ?? null;
 
   const tenant = Array.isArray(quote.tenants) ? quote.tenants[0] : quote.tenants;
+
+  // §20.7 (#1876) — tenant-of-record disclosure on the quote acceptance page.
+  // Fail-closed: only render when BOTH the sub-host display_name and the
+  // platform host-agency legal name resolve — never a fabricated placeholder.
+  const { data: hostRow } = await svc
+    .from("platform_settings")
+    .select("value")
+    .eq("key", "host_agency_legal_name")
+    .maybeSingle();
+  const hostLegalName = resolveHostAgencyLegalName((hostRow as { value?: unknown } | null)?.value);
+  const disclosure =
+    tenant?.display_name && hostLegalName
+      ? {
+          tenant: { name: tenant.display_name, support_email: tenant.support_email ?? "" },
+          hostAgency: { legal_name: hostLegalName },
+        }
+      : null;
 
   // Audit who viewed — same pattern as /i/[token].
   const h = await headers();
@@ -256,6 +275,12 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
           <p className="m-0 text-foreground leading-[1.5] whitespace-pre-wrap">
             {quote.custom_notes}
           </p>
+        </section>
+      )}
+
+      {disclosure && (
+        <section className="mb-6">
+          <TenantOfRecordDisclosure tenant={disclosure.tenant} hostAgency={disclosure.hostAgency} />
         </section>
       )}
 

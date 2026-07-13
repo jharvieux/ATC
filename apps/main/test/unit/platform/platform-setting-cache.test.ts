@@ -13,6 +13,7 @@ import {
   getCachedPlatformSetting,
   _resetPlatformSettingCacheForTests,
   evictPlatformSetting,
+  resolveHostAgencyLegalName,
 } from "@/lib/platform/platform-setting-cache";
 
 type Result = { data: unknown; error: { message: string } | null };
@@ -95,5 +96,39 @@ describe("getCachedPlatformSetting", () => {
     evictPlatformSetting("k1");
     await getCachedPlatformSetting(db, "k1");
     expect(reads.count).toBe(2);
+  });
+});
+
+// §20.7 / #1877 — the single canonical host_agency_legal_name unwrap. WHY it
+// matters: this feeds a customer-facing LEGAL disclosure. It must tolerate both
+// wire shapes (bare string, {value:string}) yet fail closed to null on anything
+// malformed so callers never render a fabricated legal name. Before #1877 the
+// unwrap was copy-pasted four ways (one of which mangled the object shape to
+// "[object Object]"); these pin the one behavior everyone now shares.
+describe("resolveHostAgencyLegalName", () => {
+  it("returns a bare string value verbatim", () => {
+    expect(resolveHostAgencyLegalName("Wavecrest Host Agency LLC")).toBe(
+      "Wavecrest Host Agency LLC",
+    );
+  });
+
+  it("unwraps the legacy {value: string} object shape", () => {
+    expect(resolveHostAgencyLegalName({ value: "Nested Host LLC" })).toBe("Nested Host LLC");
+  });
+
+  it("fails closed to null on a missing value (null/undefined)", () => {
+    expect(resolveHostAgencyLegalName(null)).toBeNull();
+    expect(resolveHostAgencyLegalName(undefined)).toBeNull();
+  });
+
+  it("fails closed to null on a malformed object (no string .value)", () => {
+    expect(resolveHostAgencyLegalName({})).toBeNull();
+    expect(resolveHostAgencyLegalName({ value: 42 })).toBeNull();
+    expect(resolveHostAgencyLegalName({ value: { deep: "x" } })).toBeNull();
+  });
+
+  it("never returns the fabricated 'Host Agency' placeholder for malformed input", () => {
+    expect(resolveHostAgencyLegalName({})).not.toBe("Host Agency");
+    expect(resolveHostAgencyLegalName(null)).not.toBe("Host Agency");
   });
 });

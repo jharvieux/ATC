@@ -5,7 +5,8 @@
 // then redirects here. The page reads the booking back and shows status
 // + next-steps copy depending on host_adapter outcome.
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { TenantOfRecordDisclosure } from "@/components/booking/TenantOfRecordDisclosure";
 
 interface Booking {
   id: string;
@@ -20,6 +21,11 @@ interface Booking {
   host_adapter: string | null;
   host_booking_reference: string | null;
 }
+
+type TenantOfRecordData = {
+  tenant: { name: string; support_email: string };
+  hostAgency: { legal_name: string };
+};
 
 const STATUS_COPY: Record<string, { headline: string; body: string; tone: "good" | "wait" | "bad" }> = {
   submitted: {
@@ -87,12 +93,21 @@ export default function BookingConfirmationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = use(params);
+  // Client-page async-params convention: resolve the params promise into state
+  // (matches the sibling booking/flow page), rather than the `use()` hook.
+  const [id, setId] = useState<string | null>(null);
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [disclosure, setDisclosure] = useState<TenantOfRecordData | null>(null);
+  const [disclosureError, setDisclosureError] = useState(false);
 
   useEffect(() => {
+    void params.then((p) => setId(p.id));
+  }, [params]);
+
+  useEffect(() => {
+    if (!id) return;
     let cancelled = false;
     (async () => {
       try {
@@ -115,7 +130,45 @@ export default function BookingConfirmationPage({
     };
   }, [id]);
 
-  if (loading) {
+  // §20.7 (#1876) — tenant-of-record disclosure on the confirmation surface.
+  // Fail-closed on the legal names (never fabricate a placeholder), but a
+  // failure to load them is surfaced as a visible notice rather than silently
+  // omitted — this is a required §20.7 legal surface. Matches the sibling
+  // Review-stage flow page. Post-submission, so nothing is blocked.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/bookings/${id}/tenant-of-record`);
+        if (!res.ok) {
+          if (!cancelled) setDisclosureError(true);
+          return;
+        }
+        const data = (await res.json()) as {
+          tenant: { name: string | null; support_email: string };
+          host_agency: { legal_name: string | null };
+        };
+        if (!data.tenant.name || !data.host_agency.legal_name) {
+          if (!cancelled) setDisclosureError(true);
+          return;
+        }
+        if (!cancelled) {
+          setDisclosure({
+            tenant: { name: data.tenant.name, support_email: data.tenant.support_email },
+            hostAgency: { legal_name: data.host_agency.legal_name },
+          });
+        }
+      } catch {
+        if (!cancelled) setDisclosureError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (!id || loading) {
     return (
       <main className="max-w-[700px] mx-auto px-6 py-12">
         <p className="text-muted-foreground">Loading your booking…</p>
@@ -181,6 +234,18 @@ export default function BookingConfirmationPage({
           )}
         </dl>
       </section>
+
+      {disclosure ? (
+        <section className="mb-8">
+          <TenantOfRecordDisclosure tenant={disclosure.tenant} hostAgency={disclosure.hostAgency} />
+        </section>
+      ) : disclosureError ? (
+        <section className="mb-8">
+          <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[13px]">
+            Couldn&apos;t load the tenant-of-record disclosure. Contact your travel agent if you need it.
+          </div>
+        </section>
+      ) : null}
 
       <section className="border-t border-border pt-5 text-muted-foreground text-[13px]">
         <p className="m-0">

@@ -31,6 +31,7 @@ import type { BookingSubmissionRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { withIdempotencyKey } from "@/lib/http/idempotency";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
 
 type BookingRow = {
   id: string;
@@ -183,6 +184,41 @@ async function runDobGate(db: Db, bookingId: string): Promise<Response | null> {
     }
     throw err;
   }
+}
+
+// Step 2b — §20.7 (#1882) server-side fail-closed disclosure gate. The booking
+// confirmation surfaces carry the tenant-of-record legal disclosure; a direct
+// POST that bypasses the Stage-4 UI (where the only fail-closed check lived
+// after #1878) must not be able to confirm a booking when that disclosure can't
+// be resolved. Re-derive the sub-host display_name + platform host-agency legal
+// name the same way the tenant-of-record route does; 422 if either is
+// unresolvable. Pre-host exit: release the CAS lock so the agent can retry once
+// the platform_settings row is configured (same discipline as the DOB gate).
+async function assertDisclosureResolvable(
+  adminDb: AdminDb,
+  db: Db,
+  bookingId: string,
+  tenantId: string,
+): Promise<Response | null> {
+  const [
+    { data: tenantData, error: tenantErr },
+    { data: hostRow, error: hostErr },
+  ] = await Promise.all([
+    adminDb.from("tenants").select("display_name").eq("id", tenantId).maybeSingle(),
+    adminDb.from("platform_settings").select("value").eq("key", "host_agency_legal_name").maybeSingle(),
+  ]);
+  if (tenantErr || hostErr) {
+    await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_disclosure_read");
+    return dbErrorResponse(tenantErr ?? hostErr);
+  }
+
+  const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? null;
+  const hostName = resolveHostAgencyLegalName((hostRow as { value?: unknown } | null)?.value);
+  if (!tenantName || !hostName) {
+    await revertSubmitLock(db, bookingId, "bookings.update.revert_lock_on_disclosure_unavailable");
+    return Response.json({ error: "disclosure_unavailable" }, { status: 422 });
+  }
+  return null;
 }
 
 // Step 3 — load the tenant (prong, tier, §15.12 sandbox) and resolve
@@ -697,6 +733,9 @@ async function submitBooking(
 
     const dobResponse = await runDobGate(db, bookingIdStr);
     if (dobResponse) return dobResponse;
+
+    const disclosureResponse = await assertDisclosureResolvable(adminDb, db, bookingIdStr, ctx.tenant_id);
+    if (disclosureResponse) return disclosureResponse;
 
     const tenantResult = await loadTenantAndSplitRate(adminDb, db, bookingIdStr, ctx.tenant_id);
     if ("response" in tenantResult) return tenantResult.response;

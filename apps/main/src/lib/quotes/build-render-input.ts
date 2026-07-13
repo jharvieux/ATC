@@ -13,6 +13,7 @@ import type { TenantContext } from "@/lib/db/tenant-context";
 import type { QuoteRenderInput } from "./render-pdf";
 import { selectRepresentativeOption } from "./representative-option";
 import { deriveKindAndVariance, type QuoteKind } from "./kind-variance";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
 
 // §38 — the quotes row is a container now; trip detail + per-option
 // financials live on quote_options. The loader pulls only container/pricing
@@ -144,18 +145,23 @@ export async function buildRenderInputFromQuote(
   if (tenantErr) {
     return { ok: false, status: 500, message: `tenant lookup: ${tenantErr.message}` };
   }
-  const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? "Sub-host";
+  // §20.7 fail-closed (#1877): the rendered PDF carries the tenant-of-record
+  // legal disclosure, so a missing sub-host name or host-agency legal name must
+  // fail loud — NEVER render a fabricated "Sub-host" / "Host Agency" placeholder
+  // into a customer-facing legal document (this function's contract comment
+  // above already forbade it; the code now enforces it).
+  const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? null;
+  if (!tenantName) {
+    return { ok: false, status: 500, message: "tenant display_name unavailable" };
+  }
 
   if (hostErr) {
     return { ok: false, status: 500, message: `host lookup: ${hostErr.message}` };
   }
-  const hostNameValue = hostNameRow as { value?: unknown } | null;
-  const hostName =
-    typeof hostNameValue?.value === "string"
-      ? hostNameValue.value
-      : typeof hostNameValue?.value === "object" && hostNameValue?.value !== null
-        ? String((hostNameValue.value as { value?: string }).value ?? "Host Agency")
-        : "Host Agency";
+  const hostName = resolveHostAgencyLegalName((hostNameRow as { value?: unknown } | null)?.value);
+  if (!hostName) {
+    return { ok: false, status: 500, message: "host_agency_legal_name unavailable" };
+  }
 
   if (optionsErr) {
     return { ok: false, status: 500, message: `options lookup: ${optionsErr.message}` };

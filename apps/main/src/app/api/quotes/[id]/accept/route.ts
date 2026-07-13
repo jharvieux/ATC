@@ -25,6 +25,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 import { deriveKindAndVariance } from "@/lib/quotes/kind-variance";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
 
 interface QuoteRow {
   id: string;
@@ -124,25 +125,33 @@ export async function POST(
       }
     }
 
-    // Tenant + host agency display info for the PDF render.
-    const { data: tenantData } = await adminDb
+    // §20.7 tenant-of-record disclosure inputs for the accepted-quote PDF. This
+    // PDF is the dispute-defense snapshot, so its legal disclosure must carry the
+    // REAL sub-host + host-agency legal name — never a fabricated placeholder.
+    const { data: tenantData, error: tenantErr } = await adminDb
       // #1190: tenants has no "name" column — the display label is display_name.
       .from("tenants")
       .select("display_name, support_email")
       .eq("id", ctx.tenant_id)
       .maybeSingle();
-    const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? "Sub-host";
+    if (tenantErr) return dbErrorResponse(tenantErr);
 
-    const { data: hostNameRow } = await adminDb
+    const { data: hostNameRow, error: hostErr } = await adminDb
       .from("platform_settings")
       .select("value")
       .eq("key", "host_agency_legal_name")
       .maybeSingle();
-    const hostName = typeof hostNameRow?.value === "string"
-      ? hostNameRow.value
-      : (typeof hostNameRow?.value === "object" && hostNameRow?.value !== null
-        ? String((hostNameRow.value as { value?: string }).value ?? "Host Agency")
-        : "Host Agency");
+    if (hostErr) return dbErrorResponse(hostErr);
+
+    const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? null;
+    const hostName = resolveHostAgencyLegalName((hostNameRow as { value?: unknown } | null)?.value);
+
+    // Fail-closed (#1883, mirrors #1856/#1878): if either name is unresolvable,
+    // refuse the acceptance with a client-distinguishable error rather than
+    // render "Sub-host" / "Host Agency" into the customer's accepted document.
+    if (!tenantName || !hostName) {
+      return Response.json({ error: "disclosure_unavailable" }, { status: 422 });
+    }
 
     // §38 — trip detail lives on quote_options. Read this quote's options via
     // the tenant-scoped client (RLS) + an explicit quote_id filter and pick

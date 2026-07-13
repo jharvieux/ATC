@@ -3,6 +3,7 @@
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { resolveHostAgencyLegalName } from "@/lib/platform/platform-setting-cache";
 
 export async function GET(): Promise<Response> {
   const db = createServiceRoleClient();
@@ -14,6 +15,10 @@ export async function GET(): Promise<Response> {
 
   if (error) return dbErrorResponse(error);
 
-  const name = data?.value ? String(data.value).replace(/^"|"$/g, "") : null;
+  // #1877 — unified onto the canonical unwrap. The old regex quote-stripping
+  // handled only a bare-string shape (and mangled the {value:…} shape to
+  // "[object Object]"); the shared helper handles both wire shapes and returns
+  // null on a missing/malformed value, matching the §20.7 disclosure readers.
+  const name = resolveHostAgencyLegalName((data as { value?: unknown } | null)?.value);
   return Response.json({ name });
 }

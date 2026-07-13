@@ -43,6 +43,10 @@ const mocks = vi.hoisted(() => ({
   tenantFeeOverride: vi.fn(),
   // adminDb chains
   tenantRow: vi.fn(),
+  // #1882 — §20.7 disclosure gate reads (separate from tenantRow: different
+  // columns, .maybeSingle()).
+  tenantDisclosure: vi.fn(),
+  hostSetting: vi.fn(),
   tierRow: vi.fn(),
   hostAdapterConfig: vi.fn(),
   feeConfig: vi.fn(),
@@ -129,7 +133,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
     rpc: (name: string, params: unknown) => mocks.submitCommitBooking(name, params),
     from: (table: string) => {
       if (table === "tenants") {
-        return { select: () => ({ eq: () => ({ single: mocks.tenantRow }) }) };
+        // .single() → loadTenantAndSplitRate; .maybeSingle() → #1882 disclosure gate.
+        return { select: () => ({ eq: () => ({ single: mocks.tenantRow, maybeSingle: mocks.tenantDisclosure }) }) };
+      }
+      if (table === "platform_settings") {
+        return { select: () => ({ eq: () => ({ maybeSingle: mocks.hostSetting }) }) };
       }
       if (table === "tier_definitions") {
         return { select: () => ({ eq: () => ({ single: mocks.tierRow }) }) };
@@ -210,6 +218,10 @@ beforeEach(() => {
     data: { id: TENANT_ID, tenant_type: "nuo", tier_id: TIER_ID, is_sandbox: false },
     error: null,
   });
+
+  // #1882 — disclosure gate resolves by default so existing paths are unaffected.
+  mocks.tenantDisclosure.mockResolvedValue({ data: { display_name: "Coral Cove Travel" }, error: null });
+  mocks.hostSetting.mockResolvedValue({ data: { value: "Wavecrest Host Agency LLC" }, error: null });
 
   mocks.tierRow.mockResolvedValue({
     data: { id: TIER_ID, platform_split_rate: 0.25, hold_period_days: 30 },
@@ -321,6 +333,51 @@ describe("POST /api/bookings/[id]/submit — DOB gate (§20.5)", () => {
     );
     // No host call happened on this path.
     expect(mocks.submitBooking).not.toHaveBeenCalled();
+  });
+});
+
+// ── §20.7 disclosure gate (#1882) ─────────────────────────────────────────
+
+describe("POST /api/bookings/[id]/submit — server-side disclosure gate (§20.7 #1882)", () => {
+  it("returns 422 disclosure_unavailable when the host-agency legal name is missing", async () => {
+    // A direct POST (bypassing the Stage-4 UI) must not confirm a booking when
+    // the tenant-of-record disclosure can't be resolved.
+    mocks.hostSetting.mockResolvedValue({ data: null, error: null });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(422);
+    expect((await res.json() as { error: string }).error).toBe("disclosure_unavailable");
+    // No host adapter call happened — the gate is pre-host.
+    expect(mocks.submitBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 when platform_settings.value is a malformed object (never a placeholder)", async () => {
+    mocks.hostSetting.mockResolvedValue({ data: { value: {} }, error: null });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(422);
+    expect(mocks.submitBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 when the sub-host tenant display_name is missing", async () => {
+    mocks.tenantDisclosure.mockResolvedValue({ data: { display_name: null }, error: null });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(422);
+    expect((await res.json() as { error: string }).error).toBe("disclosure_unavailable");
+  });
+
+  it("releases the CAS lock on the disclosure early exit (pre-host, safe to revert)", async () => {
+    mocks.hostSetting.mockResolvedValue({ data: null, error: null });
+    await POST(makeReq(), PARAMS);
+    expect(mocks.safeAwait).toHaveBeenCalledWith(
+      expect.anything(),
+      "bookings.update.revert_lock_on_disclosure_unavailable",
+    );
+    expect(mocks.submitBooking).not.toHaveBeenCalled();
+  });
+
+  it("happy path is unchanged when the disclosure resolves (still reaches host submit)", async () => {
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(200);
+    expect(mocks.submitBooking).toHaveBeenCalledTimes(1);
   });
 });
 

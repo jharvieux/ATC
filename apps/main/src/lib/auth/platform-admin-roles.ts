@@ -20,7 +20,7 @@ export const PLATFORM_ADMIN_ROLE_LABELS: Record<PlatformAdminRole, string> = {
 
 export const PLATFORM_ADMIN_ROLE_DESCRIPTIONS: Record<PlatformAdminRole, string> = {
   superadmin: "Full platform access, including managing other platform admins.",
-  reviewer: "RAG knowledge management, content moderation, cruise catalog, travel news, denylist, retrieval weights.",
+  reviewer: "RAG knowledge management, content moderation, cruise catalog, travel news, denylist, retrieval weights, feedback settings.",
   finance: "AI pricing, reconciliation, and resource utilization.",
   support: "Help triage, email samples, vendor status.",
 };
@@ -37,6 +37,7 @@ export const ADMIN_AREA_GRANTS = {
   rag:               ["superadmin", "reviewer", "service"] as const,
   chunks:            ["superadmin", "reviewer"] as const,
   retrieval_weights: ["superadmin", "reviewer"] as const,
+  feedback_settings: ["superadmin", "reviewer"] as const,
 
   // Content and catalog
   travel_news:       ["superadmin", "reviewer"] as const,
