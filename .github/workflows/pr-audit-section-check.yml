@@ -90,7 +90,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT" = "merge_group" ]; then
-            PR_NUMBER=$(printf '%s' "$MG_HEAD_REF" | grep -oE 'pr-[0-9]+' | head -1 | sed 's/^pr-//')
+            # `|| true`: under `set -euo pipefail`, a no-match grep exits 1 and
+            # aborts the step before the friendly guard below can run — mask it so
+            # the empty-PR_NUMBER case reaches the ::error:: diagnostic.
+            PR_NUMBER=$(printf '%s' "$MG_HEAD_REF" | grep -oE 'pr-[0-9]+' | head -1 | sed 's/^pr-//') || true
             if [ -z "$PR_NUMBER" ]; then
               echo "::error::Could not parse a PR number from merge_group head ref '$MG_HEAD_REF' — the audit gate can't tell which PR's markers to check."
               exit 1

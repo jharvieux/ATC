@@ -90,6 +90,11 @@ jobs:
         # deploy.yml via the shared-test-db group above.
         env:
           CONFIRM_TEST_DB_RESET: "true"
+          # Distinctly-named target var (#1896 audit): the reset script reads
+          # RESET_TARGET_DB_URL, never the generic SUPABASE_DB_URL, so this
+          # destructive step can only ever be pointed at the test DB — never the
+          # prod DB that SUPABASE_DB_URL binds to in prod-drift-check.yml.
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
         run: pnpm db:reset:ci
 
       - name: Apply Supabase migrations to test DB

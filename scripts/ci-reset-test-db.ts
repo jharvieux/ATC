@@ -13,13 +13,24 @@
 // AND a strict improvement for today's non-queue flow (no more orphan-row
 // wedging). See #1896 groundwork.
 //
-// Scope: the MAIN test DB only (SUPABASE_DB_URL). Drops + recreates `public`
+// Scope: the MAIN test DB only. Drops + recreates `public`
 // — the only schema the app's migrations own, matching scripts/db-reset.ts's
 // proven local reset — and empties the migration ledger. Supabase-managed
 // schemas (auth, storage, graphql, realtime, vault) are owned by
 // supabase_admin: the postgres role can't drop them and the migrations don't
 // need them dropped. The RAG test DB is not reset here (deploy.yml never
 // pushes it; see the PR body's follow-up note).
+//
+// Target var — the name IS the safety contract (#1896 audit): this script reads
+// RESET_TARGET_DB_URL, a DISTINCTLY-NAMED var that must only ever be bound to
+// the throwaway test DB. It deliberately does NOT read the generic
+// SUPABASE_DB_URL, because that same name is bound to the PRODUCTION database in
+// prod-drift-check.yml — reading it here would let a future workflow author who
+// copies a reset step next to a prod binding silently wipe prod. RESET_TARGET_DB_URL
+// is bound to SUPABASE_TEST_DB_URL at the step level in the only two call sites
+// (deploy.yml rls-snapshot-diff, nightly-full-test.yml) and is never bound to a
+// prod secret anywhere in the repo. The script hard-stops (below) if it is unset,
+// so it can never fall back to some other ambient DB URL.
 //
 // Serialization: this MUST run under the `shared-test-db` GitHub Actions
 // concurrency group so no other job reads or writes the same DB while the
@@ -28,26 +39,26 @@
 // that touches this DB.
 //
 // Safety: refuses to run unless CONFIRM_TEST_DB_RESET=true is set by the
-// caller, so merely having SUPABASE_DB_URL in the environment can never wipe a
-// DB. A secret-less run (Dependabot) has no URL and skips (exit 0), the same
+// caller, so merely having RESET_TARGET_DB_URL in the environment can never wipe
+// a DB. A secret-less run (Dependabot) has no URL and skips (exit 0), the same
 // posture as deploy.yml's apply step.
 
 import postgres from "postgres";
 import { redactSecrets } from "./lib/redact-secrets";
 
-const dbUrl = process.env.SUPABASE_DB_URL;
+const dbUrl = process.env.RESET_TARGET_DB_URL;
 
 if (process.env.CONFIRM_TEST_DB_RESET !== "true") {
   console.error(
     "ci-reset-test-db: refusing to run — set CONFIRM_TEST_DB_RESET=true to confirm this destructive reset. " +
-      "This guard keeps a stray SUPABASE_DB_URL from ever wiping a database.",
+      "This guard keeps a stray RESET_TARGET_DB_URL from ever wiping a database.",
   );
   process.exit(1);
 }
 
 if (!dbUrl) {
   console.log(
-    "ci-reset-test-db: SUPABASE_DB_URL not set — skipping reset (Dependabot / secret-less run).",
+    "ci-reset-test-db: RESET_TARGET_DB_URL not set — skipping reset (Dependabot / secret-less run).",
   );
   process.exit(0);
 }
