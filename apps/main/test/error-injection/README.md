@@ -29,55 +29,38 @@ real module to intercept.
 The probe runs in its own CI step (alongside the regular `pnpm -r test`
 step) so a flaky resource-mocked test doesn't block unrelated PRs.
 
-## Canonical handler test pattern
+## Actual handler test pattern (#1821)
 
-```typescript
-// apps/main/test/error-injection/<handler-name>.error.test.ts
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFailingDbClient, makeMockStripeEvent, makeMockStripeWebhookRequest } from "./_helpers";
+`_helpers.ts` exports a generic `makeFailingDbClient` factory, but **no
+existing probe imports it** — every `*.error.test.ts` file rolls its own
+inline `vi.mock("@/lib/db/service-role-client", ...)` with a per-table chain
+hand-shaped to that handler. That's not drift to fix; it's the real
+convention, and it's the right one: each handler queries a different set of
+tables with a different chain shape (single-row lookups, CAS
+`.update().eq().select()`, multi-row `.in()` fetches, sequential mutations
+that must return different rows depending on the payload). A generic
+one-size-fits-all DB mock can express "fail this verb" but not "this
+handler's specific branch structure" — every attempt to force a handler onto
+a shared factory either loses test fidelity or needs so much per-handler
+special-casing that it stops being shared. See
+`payouts-execute-transfer.error.test.ts` for a representative example:
+`payout_records.update()` needs distinct lock-acquire vs. settle CAS
+branches, keyed off the update payload — `makeFailingDbClient` has no way to
+express that.
 
-// vi.mock is hoisted — declare it at module level. Behavior is toggled
-// via module-scoped variables.
-let dbOpts: Parameters<typeof makeFailingDbClient>[0] = {};
+**When adding a new probe:** copy the existing probe file whose handler
+shape is closest to yours (DB-heavy cron vs. webhook-signature handler vs.
+Stripe-calling cron — see the Coverage table below) and adapt its inline
+mocks. Don't start from `_helpers.ts`'s `makeFailingDbClient` — it has not
+been proven to fit any production handler's actual query shape, despite
+being documented here as canonical until #1821.
 
-vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => makeFailingDbClient(dbOpts),
-}));
-
-let mockEvent: ReturnType<typeof makeMockStripeEvent>;
-
-vi.mock("stripe", () => ({
-  default: class FakeStripe {
-    webhooks = {
-      constructEvent: (_body: string, _sig: string, _secret: string) => mockEvent,
-    };
-    errors = { StripeError: class extends Error {} };
-  },
-}));
-
-import { handleStripeWebhook } from "@/lib/stripe/webhook-handler";
-
-beforeEach(() => {
-  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
-  process.env.STRIPE_WEBHOOK_SECRET = "whsec_fake";
-  dbOpts = {};
-  mockEvent = makeMockStripeEvent("transfer.reversed", { id: "tr_1" });
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-describe("Stripe webhook — error injection", () => {
-  it("returns 500 when update fails on transfer.reversed (Pattern 1)", async () => {
-    const counter = { value: 0 };
-    dbOpts = { fail: ["update"], selectResult: { data: [{ id: "p-1" }] }, callCount: counter };
-    const res = await handleStripeWebhook(makeMockStripeWebhookRequest("transfer.reversed"), "platform");
-    expect(res.status).toBe(500);
-    expect(counter.value).toBeGreaterThan(0);
-  });
-});
-```
+`_helpers.ts`'s **non-DB** helpers (`makeMockStripeEvent`,
+`makeThrowingStripeClass`, `makeStripeConnectionError`,
+`invokeInngestFunction`, `makeNoopStep`, `makeThrowingFetch`) don't have this
+problem — they're simple and generic. They're just not wired into any probe
+today because nothing has needed them yet; reach for them directly when they
+fit.
 
 ## Running locally
 
@@ -87,7 +70,8 @@ pnpm test:error-injection
 
 ## Adding a new handler
 
-1. Add a file `<handler-name>.error.test.ts` here.
+1. Add a file `<handler-name>.error.test.ts` here, starting from the
+   closest-shaped existing probe (see above) rather than `_helpers.ts`.
 2. Cover the three injection modes for each mutation site / external dep.
 3. Add a row to the "Coverage" table below.
 
