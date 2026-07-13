@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-349 — 2026-07-13 — GH Actions implicit `run:` shell has NO pipefail — `| tee` gates must capture `${PIPESTATUS[0]}`
+
+**Decision**: Any workflow step that pipes a load-bearing command through `tee` (or any pipe) and branches on its exit code must capture `${PIPESTATUS[0]}` explicitly, never `$?`. GitHub's implicit `run:` shell is `bash -e {0}` — `-o pipefail` applies ONLY with an explicit `shell: bash` declaration.
+
+**Why**: PR #1851's nightly-triage change added `| tee` on the (twice-audited, still wrong) premise that pipefail was on by default. Result: the first nightly after merge swallowed a real suite failure (transfer-reversal, #1862), reported success, and filed no issue — a green-but-lying run caught only by the operator-requested overnight watch. The same shape exists latent in `deploy.yml` (#1865) and `supabase-advisor-check.yml` (#1866). Fixed in PR #1864 with a local bash demonstration in the PR body.
+
+**Rejected**: enabling pipefail via `shell: bash` (fixes this step but leaves the trap for the next `run:` block someone writes without it; PIPESTATUS is self-contained and shell-default-proof).
+
+**Related artifacts**: PR #1864; issues #1862, #1863 (nightly also never invokes the apps/rag suite), #1865, #1866; `.github/workflows/nightly-full-test.yml`.
+
+---
+
 ## D-348 — 2026-07-13 — Frontend sweep discipline: tests-first for untested god components; verify-before-fix for static-analysis perf flags (#1810/#1812/#1813, PR #1857)
 
 **Decision**: For #1812's highest-risk item (email-templates settings page: 28 hooks, 954 lines, zero tests), shipped characterization tests ONLY (template-switch 13-field reset, sailing cascade, search debounce) and deferred the reducer rewrite — the tests are the safety net a future rewrite requires; #1812 stays open with the remainder enumerated. For #1813, re-verified each flagged site before touching it: 2 of ~16 re-examined were real (index-as-key on mid-list-removable rows with row state — passenger rows, resource links; fixed with client-only `_key` UUIDs stripped from payloads, pinned by DOM-node-IDENTITY regression tests that mutation-testing confirmed fail under `key={idx}`); the rest documented as false positives on the issue. #1810 shipped the resolve-review console action surfacing the `host_booking_may_exist` refusal with do-not-resubmit guidance.
