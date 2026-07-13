@@ -12,6 +12,8 @@ import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { safeAwait } from "@/lib/db/safe-mutation";
+import { resolveQuoteKind, NO_HOST_INTEGRATION_ADAPTER } from "@/lib/quotes/kind-resolver";
 
 const OptionCreateSchema = z.object({
   label: z.string().optional(),
@@ -121,6 +123,38 @@ export async function POST(
       .select()
       .single();
     if (error) return dbErrorResponse(error);
+
+    // #1804 — the #1742 price_kind/priced_at wiring only covered POST
+    // /api/quotes' single-option creation path. Quotes built through this
+    // multi-option endpoint (the primary §38 flow) never got their parent
+    // priced_at/price_kind stamped, so quote-estimate-expiry-sweep's
+    // `.lt("priced_at", cutoff)` filter silently matched zero of them
+    // (NULL < x is never true). Only stamp on FIRST pricing — a quote
+    // already priced by an earlier option keeps its existing priced_at
+    // freshness window; re-pricing an existing option goes through the
+    // PATCH route below instead.
+    if (typeof parsed.data.total_amount_cents === "number") {
+      const { data: quoteRow, error: quoteReadErr } = await db
+        .from("quotes")
+        .select("priced_at")
+        .eq("id", quoteId)
+        .single();
+      if (quoteReadErr) return dbErrorResponse(quoteReadErr);
+      if ((quoteRow as { priced_at: string | null }).priced_at == null) {
+        const pricedAt = new Date().toISOString();
+        await safeAwait(
+          db.from("quotes").update({
+            priced_at: pricedAt,
+            price_kind: resolveQuoteKind(
+              { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
+              NO_HOST_INTEGRATION_ADAPTER,
+            ),
+          }).eq("id", quoteId),
+          "quotes.update.price_kind_from_option_create",
+        );
+      }
+    }
+
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);
