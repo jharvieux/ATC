@@ -16,11 +16,16 @@ const h = vi.hoisted(() => ({
   failKeys: new Set<string>(),
   // Rows returned by the post-update loadCurrent read.
   currentRows: [] as Array<{ key: string; value: unknown }>,
+  publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
 }));
 
 vi.mock("@/lib/auth/assert-platform-admin", () => ({
   assertPlatformAdminArea: async () => ({ admin_user_id: "admin-user-1" }),
   PlatformAdminError: class extends Error {},
+}));
+
+vi.mock("@/lib/rag-sync/publish-platform-event", () => ({
+  publishPlatformEvent: h.publishPlatformEvent,
 }));
 
 vi.mock("@/lib/db/platform-admin-client", () => ({
@@ -31,12 +36,14 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
     const db = {
       from: (_table: string) => ({
         update: (payload: { value: unknown }) => ({
-          eq: async (_col: string, key: string) => {
-            h.updates.push({ key, value: payload.value });
-            return h.failKeys.has(key)
-              ? { error: { message: `write failed for ${key}` } }
-              : { error: null };
-          },
+          eq: (_col: string, key: string) => ({
+            select: async (_cols: string) => {
+              h.updates.push({ key, value: payload.value });
+              return h.failKeys.has(key)
+                ? { data: null, error: { message: `write failed for ${key}` } }
+                : { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
+            },
+          }),
         }),
         select: () => ({
           in: async () => ({ data: h.currentRows, error: null }),
@@ -61,6 +68,7 @@ beforeEach(() => {
   h.updates = [];
   h.failKeys = new Set();
   h.currentRows = [];
+  h.publishPlatformEvent.mockClear();
 });
 
 describe("PUT /api/admin/retrieval-weights — parallel per-key updates (#1827)", () => {
@@ -108,5 +116,38 @@ describe("PUT /api/admin/retrieval-weights — parallel per-key updates (#1827)"
     const res = await PUT(req({ match: 99 }));
     expect(res.status).toBe(422);
     expect(h.updates).toEqual([]);
+  });
+});
+
+describe("PUT /api/admin/retrieval-weights — RAG-sync publish (#1826)", () => {
+  it("calls publishPlatformEvent with the changed keys/values after a successful save", async () => {
+    h.currentRows = [
+      { key: "retrieval_weight_match", value: 2 },
+      { key: "retrieval_weight_feedback", value: 0.5 },
+    ];
+    const res = await PUT(req({ match: 2, feedback: 0.5 }));
+    expect(res.status).toBe(200);
+
+    expect(h.publishPlatformEvent).toHaveBeenCalledTimes(1);
+    const event = h.publishPlatformEvent.mock.calls[0]![0] as {
+      event_type: string;
+      source_revision: number;
+      payload: { changes: Array<{ key: string; value: unknown }> };
+    };
+    expect(event.event_type).toBe("platform_settings.updated");
+    // source_revision comes from the updated row's updated_at (DB write
+    // time), not Date.now() at call time — see route.ts's PUT handler.
+    expect(event.source_revision).toBe(Math.floor(new Date("2026-07-13T00:00:00.000Z").getTime() / 1000));
+    expect(event.payload.changes.slice().sort((a, b) => a.key.localeCompare(b.key))).toEqual([
+      { key: "retrieval_weight_feedback", value: 0.5 },
+      { key: "retrieval_weight_match", value: 2 },
+    ]);
+  });
+
+  it("does not call publishPlatformEvent when the DB write fails", async () => {
+    h.failKeys = new Set(["retrieval_weight_match"]);
+    const res = await PUT(req({ match: 3 }));
+    expect(res.status).toBe(500);
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });

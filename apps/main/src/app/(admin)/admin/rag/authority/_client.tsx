@@ -54,80 +54,95 @@ const OVERRIDE_OPTIONS = [
 const thCls = "px-2 py-2 text-left border-b-2 border-border font-semibold text-sm";
 const tdCls = "px-2 py-2 border-b border-muted align-top text-sm";
 
+interface ListState {
+  items: ChunkRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  loading: boolean;
+  error: string | null;
+}
+
+interface FilterState {
+  sourceFilter: string;
+  scopeFilter: string;
+  hasOverrideFilter: string;
+}
+
+interface EditState {
+  editingChunkId: string | null;
+  editValue: string;
+  editReason: string;
+  saving: boolean;
+}
+
 export default function AuthorityCurationPage(): JSX.Element {
-  const [items, setItems] = useState<ChunkRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sourceFilter, setSourceFilter] = useState("");
-  const [scopeFilter, setScopeFilter] = useState("");
-  const [hasOverrideFilter, setHasOverrideFilter] = useState("");
-  const [editingChunkId, setEditingChunkId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [editReason, setEditReason] = useState("");
-  const [saving, setSaving] = useState(false);
+  // #1812 — the 13 useState hooks (list/pagination data, filters, inline
+  // edit form) are grouped into 3 state objects by concern, one useState
+  // each, matching the pattern established in #1791.
+  const [list, setList] = useState<ListState>({
+    items: [], total: 0, page: 1, pageSize: 25, loading: true, error: null,
+  });
+  const [filters, setFilters] = useState<FilterState>({
+    sourceFilter: "", scopeFilter: "", hasOverrideFilter: "",
+  });
+  const [edit, setEdit] = useState<EditState>({
+    editingChunkId: null, editValue: "", editReason: "", saving: false,
+  });
 
   async function load(): Promise<void> {
-    setLoading(true);
-    setError(null);
+    setList((s) => ({ ...s, loading: true, error: null }));
     try {
       const url = new URL("/api/admin/rag/authority/list", window.location.origin);
-      url.searchParams.set("page", String(page));
-      if (sourceFilter) url.searchParams.set("source", sourceFilter);
-      if (scopeFilter) url.searchParams.set("scope", scopeFilter);
-      if (hasOverrideFilter) url.searchParams.set("has_override", hasOverrideFilter);
+      url.searchParams.set("page", String(list.page));
+      if (filters.sourceFilter) url.searchParams.set("source", filters.sourceFilter);
+      if (filters.scopeFilter) url.searchParams.set("scope", filters.scopeFilter);
+      if (filters.hasOverrideFilter) url.searchParams.set("has_override", filters.hasOverrideFilter);
 
       const res = await adminFetch(url.toString());
       if (!res.ok) throw new Error(`load_failed_${res.status}`);
       const data = (await res.json()) as ListResponse;
-      setItems(data.items);
-      setTotal(data.total);
-      setPageSize(data.page_size);
+      setList((s) => ({ ...s, items: data.items, total: data.total, pageSize: data.page_size }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "load_failed");
+      setList((s) => ({ ...s, error: e instanceof Error ? e.message : "load_failed" }));
     } finally {
-      setLoading(false);
+      setList((s) => ({ ...s, loading: false }));
     }
   }
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, sourceFilter, scopeFilter, hasOverrideFilter]);
+  }, [list.page, filters.sourceFilter, filters.scopeFilter, filters.hasOverrideFilter]);
 
   function startEdit(chunk: ChunkRow): void {
-    setEditingChunkId(chunk.id);
-    setEditValue(
-      chunk.authority_manual_override !== null
-        ? String(chunk.authority_manual_override)
-        : "",
-    );
-    setEditReason(chunk.authority_override_reason ?? "");
+    setEdit({
+      editingChunkId: chunk.id,
+      editValue: chunk.authority_manual_override !== null ? String(chunk.authority_manual_override) : "",
+      editReason: chunk.authority_override_reason ?? "",
+      saving: false,
+    });
   }
 
   function cancelEdit(): void {
-    setEditingChunkId(null);
-    setEditValue("");
-    setEditReason("");
+    setEdit({ editingChunkId: null, editValue: "", editReason: "", saving: false });
   }
 
   async function saveEdit(chunk: ChunkRow): Promise<void> {
-    setSaving(true);
-    setError(null);
+    setEdit((s) => ({ ...s, saving: true }));
+    setList((s) => ({ ...s, error: null }));
     try {
       const overrideNum =
-        editValue.trim() === "" ? null : Number(editValue.trim());
+        edit.editValue.trim() === "" ? null : Number(edit.editValue.trim());
       if (overrideNum !== null) {
         if (!Number.isFinite(overrideNum) || overrideNum < 0 || overrideNum > 1) {
-          setError("Override must be a number between 0 and 1, or empty to clear.");
-          setSaving(false);
+          setList((s) => ({ ...s, error: "Override must be a number between 0 and 1, or empty to clear." }));
+          setEdit((s) => ({ ...s, saving: false }));
           return;
         }
-        if (!editReason.trim()) {
-          setError("Reason is required when setting an override.");
-          setSaving(false);
+        if (!edit.editReason.trim()) {
+          setList((s) => ({ ...s, error: "Reason is required when setting an override." }));
+          setEdit((s) => ({ ...s, saving: false }));
           return;
         }
       }
@@ -136,25 +151,25 @@ export default function AuthorityCurationPage(): JSX.Element {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           authority_manual_override: overrideNum,
-          reason: editReason.trim(),
+          reason: edit.editReason.trim(),
           origin_tenant_id: chunk.tenant_id,
         }),
       });
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        setError(data.error ?? `save_failed_${res.status}`);
+        setList((s) => ({ ...s, error: data.error ?? `save_failed_${res.status}` }));
         return;
       }
       cancelEdit();
       await load();
     } finally {
-      setSaving(false);
+      setEdit((s) => ({ ...s, saving: false }));
     }
   }
 
   async function clearOverride(chunk: ChunkRow): Promise<void> {
-    setSaving(true);
-    setError(null);
+    setEdit((s) => ({ ...s, saving: true }));
+    setList((s) => ({ ...s, error: null }));
     try {
       const res = await adminFetch(`/api/admin/rag/authority/${chunk.id}`, {
         method: "POST",
@@ -167,15 +182,18 @@ export default function AuthorityCurationPage(): JSX.Element {
       });
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        setError(data.error ?? `clear_failed_${res.status}`);
+        setList((s) => ({ ...s, error: data.error ?? `clear_failed_${res.status}` }));
         return;
       }
       await load();
     } finally {
-      setSaving(false);
+      setEdit((s) => ({ ...s, saving: false }));
     }
   }
 
+  const { items, total, page, pageSize, loading, error } = list;
+  const { sourceFilter, scopeFilter, hasOverrideFilter } = filters;
+  const { editingChunkId, editValue, editReason, saving } = edit;
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
@@ -200,7 +218,7 @@ export default function AuthorityCurationPage(): JSX.Element {
           <span className="block text-[12px] text-foreground mb-0.5">Source</span>
           <select
             value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
+            onChange={(e) => setFilters((f) => ({ ...f, sourceFilter: e.target.value }))}
             className="px-2 py-1.5 border border-border rounded text-sm"
           >
             {SOURCE_OPTIONS.map((o) => (
@@ -212,7 +230,7 @@ export default function AuthorityCurationPage(): JSX.Element {
           <span className="block text-[12px] text-foreground mb-0.5">Scope</span>
           <select
             value={scopeFilter}
-            onChange={(e) => setScopeFilter(e.target.value)}
+            onChange={(e) => setFilters((f) => ({ ...f, scopeFilter: e.target.value }))}
             className="px-2 py-1.5 border border-border rounded text-sm"
           >
             {SCOPE_OPTIONS.map((o) => (
@@ -224,7 +242,7 @@ export default function AuthorityCurationPage(): JSX.Element {
           <span className="block text-[12px] text-foreground mb-0.5">Override</span>
           <select
             value={hasOverrideFilter}
-            onChange={(e) => setHasOverrideFilter(e.target.value)}
+            onChange={(e) => setFilters((f) => ({ ...f, hasOverrideFilter: e.target.value }))}
             className="px-2 py-1.5 border border-border rounded text-sm"
           >
             {OVERRIDE_OPTIONS.map((o) => (
@@ -295,7 +313,7 @@ export default function AuthorityCurationPage(): JSX.Element {
                         max="1"
                         step="0.01"
                         value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
+                        onChange={(e) => setEdit((s) => ({ ...s, editValue: e.target.value }))}
                         placeholder="0.00-1.00 or blank to clear"
                         className="w-[140px] border border-border rounded px-1.5 py-1 text-[12px]"
                       />
@@ -322,7 +340,7 @@ export default function AuthorityCurationPage(): JSX.Element {
                       <input
                         type="text"
                         value={editReason}
-                        onChange={(e) => setEditReason(e.target.value)}
+                        onChange={(e) => setEdit((s) => ({ ...s, editReason: e.target.value }))}
                         placeholder="Reason (required to set)"
                         maxLength={500}
                         className="block w-[220px] mt-1 border border-border rounded px-1.5 py-1 text-[12px]"
@@ -386,7 +404,7 @@ export default function AuthorityCurationPage(): JSX.Element {
         <div className="mt-4 flex gap-2 justify-center">
           <button
             type="button"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => setList((s) => ({ ...s, page: Math.max(1, s.page - 1) }))}
             disabled={page === 1}
             className="px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
           >
@@ -397,7 +415,7 @@ export default function AuthorityCurationPage(): JSX.Element {
           </span>
           <button
             type="button"
-            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            onClick={() => setList((s) => ({ ...s, page: Math.min(pages, s.page + 1) }))}
             disabled={page === pages}
             className="px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
           >

@@ -202,7 +202,16 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           git fetch --no-tags origin "$GITHUB_BASE_REF"
+          # No `shell:` key on this step, so the implicit default shell is
+          # `bash -e {0}` — NOT `-o pipefail` (only `shell: bash` adds that).
+          # `$?` after the pipe below would read `tee`'s exit code, not
+          # ci-decide-tests.mjs's, letting a script failure through with
+          # GITHUB_OUTPUT silently empty/stale (D-349; same shape as #1864).
+          # Capture `${PIPESTATUS[0]}` and fail the step explicitly instead.
+          set +e
           node scripts/ci-decide-tests.mjs | tee -a "$GITHUB_OUTPUT"
+          STATUS=${PIPESTATUS[0]}
+          exit "$STATUS"
 
       - name: Run full vitest suite (with coverage)
         if: steps.scope.outputs.mode == 'full'

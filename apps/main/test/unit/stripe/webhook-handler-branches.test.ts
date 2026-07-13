@@ -605,12 +605,19 @@ describe("Stripe webhook — invoice.payment_failed", () => {
 // two concurrent deliveries can both pass it before either writes. The
 // `.or(subscription_status_event_at.is.null,...lt.<created>)` WHERE clause
 // makes the check atomic in the DB — a 0-row result means a concurrent
-// newer event already won, and this event's write must be silently
-// dropped (not treated as an error, not overwriting the newer state).
+// newer event already won, and this event's write must be dropped (not
+// treated as an error, not overwriting the newer state).
+//
+// #1854 — the recorded outcome for that 0-row CAS-lost result is
+// 'stale_discarded', NOT 'unhandled'. 'unhandled' is reserved for event types
+// with no handler at all (a real coverage gap); conflating the two poisons any
+// dashboard over processing_outcome. Each test below asserts 'stale_discarded'
+// and explicitly rejects 'unhandled', so it fails if the two are ever conflated
+// again (regression guard for the #1854 fix).
 // ---------------------------------------------------------------------------
 
-describe("Stripe webhook — #1583 CAS guard (concurrent newer event wins the race)", () => {
-  it("customer.subscription.updated: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+describe("Stripe webhook — #1583/#1854 CAS guard (concurrent newer event wins the race)", () => {
+  it("customer.subscription.updated: 0-row CAS result records 'stale_discarded', not 'unhandled'", async () => {
     mockEventType = "customer.subscription.updated";
     mockEventData = { id: "sub_1", status: "active" };
     selectMaybeSingle = { data: { id: "t-1", non_paying_since: null }, error: null };
@@ -620,10 +627,11 @@ describe("Stripe webhook — #1583 CAS guard (concurrent newer event wins the ra
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
-    expect(outcome!.processing_outcome).toBe("unhandled");
+    expect(outcome!.processing_outcome).toBe("stale_discarded");
+    expect(outcome!.processing_outcome).not.toBe("unhandled");
   });
 
-  it("invoice.payment_succeeded: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+  it("invoice.payment_succeeded: 0-row CAS result records 'stale_discarded', not 'unhandled'", async () => {
     mockEventType = "invoice.payment_succeeded";
     mockEventData = { parent: { subscription_details: { subscription: "sub_1" } } };
     selectMaybeSingle = { data: { id: "t-1", subscription_status: "past_due" }, error: null };
@@ -633,10 +641,11 @@ describe("Stripe webhook — #1583 CAS guard (concurrent newer event wins the ra
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
-    expect(outcome!.processing_outcome).toBe("unhandled");
+    expect(outcome!.processing_outcome).toBe("stale_discarded");
+    expect(outcome!.processing_outcome).not.toBe("unhandled");
   });
 
-  it("invoice.payment_failed: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+  it("invoice.payment_failed: 0-row CAS result records 'stale_discarded', not 'unhandled'", async () => {
     mockEventType = "invoice.payment_failed";
     mockEventData = { parent: { subscription_details: { subscription: "sub_1" } } };
     selectMaybeSingle = { data: { id: "t-1", non_paying_since: null }, error: null };
@@ -646,7 +655,8 @@ describe("Stripe webhook — #1583 CAS guard (concurrent newer event wins the ra
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
-    expect(outcome!.processing_outcome).toBe("unhandled");
+    expect(outcome!.processing_outcome).toBe("stale_discarded");
+    expect(outcome!.processing_outcome).not.toBe("unhandled");
   });
 });
 
