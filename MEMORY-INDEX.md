@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-355 — 2026-07-13 — #444 tier-lookup family shipped (PR #1917): phantom tier codes were silently killing the AI hero-image gate; update_seats gained the missing §15.15 agency-only gate.
 - D-354 — 2026-07-13 — GH hardening: main protected, Dependency Review required check, GHAS runbook'd; merge queue blocked (user-owned repo) but PR #1915's test-DB reset kills the ledger-orphan class and the migration merge-train ordering constraint.
 - D-353 — 2026-07-13 — Follow-up sweep: 10 PRs merged / 11 issues closed; §6.10 spec-bounds violation caught pre-merge (#1906); disclosure family fail-closed on all existing surfaces; flake #1912 filed.
 - D-352 — 2026-07-13 — GHAS PR comments dispositioned before every merge; custom sanitizers must be CodeQL-recognizable (sanitize.ts literal \r\n replace is load-bearing; #1896).
