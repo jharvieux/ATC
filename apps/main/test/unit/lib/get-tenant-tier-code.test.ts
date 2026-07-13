@@ -5,15 +5,15 @@
 // must unwrap both, and return null (least privilege — no tier-gated
 // features) when the tenant is missing or has no tier.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getTenantTierCode } from "@/lib/tenancy/get-tenant-tier-code";
 
-function dbReturning(data: unknown): SupabaseClient {
+function dbReturning(data: unknown, error: { message: string } | null = null): SupabaseClient {
   return {
     from: () => ({
       select: () => ({
-        eq: () => ({ maybeSingle: async () => ({ data, error: null }) }),
+        eq: () => ({ maybeSingle: async () => ({ data, error }) }),
       }),
     }),
   } as unknown as SupabaseClient;
@@ -36,5 +36,13 @@ describe("getTenantTierCode", () => {
 
   it("returns null for an empty array embed", async () => {
     expect(await getTenantTierCode(dbReturning({ tier_definitions: [] }), "t1")).toBeNull();
+  });
+
+  it("returns null AND logs on a query error — an outage must be diagnosable, not mistaken for 'no tier'", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await getTenantTierCode(dbReturning(null, { message: "db_timeout" }), "t1");
+    expect(code).toBeNull();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("lookup failed"), "db_timeout");
+    errSpy.mockRestore();
   });
 });
