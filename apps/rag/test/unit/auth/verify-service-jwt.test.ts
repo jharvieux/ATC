@@ -19,6 +19,7 @@ import { SignJWT, generateKeyPair, exportSPKI } from "jose";
 import { randomUUID } from "node:crypto";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
+import { SERVICE_JWT_AUDIENCE, SERVICE_JWT_ISSUER } from "@atc/contracts";
 
 // ── Key setup (once per suite) ────────────────────────────────────────────────
 
@@ -41,6 +42,8 @@ type ClaimsOverride = {
   exp?: number;
   iat?: number;
   jti?: string | null;
+  iss?: string;
+  aud?: string;
 };
 
 async function makeToken(overrides: ClaimsOverride = {}) {
@@ -55,6 +58,11 @@ async function makeToken(overrides: ClaimsOverride = {}) {
     .setProtectedHeader({ alg: "RS256", kid: overrides.kid ?? KEY_ID })
     .setIssuedAt(overrides.iat ?? now)
     .setExpirationTime(overrides.exp ?? now + 300);
+
+  // iss/aud default to ABSENT so existing tests exercise the tolerant rollout
+  // path; individual tests opt in to set/mismatch them (#1773).
+  if (overrides.iss !== undefined) builder = builder.setIssuer(overrides.iss);
+  if (overrides.aud !== undefined) builder = builder.setAudience(overrides.aud);
 
   return builder.sign(privateKey);
 }
@@ -116,6 +124,23 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const token = await makeToken();
     const tampered = token.slice(0, -10) + "tampered!!";
     const res = await callHandler(makeReq(tampered));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
+  });
+
+  // ── 2.5 iss/aud defense-in-depth (#1773) ─────────────────────────────────
+  // A PRESENT claim must match; these throw at step 2.5 (after signature,
+  // before redis/tenant) so they need no redis/supabase mocks.
+  it("returns 401 signature_invalid when iss is present but wrong", async () => {
+    const token = await makeToken({ iss: "evil-issuer", aud: SERVICE_JWT_AUDIENCE });
+    const res = await callHandler(makeReq(token));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
+  });
+
+  it("returns 401 signature_invalid when aud is present but wrong", async () => {
+    const token = await makeToken({ iss: SERVICE_JWT_ISSUER, aud: "some-other-service" });
+    const res = await callHandler(makeReq(token));
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: "signature_invalid" });
   });
@@ -325,5 +350,74 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ reached: true, tenant_id: "active-tenant" });
+  });
+
+  // ── #1773: correct iss+aud present → success ─────────────────────────────
+  it("accepts a token carrying the correct iss and aud", async () => {
+    vi.resetModules();
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { tenant_id: "active-tenant", status: "active" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    vi.doMock("@/lib/redis/client", () => ({
+      getRedis: () => ({ set: async () => "OK" }),
+    }));
+
+    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
+
+    const token = await makeToken({
+      tenant_id: "active-tenant",
+      iss: SERVICE_JWT_ISSUER,
+      aud: SERVICE_JWT_AUDIENCE,
+    });
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  // ── #1773: ROLLOUT INTENT — absent iss/aud is tolerated (not rejected) ────
+  // Deliberate transitional behaviour: atc-main (signer) and atc-rag (verifier)
+  // are separate Vercel apps that deploy at different times, so short-TTL
+  // tokens minted before the signer upgrade can still arrive here. Until the
+  // #1773 strict flip, an absent claim is warn-logged and allowed. This test
+  // is the executable record of that intent — when the flip lands it MUST be
+  // changed to assert 401.
+  it("tolerates a token with NO iss/aud during the rollout window", async () => {
+    vi.resetModules();
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { tenant_id: "active-tenant", status: "active" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    vi.doMock("@/lib/redis/client", () => ({
+      getRedis: () => ({ set: async () => "OK" }),
+    }));
+
+    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
+
+    // makeToken with no iss/aud overrides → both claims absent.
+    const token = await makeToken({ tenant_id: "active-tenant" });
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
   });
 });
