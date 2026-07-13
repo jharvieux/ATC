@@ -119,58 +119,48 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         );
       }
 
-      // #1600 — the create path caps at 50 active invitees per group
-      // (groups/route.ts); the single-invite path enforces the same cap via the
-      // shared MAX_INVITEES_PER_GROUP constant.
-      // #1680: this count-then-insert is NOT atomic — two concurrent invites to
-      // the same group can both read count=49 and both insert, overshooting the
-      // cap. Accepted as low-severity: the actor is an authenticated
-      // coordinator, the race requires two invites to the SAME group within one
-      // request window, and the blast radius is a handful of invitees over 50.
-      // A true atomic fix needs a DB migration (an advisory-lock RPC that
-      // count-checks + inserts in one transaction, or a partial exclusion
-      // constraint) — not expressible through PostgREST's autocommit-per-call.
-      // The migration is not yet approved, so the race stays accepted here and
-      // the atomic reserve remains tracked on #1680.
-      const { count: activeCount, error: countErr } = await svc
-        // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
-        .from("invitations")
-        .select("id", { count: "exact", head: true })
-        .eq("group_id", params.id)
-        .is("token_revoked_at", null);
-      if (countErr) return dbErrorResponse(countErr);
-      if ((activeCount ?? 0) >= MAX_INVITEES_PER_GROUP) {
-        return Response.json({ error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` }, { status: 400 });
-      }
-
+      // #1600/#1680 — the 50-active-invitee cap is enforced atomically by the
+      // reserve_group_invitations RPC: it takes a group-scoped advisory lock,
+      // re-counts active invitees, and inserts in ONE transaction, so two
+      // concurrent invites to the same group can't both pass a stale count and
+      // overshoot the cap. The old count-then-insert here was a real TOCTOU
+      // (not expressible atomically through PostgREST's autocommit-per-call).
+      // invitations.token is NOT NULL UNIQUE, so the row carries a generated
+      // token (the create + reissue_all paths set it too).
       const invId = crypto.randomUUID();
       const token = await generateToken(invId);
-      const { data: insertedRows, error: insertErr } = await svc
+      const { data: reserve, error: reserveErr } = await svc
         // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
-        .from("invitations")
-        .insert({
-          id: invId,
-          group_id: params.id,
-          invitee_email: email,
-          invitee_name: (body.invitee_name as string | undefined) ?? null,
-          personal_note: (body.personal_note as string | undefined) ?? null,
-          visibility_choice: vis,
-          // invitations.token is NOT NULL UNIQUE — omitting it 500'd every
-          // single-invitee add (the create + reissue_all paths set it too).
-          token,
-        })
-        .select("id");
+        .rpc("reserve_group_invitations", {
+          p_group_id: params.id,
+          p_invitations: [
+            {
+              id: invId,
+              invitee_email: email,
+              invitee_name: (body.invitee_name as string | undefined) ?? null,
+              personal_note: (body.personal_note as string | undefined) ?? null,
+              visibility_choice: vis,
+              token,
+            },
+          ],
+          p_max: MAX_INVITEES_PER_GROUP,
+        });
 
-      if (insertErr) {
+      if (reserveErr) {
         // #1600 — invitations_group_active_email_uniq_idx (partial, active rows
-        // only) rejects a repeat invite to an already-invited address.
-        if (insertErr.code === "23505") {
+        // only) rejects a repeat invite to an already-invited address; the RPC's
+        // insert surfaces that as SQLSTATE 23505.
+        if (reserveErr.code === "23505") {
           return Response.json({ error: "invitee_already_invited" }, { status: 409 });
         }
-        return dbErrorResponse(insertErr);
+        return dbErrorResponse(reserveErr);
       }
-      if (!insertedRows || insertedRows.length === 0) {
-        return Response.json({ error: "Failed to create invitation" }, { status: 500 });
+      const reserveStatus = (reserve as { status?: string } | null)?.status;
+      if (reserveStatus === "cap_exceeded") {
+        return Response.json({ error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` }, { status: 400 });
+      }
+      if (reserveStatus !== "ok") {
+        return dbErrorResponse(new Error(`reserve_group_invitations returned unexpected status: ${String(reserveStatus)}`));
       }
 
       // BP27 §27.4 — bump the group-invitees counter, matching the create
