@@ -22,10 +22,7 @@ interface PatchShipBody {
   signature_feature?: string | null;
 }
 
-// A stat integer must be a positive whole number, or null to clear it.
-// `min`/`max` bound obviously-wrong values (a 3-digit year, a 6-figure deck
-// count) before they reach the DB. Returns "invalid" for anything else so the
-// route can 400 rather than silently coerce.
+// Returns "invalid" for anything else so the route can 400 rather than silently coerce.
 function parseStatInt(v: unknown, min: number, max: number): number | null | "invalid" {
   if (v === null) return null;
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) return "invalid";

@@ -35,6 +35,7 @@
 // value an operator already set via the admin console (#1565 part 2).
 
 import { readFileSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 
 const INPUT_PATH = process.env.DECK_INTEL_JSON ?? "/tmp/rag_deck_intel.json";
@@ -54,7 +55,7 @@ interface DeckIntelRow {
   content: string;
 }
 
-interface DraftLine {
+export interface DraftLine {
   ship: string;
   signature_feature: string | null;
   rationale: string;
@@ -97,18 +98,24 @@ function loadRows(): DeckIntelRow[] {
 function loadDrafts(): DraftLine[] {
   if (!existsSync(DRAFT_PATH)) return [];
   const out: DraftLine[] = [];
-  for (const line of readFileSync(DRAFT_PATH, "utf8").split("\n")) {
+  const lines = readFileSync(DRAFT_PATH, "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line.trim()) continue;
-    try { out.push(JSON.parse(line) as DraftLine); } catch { /* skip corrupt line */ }
+    try {
+      out.push(JSON.parse(line) as DraftLine);
+    } catch {
+      console.warn(`[signature] skipping corrupt JSONL line ${i + 1} in ${DRAFT_PATH}`);
+    }
   }
   return out;
 }
 
-function sqlEscape(s: string): string {
+export function sqlEscape(s: string): string {
   return s.replace(/'/g, "''");
 }
 
-function writeApplySql(drafts: DraftLine[]): void {
+export function writeApplySql(drafts: DraftLine[], sqlPath: string = SQL_PATH): void {
   const applied = drafts.filter((d) => d.signature_feature !== null);
   const header = [
     "-- #1565 — signature_feature curation, DRAFTED by scripts/draft-signature-features.ts.",
@@ -124,8 +131,8 @@ function writeApplySql(drafts: DraftLine[]): void {
     `  WHERE lower(canonical_name) = lower('${sqlEscape(d.ship)}') AND signature_feature IS NULL; -- ${d.rationale.replace(/\n/g, " ")}`,
   );
   const footer = ["", "COMMIT;", ""];
-  writeFileSync(SQL_PATH, [...header, ...stmts, ...footer].join("\n"));
-  console.log(`[signature] wrote ${applied.length} UPDATE(s) to ${SQL_PATH} (${drafts.length - applied.length} null/skipped).`);
+  writeFileSync(sqlPath, [...header, ...stmts, ...footer].join("\n"));
+  console.log(`[signature] wrote ${applied.length} UPDATE(s) to ${sqlPath} (${drafts.length - applied.length} null/skipped).`);
 }
 
 async function draftOne(client: Anthropic, row: DeckIntelRow): Promise<DraftLine> {
@@ -213,7 +220,9 @@ async function main(): Promise<void> {
   console.log(`[signature] REVIEW ${DRAFT_PATH}, then apply ${SQL_PATH} to main by hand.`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
