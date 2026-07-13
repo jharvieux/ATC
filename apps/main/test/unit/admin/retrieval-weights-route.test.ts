@@ -16,11 +16,16 @@ const h = vi.hoisted(() => ({
   failKeys: new Set<string>(),
   // Rows returned by the post-update loadCurrent read.
   currentRows: [] as Array<{ key: string; value: unknown }>,
+  publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
 }));
 
 vi.mock("@/lib/auth/assert-platform-admin", () => ({
   assertPlatformAdminArea: async () => ({ admin_user_id: "admin-user-1" }),
   PlatformAdminError: class extends Error {},
+}));
+
+vi.mock("@/lib/rag-sync/publish-platform-event", () => ({
+  publishPlatformEvent: h.publishPlatformEvent,
 }));
 
 vi.mock("@/lib/db/platform-admin-client", () => ({
@@ -61,6 +66,7 @@ beforeEach(() => {
   h.updates = [];
   h.failKeys = new Set();
   h.currentRows = [];
+  h.publishPlatformEvent.mockClear();
 });
 
 describe("PUT /api/admin/retrieval-weights — parallel per-key updates (#1827)", () => {
@@ -108,5 +114,45 @@ describe("PUT /api/admin/retrieval-weights — parallel per-key updates (#1827)"
     const res = await PUT(req({ match: 99 }));
     expect(res.status).toBe(422);
     expect(h.updates).toEqual([]);
+  });
+});
+
+describe("PUT /api/admin/retrieval-weights — RAG-sync publish (#1826)", () => {
+  it("calls publishPlatformEvent with the changed keys/values after a successful save", async () => {
+    h.currentRows = [
+      { key: "retrieval_weight_match", value: 2 },
+      { key: "retrieval_weight_feedback", value: 0.5 },
+    ];
+    const res = await PUT(req({ match: 2, feedback: 0.5 }));
+    expect(res.status).toBe(200);
+
+    expect(h.publishPlatformEvent).toHaveBeenCalledTimes(1);
+    const event = h.publishPlatformEvent.mock.calls[0]![0] as {
+      event_type: string;
+      payload: { changes: Array<{ key: string; value: unknown }> };
+    };
+    expect(event.event_type).toBe("platform_settings.updated");
+    expect(event.payload.changes.slice().sort((a, b) => a.key.localeCompare(b.key))).toEqual([
+      { key: "retrieval_weight_feedback", value: 0.5 },
+      { key: "retrieval_weight_match", value: 2 },
+    ]);
+  });
+
+  it("still saves successfully when publishPlatformEvent rejects", async () => {
+    h.currentRows = [{ key: "retrieval_weight_match", value: 3 }];
+    h.publishPlatformEvent.mockRejectedValueOnce(new Error("enqueue exploded"));
+
+    const res = await PUT(req({ match: 3 }));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { updated: string[] };
+    expect(body.updated).toEqual(["match"]);
+  });
+
+  it("does not call publishPlatformEvent when the DB write fails", async () => {
+    h.failKeys = new Set(["retrieval_weight_match"]);
+    const res = await PUT(req({ match: 3 }));
+    expect(res.status).toBe(500);
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });

@@ -13,13 +13,16 @@
 //
 // Note: this updates the MAIN-side canonical row. The rag-side replica
 // (apps/rag/supabase/migrations/0006_platform_settings_replica.sql) needs
-// to be kept in sync — the sync mechanism is deferred (see D-041); for now
-// changes here MUST be mirrored manually into the rag DB until the sync
-// job lands, or composite scoring will use stale weights.
+// to be kept in sync. #1826: this now calls publishPlatformEvent after a
+// successful write, so sync is webhook-speed for any retrieval_weight_*
+// key once it's added to publish-platform-event.ts's SYNC_ELIGIBLE_KEYS
+// (not yet — see that file's comment); until then the publish is a
+// harmless no-op and the nightly reconcile (§8.3) stays the backstop.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { publishPlatformEvent } from "@/lib/rag-sync/publish-platform-event";
 
 type WeightKey = "match" | "authority" | "recency" | "feedback";
 const WEIGHT_KEYS: readonly WeightKey[] = ["match", "authority", "recency", "feedback"];
@@ -151,6 +154,20 @@ export async function PUT(req: Request): Promise<Response> {
             `retrieval-weights update partial failure — failed: [${failedKeys.join(", ")}], applied: [${appliedKeys.join(", ")}]`,
           );
         }
+        // #1826 — enqueue the RAG-sync event after the write commits. The
+        // weight update above already succeeded, so a publish failure must
+        // not fail this response — catch and log; the nightly reconcile
+        // (§8.3) is the backstop for whatever RAG missed.
+        try {
+          await publishPlatformEvent({
+            event_type: "platform_settings.updated",
+            source_revision: Math.floor(Date.now() / 1000),
+            payload: { changes: entries.map(([w, value]) => ({ key: settingKey(w), value })) },
+          });
+        } catch (err) {
+          console.error("[retrieval-weights] publishPlatformEvent failed:", err);
+        }
+
         const updated: WeightKey[] = entries.map(([w]) => w);
         const values = await loadCurrent(db as unknown as PlatformDb);
         return {
