@@ -30,6 +30,13 @@ describe("isSyncEligibleKey", () => {
     expect(isSyncEligibleKey("feedback_decay_halflife_days")).toBe(true);
   });
 
+  it("returns true for the retrieval composite weights (#1887)", () => {
+    expect(isSyncEligibleKey("retrieval_weight_match")).toBe(true);
+    expect(isSyncEligibleKey("retrieval_weight_authority")).toBe(true);
+    expect(isSyncEligibleKey("retrieval_weight_recency")).toBe(true);
+    expect(isSyncEligibleKey("retrieval_weight_feedback")).toBe(true);
+  });
+
   it("returns false for the deny-list (privacy)", () => {
     expect(isSyncEligibleKey("supervisor_slur_deny_list")).toBe(false);
   });
@@ -111,6 +118,21 @@ describe("publishPlatformEvent — allowlist filter", () => {
       data: { event: { payload: { changes: unknown[] } } };
     };
     expect(arg.data.event.payload.changes).toHaveLength(2);
+  });
+
+  it("enqueues a retrieval_weight_* change (#1887 — was previously filtered to a no-op)", async () => {
+    await publishPlatformEvent({
+      event_type: "platform_settings.updated",
+      source_revision: 12345,
+      payload: {
+        changes: [{ key: "retrieval_weight_match", value: 2 }],
+      },
+    });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    const arg = mocks.send.mock.calls[0]![0] as {
+      data: { event: { payload: { changes: Array<{ key: string; value: unknown }> } } };
+    };
+    expect(arg.data.event.payload.changes).toEqual([{ key: "retrieval_weight_match", value: 2 }]);
   });
 
   it("never throws when the enqueue fails (committed platform_settings write must not roll back)", async () => {

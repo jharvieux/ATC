@@ -158,11 +158,14 @@ describeIf("Stripe webhook handler", () => {
     expect(data?.processing_outcome).toBe("unhandled");
   });
 
-  it("transfer.reversed for an unknown transfer reverses 0 rows → outcome 'unhandled', 200", async () => {
+  it("[#1873] transfer.reversed for an unknown transfer reverses 0 rows → outcome 'no_op', 200", async () => {
     // §14.9 — the reversal UPDATE is guarded by stripe_transfer_id + status='paid'.
     // A transfer id that matches no payout_records row must NOT throw (which would
-    // make Stripe retry the clawback forever); 0 rows matched → outcome 'unhandled'
-    // → 200. Asserting against the real DB proves the guarded UPDATE is benign.
+    // make Stripe retry the clawback forever); 0 rows matched → outcome 'no_op'
+    // (#1873: a healthy no-op — not ours — distinct from 'unhandled', reserved for
+    // event types with no handler at all) → 200. Asserting against the real DB
+    // proves the guarded UPDATE is benign AND that the CHECK constraint admits
+    // 'no_op'.
     const eventId = `evt_reversed_${randomUUID().slice(0, 8)}`;
     insertedEventIds.push(eventId);
 
@@ -190,7 +193,8 @@ describeIf("Stripe webhook handler", () => {
       .single();
 
     expect(error).toBeNull();
-    expect(data?.processing_outcome).toBe("unhandled");
+    expect(data?.processing_outcome).toBe("no_op");
+    expect(data?.processing_outcome).not.toBe("unhandled");
   });
 
   it("transfer.reversed same-event re-delivery: dedup unique constraint returns 'Duplicate' — no double-credit", async () => {

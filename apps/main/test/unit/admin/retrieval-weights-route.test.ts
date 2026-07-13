@@ -14,6 +14,9 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ key: string; value: unknown }>,
   // Keys whose update should fail with a DB error.
   failKeys: new Set<string>(),
+  // Keys whose update "succeeds" (error: null) but returns no row — the
+  // #1887 source_revision guard test.
+  emptyRowKeys: new Set<string>(),
   // Rows returned by the post-update loadCurrent read.
   currentRows: [] as Array<{ key: string; value: unknown }>,
   publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
@@ -39,9 +42,13 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
           eq: (_col: string, key: string) => ({
             select: async (_cols: string) => {
               h.updates.push({ key, value: payload.value });
-              return h.failKeys.has(key)
-                ? { data: null, error: { message: `write failed for ${key}` } }
-                : { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
+              if (h.failKeys.has(key)) {
+                return { data: null, error: { message: `write failed for ${key}` } };
+              }
+              if (h.emptyRowKeys.has(key)) {
+                return { data: [], error: null };
+              }
+              return { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
             },
           }),
         }),
@@ -67,6 +74,7 @@ function req(body: unknown): Request {
 beforeEach(() => {
   h.updates = [];
   h.failKeys = new Set();
+  h.emptyRowKeys = new Set();
   h.currentRows = [];
   h.publishPlatformEvent.mockClear();
 });
@@ -146,6 +154,20 @@ describe("PUT /api/admin/retrieval-weights — RAG-sync publish (#1826)", () => 
 
   it("does not call publishPlatformEvent when the DB write fails", async () => {
     h.failKeys = new Set(["retrieval_weight_match"]);
+    const res = await PUT(req({ match: 3 }));
+    expect(res.status).toBe(500);
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/admin/retrieval-weights — source_revision guard (#1887)", () => {
+  it("fails loud instead of computing Math.max(...[]) = -Infinity when no row returns updated_at", async () => {
+    // error: null but data: [] for every requested key — the write
+    // "succeeded" per Supabase yet no updated_at came back. Math.max over an
+    // empty array used to silently yield -Infinity, which would poison
+    // source_revision and make the rag-side stale-revision guard skip the
+    // key forever now that retrieval_weight_* actually reaches rag (#1887).
+    h.emptyRowKeys = new Set(["retrieval_weight_match"]);
     const res = await PUT(req({ match: 3 }));
     expect(res.status).toBe(500);
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
