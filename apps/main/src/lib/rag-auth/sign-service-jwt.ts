@@ -19,11 +19,17 @@
 import "server-only";
 import { SignJWT, importPKCS8 } from "jose";
 import { randomUUID } from "node:crypto";
-import type { ServiceJwtClaims } from "@atc/contracts";
+import {
+  SERVICE_JWT_AUDIENCE,
+  SERVICE_JWT_ISSUER,
+  type ServiceJwtClaims,
+} from "@atc/contracts";
 
 // The claim shape is the shared @atc/contracts/ServiceJwtClaims; signing adds
-// only the optional TTL override (env: SERVICE_JWT_TTL_SECONDS).
-export type SignServiceJwtOptions = ServiceJwtClaims & {
+// only the optional TTL override (env: SERVICE_JWT_TTL_SECONDS). iss/aud are
+// fixed protocol constants set unconditionally below, so callers neither pass
+// nor override them (#1773).
+export type SignServiceJwtOptions = Omit<ServiceJwtClaims, "iss" | "aud"> & {
   ttl_seconds?: number;
 };
 
@@ -58,6 +64,8 @@ export async function signServiceJwt(opts: SignServiceJwtOptions): Promise<strin
     ...(opts.persona_id !== undefined && { persona_id: opts.persona_id }),
   })
     .setProtectedHeader({ alg: "RS256", kid })
+    .setIssuer(SERVICE_JWT_ISSUER)
+    .setAudience(SERVICE_JWT_AUDIENCE)
     .setIssuedAt(now)
     .setExpirationTime(now + ttl)
     .setJti(randomUUID());
