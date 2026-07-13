@@ -86,17 +86,25 @@ export async function PATCH(
     // first one.
     if (typeof parsed.data.total_amount_cents === "number") {
       const quoteId = (data as { quote_id: string }).quote_id;
-      const pricedAt = new Date().toISOString();
-      await safeAwait(
-        db.from("quotes").update({
-          priced_at: pricedAt,
-          price_kind: resolveQuoteKind(
-            { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
-            NO_HOST_INTEGRATION_ADAPTER,
-          ),
-        }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
-        "quotes.update.price_kind_from_option_patch",
-      );
+      try {
+        const pricedAt = new Date().toISOString();
+        await safeAwait(
+          db.from("quotes").update({
+            priced_at: pricedAt,
+            price_kind: resolveQuoteKind(
+              { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
+              NO_HOST_INTEGRATION_ADAPTER,
+            ),
+          }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
+          "quotes.update.price_kind_from_option_patch",
+        );
+      } catch (stampErr) {
+        console.error("quote_options.PATCH: priced_at stamp failed, continuing", {
+          quoteId,
+          tenantId: ctx.tenant_id,
+          err: stampErr,
+        });
+      }
     }
 
     return Response.json(data);

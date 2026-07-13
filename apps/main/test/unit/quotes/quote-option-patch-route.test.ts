@@ -32,7 +32,10 @@ const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 const OPTION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const QUOTE_ID = "99999999-8888-7777-6666-555555555555";
 
-function makeDb(onQuoteUpdate: (payload: Record<string, unknown>) => void) {
+function makeDb(
+  onQuoteUpdate: (payload: Record<string, unknown>) => void,
+  updateResult?: { data: null; error: { message: string } | null },
+) {
   return {
     from(table: string) {
       if (table === "quote_options") {
@@ -53,8 +56,8 @@ function makeDb(onQuoteUpdate: (payload: Record<string, unknown>) => void) {
             onQuoteUpdate(payload);
             const updateChain: Record<string, unknown> = {};
             updateChain.eq = () => updateChain;
-            updateChain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
-              Promise.resolve({ data: null, error: null }).then(resolve);
+            updateChain.then = (resolve: (v: { data: null; error: unknown }) => unknown) =>
+              Promise.resolve(updateResult ?? { data: null, error: null }).then(resolve);
             return updateChain;
           },
         };
@@ -106,5 +109,21 @@ describe("PATCH /api/quote-options/:id — re-stamps parent quote price_kind (#1
 
     expect(res.status).toBe(200);
     expect(updateCalled).toBe(false);
+  });
+
+  it("still returns 200 with the option row when the priced_at stamp update fails (round-2 audit blocker)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = makeDb(() => {}, { data: null, error: { message: "connection reset" } });
+    mocks.tenantClient.mockReturnValue(db);
+
+    const res = await PATCH(req({ total_amount_cents: 300000 }), {
+      params: Promise.resolve({ id: OPTION_ID }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.id).toBe(OPTION_ID);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });
