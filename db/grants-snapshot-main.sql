@@ -269,9 +269,6 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.payout_balances TO service_role;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.payout_records TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.payout_records TO service_role;
 
--- TABLE: public.pending_rag_sync
-GRANT DELETE, INSERT, SELECT, UPDATE ON public.pending_rag_sync TO service_role;
-
 -- TABLE: public.persona_addendums
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.persona_addendums TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.persona_addendums TO service_role;

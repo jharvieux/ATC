@@ -27,3 +27,41 @@
 2 apps/main/src/lib/privacy/purge-user-data.ts::conversations
 2 apps/main/src/lib/privacy/purge-user-data.ts::messages
 1 apps/main/src/lib/privacy/purge-user-data.ts::quotes
+
+# #1836 — contacts + quote_options added to WATCHED_EXACT. Pre-existing sites
+# below, baselined rather than fixed (each reason inline):
+# quote_options: every site is scoped by a single quote_id (or an already-
+# bounded quote_id set) — getMaxOptionsForTenant caps a quote at 5 options
+# (1 for byo_research tier), so these are bounded by write-side business rule
+# even without a SQL .limit().
+1 apps/main/src/app/api/agent/quote-copilot/route.ts::quote_options
+1 apps/main/src/app/api/quotes/[id]/accept/route.ts::quote_options
+2 apps/main/src/app/api/quotes/[id]/options/route.ts::quote_options
+1 apps/main/src/app/api/quotes/[id]/route.ts::quote_options
+# quote_options join fan-out bounded by the already-paginated (.range, max
+# 200) quotes list built above it in the same function.
+1 apps/main/src/app/api/quotes/route.ts::quote_options
+1 apps/main/src/app/q/[token]/page.tsx::quote_options
+# quote_id set here comes from the already-bounded `quotes` query above it
+# in this file (see the quote-estimate-expiry-sweep.ts::quotes entry).
+1 apps/main/src/inngest/quote-estimate-expiry-sweep.ts::quote_options
+1 apps/main/src/inngest/task-sequence-step-fire.ts::quote_options
+1 apps/main/src/lib/chat/customer-context.ts::quote_options
+1 apps/main/src/lib/quotes/build-render-input.ts::quote_options
+# contacts: bounded-by-construction reads (id sets sourced from an
+# already-bounded upstream query) plus one guard indirection gap.
+# id set sourced from the already-.limit(200)'d name-match query above it.
+1 apps/main/src/app/api/bookings/route.ts::contacts
+# false positive — bounded via .range() chained on the `query` variable
+# outside this statement's text window (checker's documented indirection
+# gap; see check-unbounded-select.ts's doc comment).
+1 apps/main/src/app/api/crm/contacts/route.ts::contacts
+# false positive — bounded via .limit(200) chained on the reassigned `q`
+# variable outside this statement's text window (same indirection gap).
+1 apps/main/src/app/api/tenant/crm/notes/list/route.ts::contacts
+# contactIds sourced from the already-bounded quotes query in this file.
+1 apps/main/src/inngest/quote-estimate-expiry-sweep.ts::contacts
+# §25.4 CCPA user-data purge, scoped to a single user_id/hash — same
+# established pattern as this file's existing bookings/conversations/
+# messages/quotes baseline entries above.
+2 apps/main/src/lib/privacy/purge-user-data.ts::contacts

@@ -77,7 +77,7 @@ export function GroupInvitation(props: GroupInvitationProps): React.ReactElement
         <tbody>
           <TripRow label="Cruise line" value={props.cruise_line} />
           <TripRow label="Ship" value={props.ship_name} />
-          <TripRow label="Sailing date" value={new Date(props.sailing_date).toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} />
+          <TripRow label="Sailing date" value={new Date(props.sailing_date).toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" })} />
           <TripRow label="Departure port" value={props.departure_port} />
           {props.target_group_rate_formatted && (
             <TripRow label="Target group rate" value={props.target_group_rate_formatted} />

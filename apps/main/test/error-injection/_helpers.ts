@@ -10,7 +10,14 @@
 // effects) plus a documented behavior-object shape that test files import
 // and wire into their vi.mock callbacks.
 //
-// See ./README.md for the canonical usage pattern.
+// #1821 — none of the 8 existing probes actually import makeFailingDbClient;
+// each hand-shapes its own DB mock because a generic per-verb-fail factory
+// can't express a real handler's branch-specific chain shape (see
+// README.md's "Actual handler test pattern" section). Verify shape fit
+// against your handler before reaching for it — don't assume it's proven.
+// The non-DB helpers below (Stripe/Inngest) don't have this problem.
+//
+// See ./README.md for the actual, working pattern used by real probes.
 
 import { vi } from "vitest";
 

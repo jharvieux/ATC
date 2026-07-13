@@ -28,11 +28,51 @@ jobs:
     outputs:
       code: ${{ steps.f.outputs.code }}
       workflows_only: ${{ steps.f.outputs.workflows_only }}
+      rag_changed: ${{ steps.rag.outputs.rag_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Detect atc-rag changes (#1829)
+        # Gates the beta-tier RAG deploy job so an ordinary atc-main-only PR
+        # merge to dev doesn't trigger a redundant atc-rag deploy. Diffs
+        # against the pre-push SHA on `push` (dev-merge) and against the PR
+        # base on `pull_request`; PROD RAG deploys (deploy-production) are
+        # NOT gated by this — they deploy unconditionally alongside atc-main
+        # on every release cut, same as atc-main's own prod step has no
+        # change filter.
+        id: rag
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags origin "$BASE" || true
+            DIFF_RANGE="origin/$BASE...HEAD"
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            DIFF_RANGE="$BEFORE...HEAD"
+          else
+            # workflow_dispatch, or a push with no usable `before` (e.g. a
+            # brand-new branch) — fail SAFE, same posture as doc-detection
+            # below: uncertainty means deploy, not silently skip.
+            echo "::notice::No diffable range for atc-rag change detection — defaulting to rag_changed=true."
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! CHANGED=$(git diff --name-only "$DIFF_RANGE" 2>/dev/null); then
+            echo "::warning::git diff failed — defaulting to rag_changed=true."
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$CHANGED" | grep -qE '^(apps/rag/|packages/contracts/|packages/config/|pnpm-lock\.yaml$)'; then
+            echo "rag_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rag_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Detect non-doc changes
         id: f
@@ -292,9 +332,10 @@ jobs:
         # RLS/grants checks below. SUPABASE_DB_URL / SUPABASE_RAG_DB_URL come
         # from the job-level env above.
         env:
+          BASE_REF: ${{ github.base_ref || 'dev' }}
           MIGRATION_LEDGER_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: |
-          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          git fetch --no-tags --quiet origin "$BASE_REF"
           pnpm tsx scripts/check-migration-ledger.ts --target=main
           pnpm tsx scripts/check-migration-ledger.ts --target=rag
 
@@ -383,6 +424,62 @@ jobs:
       # Grants drift on dev push is now reported by the consolidated
       # "Report snapshot/grants drift on dev" step above (it runs grants:check too).
 
+  integration-tests-critical:
+    name: Integration Tests (RLS + Payments)
+    runs-on: ubuntu-latest
+    # Depends on rls-snapshot-diff rather than running in parallel with it so
+    # this job reuses THAT job's already-applied migrations on the shared test
+    # DB instead of racing a second `supabase db push` against the same
+    # supabase_migrations.schema_migrations ledger (the shared-test-DB hazard
+    # in docs/runbooks/migrations.md). needs: cascades the doc-only-PR skip
+    # from detect-changes/rls-snapshot-diff automatically; the explicit `if:`
+    # below matches this file's convention (see cross-tenant-probe) rather
+    # than relying on that implicit cascade alone.
+    needs: [detect-changes, rls-snapshot-diff]
+    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    # #1797: the RLS + Stripe-webhook integration suites previously ran
+    # nightly only (nightly-full-test.yml), so a PR regression in tenant
+    # isolation or payment-webhook handling could merge green and only
+    # surface the next morning on dev. #1797 left the mechanism open
+    # ("Options to consider..."), so this is the minimal version: ONLY the
+    # RLS + payments suites the issue title names, not the full DB-backed set
+    # (proxy, chat-limit-concurrency, transfer-reversal,
+    # import-promote-atomicity) that also nightly-only-skip — bounding
+    # CI-minutes cost on every PR. See the PR body for the runtime estimate
+    # (unmeasured — this job needs live test-DB secrets this sandboxed
+    # worktree doesn't have) and for whether to add this job to dev's
+    # required-status-checks list.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      # Placeholders are fine: the stripe-webhook suite self-signs events with
+      # STRIPE_WEBHOOK_SECRET and the handler verifies with the same value
+      # (pure HMAC, no live Stripe API call) — same posture as nightly-full-test.yml.
+      STRIPE_SECRET_KEY: sk_test_ci-placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run RLS + Stripe-webhook integration suites
+        # Absent secrets (Dependabot PRs get none) => haveSupabase/haveAll
+        # in these suites evaluate false => describe.skip => 0 tests run,
+        # job still exits 0 — same no-secrets posture as rls-snapshot-diff.
+        run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
+
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
@@ -439,6 +536,49 @@ jobs:
 
       - name: Run cross-tenant probe
         run: pnpm test:cross-tenant
+
+  # ============================================================
+  # atc-rag beta deploy (#1829) — runs on dev-merge only, gated by
+  # detect-changes' rag_changed filter so an atc-main-only PR merge
+  # doesn't trigger a redundant RAG deploy. Mirrors the manual command
+  # in the ops runbook (`cd apps/rag && vercel deploy --yes`) rather
+  # than the atc-main pull/build/deploy-prebuilt pattern below — that's
+  # the already-verified-working remote-build path for this project
+  # (see memory: reference_rag_deploy.md), and needs no local
+  # Node/pnpm install step.
+  #
+  # atc-main itself has NO equivalent explicit beta-deploy job in this
+  # file — Vercel's native Git integration deploys atc-main on every
+  # push to `dev` automatically. atc-rag's Git integration does not
+  # (confirmed by the manual-deploy-only status quo this issue fixes),
+  # so this job is the explicit substitute for that missing integration
+  # wiring, scoped by path so it only fires when relevant.
+  # ============================================================
+
+  deploy-rag-beta:
+    name: Deploy atc-rag (Beta)
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.detect-changes.outputs.rag_changed == 'true'
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@54
+
+      - name: Vercel deploy (atc-rag beta)
+        working-directory: apps/rag
+        run: |
+          if [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
+            exit 1
+          fi
+          vercel deploy --token="$VERCEL_TOKEN" --yes
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -745,6 +885,14 @@ jobs:
     # failed (enabled) does, via !failure(). The `production` GitHub environment's
     # required-reviewer gate remains the per-instance operator approval; no prod
     # migration or deploy happens without it.
+    #
+    # #1851 audit finding 3 — integration-tests-critical (#1797, RLS + Stripe-
+    # webhook suites) was added as a CI gate but not listed here, so this job's
+    # own every-gate-is-a-direct-needs convention above didn't actually cover
+    # it: a failing RLS/payments regression wouldn't block prod. Added below.
+    # Not yet promoted to dev's branch-protection required-status-checks list
+    # (#1797's own deferral, unresolved) — that promotion is still the
+    # operator's morning action once the job has a few clean runs on `dev`.
     if: |
       always() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -758,6 +906,7 @@ jobs:
         secret-scan,
         cve-scan,
         rls-snapshot-diff,
+        integration-tests-critical,
         cross-tenant-probe,
         contract-tests,
         deploy-staging,
@@ -823,6 +972,35 @@ jobs:
         run: |
           sleep 30
           curl -f https://ai-travelconcierge.com/api/health
+
+      # #1829 — atc-rag prod deploy, through this SAME job and the SAME
+      # `production` GitHub Environment approval gate as atc-main above (one
+      # approval covers both; a separate job here would need its own
+      # `environment: production` and force a second reviewer click).
+      # Unconditional on every release, same as atc-main's own prod deploy
+      # step has no change filter — this is a rare, deliberate event, not
+      # the frequent dev-merge traffic the beta job's rag_changed filter
+      # protects against. Uses the same remote-build `vercel deploy --prod`
+      # command already verified working manually (memory:
+      # reference_rag_deploy.md) rather than the pull/build/deploy-prebuilt
+      # pattern atc-main uses above.
+      - name: Vercel deploy (atc-rag production)
+        env:
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
+        working-directory: apps/rag
+        run: |
+          if [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
+            exit 1
+          fi
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Smoke test atc-rag production
+        # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md
+        # — not a secret, so no new secret needed for this check.
+        run: |
+          sleep 15
+          curl -f https://rag.ai-travelconcierge.com/api/health
 
       - name: Sync Inngest app (#835)
         # Vercel CLI deploys don't fire the Vercel→Inngest integration, so a newly

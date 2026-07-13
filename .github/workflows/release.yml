@@ -29,24 +29,27 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Version must be x.y.z (e.g. 1.2.3). Got: $VERSION"
             exit 1
           fi
 
       - name: Abort if branch already exists
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           if git ls-remote --exit-code --heads origin "release/$VERSION" > /dev/null 2>&1; then
             echo "::error::release/$VERSION already exists. Delete it first or choose a different version."
             exit 1
           fi
 
       - name: Create and push release branch
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "release/$VERSION"

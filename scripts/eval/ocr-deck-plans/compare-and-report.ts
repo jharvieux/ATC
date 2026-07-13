@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import postgres from "postgres";
+import { redactSecrets } from "../../lib/redact-secrets";
 
 const RESULTS_PATH = "scripts/eval/ocr-deck-plans/results.jsonl";
 
@@ -230,6 +231,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(redactSecrets(err));
   process.exit(1);
 });

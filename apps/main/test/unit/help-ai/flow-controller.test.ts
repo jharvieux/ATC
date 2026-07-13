@@ -9,6 +9,8 @@ import {
   advanceHelpFlow,
   bugDraftIsComplete,
   bugStepFor,
+  bugQuestionForState,
+  BUG_FLOW_QUESTIONS_CUSTOMER,
   featureDraftIsComplete,
   featureStepFor,
   BUG_FLOW_STEPS,
@@ -179,5 +181,35 @@ describe("help flow escalation rule (§32.4.3)", () => {
   it("stays in 'ended' regardless of input", () => {
     const s = advanceHelpFlow("ended", false, 5);
     expect(s.state).toBe("ended");
+  });
+});
+
+describe("bugQuestionForState — source-surface wording (§32.10.3)", () => {
+  // The message route now routes customer_chat sessions through this
+  // dispatcher; a regression here means customers get admin-toned prompts.
+  it("returns the friendlier customer copy for customer_chat", () => {
+    expect(bugQuestionForState("gathering_steps", "customer_chat")).toBe(
+      "Can you walk me through exactly what you did?",
+    );
+    expect(bugQuestionForState("gathering_actual", "customer_chat")).toBe("What happened?");
+  });
+
+  it("returns the tenant-admin default for admin", () => {
+    expect(bugQuestionForState("gathering_steps", "admin")).toBe(
+      bugStepFor("gathering_steps")?.question,
+    );
+  });
+
+  it("customer and admin wording diverge for every gathering state", () => {
+    const states = ["gathering_location", "gathering_actual", "gathering_expected", "gathering_steps", "gathering_frequency"] as const;
+    for (const s of states) {
+      expect(bugQuestionForState(s, "customer_chat")).toBe(BUG_FLOW_QUESTIONS_CUSTOMER[s]);
+      expect(bugQuestionForState(s, "customer_chat")).not.toBe(bugQuestionForState(s, "admin"));
+    }
+  });
+
+  it("terminal 'submitted' state yields empty string on both surfaces (route falls back)", () => {
+    expect(bugQuestionForState("submitted", "customer_chat")).toBe("");
+    expect(bugQuestionForState("submitted", "admin")).toBe("");
   });
 });
