@@ -42,11 +42,13 @@ interface KeySpec {
   default: number;
 }
 
+// Ranges are the §6.10 range table (section-06-rag-service-schema.html) — the
+// spec is the source of truth for these bounds.
 const FEEDBACK_KEYS: Record<FeedbackKey, KeySpec> = {
-  feedback_adjustment_limit: { integer: false, min: 0, max: 1, default: 0.05 },
-  feedback_min_signal_count: { integer: true, min: 1, max: 1000, default: 2 },
+  feedback_adjustment_limit: { integer: false, min: 0, max: 0.5, default: 0.05 },
+  feedback_min_signal_count: { integer: true, min: 1, max: 100, default: 2 },
   feedback_period_days: { integer: true, min: 1, max: 365, default: 30 },
-  feedback_decay_halflife_days: { integer: true, min: 1, max: 3650, default: 90 },
+  feedback_decay_halflife_days: { integer: true, min: 1, max: 365, default: 90 },
 };
 
 const KEYS = Object.keys(FEEDBACK_KEYS) as FeedbackKey[];
@@ -178,13 +180,17 @@ export async function PUT(req: Request): Promise<Response> {
           .filter((s): s is PromiseFulfilledResult<string | undefined> => s.status === "fulfilled")
           .map((s) => s.value)
           .filter((v): v is string => v !== undefined);
-        // Empty-updatedAts guard (PR #1900's intent; not yet on dev): if no row
-        // returned an updated_at, Math.max(...[]) is -Infinity — a poison
-        // source_revision. Fall back to now so the sync event stays orderable.
-        const sourceRevision =
-          updatedAts.length > 0
-            ? Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)))
-            : Math.floor(Date.now() / 1000);
+        // Empty-updatedAts guard (matches retrieval-weights, #1900): every
+        // entry above either threw (caught as a settled rejection) or returned
+        // an updated_at, so an empty array means the update succeeded with
+        // error:null but the row had no updated_at. Math.max(...[]) is
+        // -Infinity — a poison source_revision that would make the rag-side
+        // stale-revision guard skip every key forever. Fail loud instead of
+        // publishing it.
+        if (updatedAts.length === 0) {
+          throw new Error("feedback-settings update: no updated_at returned for any key");
+        }
+        const sourceRevision = Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)));
 
         // Enqueue the RAG-sync event after the write commits. These four keys
         // are sync-eligible, so this produces real traffic. publishPlatformEvent

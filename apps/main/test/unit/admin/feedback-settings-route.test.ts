@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ key: string; value: unknown }>,
   failKeys: new Set<string>(),
   currentRows: [] as Array<{ key: string; value: unknown }>,
+  // When true, updates succeed (error:null) but the returned row carries no
+  // updated_at — exercises the empty-updatedAts fail-loud guard.
+  noUpdatedAt: false,
   publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
 }));
 
@@ -34,9 +37,9 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
           eq: (_col: string, key: string) => ({
             select: async (_cols: string) => {
               h.updates.push({ key, value: payload.value });
-              return h.failKeys.has(key)
-                ? { data: null, error: { message: `write failed for ${key}` } }
-                : { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
+              if (h.failKeys.has(key)) return { data: null, error: { message: `write failed for ${key}` } };
+              if (h.noUpdatedAt) return { data: [{}] as Array<{ updated_at: string }>, error: null };
+              return { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
             },
           }),
         }),
@@ -63,6 +66,7 @@ beforeEach(() => {
   h.updates = [];
   h.failKeys = new Set();
   h.currentRows = [];
+  h.noUpdatedAt = false;
   h.publishPlatformEvent.mockClear();
 });
 
@@ -137,6 +141,32 @@ describe("PUT /api/admin/feedback-settings — validation", () => {
     expect(h.updates).toEqual([]);
   });
 
+  // Spec §6.10 bounds adjustment_limit to [0, 0.5]. 0.8 is a finite fractional
+  // number that an earlier [0, 1] bound would have accepted — this pins the
+  // spec bound so a regression back to the looser range fails here.
+  it("rejects an adjustment_limit above the §6.10 spec max (0.5) even though it is < 1", async () => {
+    const res = await PUT(req({ feedback_adjustment_limit: 0.8 }));
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; key: string };
+    expect(body.error).toBe("invalid_feedback_setting");
+    expect(body.key).toBe("feedback_adjustment_limit");
+    expect(h.updates).toEqual([]);
+  });
+
+  // min_signal_count spec max is 100 (was 1000); decay_halflife spec max is 365
+  // (was 3650). Values inside the old bounds must now be rejected.
+  it("rejects a min_signal_count above the §6.10 spec max (100)", async () => {
+    const res = await PUT(req({ feedback_min_signal_count: 500 }));
+    expect(res.status).toBe(422);
+    expect(h.updates).toEqual([]);
+  });
+
+  it("rejects a decay_halflife_days above the §6.10 spec max (365)", async () => {
+    const res = await PUT(req({ feedback_decay_halflife_days: 1000 }));
+    expect(res.status).toBe(422);
+    expect(h.updates).toEqual([]);
+  });
+
   it("rejects a non-integer for an integer-only key before touching the DB", async () => {
     const res = await PUT(req({ feedback_min_signal_count: 2.5 }));
     expect(res.status).toBe(422);
@@ -180,6 +210,18 @@ describe("PUT /api/admin/feedback-settings — RAG-sync publish", () => {
     h.failKeys = new Set(["feedback_period_days"]);
     const res = await PUT(req({ feedback_period_days: 30 }));
     expect(res.status).toBe(500);
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
+  });
+
+  // A write that succeeds (error:null) but returns no updated_at would make
+  // Math.max(...[]) === -Infinity, a poison source_revision. The route must
+  // fail loud (db_error) and NOT publish rather than emit an unorderable event.
+  it("throws (db_error) and does not publish when no updated_at is returned", async () => {
+    h.noUpdatedAt = true;
+    const res = await PUT(req({ feedback_period_days: 30 }));
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: "db_error" });
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });
