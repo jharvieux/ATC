@@ -317,6 +317,25 @@ describe("POST /api/groups/[id]/members", () => {
     );
     expect(res.status).toBe(500);
   });
+
+  it("fails loud (500) on an unexpected reserve status — never falls through to 201", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID },
+      error: null,
+    });
+    // A verdict that is neither "ok" nor "cap_exceeded" (e.g. a future/renamed
+    // status or a malformed payload) must not be treated as success: nothing
+    // may have been inserted, so a 201 would be a silent lie.
+    mocks.reserveRpc.mockResolvedValue({
+      data: { status: "unexpected" },
+      error: null,
+    });
+    const res = await MEMBERS_POST(
+      postReq({ invitees: [{ email: "a@example.com" }] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("POST /api/groups/[id]/broadcast", () => {

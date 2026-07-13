@@ -112,10 +112,18 @@ export async function POST(
     if (reserveErr) {
       return dbErrorResponse(reserveErr);
     }
-    if ((reserve as { status?: string } | null)?.status === "cap_exceeded") {
+    const reserveStatus = (reserve as { status?: string } | null)?.status;
+    if (reserveStatus === "cap_exceeded") {
       return Response.json(
         { error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` },
         { status: 400 },
+      );
+    }
+    // Fail loud on any unexpected verdict — never fall through to 201 having
+    // possibly inserted nothing (mirrors the single-invite route).
+    if (reserveStatus !== "ok") {
+      return dbErrorResponse(
+        new Error(`reserve_group_invitations returned unexpected status: ${String(reserveStatus)}`),
       );
     }
 
