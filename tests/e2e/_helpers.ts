@@ -2,8 +2,6 @@
 
 export const BYPASS = process.env.TEST_AUTH_BYPASS_TOKEN ?? "tier2-local-test-secret";
 export const TENANT = process.env.TEST_AUTH_BYPASS_TENANT_ID ?? "22222222-0000-0000-0000-0000000000a1";
-export const PUBLIC_USER_ID =
-  process.env.TEST_AUTH_BYPASS_PUBLIC_USER_ID ?? "b0000000-0000-0000-0000-0000000000b1";
 export const CONTACT_ID = "c0000000-0000-0000-0000-0000000000c1";
 
 export const HEADERS = {

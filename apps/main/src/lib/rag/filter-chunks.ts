@@ -124,7 +124,7 @@ function dedupChunks(chunks: RetrievedChunk[], threshold: number): RetrievedChun
   return result;
 }
 
-export function cosineSimilarity(a: number[], b: number[]): number {
+function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0;
   let normA = 0;

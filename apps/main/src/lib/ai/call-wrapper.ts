@@ -582,9 +582,3 @@ export async function instrumentedOpenAIEmbedding(
 
   return { embeddings: resp.data.map((d) => d.embedding), raw: resp };
 }
-
-// Test-only — clears the tenant snapshot cache so tests can vary state.
-// Delegates to the shared cache in lib/abuse/snapshot.ts.
-export function _resetTenantSnapshotCacheForTests(): void {
-  _resetSnapshotCacheForTests();
-}

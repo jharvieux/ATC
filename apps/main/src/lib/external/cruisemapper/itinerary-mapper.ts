@@ -89,7 +89,7 @@ const LINE_RULES: ReadonlyArray<readonly [string, SailingKey["line"]]> = [
 // code) so its itinerary is never silently dropped. The 2026-06-06 gap was ~117
 // ships on lines the old hard allow-list returned null for — mapSailing dropped
 // them and the content_hash masking bug hid it.
-export function normalizeLineCode(raw: string): SailingKey["line"] | null {
+function normalizeLineCode(raw: string): SailingKey["line"] | null {
   const upper = raw.toUpperCase().trim();
   if (upper.length === 0) return null;
   if (KNOWN_CODES.has(upper)) return upper as SailingKey["line"];

@@ -71,7 +71,7 @@ export const LOGIN_GATED_PREFIXES: readonly string[] = [
 // tenant is resolved by SUBDOMAIN (proxy.ts step 3, by slug) rather than by the
 // platform-domain console list. Listed explicitly so the walk test can tell a
 // consciously-platform-default route from a forgotten one.
-export const PLATFORM_DEFAULT_API_PREFIXES: readonly string[] = [
+const PLATFORM_DEFAULT_API_PREFIXES: readonly string[] = [
   "/api/agent",
   "/api/commissions",
   "/api/cron",

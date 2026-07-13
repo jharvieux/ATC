@@ -28,7 +28,7 @@ export type SubscriptionStatus =
   | "incomplete_expired"
   | "paused";
 
-export const PAYING_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
+const PAYING_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
   "active",
   "trialing",
 ]);

@@ -286,7 +286,7 @@ export function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
 
 // §953 Phase A: derive the cabin-intel URL for a ship from its /ships/ URL.
 // CruiseMapper cabin pages share the same slug: /cabins/<Ship-Slug-Id>.
-export function cabinUrlFromShipUrl(shipUrl: string): string | null {
+function cabinUrlFromShipUrl(shipUrl: string): string | null {
   try {
     const u = new URL(shipUrl);
     if (!/^\/ships\/[^/]+$/.test(u.pathname)) return null;

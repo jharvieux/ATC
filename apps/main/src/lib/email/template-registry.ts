@@ -32,7 +32,7 @@ export interface EmailTemplateSpec {
   ai_content?: { description: string };
 }
 
-export const AI_CONTENT_VARIABLE = "ai_content";
+const AI_CONTENT_VARIABLE = "ai_content";
 
 /** Variable names allowed in a BODY template (subjects use spec.variables only). */
 export function bodyVariableNames(spec: EmailTemplateSpec): string[] {

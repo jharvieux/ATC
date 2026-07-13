@@ -29,7 +29,6 @@ import { createHash } from "node:crypto";
 import { getInstallationToken } from "./auth";
 import { env } from "@/lib/env";
 import {
-  BUG_FIELDS,
   PIIZeroToleranceQuarantineError,
   assertNoZeroTolerancePii,
   redactSubmission,
@@ -304,43 +303,8 @@ export async function createFeatureIssue(input: FeatureRequestInput): Promise<Cr
   return createIssue({ title, body, labels });
 }
 
-/**
- * Close an issue with a brief reason comment. Used by the resolution
- * recording path in BP32 (`POST /api/webhooks/github`) and by the
- * platform-admin triage UI for in-band closures.
- */
-export async function closeIssue(issue_number: number, reason: string): Promise<void> {
-  const e = env();
-  const client = await octokit();
-  try {
-    if (reason && reason.trim().length > 0) {
-      await client.issues.createComment({
-        owner: e.GITHUB_REPO_OWNER,
-        repo: e.GITHUB_REPO_NAME,
-        issue_number,
-        body: `Closing: ${reason}`,
-      });
-    }
-    await client.issues.update({
-      owner: e.GITHUB_REPO_OWNER,
-      repo: e.GITHUB_REPO_NAME,
-      issue_number,
-      state: "closed",
-    });
-  } catch (err) {
-    const e2 = err as { status?: number; message?: string };
-    throw new GitHubAPIError(
-      `GitHub issue close failed: ${e2.message ?? "unknown error"}`,
-      "PATCH /repos/:owner/:repo/issues/:issue_number",
-      e2.status,
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Small string helpers — kept private (the BUG_FIELDS export is the public
-// contract for which fields run through PII redaction; nothing else here
-// is consumer-facing).
+// Small string helpers — kept private.
 // ---------------------------------------------------------------------------
 
 function truncateForTitle(s: string | null | undefined): string | null {
@@ -355,6 +319,3 @@ function redactedString(s: string | null | undefined): string | null {
   const { redactTolerablePii } = require("@/lib/help-ai/pii-redaction") as typeof import("@/lib/help-ai/pii-redaction");
   return redactTolerablePii(s);
 }
-
-// Silence unused-export warning on BUG_FIELDS — re-exported for downstream tests.
-export { BUG_FIELDS };

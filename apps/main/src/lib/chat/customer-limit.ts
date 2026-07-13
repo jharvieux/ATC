@@ -43,7 +43,7 @@ async function loadPlatformSetting(
   return value ?? fallback;
 }
 
-export async function resolveCaps(
+async function resolveCaps(
   db: SupabaseClient,
   user_id: string,
   tenant_id: string,

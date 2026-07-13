@@ -83,12 +83,3 @@ export function isBookingImminent(sailingDateIso: string): boolean {
   if (sailingMs < now) return false; // past sailings are not imminent
   return sailingMs - now <= imminentBookingWindowMs();
 }
-
-/**
- * Returns true when a family member's DOB should be suppressed from
- * legally-sensitive rendering surfaces (quote PDFs, pre-cruise emails) per §11.5.
- * Used by §23 pre-cruise email rendering and §12 quote PDF generator.
- */
-export function suppressDOBContentForEstimated(entry: FamilyMember): boolean {
-  return entry.date_of_birth_is_estimated === true;
-}

@@ -12,7 +12,7 @@ import type { OpenAIBatchSummary } from "./types";
 
 let _client: OpenAI | undefined;
 
-export function getOpenAIClient(): OpenAI {
+function getOpenAIClient(): OpenAI {
   if (!_client) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY not set");

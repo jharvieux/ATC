@@ -5,7 +5,7 @@
 // a $1 tolerance per §38.10), and sum of commissionable items must equal
 // commissionable_fare_cents.
 
-export const VALID_CATEGORIES = [
+const VALID_CATEGORIES = [
   "base_fare",
   "cabin_upgrade",
   "loyalty_discount",
