@@ -67,6 +67,54 @@ function isStaleSubscriptionEvent(
   return false;
 }
 
+// Shared staleness-guard + CAS write for the three subscription-status handlers
+// (customer.subscription.*, invoice.payment_succeeded/failed). Each case builds
+// its own `updates` object (the genuinely different business logic) and the
+// tenant SELECT it needs, then hands the row + updates here so the ordering
+// protection (#1583/#1677) lives in exactly one place and can't drift across
+// the three copies. Returns the processing_outcome to record, or null when the
+// CAS lost the race (caller leaves its outcome unchanged — pre-existing behavior
+// records that as 'unhandled').
+async function applyStaleGuardedSubscriptionUpdate(
+  db: ReturnType<typeof createServiceRoleClient>,
+  event: Stripe.Event,
+  tenantId: string,
+  lastEventAt: string | null,
+  eventCreatedIso: string,
+  updates: Record<string, unknown>,
+): Promise<"success" | "stale_discarded" | null> {
+  if (
+    isStaleSubscriptionEvent(event.type, event.id, eventCreatedIso, tenantId, lastEventAt)
+  ) {
+    // #1677 — a handler ran but deliberately discarded this out-of-order stale
+    // duplicate. Distinct outcome so a dashboard doesn't conflate it with
+    // 'unhandled' (= no handler for the type, a real gap).
+    return "stale_discarded";
+  }
+  // The `.or(...)` WHERE clause is the real correctness layer: it makes the
+  // staleness check atomic in the DB. A 0-row result means a concurrent newer
+  // event already won and this write is silently dropped.
+  const casRows = await safeAwait(
+    db
+      .from("tenants")
+      .update(updates)
+      .eq("id", tenantId)
+      .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
+      .select("id"),
+    `tenants.update.${event.type}`,
+  );
+  if (!casRows || casRows.length === 0) {
+    console.warn(
+      "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
+      event.type,
+      tenantId,
+      event.id,
+    );
+    return null;
+  }
+  return "success";
+}
+
 async function clearStripeWebhookEventRow(
   db: ReturnType<typeof createServiceRoleClient>,
   eventId: string,
@@ -339,29 +387,12 @@ export async function handleStripeWebhook(
           break;
         }
 
-        const eventCreatedIso = new Date(event.created * 1000).toISOString();
-        if (
-          isStaleSubscriptionEvent(
-            event.type,
-            event.id,
-            eventCreatedIso,
-            tenantRow.id,
-            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
-          )
-        ) {
-          // #1677 — we HAD a handler and deliberately discarded this event as an
-          // out-of-order stale duplicate. Record a distinct outcome so a
-          // dashboard doesn't conflate this healthy case with 'unhandled'
-          // (= no handler for the type, a real gap).
-          processingOutcome = "stale_discarded";
-          break;
-        }
-
         const status = event.type === "customer.subscription.deleted"
           ? "canceled"
           : (sub.status as string);
         const isPaying = status === "active" || status === "trialing";
 
+        const eventCreatedIso = new Date(event.created * 1000).toISOString();
         const updates: Record<string, unknown> = {
           subscription_status: status,
           subscription_status_event_at: eventCreatedIso,
@@ -371,25 +402,15 @@ export async function handleStripeWebhook(
         } else if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        const casRows = await safeAwait(
-          db
-            .from("tenants")
-            .update(updates)
-            .eq("id", tenantRow.id)
-            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
-            .select("id"),
-          `tenants.update.${event.type}`,
+        const outcome = await applyStaleGuardedSubscriptionUpdate(
+          db,
+          event,
+          tenantRow.id,
+          (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          eventCreatedIso,
+          updates,
         );
-        if (!casRows || casRows.length === 0) {
-          console.warn(
-            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
-            event.type,
-            tenantRow.id,
-            event.id,
-          );
-          break;
-        }
-        processingOutcome = "success";
+        if (outcome) processingOutcome = outcome;
         break;
       }
 
@@ -417,24 +438,8 @@ export async function handleStripeWebhook(
         if (!tenantRow) {
           break;
         }
-        const eventCreatedIso = new Date(event.created * 1000).toISOString();
-        if (
-          isStaleSubscriptionEvent(
-            event.type,
-            event.id,
-            eventCreatedIso,
-            tenantRow.id,
-            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
-          )
-        ) {
-          // #1677 — we HAD a handler and deliberately discarded this event as an
-          // out-of-order stale duplicate. Record a distinct outcome so a
-          // dashboard doesn't conflate this healthy case with 'unhandled'
-          // (= no handler for the type, a real gap).
-          processingOutcome = "stale_discarded";
-          break;
-        }
         const cur = (tenantRow as { subscription_status: string | null }).subscription_status;
+        const eventCreatedIso = new Date(event.created * 1000).toISOString();
         const updates: Record<string, unknown> = {
           non_paying_since: null,
           subscription_status_event_at: eventCreatedIso,
@@ -442,25 +447,15 @@ export async function handleStripeWebhook(
         if (cur !== "active" && cur !== "trialing") {
           updates.subscription_status = "active";
         }
-        const casRows = await safeAwait(
-          db
-            .from("tenants")
-            .update(updates)
-            .eq("id", tenantRow.id)
-            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
-            .select("id"),
-          `tenants.update.${event.type}`,
+        const outcome = await applyStaleGuardedSubscriptionUpdate(
+          db,
+          event,
+          tenantRow.id,
+          (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          eventCreatedIso,
+          updates,
         );
-        if (!casRows || casRows.length === 0) {
-          console.warn(
-            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
-            event.type,
-            tenantRow.id,
-            event.id,
-          );
-          break;
-        }
-        processingOutcome = "success";
+        if (outcome) processingOutcome = outcome;
         break;
       }
 
@@ -488,22 +483,6 @@ export async function handleStripeWebhook(
           break;
         }
         const eventCreatedIso = new Date(event.created * 1000).toISOString();
-        if (
-          isStaleSubscriptionEvent(
-            event.type,
-            event.id,
-            eventCreatedIso,
-            tenantRow.id,
-            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
-          )
-        ) {
-          // #1677 — we HAD a handler and deliberately discarded this event as an
-          // out-of-order stale duplicate. Record a distinct outcome so a
-          // dashboard doesn't conflate this healthy case with 'unhandled'
-          // (= no handler for the type, a real gap).
-          processingOutcome = "stale_discarded";
-          break;
-        }
         const updates: Record<string, unknown> = {
           subscription_status: "past_due",
           subscription_status_event_at: eventCreatedIso,
@@ -511,25 +490,15 @@ export async function handleStripeWebhook(
         if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        const casRows = await safeAwait(
-          db
-            .from("tenants")
-            .update(updates)
-            .eq("id", tenantRow.id)
-            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
-            .select("id"),
-          `tenants.update.${event.type}`,
+        const outcome = await applyStaleGuardedSubscriptionUpdate(
+          db,
+          event,
+          tenantRow.id,
+          (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          eventCreatedIso,
+          updates,
         );
-        if (!casRows || casRows.length === 0) {
-          console.warn(
-            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
-            event.type,
-            tenantRow.id,
-            event.id,
-          );
-          break;
-        }
-        processingOutcome = "success";
+        if (outcome) processingOutcome = outcome;
         break;
       }
       default:
