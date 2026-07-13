@@ -27,6 +27,7 @@ type BillingData = {
     hosted_invoice_url: string | null;
   }[];
   read_only: boolean;
+  is_agency: boolean;
 };
 
 export default function BillingPage() {
@@ -73,7 +74,7 @@ export default function BillingPage() {
   if (!data) return <div className="p-8 text-red-600">Failed to load billing data.</div>;
 
   const { tenant, invoices, read_only } = data;
-  const isAgency = true; // TODO(bp23-tier-lookup): derive from tier_id → tier_definitions lookup
+  const isAgency = data.is_agency === true;
 
   return (
     <div className="p-8 max-w-2xl mx-auto space-y-8">

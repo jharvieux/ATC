@@ -18,16 +18,20 @@ const CRUISE_LINE_DEFAULTS: Record<string, string> = {
   _default: "https://cdn.ai-travelconcierge.com/defaults/cruise-ship-ocean.jpg",
 };
 
-const AI_ELIGIBLE_TIERS = new Set([
-  "sub_host_pro",
-  "sub_host_agency",
+// Pro + agency tiers of both tenant types. Values MUST be real
+// tier_definitions codes (§3.3, CODE_TO_TIER_MAP keys) — the originals were
+// phantom "sub_host_*" codes that could never match (#444).
+export const AI_ELIGIBLE_TIERS = new Set([
+  "sub_pro",
+  "sub_agency",
   "byo_professional",
   "byo_agency",
 ]);
 
 export interface HeroImageContext {
   tenant_id: string;
-  tier: string;
+  /** tier_definitions.code; null (tier unknown) disables AI generation. */
+  tier: string | null;
   destination: string;
   cruise_line: string;
   coordinator_url?: string | null;
@@ -49,7 +53,7 @@ export async function selectHeroImage(ctx: HeroImageContext): Promise<string> {
   if (lib?.image_url) return lib.image_url;
 
   // 3. AI generation (tier-gated)
-  if (AI_ELIGIBLE_TIERS.has(ctx.tier) && process.env.IMAGE_GEN_PROVIDER === "openai" && process.env.OPENAI_API_KEY) {
+  if (ctx.tier !== null && AI_ELIGIBLE_TIERS.has(ctx.tier) && process.env.IMAGE_GEN_PROVIDER === "openai" && process.env.OPENAI_API_KEY) {
     // Check cache
     const { data: cached } = await db
       .from("destination_images_cache")

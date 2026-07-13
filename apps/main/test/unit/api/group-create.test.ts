@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   resolveCanonical: vi.fn(),
   selectHeroImage: vi.fn(),
+  getTenantTierCode: vi.fn(),
   loadTenantSnapshot: vi.fn(),
   incrementGroupInvitees: vi.fn(),
   generateToken: vi.fn(),
@@ -44,6 +45,10 @@ vi.mock("@/lib/canonical/resolve-canonical", () => ({
 
 vi.mock("@/lib/groups/hero-image", () => ({
   selectHeroImage: mocks.selectHeroImage,
+}));
+
+vi.mock("@/lib/tenancy/get-tenant-tier-code", () => ({
+  getTenantTierCode: mocks.getTenantTierCode,
 }));
 
 vi.mock("@/lib/abuse/snapshot", () => ({
@@ -137,6 +142,7 @@ beforeEach(() => {
   });
   mocks.resolveCanonical.mockResolvedValue({ matched: false });
   mocks.selectHeroImage.mockResolvedValue(null);
+  mocks.getTenantTierCode.mockResolvedValue("sub_starter");
   mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
   mocks.incrementGroupInvitees.mockResolvedValue(undefined);
   mocks.generateToken.mockReturnValue("tok-stub");
@@ -172,6 +178,22 @@ describe("POST /api/groups — sailing_id FK (#783)", () => {
     const body = await res.json() as { error: string };
     expect(body.error).toContain("UUID");
     expect(groupInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/groups — hero-image tier (#444)", () => {
+  // The tier was hardcoded "sub_host_starter" (a phantom code), so the
+  // tier-gated AI hero-image path could never trigger. It must come from the
+  // tenant's actual tier_definitions row.
+  it("passes the tenant's resolved tier code to selectHeroImage", async () => {
+    mocks.getTenantTierCode.mockResolvedValue("sub_agency");
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq(BASE_BODY));
+
+    expect(res.status).toBe(201);
+    expect(mocks.selectHeroImage).toHaveBeenCalledWith(
+      expect.objectContaining({ tier: "sub_agency" }),
+    );
   });
 });
 

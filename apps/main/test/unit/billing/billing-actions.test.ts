@@ -7,6 +7,8 @@
 // - unknown_action → 422 (fail on unexpected input; prevents silent no-op).
 // - change_tier: invalid_tier_for_tenant_type → 422 (unmapped code would corrupt billing).
 // - change_tier: tier_definitions error/missing → 500 (fail-closed; incomplete platform state must not proceed).
+// - update_seats: non-agency tier → 422 (§15.15 seats are Agency-only; a non-agency
+//   tenant must not be able to attach the agency seat price to its subscription; #444).
 // - switch_billing_period: same period → 200 no-op (idempotent; prevents unnecessary Stripe calls).
 // - switch_billing_period: annual→monthly deferred to renewal (§15.15; immediate downgrade is not supported).
 // - switch_billing_period: monthly→annual resolves tier from DB via CODE_TO_TIER, not from request body.
@@ -261,8 +263,31 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.error).toBe("seat_count required");
   });
 
+  it("update_seats: returns 422 seats_agency_tier_only for a non-agency tier — seat price must not attach to non-agency subscriptions (§15.15, #444)", async () => {
+    tenantData = activeTenant();
+    tierDefCodeData = { code: "byo_professional" };
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
+    expect(res.status).toBe(422);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("seats_agency_tier_only");
+    expect(mockStripeSubscriptionsUpdate).not.toHaveBeenCalled();
+    expect(mockInngestSend).not.toHaveBeenCalled();
+  });
+
+  it("update_seats: tier lookup DB error → 500 fail-closed, not a silent allow", async () => {
+    tenantData = activeTenant();
+    tierDefCodeError = { message: "tier_db_timeout" };
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("tier_lookup_failed");
+  });
+
   it("update_seats: inngest.send fires with change:seats on success", async () => {
     tenantData = activeTenant();
+    tierDefCodeData = { code: "byo_agency" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
     expect(res.status).toBe(200);
@@ -281,6 +306,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     // seat-price calculation would break — wrong price ID or wrong quantity offset
     // would silently mis-bill the tenant.
     tenantData = { ...activeTenant()!, stripe_subscription_id: "sub_test_1" };
+    tierDefCodeData = { code: "byo_agency" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 4 }));
     expect(res.status).toBe(200);

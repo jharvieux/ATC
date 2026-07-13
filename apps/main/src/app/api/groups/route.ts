@@ -16,6 +16,7 @@ import { generateToken } from "@/lib/groups/invitation-token";
 import { sendGroupInvitationEmail, type GroupInvitationGroup } from "@/lib/groups/send-invitation-email";
 import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { getTenantTierCode } from "@/lib/tenancy/get-tenant-tier-code";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
 import { hardDeleteGroup } from "@/lib/groups/delete-group";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -72,7 +73,7 @@ export async function POST(req: Request): Promise<Response> {
     // Select hero image via priority chain.
     const heroUrl = await selectHeroImage({
       tenant_id: ctx.tenant_id,
-      tier: "sub_host_starter", // TODO(rbac): read actual tier from tenant row
+      tier: await getTenantTierCode(svc, ctx.tenant_id),
       destination: departure_port,
       cruise_line,
       coordinator_url: hero_image_url ?? null,
