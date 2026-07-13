@@ -133,26 +133,50 @@ export async function POST(
     // already priced by an earlier option keeps its existing priced_at
     // freshness window; re-pricing an existing option goes through the
     // PATCH route below instead.
+    //
+    // Best-effort, matching the sibling `quotes.route.ts` pattern: the
+    // option row above is the write the client asked for and is already
+    // durable. Letting a failure here 500 the request would make the
+    // client retry and re-POST a duplicate option (no idempotency key on
+    // this route). Swallow read/update failures and still return 201 — a
+    // missed stamp self-heals via the PATCH route's unconditional
+    // re-stamp. The `.is("priced_at", null)` on the update is a CAS guard
+    // against the read-then-write race with a concurrent stamp; a
+    // zero-row result just means someone else already stamped it, so no
+    // error is raised for that case either.
     if (typeof parsed.data.total_amount_cents === "number") {
-      const { data: quoteRow, error: quoteReadErr } = await db
-        .from("quotes")
-        .select("priced_at")
-        .eq("id", quoteId)
-        .eq("tenant_id", ctx.tenant_id)
-        .single();
-      if (quoteReadErr) return dbErrorResponse(quoteReadErr);
-      if ((quoteRow as { priced_at: string | null }).priced_at == null) {
-        const pricedAt = new Date().toISOString();
-        await safeAwait(
-          db.from("quotes").update({
-            priced_at: pricedAt,
-            price_kind: resolveQuoteKind(
-              { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
-              NO_HOST_INTEGRATION_ADAPTER,
-            ),
-          }).eq("id", quoteId).eq("tenant_id", ctx.tenant_id),
-          "quotes.update.price_kind_from_option_create",
-        );
+      try {
+        const { data: quoteRow, error: quoteReadErr } = await db
+          .from("quotes")
+          .select("priced_at")
+          .eq("id", quoteId)
+          .eq("tenant_id", ctx.tenant_id)
+          .single();
+        if (quoteReadErr) throw quoteReadErr;
+        if ((quoteRow as { priced_at: string | null }).priced_at == null) {
+          const pricedAt = new Date().toISOString();
+          await safeAwait(
+            db
+              .from("quotes")
+              .update({
+                priced_at: pricedAt,
+                price_kind: resolveQuoteKind(
+                  { priced_at: pricedAt, price_lock_token: null, price_lock_expires_at: null },
+                  NO_HOST_INTEGRATION_ADAPTER,
+                ),
+              })
+              .eq("id", quoteId)
+              .eq("tenant_id", ctx.tenant_id)
+              .is("priced_at", null),
+            "quotes.update.price_kind_from_option_create",
+          );
+        }
+      } catch (stampErr) {
+        console.error("quote_options.POST: priced_at stamp failed, continuing", {
+          quoteId,
+          tenantId: ctx.tenant_id,
+          err: stampErr,
+        });
       }
     }
 

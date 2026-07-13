@@ -38,6 +38,7 @@ const QUOTE_ID = "99999999-8888-7777-6666-555555555555";
 function makeDb(opts: {
   quotePricedAt: string | null;
   onQuoteUpdate: (payload: Record<string, unknown>) => void;
+  updateResult?: { data: null; error: { message: string } | null };
 }) {
   return {
     from(table: string) {
@@ -58,8 +59,9 @@ function makeDb(opts: {
 
         const updateChain: Record<string, unknown> = {};
         updateChain.eq = () => updateChain;
-        updateChain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
-          Promise.resolve({ data: null, error: null }).then(resolve);
+        updateChain.is = () => updateChain;
+        updateChain.then = (resolve: (v: { data: null; error: unknown }) => unknown) =>
+          Promise.resolve(opts.updateResult ?? { data: null, error: null }).then(resolve);
 
         return {
           select: () => selectChain,
@@ -129,5 +131,45 @@ describe("POST /api/quotes/:id/options — price_kind evaluation (#1804)", () =>
 
     expect(res.status).toBe(201);
     expect(updateCalled).toBe(false);
+  });
+
+  it("still returns 201 with the option row when the priced_at stamp update fails (audit blocker fix)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = makeDb({
+      quotePricedAt: null,
+      onQuoteUpdate: () => {},
+      updateResult: { data: null, error: { message: "connection reset" } },
+    });
+    mocks.tenantClient.mockReturnValue(db);
+
+    const res = await POST(req({ total_amount_cents: 250000, cruise_line: "Royal" }), {
+      params: Promise.resolve({ id: QUOTE_ID }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe("opt-1");
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("still returns 201 with no error when the stamp update races and matches zero rows (CAS)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = makeDb({
+      quotePricedAt: null,
+      onQuoteUpdate: () => {},
+      updateResult: { data: null, error: null },
+    });
+    mocks.tenantClient.mockReturnValue(db);
+
+    const res = await POST(req({ total_amount_cents: 250000, cruise_line: "Royal" }), {
+      params: Promise.resolve({ id: QUOTE_ID }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe("opt-1");
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });
