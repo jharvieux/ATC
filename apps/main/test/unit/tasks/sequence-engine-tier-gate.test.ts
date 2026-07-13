@@ -13,15 +13,19 @@ type TierRow = { tier_definitions: { code: string } | null };
 // Minimal Supabase-shaped stub: tierCode reads tenants; the rest of the
 // engine reads task_sequences/steps/runs. We record which tables were hit
 // so a blocked tier can be shown to short-circuit before any sequence lookup.
-function makeSvc(tierCode: string | null) {
+function makeSvc(tierCode: string | null, tenantError: { message: string } | null = null) {
   const tablesHit: string[] = [];
   const svc = {
     from(table: string) {
       tablesHit.push(table);
       if (table === "tenants") {
-        const row: TierRow = { tier_definitions: tierCode ? { code: tierCode } : null };
+        const row: TierRow | null = tenantError
+          ? null
+          : { tier_definitions: tierCode ? { code: tierCode } : null };
         return {
-          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: row, error: tenantError }) }),
+          }),
         };
       }
       if (table === "task_sequences") {
@@ -63,5 +67,40 @@ describe("triggerMatchingSequences tier gate (§37.10)", () => {
     });
     expect(res).toEqual({ runs_started: 0 });
     expect(tablesHit).toContain("task_sequences");
+  });
+
+  // Fail-closed on an unresolved tier. A blocklist gate that returned ok:true on
+  // a null tier (missing tenant row / missing tier FK) would auto-fire sequences
+  // for a tenant whose entitlement can't be confirmed — the exact leak byo_research
+  // must never get. The deliberate trade: withhold sequences (recoverable) rather
+  // than leak entitlements (not) during a tier-lookup gap.
+  it("withholds sequences when the tenant has no resolvable tier (null)", async () => {
+    const { svc, tablesHit } = makeSvc(null);
+    const res = await triggerMatchingSequences({
+      tenant_id: "t1",
+      trigger: "booking_confirmed",
+      record: { booking_id: "b1" },
+      svc,
+    });
+    expect(res).toEqual({ runs_started: 0 });
+    expect(tablesHit).toContain("tenants");
+    expect(tablesHit).not.toContain("task_sequences");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  // Same fail-closed outcome when the tier lookup itself errors (DB outage /
+  // swallowed error): deny, don't treat the outage as "no restriction applies".
+  it("withholds sequences when the tier lookup returns a DB error", async () => {
+    const { svc, tablesHit } = makeSvc(null, { message: "connection reset" });
+    const res = await triggerMatchingSequences({
+      tenant_id: "t1",
+      trigger: "booking_confirmed",
+      record: { booking_id: "b1" },
+      svc,
+    });
+    expect(res).toEqual({ runs_started: 0 });
+    expect(tablesHit).toContain("tenants");
+    expect(tablesHit).not.toContain("task_sequences");
+    expect(send).not.toHaveBeenCalled();
   });
 });
