@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   membersBranch: vi.fn(),
   membersIn: vi.fn(),
   invitationsInsert: vi.fn(),
+  reserveRpc: vi.fn(),
   tenantsMaybeSingle: vi.fn(),
   brandingMaybeSingle: vi.fn(),
   assertGroupNotSailed: vi.fn(),
@@ -51,6 +52,14 @@ vi.mock("@/lib/email/notifications", () => ({
 
 vi.mock("@/lib/groups/invitation-token", () => ({
   generateToken: (id: string) => `tok-${id.slice(0, 8)}`,
+}));
+
+// #1875 — the members route calls the reserve_group_invitations RPC through a
+// raw service-role client (tenantClient refuses .rpc()).
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({
+    rpc: (name: string, args: unknown) => mocks.reserveRpc(name, args),
+  }),
 }));
 
 // One tenantClient mock. The invitations branch terminal handles both:
@@ -139,6 +148,7 @@ beforeEach(() => {
     error: null,
   });
   mocks.invitationsInsert.mockReturnValue(Promise.resolve({ error: null }));
+  mocks.reserveRpc.mockResolvedValue({ data: { status: "ok", inserted: 1 }, error: null });
 });
 
 const PARAMS = { params: Promise.resolve({ id: GROUP_ID }) };
@@ -212,12 +222,18 @@ describe("POST /api/groups/[id]/members", () => {
     const body = (await res.json()) as { added: number; invitation_ids: string[] };
     expect(body.added).toBe(2);
     expect(body.invitation_ids).toHaveLength(2);
-    const insertedRows = mocks.invitationsInsert.mock.calls[0]?.[0] as Array<{
-      invitee_email: string;
-      token: string;
-    }>;
-    expect(insertedRows[0]?.invitee_email).toBe("a@example.com");
-    expect(insertedRows[0]?.token).toMatch(/^tok-/);
+    // #1875 — the batch is reserved+inserted atomically by the RPC, capped at
+    // MAX_INVITEES_PER_GROUP. Assert the invitee rows (with HMAC tokens) and the
+    // cap parameter reach the RPC.
+    const [rpcName, rpcArgs] = mocks.reserveRpc.mock.calls[0] as [
+      string,
+      { p_group_id: string; p_invitations: Array<{ invitee_email: string; token: string }>; p_max: number },
+    ];
+    expect(rpcName).toBe("reserve_group_invitations");
+    expect(rpcArgs.p_group_id).toBe(GROUP_ID);
+    expect(rpcArgs.p_max).toBe(50);
+    expect(rpcArgs.p_invitations[0]?.invitee_email).toBe("a@example.com");
+    expect(rpcArgs.p_invitations[0]?.token).toMatch(/^tok-/);
   });
 
   it("rejects an unknown body key via zod .strict (no group_id/tenant_id injection)", async () => {
@@ -226,7 +242,27 @@ describe("POST /api/groups/[id]/members", () => {
       PARAMS,
     );
     expect(res.status).toBe(400);
-    expect(mocks.invitationsInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 without reserving when the batch would exceed the cumulative cap (#1875)", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID },
+      error: null,
+    });
+    // The RPC re-counts active invitees under an advisory lock and refuses when
+    // existing + batch would exceed the cap — no row is inserted.
+    mocks.reserveRpc.mockResolvedValue({
+      data: { status: "cap_exceeded", active_count: 49 },
+      error: null,
+    });
+    const res = await MEMBERS_POST(
+      postReq({ invitees: [{ email: "a@example.com" }, { email: "b@example.com" }] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("50");
   });
 
   it("rejects malformed email via zod string().email()", async () => {
@@ -244,7 +280,7 @@ describe("POST /api/groups/[id]/members", () => {
       PARAMS,
     );
     expect(res.status).toBe(404);
-    expect(mocks.invitationsInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
   it("returns 410 group_sailed when the group has sailed (§18.10)", async () => {
@@ -263,17 +299,37 @@ describe("POST /api/groups/[id]/members", () => {
     const body = (await res.json()) as { error: string; sailed_at: string };
     expect(body.error).toBe("group_sailed");
     expect(body.sailed_at).toBe("2026-05-01T00:00:00Z");
-    expect(mocks.invitationsInsert).not.toHaveBeenCalled();
+    expect(mocks.reserveRpc).not.toHaveBeenCalled();
   });
 
-  it("fails loud (500) on insert error", async () => {
+  it("fails loud (500) on reserve RPC error", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID },
       error: null,
     });
-    mocks.invitationsInsert.mockReturnValue(
-      Promise.resolve({ error: { message: "fk constraint" } }),
+    mocks.reserveRpc.mockResolvedValue({
+      data: null,
+      error: { message: "fk constraint" },
+    });
+    const res = await MEMBERS_POST(
+      postReq({ invitees: [{ email: "a@example.com" }] }),
+      PARAMS,
     );
+    expect(res.status).toBe(500);
+  });
+
+  it("fails loud (500) on an unexpected reserve status — never falls through to 201", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID },
+      error: null,
+    });
+    // A verdict that is neither "ok" nor "cap_exceeded" (e.g. a future/renamed
+    // status or a malformed payload) must not be treated as success: nothing
+    // may have been inserted, so a 201 would be a silent lie.
+    mocks.reserveRpc.mockResolvedValue({
+      data: { status: "unexpected" },
+      error: null,
+    });
     const res = await MEMBERS_POST(
       postReq({ invitees: [{ email: "a@example.com" }] }),
       PARAMS,
