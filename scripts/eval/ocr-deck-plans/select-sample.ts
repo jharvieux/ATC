@@ -6,6 +6,7 @@
 // per line so no single line consumes more than ~30% of the sample.
 
 import postgres from "postgres";
+import { redactSecrets } from "../../lib/redact-secrets";
 
 const TOTAL_SAMPLE = 200;
 const PER_LINE_CAP_RATIO = 0.30;
@@ -110,6 +111,6 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(redactSecrets(err));
   process.exit(1);
 });

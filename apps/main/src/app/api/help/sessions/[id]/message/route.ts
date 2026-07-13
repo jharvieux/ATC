@@ -48,7 +48,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import {
   advanceBugFlow,
   advanceFeatureFlow,
-  bugStepFor,
+  bugQuestionForState,
   featureStepFor,
   EMPTY_BUG_DRAFT,
   EMPTY_FEATURE_DRAFT,
@@ -118,10 +118,15 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       // Load the session — RLS confirms it belongs to ctx.tenant_id.
       const { data: sessionRow } = await db
         .from("help_sessions")
-        .select("id, session_type, conversation_id")
+        .select("id, session_type, source_surface, conversation_id")
         .eq("id", sessionId)
         .maybeSingle();
-      const session = sessionRow as { id: string; session_type: "help" | "bug" | "feature"; conversation_id: string | null } | null;
+      const session = sessionRow as {
+        id: string;
+        session_type: "help" | "bug" | "feature";
+        source_surface: "admin" | "customer_chat";
+        conversation_id: string | null;
+      } | null;
       if (!session) {
         await writer.write(encoder.encode(sseLine("Session not found.")));
         await writer.write(encoder.encode(sseLine("[DONE]")));
@@ -262,8 +267,11 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         const reconstructed = reconstructBugDraft(priorUserMessages);
         const advanced = advanceBugFlow(currentState, reconstructed, userMessage);
         draftSnapshot = advanced.draft;
-        const step = bugStepFor(advanced.state);
-        nextQuestion = step?.question ?? "Thanks — that's everything I need. I'll summarize before submitting.";
+        // §32.10.3 — customer_chat sessions get the friendlier customer copy;
+        // admin sessions get the tenant-admin defaults.
+        nextQuestion =
+          bugQuestionForState(advanced.state, session.source_surface) ||
+          "Thanks — that's everything I need. I'll summarize before submitting.";
       } else if (session.session_type === "feature") {
         const currentState = featureStateForIndex(priorUserMessages.length);
         const reconstructed = reconstructFeatureDraft(priorUserMessages);
