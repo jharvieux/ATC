@@ -106,7 +106,7 @@
 <p>▼</p>
 <p>Resend webhook fires:</p>
 <p>├──► delivered  → log only</p>
-<p>├──► soft bounce → retry up to 3 times over 24h</p>
+<p>├──► soft bounce → retry up to 3 times, inter-attempt delays 6h/12h/24h (cumulative +6h/+18h/+42h; operator-confirmed 2026-07-12), re-sending the stored rendered content verbatim</p>
 <p>├──► hard bounce → suppress + flag email_status='invalid'</p>
 <p>├──► complaint → suppress + flag email_status='complained'</p>
 <p>└──► open / click → log for engagement metrics (no PII)</p>
