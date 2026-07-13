@@ -348,6 +348,21 @@ jobs:
           pnpm tsx scripts/check-migration-ledger.ts --target=main
           pnpm tsx scripts/check-migration-ledger.ts --target=rag
 
+      - name: Reset main test DB before apply (#1660 / #1896)
+        # Return the shared MAIN test DB to a clean slate so the push below
+        # rebuilds every migration from scratch, regardless of what any
+        # abandoned branch left in the shared ledger. This is what makes the
+        # apply self-contained (the precondition for a safe merge queue) and is
+        # a strict improvement today: it kills the orphan-ledger-row wedge from
+        # docs/runbooks/migrations.md §4. Runs AFTER the ledger collision
+        # pre-check above (which reads the live pre-reset ledger) and BEFORE the
+        # push. Guarded by URL presence + CONFIRM_TEST_DB_RESET, so a
+        # secret-less run (Dependabot) skips gracefully. RAG is not reset here —
+        # deploy.yml never pushes the RAG DB (see PR body follow-up).
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+        run: pnpm db:reset:ci
+
       - name: Apply main app migrations to test DB
         # Brings TEST DB to HEAD before the snapshot check so that a PR which
         # includes a migration + updated snapshot can validate both in one run,
