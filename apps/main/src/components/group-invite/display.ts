@@ -33,10 +33,14 @@ export function firstNameOnly(displayName: string): string {
 }
 
 export function daysUntil(sailingDateIso: string): number {
-  const sailDate = new Date(sailingDateIso);
-  const now = new Date();
+  // UTC-normalize to avoid off-by-one in negative-UTC-offset timezones
+  // (e.g. Pacific/Honolulu, UTC-10). Compare dates as calendar days, not timestamps.
+  const sailDateStr = sailingDateIso.split("T")[0]; // Extract "2026-07-06" from date or timestamp
+  const sailDate = new Date(sailDateStr + "T00:00:00Z");
+  const nowDateStr = new Date().toISOString().split("T")[0]; // Today's UTC date
+  const todayUTC = new Date(nowDateStr + "T00:00:00Z");
   const msPerDay = 24 * 60 * 60 * 1000;
-  return Math.max(0, Math.ceil((sailDate.getTime() - now.getTime()) / msPerDay));
+  return Math.max(0, Math.ceil((sailDate.getTime() - todayUTC.getTime()) / msPerDay));
 }
 
 export function formatSailDate(sailingDateIso: string): string {

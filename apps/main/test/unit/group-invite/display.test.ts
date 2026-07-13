@@ -33,6 +33,23 @@ describe("daysUntil", () => {
     expect(daysUntil(future)).toBeGreaterThanOrEqual(29);
     expect(daysUntil(future)).toBeLessThanOrEqual(30);
   });
+
+  describe("#1855: date-only string under a negative-UTC-offset timezone", () => {
+    const originalTz = process.env.TZ;
+
+    beforeEach(() => {
+      process.env.TZ = "Pacific/Honolulu"; // UTC-10, no DST
+    });
+
+    afterEach(() => {
+      process.env.TZ = originalTz;
+    });
+
+    it("returns 0 for today's sail date, not 1 due to timezone offset", () => {
+      const today = new Date().toISOString().split("T")[0]!; // "2026-07-06"
+      expect(daysUntil(today)).toBe(0);
+    });
+  });
 });
 
 describe("formatSailDate — #1808: date-only string under a negative-UTC-offset timezone", () => {
