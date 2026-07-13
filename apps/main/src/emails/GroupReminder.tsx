@@ -31,6 +31,7 @@ export function GroupReminder(props: GroupReminderProps): React.ReactElement {
         year: "numeric",
         month: "long",
         day: "numeric",
+        timeZone: "UTC",
       });
 
   return (

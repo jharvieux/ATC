@@ -91,7 +91,7 @@ export default function EmailSamplesPage() {
       customer_name: form.customerName,
       ship_name: form.shipName,
       cruise_line: form.cruiseLine,
-      sailing_date: new Date(form.sailingDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+      sailing_date: new Date(form.sailingDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }),
       ports: form.ports,
       destination_region: form.region,
       companion_page_url: form.companionUrl,

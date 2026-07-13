@@ -40,7 +40,7 @@ export function daysUntil(sailingDateIso: string): number {
 }
 
 export function formatSailDate(sailingDateIso: string): string {
-  return new Date(sailingDateIso).toLocaleDateString("en-US", { dateStyle: "long" });
+  return new Date(sailingDateIso).toLocaleDateString("en-US", { dateStyle: "long", timeZone: "UTC" });
 }
 
 // "{departurePort} → {stop1} → {stop2} → …", skipping the embarkation day
