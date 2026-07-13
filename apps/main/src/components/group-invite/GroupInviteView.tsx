@@ -28,7 +28,9 @@ export function GroupInviteView({ data, token, tenantLogoUrl = null }: { data: I
   const [guestListOpen, setGuestListOpen] = React.useState(false);
 
   const isSailed = data.group.status === "sailed";
-  const sailingDate = new Date(data.group.sailing_date);
+  // sailing_date is a date-only string parsed as UTC midnight (#1808) — use
+  // UTC getters so negative-UTC-offset locales don't shift the year back.
+  const sailingYear = new Date(data.group.sailing_date).getUTCFullYear();
   const nights = data.itinerary ? data.itinerary.length - 1 : 0;
 
   async function patchInvitation(body: Record<string, string>) {
@@ -85,7 +87,7 @@ export function GroupInviteView({ data, token, tenantLogoUrl = null }: { data: I
     <div data-cruise-theme={theme} className={`${quicksand.variable} min-h-screen bg-[var(--cruise-bg)] text-[var(--cruise-text)]`}>
       <Nav
         cruiseLine={data.group.cruise_line}
-        sailingYear={sailingDate.getFullYear()}
+        sailingYear={sailingYear}
         organizers={data.roster.filter((r) => !r.anonymous).slice(0, 2)}
         tenantLogoUrl={tenantLogoUrl}
       />
