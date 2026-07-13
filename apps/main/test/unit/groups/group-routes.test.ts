@@ -318,6 +318,24 @@ describe("POST /api/groups/[id]/members", () => {
     expect(res.status).toBe(500);
   });
 
+  it("returns 409 invitee_already_invited on reserve RPC 23505 (#1895 — matches the single-invite route)", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID },
+      error: null,
+    });
+    mocks.reserveRpc.mockResolvedValue({
+      data: null,
+      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+    });
+    const res = await MEMBERS_POST(
+      postReq({ invitees: [{ email: "a@example.com" }] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invitee_already_invited");
+  });
+
   it("fails loud (500) on an unexpected reserve status — never falls through to 201", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID },
