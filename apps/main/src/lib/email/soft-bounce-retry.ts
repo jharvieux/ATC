@@ -18,9 +18,11 @@
 //     VENDOR DELIVERY (D-091 #23) — Resend won't physically re-transmit the
 //     message. It does NOT cover sendEmail's own DB bookkeeping: an un-stepped
 //     re-run would insert a fresh email_log row and bump incrementEmailSent. So
-//     the key alone does not make a re-run harmless; sendEmail + the row it
-//     writes are wrapped in a memoized step.run boundary (Pattern-14) below to
-//     keep a real Inngest function-retry from re-executing them.
+//     the key alone does not make a re-run harmless; sendEmail is wrapped in its
+//     own memoized step.run boundary (Pattern-14) below to keep a real Inngest
+//     function-retry from re-invoking it. The last_send_log_id write is a
+//     SEPARATE, later step (#1832) — a transient DB error writing it must retry
+//     only that write, not re-run the already-memoized send.
 //   - completed_attempt (written AFTER scheduleNext succeeds) is the completion
 //     marker that stops a re-run of an ALREADY-FINISHED attempt from reaching
 //     sendEmail again — that's what prevents the orphaned email_log row + spurious
@@ -63,10 +65,12 @@ export interface SoftBounceRetryDeps {
   scheduleNext: (payload: SoftBounceRetryPayload) => Promise<void>;
   // Durable step boundary (Inngest step.run in production, keyed by `id`).
   // Memoizes fn's return value across whole-function retries, so a retry that
-  // re-enters AFTER this step already completed does not re-invoke sendEmail
-  // and re-write last_send_log_id. Test stubs just call fn() directly — they
-  // don't model Inngest's memoization, which is why the crash-resume test
-  // still observes two sends (see that test's comment).
+  // re-enters AFTER a given step already completed does not re-invoke it.
+  // sendEmail and the last_send_log_id write are two SEPARATE steps (#1832),
+  // so a retry of the record write never re-invokes the memoized send. Test
+  // stubs just call fn() directly — they don't model Inngest's memoization,
+  // which is why the crash-resume test still observes two sends (see that
+  // test's comment).
   runStep: <T>(id: string, fn: () => Promise<T>) => Promise<T>;
 }
 
@@ -271,14 +275,17 @@ export async function runSoftBounceRetryAttempt(
   const tenant = await loadTenantForSend(db, tenant_id);
   if (!tenant) return "tenant_missing";
 
-  // Pattern-14: sendEmail + the last_send_log_id write it feeds are wrapped in a
-  // single step boundary (memoized by attempt). Without this, a whole-function
-  // retry that re-enters after a successful send but before completed_attempt
-  // lands would re-invoke sendEmail — the Resend Idempotency-Key dedupes only
-  // the vendor delivery, not sendEmail's own email_log INSERT + sent-counter
-  // bump, so an un-stepped re-run orphans a duplicate row/metric.
-  const result = await runStep(`send-and-record:${email_log_id}:${attempt}`, async () => {
-    const sendResult = await sendEmail({
+  // Pattern-14: sendEmail is memoized in its OWN step boundary (keyed by
+  // attempt), separate from the last_send_log_id write below. Without this,
+  // a whole-function retry that re-enters after a successful send but before
+  // completed_attempt lands would re-invoke sendEmail — the Resend
+  // Idempotency-Key dedupes only the vendor delivery, not sendEmail's own
+  // email_log INSERT + sent-counter bump, so an un-stepped re-run orphans a
+  // duplicate row/metric. The record write is a SEPARATE step (#1832) so a
+  // transient DB error there retries only the record, never re-invoking the
+  // already-memoized send.
+  const result = await runStep(`send:${email_log_id}:${attempt}`, () =>
+    sendEmail({
       db,
       tenant,
       to: content.to_email,
@@ -298,23 +305,26 @@ export async function runSoftBounceRetryAttempt(
       ...(content.related_group_id ? { related_group_id: content.related_group_id } : {}),
       ...(content.user_id ? { user_id: content.user_id } : {}),
       ...(content.contact_id ? { contact_id: content.contact_id } : {}),
-    });
+    }),
+  );
 
-    if (sendResult.status === "sent" && sendResult.email_log_id) {
-      // Record the re-send row so the next attempt reads its delivery status.
-      await safeAwait(
+  if (result.status === "sent" && result.email_log_id) {
+    // Record the re-send row so the next attempt reads its delivery status.
+    // A second, independent step: if this DB write throws, only THIS step
+    // retries — the send above stays memoized, so retrying never re-sends.
+    await runStep(`record-send-log:${email_log_id}:${attempt}`, () =>
+      safeAwait(
         db
           // d091-allow:service-role-tenant email_log_id is the globally-unique PK; a retry-content row is single-tenant by construction (FK to email_log), so PK-scoped access is not cross-tenant.
           .from("email_retry_content")
-          .update({ last_send_log_id: sendResult.email_log_id })
+          .update({ last_send_log_id: result.email_log_id })
           .eq("email_log_id", email_log_id),
         "email_retry_content.update.last_send_log_id",
-      );
-    }
-    // "rate_limited" / "failed" don't update last_send_log_id (no new row landed);
-    // we still advance the chain so a later attempt can try again.
-    return sendResult;
-  });
+      ),
+    );
+  }
+  // "rate_limited" / "failed" don't update last_send_log_id (no new row landed);
+  // we still advance the chain so a later attempt can try again.
 
   if (result.status === "suppressed") {
     // The address is already blocked — nothing more to do.

@@ -10,6 +10,9 @@
 //     suppression; four consecutive soft bounces suppress the address.
 //   - No-duplicate-send: a duplicate retry event for an already-claimed attempt
 //     is skipped by the CAS claim (no second send).
+//   - Step-boundary isolation (#1832): sendEmail and the last_send_log_id write
+//     are separate memoized steps, so a transient failure recording the send
+//     retries only that write — it never re-invokes the already-completed send.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -406,6 +409,76 @@ describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim re
     // so a refactor that makes resume a silent no-op (0 further calls) or a
     // triple-send fails loudly instead of drifting unnoticed.
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe("§23.7 soft-bounce retry — step-boundary isolation (#1832)", () => {
+  // The audit finding this closes: sendEmail and the last_send_log_id write
+  // used to share ONE step.run boundary. safeAwait throws on a transient DB
+  // error writing the record, which escaped that shared step — so a real
+  // Inngest step-retry would re-invoke sendEmail too, orphaning a duplicate
+  // email_log row + counter bump. They're now two separate memoized steps, so
+  // a record failure retries only the record step; the send step, once it has
+  // completed, is memoized and is never re-invoked. Unlike the other tests in
+  // this file (whose runStep stub deliberately does NOT memoize, to pin a
+  // different documented trade-off), this test's stub DOES memoize by id —
+  // that's the only way to observe this guarantee.
+  function dbWithOneLastSendLogIdUpdateFailure(state: State) {
+    const base = makeDb(state) as unknown as { from: (t: string) => Record<string, unknown> };
+    let failNext = true;
+    return {
+      from(table: string) {
+        const chain = base.from(table);
+        if (table !== "email_retry_content") return chain;
+        let isTargetUpdate = false;
+        const origUpdate = (chain.update as (p: Record<string, unknown>) => unknown).bind(chain);
+        chain.update = (p: Record<string, unknown>) => {
+          isTargetUpdate = "last_send_log_id" in p;
+          return origUpdate(p);
+        };
+        const origThen = (chain.then as (r: (v: unknown) => unknown) => unknown).bind(chain);
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (isTargetUpdate && failNext) {
+            failNext = false;
+            return Promise.resolve(
+              resolve({
+                data: null,
+                error: { message: "simulated transient DB error", code: "XX000", hint: null, details: null, name: "e" },
+              }),
+            );
+          }
+          return origThen(resolve);
+        };
+        return chain;
+      },
+    } as unknown as SendEmailInput["db"];
+  }
+
+  it("a transient failure recording last_send_log_id retries ONLY the record step, not sendEmail", async () => {
+    const state = makeState();
+    const db = dbWithOneLastSendLogIdUpdateFailure(state);
+    const { fn: sendEmail, calls } = makeSendEmail(state, ["soft_bounced"]);
+    const memo = new Map<string, unknown>();
+    const runStep = async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+      if (memo.has(id)) return memo.get(id) as T;
+      const result = await fn();
+      memo.set(id, result);
+      return result;
+    };
+    const deps = { db, sendEmail, sleep: async () => {}, scheduleNext: async () => {}, runStep };
+    const payload = { email_log_id: "orig", tenant_id: "t-1", attempt: 1 };
+
+    // Function-level retry 1: the send step succeeds; the record step throws.
+    await expect(runSoftBounceRetryAttempt(deps, payload)).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+
+    // Function-level retry 2 (Inngest re-invokes the whole function): the send
+    // step is memoized (no second sendEmail call); the record step re-runs and
+    // this time succeeds.
+    const outcome = await runSoftBounceRetryAttempt(deps, payload);
+    expect(outcome).toBe("resent");
+    expect(calls).toHaveLength(1); // still one — the memoized send was never re-invoked
+    expect(state.content[0]!.last_send_log_id).toBe("rs-1");
   });
 });
 
