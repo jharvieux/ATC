@@ -384,6 +384,62 @@ jobs:
       # Grants drift on dev push is now reported by the consolidated
       # "Report snapshot/grants drift on dev" step above (it runs grants:check too).
 
+  integration-tests-critical:
+    name: Integration Tests (RLS + Payments)
+    runs-on: ubuntu-latest
+    # Depends on rls-snapshot-diff rather than running in parallel with it so
+    # this job reuses THAT job's already-applied migrations on the shared test
+    # DB instead of racing a second `supabase db push` against the same
+    # supabase_migrations.schema_migrations ledger (the shared-test-DB hazard
+    # in docs/runbooks/migrations.md). needs: cascades the doc-only-PR skip
+    # from detect-changes/rls-snapshot-diff automatically; the explicit `if:`
+    # below matches this file's convention (see cross-tenant-probe) rather
+    # than relying on that implicit cascade alone.
+    needs: [detect-changes, rls-snapshot-diff]
+    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    # #1797: the RLS + Stripe-webhook integration suites previously ran
+    # nightly only (nightly-full-test.yml), so a PR regression in tenant
+    # isolation or payment-webhook handling could merge green and only
+    # surface the next morning on dev. #1797 left the mechanism open
+    # ("Options to consider..."), so this is the minimal version: ONLY the
+    # RLS + payments suites the issue title names, not the full DB-backed set
+    # (proxy, chat-limit-concurrency, transfer-reversal,
+    # import-promote-atomicity) that also nightly-only-skip — bounding
+    # CI-minutes cost on every PR. See the PR body for the runtime estimate
+    # (unmeasured — this job needs live test-DB secrets this sandboxed
+    # worktree doesn't have) and for whether to add this job to dev's
+    # required-status-checks list.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      # Placeholders are fine: the stripe-webhook suite self-signs events with
+      # STRIPE_WEBHOOK_SECRET and the handler verifies with the same value
+      # (pure HMAC, no live Stripe API call) — same posture as nightly-full-test.yml.
+      STRIPE_SECRET_KEY: sk_test_ci-placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run RLS + Stripe-webhook integration suites
+        # Absent secrets (Dependabot PRs get none) => haveSupabase/haveAll
+        # in these suites evaluate false => describe.skip => 0 tests run,
+        # job still exits 0 — same no-secrets posture as rls-snapshot-diff.
+        run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
+
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
