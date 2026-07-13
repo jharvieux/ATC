@@ -18,6 +18,15 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-348 — 2026-07-13 — Frontend discipline: tests-first before god-component rewrites (#1812 stays open); verify-before-fix for perf flags (2 real of ~16); node-identity tests for key fixes (PR #1857).
+- D-347 — 2026-07-13 — Stripe webhook staleness+CAS core extracted (identical-core-only); CAS-lost outcome conflation preserved, #1854 tracks (PR #1853).
+- D-346 — 2026-07-13 — Nightly triage hardened (tested parser + public-issue redaction); RAG deploys automated (one prod approval gate); RLS/payments tests per-PR; operator preconditions: VERCEL_RAG_PROJECT_ID + required-check promotion (PR #1851).
+- D-345 — 2026-07-13 — Contract migration ...019 (pending_rag_sync dropped, retry_of index, 'promoting' removed); rls-exceptions entries for dropped tables RETAINED (append-only history lint) (PR #1850).
+- D-344 — 2026-07-13 — Quote-stamp writes best-effort non-fatal in both option routes (500-after-committed-write invites duplicate retries); #1821 README-fix over risky probe retrofit (PR #1852).
+- D-343 — 2026-07-13 — Ops-script secret redaction completed; db-reset psql via execFileSync+PGPASSWORD (first env-var fix was cosmetic — ps-proven); postgres-js .input conclusion recorded+pinned (PR #1849).
+- D-342 — 2026-07-12 — Inngest/email retry-safety residuals: send/record step-split (4th dedup layer), abuse-sweep audit-first reorder w/o UNIQUE constraint (#1844 tracks), help-docs per-phase steps (PR #1848).
+- D-341 — 2026-07-12 — Four unwired features wired (#1822 tier gate, #1818/#1820 layouts, #1823 wording); tier gates unified deny-on-null (sequences gate was default-allow — entitlement leak); request-tenant-tier service-role helper allowlisted (PR #1845).
+- D-340 — 2026-07-12 — Service-JWT iss/aud tolerant-then-strict rollout (constants in contracts, mismatch fail-closed, absence tolerated until #1843 flips); #1773 stays open (PR #1842).
 - D-339 — 2026-07-12 — Bounded-concurrency convention: per-app mapWithConcurrency (no shared pkg, no p-limit); limits 5–20 for unbounded loops; task-reminders-fire + re-encrypt left serial pending review (PR #1827).
 - D-338 — 2026-07-12 — Knip sweep rule: verify-before-delete — 10/14 files kept (dormant-by-design or unwired features → bugs #1818/#1820-#1823, not deletions) (PR #1824).
 - D-337 — 2026-07-12 — RAG-sync delivery → Inngest (rag-sync-deliver fn, retries:10, deterministic ids, reconcile backstop); pending_rag_sync queue+cron retired (drop tracked #1825); §8.3 amendment pending (PR #1819).
