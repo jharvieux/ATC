@@ -1,51 +1,69 @@
-// CI-only reset of the shared MAIN test DB to a clean slate, so the
+// CI-only reset of a shared test DB (main or RAG) to a clean slate, so the
 // `supabase db push --include-all` step that follows can rebuild every
-// migration from scratch — independent of whatever an abandoned branch left
-// in the shared supabase_migrations ledger.
+// migration from scratch — independent of whatever an abandoned branch or
+// failed push left in the shared supabase_migrations ledger.
 //
 // Why this exists (#1660 / docs/runbooks/migrations.md §4): the test DB's
 // ledger is shared across CI runs. A migration that was applied by a branch
-// that never merged orphans a ledger row, and every other branch's
-// `supabase db push` then fails with "repair the migration history table".
-// Resetting the schema + ledger before the push makes each run's apply
-// self-contained, which is the precondition for GitHub's merge queue to be
-// safe here (a speculative merge must apply cleanly regardless of queue order)
-// AND a strict improvement for today's non-queue flow (no more orphan-row
-// wedging). See #1896 groundwork.
+// that never merged (or a push that failed partway through) orphans a
+// ledger row, and every other branch's `supabase db push` then fails with
+// "repair the migration history table" (main) or "relation ... already
+// exists" (RAG — the exact wedge #1914 confirmed live on #1919/#1920: 0001
+// re-applies, 0002 fails because its table survived a prior failed push
+// while its ledger row didn't). Resetting the schema + ledger before the
+// push makes each run's apply self-contained, which is the precondition for
+// GitHub's merge queue to be safe here (a speculative merge must apply
+// cleanly regardless of queue order) AND a strict improvement for today's
+// non-queue flow (no more orphan-row wedging). See #1896 groundwork, #1914.
 //
-// Scope: the MAIN test DB only. Drops + recreates `public`
-// — the only schema the app's migrations own, matching scripts/db-reset.ts's
+// Usage: tsx scripts/ci-reset-test-db.ts [--target=main|rag]
+// --target only affects the log label below; defaults to "main" for the
+// original call site's backward compatibility. Drops + recreates `public`
+// — the only schema either app's migrations own, matching scripts/db-reset.ts's
 // proven local reset — and empties the migration ledger. Supabase-managed
 // schemas (auth, storage, graphql, realtime, vault) are owned by
 // supabase_admin: the postgres role can't drop them and the migrations don't
-// need them dropped. The RAG test DB is not reset here (deploy.yml never
-// pushes it; see the PR body's follow-up note).
+// need them dropped.
 //
 // Target var — the name IS the safety contract (#1896 audit): this script reads
 // RESET_TARGET_DB_URL, a DISTINCTLY-NAMED var that must only ever be bound to
-// the throwaway test DB. It deliberately does NOT read the generic
-// SUPABASE_DB_URL, because that same name is bound to the PRODUCTION database in
-// prod-drift-check.yml — reading it here would let a future workflow author who
-// copies a reset step next to a prod binding silently wipe prod. RESET_TARGET_DB_URL
-// is bound to SUPABASE_TEST_DB_URL at the step level in the only two call sites
-// (deploy.yml rls-snapshot-diff, nightly-full-test.yml) and is never bound to a
-// prod secret anywhere in the repo. The script hard-stops (below) if it is unset,
-// so it can never fall back to some other ambient DB URL.
+// a throwaway test DB (main or RAG). It deliberately does NOT read the generic
+// SUPABASE_DB_URL / SUPABASE_RAG_DB_URL, because SUPABASE_DB_URL is bound to the
+// PRODUCTION database in prod-drift-check.yml — reading it here would let a
+// future workflow author who copies a reset step next to a prod binding
+// silently wipe prod. RESET_TARGET_DB_URL is bound to SUPABASE_TEST_DB_URL /
+// SUPABASE_RAG_TEST_DB_URL at the step level by each call site and is never
+// bound to a prod secret anywhere in the repo. The script hard-stops (below)
+// if it is unset, so it can never fall back to some other ambient DB URL.
 //
 // Serialization: this MUST run under the `shared-test-db` GitHub Actions
 // concurrency group so no other job reads or writes the same DB while the
 // schema is mid-rebuild (a reader would otherwise observe an empty/partial
 // schema). deploy.yml + nightly-full-test.yml set that group on every job
-// that touches this DB.
+// that touches either test DB.
 //
 // Safety: refuses to run unless CONFIRM_TEST_DB_RESET=true is set by the
 // caller, so merely having RESET_TARGET_DB_URL in the environment can never wipe
-// a DB. A secret-less run (Dependabot) has no URL and skips (exit 0), the same
-// posture as deploy.yml's apply step.
+// a DB. A secret-less run (Dependabot, or RAG's SUPABASE_RAG_TEST_DB_URL when
+// unset) has no URL and skips (exit 0), the same posture as the apply step
+// that follows it.
 
 import postgres from "postgres";
 import { redactSecrets } from "./lib/redact-secrets";
 
+type Target = "main" | "rag";
+
+function parseTarget(argv: string[]): Target {
+  const arg = argv.find((a) => a.startsWith("--target="));
+  if (!arg) return "main";
+  const value = arg.slice("--target=".length);
+  if (value !== "main" && value !== "rag") {
+    throw new Error(`--target must be 'main' or 'rag' (got '${value}')`);
+  }
+  return value;
+}
+
+const target = parseTarget(process.argv.slice(2));
 const dbUrl = process.env.RESET_TARGET_DB_URL;
 
 if (process.env.CONFIRM_TEST_DB_RESET !== "true") {
@@ -58,7 +76,7 @@ if (process.env.CONFIRM_TEST_DB_RESET !== "true") {
 
 if (!dbUrl) {
   console.log(
-    "ci-reset-test-db: RESET_TARGET_DB_URL not set — skipping reset (Dependabot / secret-less run).",
+    `ci-reset-test-db: RESET_TARGET_DB_URL not set — skipping ${target} reset (Dependabot / secret-less run).`,
   );
   process.exit(0);
 }
@@ -110,7 +128,7 @@ async function main(): Promise<void> {
     `);
 
     console.log(
-      "ci-reset-test-db: main test DB reset — public schema recreated, migration ledger emptied. " +
+      `ci-reset-test-db: ${target} test DB reset — public schema recreated, migration ledger emptied. ` +
         "'supabase db push --include-all' will now rebuild from scratch.",
     );
   } finally {

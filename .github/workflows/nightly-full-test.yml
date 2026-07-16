@@ -150,6 +150,24 @@ jobs:
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Reset RAG test DB before apply (#1914)
+        # Symmetric reset for the RAG test DB, same rationale as the main-DB
+        # reset above (#1660 / #1896) — but this one is the confirmed live
+        # fix for #1919/#1920: a failed RAG push (0001 applies, 0002 fails)
+        # left the RAG test DB's schema and ledger diverged, wedging every
+        # nightly since with "relation ... already exists" (SQLSTATE 42P07)
+        # on the push below. Resetting first makes each run's push
+        # self-contained, same as the main-DB reset already does. Serialized
+        # against deploy.yml via the shared-test-db group above. Skips
+        # gracefully (exit 0) when SUPABASE_RAG_TEST_DB_URL is unset — same
+        # posture as the apply step below.
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+          # Distinctly-named target var (#1896 audit) — see main-DB reset
+          # step above for why this is never the generic SUPABASE_RAG_DB_URL.
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+        run: pnpm db:reset:ci -- --target=rag
+
       - name: Apply Supabase migrations to RAG test DB
         id: rag-migrate
         # Mirrors the "Apply Supabase migrations to test DB" step above, but for
