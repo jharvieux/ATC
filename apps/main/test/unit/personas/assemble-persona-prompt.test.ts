@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assemblePersonaPrompt,
+  KNOWLEDGE_FRESHNESS_BLOCK,
   PERSONA_KIND_PLATFORM_HELP,
   PERSONA_KIND_TRAVEL,
   type PersonaRecord,
@@ -75,6 +76,10 @@ describe("travel personas — every structured field feeds the output (D-091 no-
       expect(persona.disclosure_pattern).toBeTruthy();
       expect(prompt).toContain("HOW YOU INTRODUCE YOURSELF");
       expect(prompt).toContain((persona.disclosure_pattern as string).trim());
+    });
+
+    it("includes the code-side knowledge-freshness block (baked-in facts defer to live data)", () => {
+      expect(assemblePersonaPrompt(persona)).toContain(KNOWLEDGE_FRESHNESS_BLOCK);
     });
 
     it("ends with the tone-calibration placeholder for downstream substitution", () => {
@@ -144,6 +149,7 @@ describe("help_ai (platform_help) is self-contained", () => {
     expect(prompt).not.toContain("YOUR AREAS OF FOCUS:");
     expect(prompt).not.toContain("YOUR BOUNDARIES (these always apply):");
     expect(prompt).not.toContain("HOW YOU INTRODUCE YOURSELF");
+    expect(prompt).not.toContain(KNOWLEDGE_FRESHNESS_BLOCK);
   });
 
   it("retains the inline {{TONE_CALIBRATION}} marker for downstream substitution", () => {
