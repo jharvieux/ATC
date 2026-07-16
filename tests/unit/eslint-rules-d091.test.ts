@@ -63,17 +63,16 @@ describe("no-credentials-in-url — regex behavior", () => {
 });
 
 describe("no-orphan-todo — pattern coverage (re-derived)", () => {
-  // Mirrors the regexes in the rule. Valid owners:
+  // Mirrors the regexes in the rule (see no-orphan-todo.js for the authoritative
+  // comment). Valid owners:
   // 1. #\d+ — issue reference (PREFERRED)
   // 2. @\w[\w-]* — GitHub handle
-  // 3. Whitelisted bare owners:
-  //    - legal-attorney, legal-counsel, operator (roles)
-  //    - usps-validator, rag-service-count, pre-cruise-emails, rbac* (features)
-  //    - bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]*, §\d+.* (spec references)
-  //    - *-haiku, help-*, prompt-\d+ (AI/prompt features)
-  //    - jharvieux (person)
+  // 3. Whitelisted bare owners — enumerated literals for actual domain concepts,
+  //    plus two bounded structural forms (prompt-\d+, [a-z]+-haiku).
   //
-  // Rejected: anything not matching above, including placeholders (owner, name, notify-*, etc.)
+  // Rejected: anything not on the enumerated list, including placeholders
+  // (owner, name, notify-*, etc.) and open-ended bp*/BP*/§*/haiku-*/help-*
+  // prefixes with invented suffixes.
   const WHITELISTED_BARE_OWNERS = [
     "legal-attorney",
     "legal-counsel",
@@ -81,15 +80,18 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
     "usps-validator",
     "rag-service-count",
     "pre-cruise-emails",
-    "rbac(?:[a-z0-9-]*)?",
-    "bp\\d+[a-z0-9]*[-/\\w]*",
-    "BP\\d+[^)]*",
-    "§\\d+[^)]*",
-    "haiku-[a-z0-9-]*",
+    "rbac-tenant-admin",
+    "bp27-abuse-signals",
+    "BP19/§18",
+    "§22\\.4-haiku-redaction",
+    "§27\\.12-cost-display",
+    "§24-tone-content",
+    "§26",
+    "haiku-pii-redaction",
+    "help-ai-confidence-haiku",
+    "help-screenshot-pii-haiku",
     "[a-z]+-haiku",
-    "help-[a-z0-9-]*",
     "prompt-\\d+",
-    "jharvieux",
   ].join("|");
   const LINE_MARKER_RE = new RegExp(
     "^(TODO|FIXME|XXX|HACK)\\b(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
@@ -107,8 +109,8 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
   it("does not flag TODO(@handle) GitHub handle", () => {
     expect(LINE_MARKER_RE.test("TODO(@jharvieux): derive")).toBe(false);
   });
-  it("does not flag TODO(bp23-tier-lookup) whitelisted bare owner", () => {
-    expect(LINE_MARKER_RE.test("TODO(bp23-tier-lookup): derive")).toBe(false);
+  it("does not flag TODO(bp27-abuse-signals) whitelisted bare owner", () => {
+    expect(LINE_MARKER_RE.test("TODO(bp27-abuse-signals): derive")).toBe(false);
   });
   it("does not flag TODO(legal-attorney) whitelisted bare owner", () => {
     expect(LINE_MARKER_RE.test("TODO(legal-attorney): review required")).toBe(false);
@@ -130,5 +132,28 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
   });
   it("does not flag (TODO(operator)) whitelisted bare owner", () => {
     expect(PAREN_MARKER_RE.test("(TODO(operator): manual step)")).toBe(false);
+  });
+
+  // D-091 audit follow-up (#1957/#1978): the whitelist used to include five
+  // open-ended prefix patterns (bp\d+..., BP\d+[^)]*, §\d+[^)]*, haiku-*, help-*)
+  // that matched a literal prefix then swallowed ANY trailing text — e.g.
+  // TODO(haiku-i-will-fix-this-later) used to pass. These now must be flagged.
+  it("flags TODO(haiku-not-a-real-feature) — bogus haiku-* suffix", () => {
+    expect(LINE_MARKER_RE.test("TODO(haiku-not-a-real-feature): x")).toBe(true);
+  });
+  it("flags TODO(help-literally-anything) — bogus help-* suffix", () => {
+    expect(LINE_MARKER_RE.test("TODO(help-literally-anything): x")).toBe(true);
+  });
+  it("flags TODO(bp1-bogus-free-text) — bogus bp\\d+ suffix", () => {
+    expect(LINE_MARKER_RE.test("TODO(bp1-bogus-free-text): x")).toBe(true);
+  });
+  it("flags TODO(BP1 bogus text) — bogus BP\\d+ free text", () => {
+    expect(LINE_MARKER_RE.test("TODO(BP1 bogus text): x")).toBe(true);
+  });
+  it("flags TODO(§1 whatever nonsense) — bogus §\\d+ free text", () => {
+    expect(LINE_MARKER_RE.test("TODO(§1 whatever nonsense): x")).toBe(true);
+  });
+  it("flags TODO(rbacnonsense) — bogus rbac* suffix (rbac(?:[a-z0-9-]*)? redundancy)", () => {
+    expect(LINE_MARKER_RE.test("TODO(rbacnonsense): x")).toBe(true);
   });
 });

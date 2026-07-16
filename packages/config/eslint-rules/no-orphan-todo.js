@@ -6,22 +6,15 @@
 // Required format (one of):
 //   TODO(#123): description       — issue link (PREFERRED: durable, linkable, verifiable)
 //   TODO(@octocat): description   — github handle (specific person)
-//   TODO(bp27-abuse-signals|operator|legal-attorney|...): description — whitelisted domain owners
+//   TODO(<whitelisted-owner>): description — enumerated domain owner (see below)
 //   FIXME(#456) ...                — colon optional
-//
-// Whitelisted bare owners (meaningful in the codebase context):
-//   - legal-attorney, legal-counsel — legal/attorney review required
-//   - operator — operator/manual action required
-//   - usps-validator, rag-service-count, pre-cruise-emails — feature/subsystem refs
-//   - bp* (e.g., bp23-tier-lookup, bp27-abuse-signals) — spec/proposal references
-//
-// REJECTED patterns (accumulate forever with no durable reference):
-//   - TODO(notifications-dedup), TODO(owner), TODO(name) — bogus/placeholder names
-//   - TODO(some-random-word) — unvalidated bare owner (doesn't match whitelist)
 //
 // Why: orphan TODOs accumulate because no one is named or linked durably. Issue refs
 // (#N) are strongest (durable, linkable, verifiable). @handles are specific (named
-// person). Bare owners are restricted to a whitelist of known domain concepts.
+// person). Bare owners are restricted to an ENUMERATED whitelist of the actual
+// identifiers in use in this codebase — no open-ended prefix patterns (bp*, BP*,
+// §*, haiku-*, help-*), since those accept arbitrary trailing text and defeat the
+// whole point (e.g. TODO(haiku-i-will-fix-this-later) used to pass).
 
 const MARKERS = ["TODO", "FIXME", "XXX", "HACK"];
 const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
@@ -29,37 +22,41 @@ const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
 // Valid owner patterns (in priority order):
 //   1. #\d+ : issue reference (PREFERRED: durable, linkable)
 //   2. @\w[\w-]* : GitHub handle (specific person)
-//   3. Whitelisted bare owners (documented domain concepts only):
-//      - legal-attorney, legal-counsel: legal/attorney review
-//      - operator: operator/manual action
-//      - Spec references: bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]*,  §\d+.*
-//      - Subsystem names: usps-validator, rag-service-count, pre-cruise-emails, rbac*, haiku-*, help-*, prompt-\d+
-//      - Person: jharvieux
+//   3. Whitelisted bare owners — enumerated literals for actual domain concepts
+//      found in the codebase, plus two bounded structural forms (prompt-\d+ and
+//      [a-z]+-haiku — single-segment prefixes only, can't swallow free text).
 //
-// Rejected patterns (accumulate forever with no durable reference):
-//   - Generic placeholders: owner, name, verify, notifications, part-6, etc.
-//   - Undefined bare words or hyphenated names not on whitelist
-
+// Rejected: anything not on the list below, including generic placeholders
+// (owner, name, verify, notifications, part-6) and bogus/invented owners.
+//
 // Two patterns count as a marker:
 //   1. Marker at start of a comment line (the classic `// TODO: ...` slop)
 //   2. Marker inside a paren-tag like `(TODO: wire X)`
 // Both must have a valid owner: either #<digits>, @<handle>, or a whitelisted bare owner.
 const WHITELISTED_BARE_OWNERS = [
+  // Roles
   "legal-attorney",
   "legal-counsel",
   "operator",
+  // Subsystem/feature refs
   "usps-validator",
   "rag-service-count",
   "pre-cruise-emails",
-  "rbac(?:[a-z0-9-]*)?", // matches rbac, rbac-tenant-admin, etc.
-  "bp\\d+[a-z0-9]*[-/\\w]*", // spec refs: bp23, bp23-tier-lookup, etc.
-  "BP\\d+[^)]*", // spec refs: BP19/§18, etc.
-  "§\\d+[^)]*", // spec refs: §27.12-cost-display, etc.
-  "haiku-[a-z0-9-]*", // haiku model features: haiku-pii-redaction, etc.
-  "[a-z]+-haiku", // haiku features: help-ai-confidence-haiku, etc.
-  "help-[a-z0-9-]*", // help subsystem features
-  "prompt-\\d+", // numbered prompt configs: prompt-12, prompt-13, etc.
-  "jharvieux",
+  "rbac-tenant-admin",
+  // Spec references (§N, BPN) — enumerated literals, not open-ended
+  "bp27-abuse-signals",
+  "BP19/§18",
+  "§22\\.4-haiku-redaction",
+  "§27\\.12-cost-display",
+  "§24-tone-content",
+  "§26",
+  // Haiku model features — enumerated literals, not open-ended
+  "haiku-pii-redaction",
+  "help-ai-confidence-haiku",
+  "help-screenshot-pii-haiku",
+  "[a-z]+-haiku", // bounded structural form: tone-haiku, etc.
+  // Numbered prompt configs — bounded structural form
+  "prompt-\\d+",
 ].join("|");
 
 const LINE_MARKER_RE = new RegExp(
