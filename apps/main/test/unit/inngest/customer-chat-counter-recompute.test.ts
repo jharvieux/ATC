@@ -22,6 +22,7 @@ interface Counter {
 
 let counters: Counter[];
 let messageCountFor: Record<string, number>; // key: `${user_id}:${tenant_id}`
+let messageCountError: Record<string, boolean>; // key: `${user_id}:${tenant_id}` — simulate a transient count failure
 
 vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: async (p: Promise<{ data: unknown; error: unknown }>) => {
@@ -76,6 +77,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const delayMs = filters.user_id === "u-1" ? 10 : 0;
           return Promise.resolve().then(async () => {
             if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+            if (messageCountError[key]) {
+              resolve({ data: null, count: null, error: { message: "count failed" } });
+              return;
+            }
             // count: "exact", head: true — PostgREST returns the count, no rows.
             resolve({ data: null, count, error: null });
           });
@@ -96,6 +101,7 @@ async function runCron(): Promise<unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  messageCountError = {};
 });
 
 describe("customerChatCounterRecompute — concurrent per-row attribution (#1789)", () => {
@@ -125,5 +131,26 @@ describe("customerChatCounterRecompute — concurrent per-row attribution (#1789
     await runCron();
 
     expect(counters[0]!.current_count).toBe(1547);
+  });
+
+  it("skips the write for a row whose count query errors, leaving its counter untouched, while other rows still process", async () => {
+    counters = [
+      { user_id: "u-err", tenant_id: "t-1", current_count: 42 },
+      { user_id: "u-ok", tenant_id: "t-1", current_count: 0 },
+    ];
+    messageCountFor = { "u-ok:t-1": 5 };
+    messageCountError = { "u-err:t-1": true };
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = (await runCron()) as { processed: number };
+    expect(result).toEqual({ processed: 2 });
+
+    const byUser = Object.fromEntries(counters.map((c) => [c.user_id, c.current_count]));
+    // u-err's counter must stay at its prior value (42), not fall through to
+    // `?? 0` and zero out a heavy user's cap for the rest of the window.
+    expect(byUser).toEqual({ "u-err": 42, "u-ok": 5 });
+
+    consoleErrorSpy.mockRestore();
   });
 });

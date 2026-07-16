@@ -12,8 +12,10 @@ vi.mock("@/inngest/client", () => ({
   },
 }));
 
+let currentFeedXml = "";
+
 vi.mock("@/lib/net/ssrf-guard", () => ({
-  fetchGuarded: vi.fn(async () => ({ ok: true, text: async () => FEED_XML })),
+  fetchGuarded: vi.fn(async () => ({ ok: true, text: async () => currentFeedXml })),
 }));
 
 vi.mock("@/lib/ai/call-wrapper", () => ({
@@ -84,6 +86,90 @@ const FEED_XML = `<?xml version="1.0"?>
   </item>
 </channel></rss>`;
 
+// Same pair, but the newer item is listed SECOND — the dedupe must not
+// silently depend on scan order to pick the newest.
+const NEWER_SECOND_XML = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>Older cruise itinerary change</title>
+    <link>https://news.test/article-2</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Tue, 01 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>Newer cruise itinerary change</title>
+    <link>https://news.test/article-2</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Wed, 02 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+</channel></rss>`;
+
+// Identical pubDate on both — the tie-break must be deterministic (first-seen
+// wins), not "whichever the Map happened to keep."
+const IDENTICAL_PUBDATE_XML = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>First-seen cruise itinerary change</title>
+    <link>https://news.test/article-3</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Wed, 02 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>Second cruise itinerary change</title>
+    <link>https://news.test/article-3</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Wed, 02 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+</channel></rss>`;
+
+// Valid date listed first, missing pubDate second — the valid-date item must win.
+const VALID_THEN_MISSING_XML = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>Valid date cruise itinerary change</title>
+    <link>https://news.test/article-4</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Wed, 02 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>No date cruise itinerary change</title>
+    <link>https://news.test/article-4</link>
+    <description>cruise ship itinerary update</description>
+  </item>
+</channel></rss>`;
+
+// Missing pubDate listed first, valid date second — the valid-date item must
+// win regardless of scan order.
+const MISSING_THEN_VALID_XML = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>No date cruise itinerary change</title>
+    <link>https://news.test/article-5</link>
+    <description>cruise ship itinerary update</description>
+  </item>
+  <item>
+    <title>Valid date cruise itinerary change</title>
+    <link>https://news.test/article-5</link>
+    <description>cruise ship itinerary update</description>
+    <pubDate>Wed, 02 Jul 2026 10:00:00 GMT</pubDate>
+  </item>
+</channel></rss>`;
+
+// Neither item has a parseable pubDate — falls back to first-seen.
+const BOTH_MISSING_XML = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>First-seen no-date item</title>
+    <link>https://news.test/article-6</link>
+    <description>cruise ship itinerary update</description>
+  </item>
+  <item>
+    <title>Second no-date item</title>
+    <link>https://news.test/article-6</link>
+    <description>cruise ship itinerary update</description>
+  </item>
+</channel></rss>`;
+
 async function runCron(): Promise<unknown> {
   vi.resetModules();
   const mod = (await import("@/inngest/travel-news-refresh")) as unknown as {
@@ -95,6 +181,7 @@ async function runCron(): Promise<unknown> {
 beforeEach(() => {
   vi.clearAllMocks();
   upsertCalls = [];
+  currentFeedXml = FEED_XML;
 });
 
 describe("travelNewsRefresh — deterministic guid dedupe (#1955)", () => {
@@ -107,5 +194,56 @@ describe("travelNewsRefresh — deterministic guid dedupe (#1955)", () => {
     expect(forThisGuid[0]!.payload.published_at).toBe(
       new Date("Wed, 02 Jul 2026 10:00:00 GMT").toISOString(),
     );
+  });
+
+  it("picks the newer item when it is listed second", async () => {
+    currentFeedXml = NEWER_SECOND_XML;
+    await runCron();
+
+    const forThisGuid = upsertCalls.filter((c) => c.payload.guid === "https://news.test/article-2");
+    expect(forThisGuid).toHaveLength(1);
+    expect(forThisGuid[0]!.payload.title).toBe("Newer cruise itinerary change");
+    expect(forThisGuid[0]!.payload.published_at).toBe(
+      new Date("Wed, 02 Jul 2026 10:00:00 GMT").toISOString(),
+    );
+  });
+
+  it("keeps the first-seen item when pubDates are identical", async () => {
+    currentFeedXml = IDENTICAL_PUBDATE_XML;
+    await runCron();
+
+    const forThisGuid = upsertCalls.filter((c) => c.payload.guid === "https://news.test/article-3");
+    expect(forThisGuid).toHaveLength(1);
+    expect(forThisGuid[0]!.payload.title).toBe("First-seen cruise itinerary change");
+  });
+
+  it("prefers the valid-date item over a missing-pubDate item, valid listed first", async () => {
+    currentFeedXml = VALID_THEN_MISSING_XML;
+    await runCron();
+
+    const forThisGuid = upsertCalls.filter((c) => c.payload.guid === "https://news.test/article-4");
+    expect(forThisGuid).toHaveLength(1);
+    expect(forThisGuid[0]!.payload.title).toBe("Valid date cruise itinerary change");
+    expect(forThisGuid[0]!.payload.published_at).not.toBeNull();
+  });
+
+  it("prefers the valid-date item over a missing-pubDate item, valid listed second", async () => {
+    currentFeedXml = MISSING_THEN_VALID_XML;
+    await runCron();
+
+    const forThisGuid = upsertCalls.filter((c) => c.payload.guid === "https://news.test/article-5");
+    expect(forThisGuid).toHaveLength(1);
+    expect(forThisGuid[0]!.payload.title).toBe("Valid date cruise itinerary change");
+    expect(forThisGuid[0]!.payload.published_at).not.toBeNull();
+  });
+
+  it("falls back to first-seen when neither item has a parseable pubDate", async () => {
+    currentFeedXml = BOTH_MISSING_XML;
+    await runCron();
+
+    const forThisGuid = upsertCalls.filter((c) => c.payload.guid === "https://news.test/article-6");
+    expect(forThisGuid).toHaveLength(1);
+    expect(forThisGuid[0]!.payload.title).toBe("First-seen no-date item");
+    expect(forThisGuid[0]!.payload.published_at).toBeNull();
   });
 });

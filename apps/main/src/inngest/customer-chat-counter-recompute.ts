@@ -29,13 +29,23 @@ export const customerChatCounterRecompute = inngest.createFunction(
 
     const targets = (rows ?? []) as Array<{ user_id: string; tenant_id: string }>;
     await mapWithConcurrency(targets, RECOMPUTE_CONCURRENCY, async (row) => {
-      const { count: msgCount } = await svc
+      const { count: msgCount, error } = await svc
         .from("messages")
         .select("id, conversations!inner(user_id, tenant_id)", { count: "exact", head: true })
         .eq("role", "user")
         .gte("created_at", since)
         .eq("conversations.user_id", row.user_id)
         .eq("conversations.tenant_id", row.tenant_id);
+      if (error) {
+        // Fail-closed: a bad count must never overwrite a good counter with 0
+        // and let a heavy user bypass their cap. Skip the write; next night's
+        // recompute corrects it.
+        console.error("[customer-chat-counter-recompute] count failed, skipping row", {
+          user_id: row.user_id,
+          tenant_id: row.tenant_id,
+        });
+        return;
+      }
       const count = msgCount ?? 0;
       await safeAwait(svc
         .from("customer_chat_counters")

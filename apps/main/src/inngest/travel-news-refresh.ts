@@ -155,20 +155,12 @@ async function refreshFeed(
   const items = await fetchFeedItems(feed.url);
   const filtered = items.filter(passesKeywordFilter).slice(0, MAX_ITEMS_PER_FEED);
 
-  // Score in batches of 20.
-  const scored: ScoreResult[] = [];
-  for (let i = 0; i < filtered.length; i += 20) {
-    const batch = filtered.slice(i, i + 20);
-    const results = await llmScoreItems(batch);
-    scored.push(...results);
-  }
-
-  const scoreMap = new Map(scored.map((r) => [r.guid, r.score]));
-
-  // #1955 — dedupe by guid before the concurrent upsert fan-out: without this,
-  // two same-link/title items fall back to the same guid and the parallel
-  // upserts (onConflict: feed_id,guid) race — whichever lands last wins
-  // nondeterministically. Newest pubDate wins the tie-break, deterministically.
+  // #1955 — dedupe by guid before scoring/upserting: without this, two
+  // same-link/title items fall back to the same guid, the parallel upserts
+  // (onConflict: feed_id,guid) race nondeterministically, and scoring
+  // duplicate content both wastes LLM tokens and lets one duplicate's score
+  // silently overwrite the other's in scoreMap. Newest pubDate wins the
+  // tie-break, deterministically.
   const byGuid = new Map<string, RssItem>();
   for (const item of filtered) {
     const existing = byGuid.get(item.guid);
@@ -183,6 +175,16 @@ async function refreshFeed(
     }
   }
   const deduped = Array.from(byGuid.values());
+
+  // Score in batches of 20.
+  const scored: ScoreResult[] = [];
+  for (let i = 0; i < deduped.length; i += 20) {
+    const batch = deduped.slice(i, i + 20);
+    const results = await llmScoreItems(batch);
+    scored.push(...results);
+  }
+
+  const scoreMap = new Map(scored.map((r) => [r.guid, r.score]));
 
   // Upsert all scored articles (including sub-threshold ones — stored but not shown).
   await mapWithConcurrency(deduped, UPSERT_CONCURRENCY, (item) => {
