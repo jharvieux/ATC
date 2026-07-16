@@ -46,6 +46,16 @@ describe("findSerialAwaitsInLoops", () => {
     expect(findSerialAwaitsInLoops(F, src)).toHaveLength(1);
   });
 
+  it("suppresses a loop marked serial-await-ok (on the line above)", () => {
+    const src = `// serial-await-ok: time-budget drain, must stay serial (#1948)\nfor (const x of items) {\n  await doWork(x);\n}`;
+    expect(findSerialAwaitsInLoops(F, src)).toEqual([]);
+  });
+
+  it("suppresses a loop marked serial-await-ok (inline on the header)", () => {
+    const src = `for (const x of items) { // serial-await-ok: ordered writes\n  await doWork(x);\n}`;
+    expect(findSerialAwaitsInLoops(F, src)).toEqual([]);
+  });
+
   it("ignores test files and non-ts", () => {
     expect(findSerialAwaitsInLoops("apps/main/src/x.test.ts", `for (const x of i) {\n await y(); \n}`)).toEqual([]);
     expect(findSerialAwaitsInLoops("apps/main/src/x.css", `for (const x of i) {\n await y(); \n}`)).toEqual([]);

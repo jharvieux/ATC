@@ -21,6 +21,11 @@
 //     fanned out (or a different concern).
 // One finding per loop header (deduped), reported as file:loopLine.
 //
+// Suppression: a loop reviewed and deliberately kept serial carries a
+// `serial-await-ok: <reason>` comment on the loop's header line or the line
+// directly above it. Suppressed loops are excluded so a future sweep does not
+// re-litigate a decision already made (e.g. the #1952 sites).
+//
 // Usage: tsx scripts/check-serial-await-in-loop.ts [srcDir ...]   # default: the two dirs above
 
 import fs from "node:fs";
@@ -84,6 +89,21 @@ export function findSerialAwaitsInLoops(relPath: string, contents: string): Seri
   if (!/\.(ts|tsx)$/.test(relPath)) return [];
   if (/\.(test|spec)\.|__tests__|\/fixtures\//.test(relPath)) return [];
   if (!/await/.test(contents)) return [];
+
+  const srcLines = contents.split("\n");
+  // Suppressed if `serial-await-ok` appears on the loop's header line or anywhere
+  // in the contiguous comment block directly above it (so a multi-line rationale
+  // still counts). Scanning stops at the first non-comment, non-blank line.
+  const suppressed = (headerLine: number): boolean => {
+    if (/serial-await-ok/.test(srcLines[headerLine - 1] ?? "")) return true;
+    for (let ln = headerLine - 2; ln >= 0; ln--) {
+      const t = (srcLines[ln] ?? "").trim();
+      if (t === "") continue;
+      if (!t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*")) break;
+      if (/serial-await-ok/.test(t)) return true;
+    }
+    return false;
+  };
 
   const findings: SerialAwaitFinding[] = [];
   const reportedLoopLines = new Set<number>();
@@ -185,7 +205,9 @@ export function findSerialAwaitsInLoops(relPath: string, contents: string): Seri
           if (sc.kind === "loop") {
             if (!reportedLoopLines.has(sc.headerLine)) {
               reportedLoopLines.add(sc.headerLine);
-              findings.push({ file: relPath, loopLine: sc.headerLine, loopKind: sc.loopKind });
+              if (!suppressed(sc.headerLine)) {
+                findings.push({ file: relPath, loopLine: sc.headerLine, loopKind: sc.loopKind });
+              }
             }
             break;
           }
