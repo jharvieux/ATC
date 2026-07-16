@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-361 — 2026-07-16 — #1932 middleware hybrid local JWT verify (PR #1987, in flight at session end)
+
+**Decision.** proxy.ts §1b verifies sessions locally (verifyIdentity → getClaims, ES256 vs cached JWKS) and calls network getUser() only on a local miss. Refresh timing unchanged — no-arg getClaims reads the session via getSession(), which auto-refreshes within the same 90s EXPIRY_MARGIN_MS getUser() used (verified against installed auth-js 2.108.1 source, not memory). Kill switch: `AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED=true` (repo flag idiom). Staged rollout = beta on dev-merge, prod at next release cut.
+
+**The audit-found seam (why the heal classifier widened).** A dead refresh token failing INSIDE getClaims runs auth-js `_removeSession` before the handoff getUser() executes, so the handoff reports `AuthSessionMissingError`, not `AuthApiError` — the #1361 heal redirect would have silently died for its primary scenario. Fix: heal also fires on session-missing-with-auth-cookie-present (locally deterministic — a transient blip surfaces as AuthRetryableFetchError instead). This also heals the previously-unhealed unparseable-cookie wedge.
+
+**Accepted tradeoffs.** (a) Server-side session revocation now reaches the middleware only at access-token expiry (≤1h) — authoritative gates (assertPermission/RLS/assertPlatformAdmin) still verify per-request; (b) during an auth brownout a request may issue two refresh POSTs.
+
+**Rejected.** Feeding getClaims's own errors into isInvalidSessionError (a JWKS-endpoint 4xx is an AuthApiError and would clear cookies on infrastructure failure); forwarding a middleware-verified header identity (the #1585 rationale stands).
+
+**State at session end.** PR #1987 open with the audit-fix commit 14182a5c pushed; blocked behind PR #1988 (the #1982 flake fix — audits clean, markers unposted due to a GitHub Files-API outage). Resume: re-run both auditors on #1988 when `gh api repos/{owner}/{repo}/pulls/1988/files --paginate` returns JSON → merge #1988 → rebase #1987 → `pnpm verify` (flake-clean post-rebase) → fresh audit pair (Opus d091 minimum — session-refresh boundary) → merge.
+
+---
+
 ## D-360 — 2026-07-16 — Sweep #5 (portable /issue-sweep): 11 PRs merged, 29 issues closed / 7 filed (net −22)
 
 **Decision.** Ran the portable issue-sweep across all 61 triageable open issues (13 Haiku triage agents → 12 batches). Operator included ALL supervised include-asks; decision rulings recorded on-issue: #1923 residual risk accepted+closed, #1948/#1949 leave-serial+closed, #1247/#1805/#1921/#1931/#1950 parked, #1932 approved as a dedicated post-sweep Fable task, #1968 canary fix approved, prod migration apply DECLINED (prod-drift-check stays red by design; #1623 tracks).
