@@ -24,7 +24,11 @@ The comments are **summaries** (scope, finding one-liners, standalone `Status` l
 
 ## PR bodies on multi-issue PRs: one `Closes #<n>` line per completed issue
 
-A single `Closes` on a multi-issue PR leaves the other issues open forever. 2026-07-12 lesson: PRs #1736/#1765 resolved six issues between them but auto-close-linked only one — the six stayed open and a later sweep burned a full batch re-verifying already-done work. Rules: every COMPLETED issue gets its own `Closes #<n>` line; a PARTIALLY-completed issue gets a remainder comment on the issue (scope done / scope left / acceptance criteria), never a `Closes` line. At merge, confirm the links actually closed the issues; close stragglers with a comment naming the PR.
+A single `Closes` on a multi-issue PR leaves the other issues open forever. 2026-07-12 lesson: PRs #1736/#1765 resolved six issues between them but auto-close-linked only one — the six stayed open and a later sweep burned a full batch re-verifying already-done work. Rules:
+
+- Every COMPLETED issue gets its own `Closes #<n>` line. **Completed means every acceptance criterion in the issue is met** (or, if it lists none, the defect as described is fully gone — the PR body says what was verified). "Mostly done" is not completed.
+- A PARTIALLY-completed issue is **closed and split** (D-358, reverses the 2026-07-12 remainder-comment rule): before the PR merges, file a remainder issue (scope shipped + the PR, scope left with file paths, acceptance criteria; inherit labels/priority), comment the cross-link on the original, then `Closes #<original>` from the PR body with a `remainder: #<new>` note. Never leave a half-done issue open under its stale description — an open issue must always describe work that actually needs doing, or the next reader re-diagnoses finished work.
+- At merge, confirm the links actually closed the issues; close stragglers with a comment naming the PR, and verify each remainder issue is open and cross-linked.
 
 ## Closing keywords: the parser is negation-blind (applies to EVERY PR)
 
