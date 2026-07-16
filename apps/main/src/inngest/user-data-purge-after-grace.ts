@@ -124,7 +124,7 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
     // mapWithConcurrency's Promise.all would abandon up to NOTIFY_CONCURRENCY-1
     // in-flight inserts mid-run, and `notifications` has no unique constraint
     // for this shape — so Inngest's retry duplicates whatever landed.
-    // TODO(notifications-dedup): a UNIQUE(tenant_id,user_id,category,title)
+    // TODO(#1954): a UNIQUE(tenant_id,user_id,category,title)
     // index + 23505 swallow is the durable fix (needs a migration);
     // collect-and-throw-once bounds the damage until then.
     const notifyFailures: Array<{ tenant_id: string; user_id: string; error: string }> = [];
