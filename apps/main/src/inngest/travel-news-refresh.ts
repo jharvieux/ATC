@@ -155,10 +155,31 @@ async function refreshFeed(
   const items = await fetchFeedItems(feed.url);
   const filtered = items.filter(passesKeywordFilter).slice(0, MAX_ITEMS_PER_FEED);
 
+  // #1955 — dedupe by guid before scoring/upserting: without this, two
+  // same-link/title items fall back to the same guid, the parallel upserts
+  // (onConflict: feed_id,guid) race nondeterministically, and scoring
+  // duplicate content both wastes LLM tokens and lets one duplicate's score
+  // silently overwrite the other's in scoreMap. Newest pubDate wins the
+  // tie-break, deterministically.
+  const byGuid = new Map<string, RssItem>();
+  for (const item of filtered) {
+    const existing = byGuid.get(item.guid);
+    if (!existing) {
+      byGuid.set(item.guid, item);
+      continue;
+    }
+    const existingTime = existing.pubDate ? Date.parse(existing.pubDate) : NaN;
+    const itemTime = item.pubDate ? Date.parse(item.pubDate) : NaN;
+    if (!Number.isNaN(itemTime) && (Number.isNaN(existingTime) || itemTime > existingTime)) {
+      byGuid.set(item.guid, item);
+    }
+  }
+  const deduped = Array.from(byGuid.values());
+
   // Score in batches of 20.
   const scored: ScoreResult[] = [];
-  for (let i = 0; i < filtered.length; i += 20) {
-    const batch = filtered.slice(i, i + 20);
+  for (let i = 0; i < deduped.length; i += 20) {
+    const batch = deduped.slice(i, i + 20);
     const results = await llmScoreItems(batch);
     scored.push(...results);
   }
@@ -166,7 +187,7 @@ async function refreshFeed(
   const scoreMap = new Map(scored.map((r) => [r.guid, r.score]));
 
   // Upsert all scored articles (including sub-threshold ones — stored but not shown).
-  await mapWithConcurrency(filtered, UPSERT_CONCURRENCY, (item) => {
+  await mapWithConcurrency(deduped, UPSERT_CONCURRENCY, (item) => {
     const score = scoreMap.get(item.guid) ?? null;
     const publishedAt = item.pubDate ? new Date(item.pubDate).toISOString() : null;
 

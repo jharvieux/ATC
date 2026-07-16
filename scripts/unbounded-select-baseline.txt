@@ -11,7 +11,6 @@
 1 apps/main/src/app/api/groups/invite/[token]/forum/threads/[threadId]/messages/route.ts::forum_messages
 1 apps/main/src/app/api/groups/invite/[token]/forum/threads/route.ts::forum_threads
 1 apps/main/src/app/api/public/quote/[token]/select/route.ts::quotes
-1 apps/main/src/inngest/customer-chat-counter-recompute.ts::messages
 1 apps/main/src/inngest/dob-estimate-reprompt-eligible.ts::messages
 2 apps/main/src/inngest/forum-moderation-retry.ts::forum_messages
 1 apps/main/src/inngest/group-reminder-cadence.ts::email_log
