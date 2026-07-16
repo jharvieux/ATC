@@ -66,6 +66,11 @@ export async function runToolUseLoop(
   let mutated = false;
   const toolResults: AnthropicToolResultBlockParam[] = [];
 
+  // serial-await-ok (#1952): tool_use blocks are dispatched IN ORDER within a
+  // single turn. Handlers mutate shared booking/customer_memory state, and the
+  // model routinely emits dependent calls in one turn (e.g. create-then-update a
+  // booking). Concurrent dispatch is a read-modify-write race and a change to the
+  // agent's execution semantics — not a safe perf swap. Stays serial by design.
   for (const block of toolUseBlocks) {
     const dispatched = await dispatchTool(
       block.name,
