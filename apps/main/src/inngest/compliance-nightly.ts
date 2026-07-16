@@ -67,14 +67,20 @@ interface TenantContactRow {
   legal_name: string | null;
   display_name: string | null;
   mailing_address: Record<string, unknown> | null;
-  email_send_pattern: "platform_resend" | "tenant_resend" | null;
-  tenant_resend_api_key_encrypted: string | null;
-  email_from_address: string | null;
-  email_from_name: string | null;
   subscription_status: string | null;
   non_paying_since: string | null;
   // #699 — internal tenants bypass the payment gate.
   is_platform_internal?: boolean;
+}
+
+// #1740: these live on tenant_branding, NOT tenants. Selecting them from
+// tenants errored the whole query, so the cron sent nothing at all.
+interface TenantBrandingRow {
+  tenant_id: string;
+  email_send_pattern: "platform_resend" | "tenant_resend" | null;
+  tenant_resend_api_key_encrypted: string | null;
+  email_from_address: string | null;
+  email_from_name: string | null;
 }
 
 export const complianceNightly = inngest.createFunction(
@@ -98,8 +104,7 @@ export const complianceNightly = inngest.createFunction(
       .from("tenants")
       .select(
         "id, status, support_email, legal_name, display_name, mailing_address, " +
-        "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
-        "email_from_name, subscription_status, non_paying_since, is_platform_internal",
+        "subscription_status, non_paying_since, is_platform_internal",
       )
       .eq("status", "active");
 
@@ -114,10 +119,27 @@ export const complianceNightly = inngest.createFunction(
       (tenantsRaw ?? []) as unknown as TenantContactRow[],
     );
 
+    const { data: brandingRaw, error: brandingErr } = await db
+      .from("tenant_branding")
+      .select(
+        "tenant_id, email_send_pattern, tenant_resend_api_key_encrypted, " +
+        "email_from_address, email_from_name",
+      )
+      .in("tenant_id", tenants.map((t) => t.id));
+
+    if (brandingErr) {
+      console.error("[compliance-nightly] Failed to fetch tenant branding: %s", brandingErr.message);
+      return;
+    }
+
+    const brandingByTenant = new Map<string, TenantBrandingRow>(
+      ((brandingRaw ?? []) as unknown as TenantBrandingRow[]).map((b) => [b.tenant_id, b]),
+    );
+
     // Each tenant's inactivity check is independent — bounded-concurrency
     // fan out instead of one tenant at a time.
     const inactivityResults = await mapWithConcurrency(tenants, NIGHTLY_CONCURRENCY, (tenant) =>
-      checkInactivity(db, tenant, now),
+      checkInactivity(db, tenant, brandingByTenant.get(tenant.id) ?? null, now),
     );
     let sentEmails = 0;
     let levelLoggedNoEmail = 0;
@@ -198,6 +220,7 @@ type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" 
 async function checkInactivity(
   db: ReturnType<typeof createServiceRoleClient>,
   tenant: TenantContactRow,
+  branding: TenantBrandingRow | null,
   now: Date,
 ): Promise<InactivityResult> {
   // Determine last activity: MAX(created_at) across conversations + bookings.
@@ -271,17 +294,18 @@ async function checkInactivity(
     return "level_logged_no_email";
   }
 
-  await sendReminderEmail({ db, tenant, level: level as InactivityNudgeLevel, daysSinceActivity });
+  await sendReminderEmail({ db, tenant, branding, level: level as InactivityNudgeLevel, daysSinceActivity });
   return "email_sent";
 }
 
 async function sendReminderEmail(args: {
   db: ReturnType<typeof createServiceRoleClient>;
   tenant: TenantContactRow;
+  branding: TenantBrandingRow | null;
   level: InactivityNudgeLevel;
   daysSinceActivity: number;
 }): Promise<void> {
-  const { db, tenant, level, daysSinceActivity } = args;
+  const { db, tenant, branding, level, daysSinceActivity } = args;
   const appUrl = process.env.MAIN_APP_URL ?? "https://ai-travelconcierge.com";
   const helpUrl = `${appUrl.replace(/\/$/, "")}/help`;
   const unsubscribeUrl = `${appUrl.replace(/\/$/, "")}/api/email/unsubscribe?email=${encodeURIComponent(tenant.support_email!)}&category=marketing`;
@@ -310,10 +334,10 @@ async function sendReminderEmail(args: {
       id: tenant.id,
       legal_name: tenantLegalName,
       mailing_address: businessAddress,
-      email_send_pattern: tenant.email_send_pattern ?? "platform_resend",
-      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
-      email_from_address: tenant.email_from_address,
-      email_from_name: tenant.email_from_name,
+      email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
+      tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+      email_from_address: branding?.email_from_address ?? null,
+      email_from_name: branding?.email_from_name ?? null,
     },
     to: tenant.support_email!,
     subject: SUBJECT_BY_LEVEL[level],
