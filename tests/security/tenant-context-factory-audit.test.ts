@@ -75,7 +75,10 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       extractBearerToken: () => null,
       createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
-        auth: { getUser: async () => ({ data: null, error: { message: "invalid jwt" } }) },
+        auth: {
+          getClaims: async () => ({ data: null, error: { message: "invalid jwt" } }),
+          getSession: async () => ({ data: { session: null }, error: null }),
+        },
         from: () => ({
           select: () => ({
             eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
@@ -100,8 +103,12 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
-          getUser: async () => ({
-            data: { user: { id: "auth-user-1" } },
+          getClaims: async () => ({
+            data: { claims: { sub: "auth-user-1" } },
+            error: null,
+          }),
+          getSession: async () => ({
+            data: { session: { access_token: "header.payload.sig" } },
             error: null,
           }),
         },
@@ -137,8 +144,12 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
-          getUser: async () => ({
-            data: { user: { id: "auth-user-1" } },
+          getClaims: async () => ({
+            data: { claims: { sub: "auth-user-1" } },
+            error: null,
+          }),
+          getSession: async () => ({
+            data: { session: { access_token: "header.payload.sig" } },
             error: null,
           }),
         },
@@ -173,8 +184,12 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
-          getUser: async () => ({
-            data: { user: { id: "auth-user-1" } },
+          getClaims: async () => ({
+            data: { claims: { sub: "auth-user-1" } },
+            error: null,
+          }),
+          getSession: async () => ({
+            data: { session: { access_token: "header.payload.sig" } },
             error: null,
           }),
         },
@@ -212,8 +227,12 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       },
       createBearerClient: () => ({
         auth: {
-          getUser: async (_token: string) => ({
-            data: { user: { id: "auth-user-bearer" } },
+          getClaims: async (_token: string) => ({
+            data: { claims: { sub: "auth-user-bearer" } },
+            error: null,
+          }),
+          getSession: async () => ({
+            data: { session: { access_token: "header.payload.sig" } },
             error: null,
           }),
         },
@@ -248,6 +267,56 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
     expect(cookieClientCalled).toBe(false);
     expect(ctx.tenant_id).toBe("tenant-uuid-here");
     expect(ctx.source).toEqual({ kind: "http_request", user_id: "auth-user-bearer" });
+  });
+
+  // #1585 — this factory swapped its GoTrue getUser() round-trip for a local
+  // JWKS signature check. The optimization is only sound if a token that fails
+  // verification still yields NO context: a TenantContext is the app's proof of
+  // authority (§5.4.5), so minting one from an unverified JWT would be a
+  // tenant-isolation breach, not merely an auth bug. The membership row below
+  // is deliberately active — the ONLY thing that may deny this request is the
+  // failed signature check.
+  it("throws when the bearer JWT's signature does not verify, even for an active member", async () => {
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: (req: Request) => {
+        const auth = req.headers.get("Authorization");
+        return auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+      },
+      createBearerClient: () => ({
+        auth: {
+          getClaims: async () => ({
+            data: null,
+            error: { name: "AuthInvalidJwtError", message: "Invalid JWT signature" },
+          }),
+          getSession: async () => ({ data: { session: null }, error: null }),
+        },
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "u-bearer", status: "active", role: "tenant_owner" },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+      createRequestScopedClient: () => ({}),
+    }));
+    const { tenantContextFromRequest } = await import(
+      "../../apps/main/src/lib/db/factories"
+    );
+    const req = new Request("https://atc.example/api/x", {
+      headers: {
+        "x-resolved-tenant-id": "tenant-uuid-here",
+        Authorization: "Bearer forged-jwt",
+      },
+    });
+    await expect(tenantContextFromRequest(req)).rejects.toThrow(
+      /invalid or expired access token/i,
+    );
   });
 });
 
