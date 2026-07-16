@@ -264,6 +264,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         html,
         ...(r.user_id ? { user_id: r.user_id } : {}),
         ...(r.contact_id ? { contact_id: r.contact_id } : {}),
+        // Keyed on the quote only — one expiry notice per quote, so a step
+        // retry of this same sweep run doesn't double-send.
+        idempotencyKey: `quote_estimate_expired:${r.id}`,
       });
 
       if (result.status === "sent") {

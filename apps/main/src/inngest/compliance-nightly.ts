@@ -96,6 +96,16 @@ interface TenantBrandingRow {
   email_from_domain_verified_at: string | null;
 }
 
+// Idempotency: this function has no step.run boundaries and uses
+// mapWithConcurrency's fail-fast semantics — one tenant's throw rejects the
+// whole batch, so Inngest retries the entire function while other tenants'
+// in-flight send/record pairs (checkInactivity, checkIcaVersionDrift) keep
+// running detached from that retry. A retried tenant can therefore be
+// re-sent; the Resend idempotencyKey on the reminder send (see
+// sendReminderEmail) is the backstop that turns a re-sent attempt into a
+// dedup no-op instead of a duplicate email. Per-tenant step isolation would
+// remove this window entirely but is a bigger design change — tracked
+// separately (refs #1934, refs #1971-audit).
 export const complianceNightly = inngest.createFunction(
   {
     id: "compliance-nightly",
@@ -211,13 +221,14 @@ async function checkIcaVersionDrift(
   // silently stop flagging drift for the rest. Paginate for the same reason.
   const tenants: Array<{ id: string }> = [];
   for (let from = 0; ; from += PAGE) {
-    const { data: page } = await db
+    const { data: page, error: tenantErr } = await db
       .from("tenants")
       .select("id")
       .eq("status", "active")
       .eq("requires_ica_reacceptance", false)
       .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
+    if (tenantErr) throw new Error(`tenants.select (ica-drift) failed: ${tenantErr.message}`);
     const batch = (page ?? []) as Array<{ id: string }>;
     tenants.push(...batch);
     if (batch.length < PAGE) break;
@@ -229,7 +240,7 @@ async function checkIcaVersionDrift(
     tenants,
     NIGHTLY_CONCURRENCY,
     async (t) => {
-      const { data: consentRows } = await db
+      const { data: consentRows, error: consentErr } = await db
         .from("legal_consents")
         .select("document_version")
         .eq("tenant_id", t.id)
@@ -237,6 +248,7 @@ async function checkIcaVersionDrift(
         .eq("action", "accepted")
         .order("acted_at", { ascending: false })
         .limit(1);
+      if (consentErr) throw new Error(`legal_consents.select failed for tenant=${t.id}: ${consentErr.message}`);
       const accepted = (consentRows ?? [])[0] as { document_version: number } | undefined;
       const acceptedVersion = accepted?.document_version ?? 0;
       if (acceptedVersion < latest.version) {
@@ -275,6 +287,13 @@ async function checkInactivity(
       .order("created_at", { ascending: false })
       .limit(1),
   ]);
+
+  if (convResult.error) {
+    throw new Error(`conversations.select failed for tenant=${tenant.id}: ${convResult.error.message}`);
+  }
+  if (bookingResult.error) {
+    throw new Error(`bookings.select failed for tenant=${tenant.id}: ${bookingResult.error.message}`);
+  }
 
   const dates = [
     convResult.data?.[0]?.created_at,
@@ -412,6 +431,9 @@ async function sendReminderEmail(args: {
     template_id: `inactivity_reminder_${level}`,
     category: "marketing",
     html,
+    // Keyed on tenant + level so a step retry of this same nudge doesn't
+    // double-send; a new level (tenant went quiet longer) gets a new key.
+    idempotencyKey: `inactivity_reminder:${tenant.id}:${level}`,
   });
 }
 

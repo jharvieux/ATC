@@ -206,6 +206,31 @@ describe("compliance-nightly — no_activity_data guard (#1928)", () => {
     // nudge-dedup lookup — there's no level to dedup against yet.
     expect(allCalls.find((c) => c.table === "tenant_inactivity_nudges")).toBeUndefined();
   });
+
+  it("throws on a conversations select error instead of misclassifying the tenant as no_activity_data", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "legal_documents") return makeChain(table, () => ({ data: [], error: null }));
+      if (table === "tenants") {
+        return makeChain(table, () => ({
+          data: [{ id: "t1", support_email: "owner@tenant.com", ...TENANT_BASE }],
+          error: null,
+        }));
+      }
+      if (table === "tenant_branding") return makeChain(table, () => ({ data: [], error: null }));
+      if (table === "conversations") {
+        return makeChain(table, () => ({ data: null, error: { message: "connection reset" } }));
+      }
+      if (table === "bookings") return makeChain(table, () => ({ data: [], error: null }));
+      return makeChain(table, () => ({ data: [], error: null }));
+    });
+
+    // A transient DB error on the activity lookup must retry via Inngest, not
+    // silently fall through to "no_activity_data" (which would mean the
+    // tenant never gets nudged and nobody notices).
+    await expect(runCron()).rejects.toThrow(/conversations\.select failed/);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(allCalls.find((c) => c.table === "tenant_inactivity_nudges")).toBeUndefined();
+  });
 });
 
 describe("compliance-nightly — #1933 bounded tenants/branding reads", () => {
@@ -258,6 +283,42 @@ describe("compliance-nightly — #1933 bounded tenants/branding reads", () => {
     expect(lastTenantSend).toBeDefined();
     const tenantArg = (lastTenantSend![0] as { tenant: Record<string, unknown> }).tenant;
     expect(tenantArg.email_from_address).toBe(`custom-t${TOTAL - 1}@tenant.com`);
+  });
+
+  it("terminates cleanly when the tenant count is an exact multiple of the page size — no dropped or duplicated page", async () => {
+    // PAGE is 1000; 2000 rows means the pagination loop's final .range() call
+    // returns a full page (length === PAGE), so the loop must make one more
+    // request that comes back empty to know to stop. A boundary bug here
+    // either drops the last page (batch.length < PAGE never true) or spins
+    // forever re-requesting the same full page.
+    const TOTAL = 2000;
+    const bigTenants = Array.from({ length: TOTAL }, (_, i) => ({
+      id: `t${i}`,
+      support_email: i === TOTAL - 1 ? "last@tenant.com" : null,
+      ...TENANT_BASE,
+    }));
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "legal_documents") return makeChain(table, () => ({ data: [], error: null }));
+      if (table === "tenants") {
+        return makeChain(table, (calls) => ({ data: rangeSlice(calls, bigTenants), error: null }));
+      }
+      if (table === "tenant_branding") return makeChain(table, () => ({ data: [], error: null }));
+      if (table === "conversations" || table === "bookings") {
+        return makeChain(table, () => ({ data: [{ created_at: OLD_ISO }], error: null }));
+      }
+      if (table === "tenant_inactivity_nudges") {
+        return makeChain(table, () => ({ data: null, error: null }));
+      }
+      return makeChain(table, () => ({ data: [], error: null }));
+    });
+
+    const result = await runCron();
+
+    // Every one of the 2000 tenants must be processed exactly once: not 1999
+    // (last page dropped) and not more (last page re-fetched and duplicated).
+    expect(result.tenants_processed).toBe(TOTAL);
+    expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 });
 
