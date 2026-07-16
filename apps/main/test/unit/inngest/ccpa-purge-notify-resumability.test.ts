@@ -50,7 +50,7 @@ type State = {
   usersRow: { deleted_at: string | null; status: string };
   activeAdmins: Record<string, Array<{ id: string }>>;
   contactRows: Array<{ tenant_id: string }>;
-  notifications: Map<string, { id: string }>;
+  notifications: Map<string, { id: string; tenant_id: string }>;
   plainInserts: Array<{ id: string }>;
   failInsertOnce: Set<string>;
 };
@@ -99,7 +99,7 @@ function makeDb(state: State) {
       }
       if (table === "notifications") {
         return {
-          insert(row: { dedup_key?: string }) {
+          insert(row: { dedup_key?: string; tenant_id: string }) {
             return {
               select() {
                 return {
@@ -112,7 +112,7 @@ function makeDb(state: State) {
                       state.failInsertOnce.delete(key);
                       return { data: null, error: { code: "08006", message: "connection reset" } };
                     }
-                    const inserted = { id: `notif-${++seq}` };
+                    const inserted = { id: `notif-${++seq}`, tenant_id: row.tenant_id };
                     if (key) state.notifications.set(key, inserted);
                     else state.plainInserts.push(inserted);
                     return { data: inserted, error: null };

@@ -61,22 +61,23 @@ describe("createNotification dedup_key idempotency (#1954)", () => {
   // the same key returns Postgres 23505; createNotification must then resolve to
   // the stored id instead of throwing or writing a duplicate.
   function makeDedupDb() {
-    const rows = new Map<string, { id: string }>();
+    const rows = new Map<string, { id: string; tenant_id: string }>();
     let seq = 0;
     const inserts: string[] = [];
     const db = {
       from: () => ({
-        insert: (row: { dedup_key?: string }) => ({
+        insert: (row: { dedup_key?: string; tenant_id: string }) => ({
           select: () => ({
             single: async () => {
               const key = row.dedup_key;
               if (key && rows.has(key)) {
                 return { data: null, error: { code: "23505", message: "duplicate key" } };
               }
-              const inserted = { id: `notif-${++seq}` };
+              const inserted = { id: `notif-${++seq}`, tenant_id: row.tenant_id };
               inserts.push(key ?? "<none>");
               if (key) rows.set(key, inserted);
-              return { data: inserted, error: null };
+              // Real insert().select("id") only projects the "id" column.
+              return { data: { id: inserted.id }, error: null };
             },
           }),
         }),
@@ -134,6 +135,35 @@ describe("createNotification dedup_key idempotency (#1954)", () => {
     } as unknown as SupabaseClient;
     await expect(
       createNotification({ db, ...baseInput, dedup_key: "ccpa_purge:PU:u1" }),
+    ).rejects.toBeInstanceOf(SupabaseMutationError);
+  });
+
+  // Guards the invariant a FUTURE non-globally-unique dedup_key would violate:
+  // the lookup keys on dedup_key alone (matching the partial UNIQUE index), so
+  // a collision across tenants must fail loud rather than silently hand back
+  // another tenant's row id.
+  it("throws instead of returning the id when the resolved row belongs to a different tenant", async () => {
+    const db = {
+      from: () => ({
+        insert: () => ({
+          select: () => ({
+            single: async () => ({ data: null, error: { code: "23505", message: "duplicate key" } }),
+          }),
+        }),
+        select: () => {
+          const chain = {
+            eq: () => chain,
+            single: async () => ({
+              data: { id: "notif-other-tenant", tenant_id: "t-2" },
+              error: null,
+            }),
+          };
+          return chain;
+        },
+      }),
+    } as unknown as SupabaseClient;
+    await expect(
+      createNotification({ db, ...baseInput, dedup_key: "collided-key" }),
     ).rejects.toBeInstanceOf(SupabaseMutationError);
   });
 });

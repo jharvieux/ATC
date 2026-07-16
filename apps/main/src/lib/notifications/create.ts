@@ -2,7 +2,7 @@
 // Called from Inngest event handlers and API routes to insert notification rows.
 // Caller must pass a service-role SupabaseClient.
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import { safeAwaitRequired, unwrapRequired, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 export type NotificationCategory =
@@ -65,15 +65,30 @@ export async function createNotification(input: CreateNotificationInput): Promis
       // resolves to exactly one row. Adding `.eq("tenant_id", …)` narrowed the
       // filter below the index key: a cross-tenant dedup_key collision would
       // then match zero rows and make `.single()` throw instead of resolving.
-      return await safeAwaitRequired<{ id: string }>(
+      const dedupRow = await safeAwaitRequired<{ id: string; tenant_id: string }>(
         db
+          // Safe only because every caller's dedup_key embeds two users.id PKs (e.g.
+          // `ccpa_purge:<purged_user_id>:<recipient_user_id>`), which are tenant-scoped
+          // by construction. The tenant_id assertion below turns any FUTURE caller that
+          // breaks that invariant (a non-globally-unique key) into a loud throw instead
+          // of a silent cross-tenant row resolution.
           // d091-allow:service-role-tenant — post-23505 lookup MUST key on the exact UNIQUE index (dedup_key alone); adding .eq("tenant_id",…) narrows below the index and makes .single() throw on a cross-tenant key collision.
           .from("notifications")
-          .select("id")
+          .select("id, tenant_id")
           .eq("dedup_key", dedup_key)
           .single(),
         "notifications.dedup_lookup",
       );
+      if (dedupRow.tenant_id !== tenant_id) {
+        throw new SupabaseMutationError("notifications.dedup_lookup", {
+          message: `dedup_key lookup resolved to tenant_id=${dedupRow.tenant_id}, expected tenant_id=${tenant_id} (row id=${dedupRow.id}) — cross-tenant dedup_key collision`,
+          code: "DEDUP_TENANT_MISMATCH",
+          hint: "dedup_key must be globally unique across tenants; check the caller's key construction.",
+          details: null,
+          name: "DedupTenantMismatch",
+        } as unknown as PostgrestError);
+      }
+      return { id: dedupRow.id };
     }
     throw new SupabaseMutationError("notifications.insert", result.error);
   }
