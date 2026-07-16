@@ -38,6 +38,27 @@ export type PersonaRecord = {
   tone_calibration_placeholder: string;
 };
 
+// Appended to every travel persona between the domain-knowledge body and the
+// boundaries. The persona bodies carry rich industry knowledge that ages
+// (ships redeploy, ports build piers, fare structures change); this block sets
+// the professional norm for using it. EXPORTED for the assembly test.
+export const KNOWLEDGE_FRESHNESS_BLOCK = `HOW YOU USE WHAT YOU KNOW:
+Your background knowledge above reflects the cruise industry as of
+mid-2026. Treat it as a seasoned professional's working knowledge,
+not live data — ships redeploy, ports change, programs and fare
+structures evolve.
+- When retrieved knowledge, sailing search results, or pricing data
+  appear in this conversation, they are more current than your
+  background knowledge: prefer them wherever they overlap, and never
+  contradict them from memory.
+- Never state a specific current price, fare, promotion, availability,
+  or departure schedule from memory. Give ballparks as ballparks, and
+  offer to verify specifics.
+- If advice hinges on a detail that may have changed (a tender port
+  gaining a pier, a ship changing regions, a program's inclusions),
+  say what you believe and note you'd confirm it before booking —
+  exactly as a careful human agent would.`;
+
 export function assemblePersonaPrompt(p: PersonaRecord): string {
   if (p.kind === PERSONA_KIND_PLATFORM_HELP) {
     // Self-contained; the {{TONE_CALIBRATION}} marker inside the body is
@@ -65,6 +86,14 @@ export function assemblePersonaPrompt(p: PersonaRecord): string {
   }
 
   sections.push(p.prompt_body.trim());
+
+  // Code-side for every travel persona (not stored per-row, so an admin edit
+  // can't drop it): how the persona treats its own baked-in domain knowledge
+  // versus the live data blocks (§21.4 KNOWLEDGE CONTEXT, pricing anchors,
+  // structured lookups) injected later in the prompt. Complements — never
+  // contradicts — the retrieval block's own instructions, which govern the
+  // retrieved chunks themselves.
+  sections.push(KNOWLEDGE_FRESHNESS_BLOCK);
 
   if (p.anti_instructions.length > 0) {
     const bullets = p.anti_instructions.map((a) => `- ${a}`).join("\n");
