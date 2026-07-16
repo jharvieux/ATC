@@ -9,10 +9,16 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { fetchGuarded } from "@/lib/net/ssrf-guard";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 import {
   instrumentedClaudeCall,
   PLATFORM_TENANT_ID,
 } from "@/lib/ai/call-wrapper";
+
+// #1789 — per-article upsert (unique on feed_id,guid) is independent of
+// every other article's; the LLM scoring above it stays batched/serial
+// (Claude calls, not touched here).
+const UPSERT_CONCURRENCY = 10;
 
 // Terms whose presence in title+description indicates relevance.
 // Lowercase — compared against lowercased text.
@@ -160,11 +166,11 @@ async function refreshFeed(
   const scoreMap = new Map(scored.map((r) => [r.guid, r.score]));
 
   // Upsert all scored articles (including sub-threshold ones — stored but not shown).
-  for (const item of filtered) {
+  await mapWithConcurrency(filtered, UPSERT_CONCURRENCY, (item) => {
     const score = scoreMap.get(item.guid) ?? null;
     const publishedAt = item.pubDate ? new Date(item.pubDate).toISOString() : null;
 
-    await safeAwait(
+    return safeAwait(
       db.from("news_articles").upsert(
         {
           feed_id: feed.id,
@@ -180,7 +186,7 @@ async function refreshFeed(
       ),
       "news_articles.upsert",
     );
-  }
+  });
 
   await safeAwait(
     db.from("news_feeds").update({ last_fetched_at: new Date().toISOString() }).eq("id", feed.id),

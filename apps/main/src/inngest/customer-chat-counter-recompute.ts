@@ -6,6 +6,11 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each (user_id, tenant_id) recompute is an independent
+// read-then-update of its own counter row.
+const RECOMPUTE_CONCURRENCY = 20;
 
 export const customerChatCounterRecompute = inngest.createFunction(
   {
@@ -22,8 +27,8 @@ export const customerChatCounterRecompute = inngest.createFunction(
       .select("user_id, tenant_id")
       .limit(5000);
 
-    let processed = 0;
-    for (const row of (rows ?? []) as Array<{ user_id: string; tenant_id: string }>) {
+    const targets = (rows ?? []) as Array<{ user_id: string; tenant_id: string }>;
+    await mapWithConcurrency(targets, RECOMPUTE_CONCURRENCY, async (row) => {
       const { data: msgs } = await svc
         .from("messages")
         .select("id, conversations!inner(user_id, tenant_id)")
@@ -37,8 +42,7 @@ export const customerChatCounterRecompute = inngest.createFunction(
         .update({ current_count: count })
         .eq("user_id", row.user_id)
         .eq("tenant_id", row.tenant_id), "customer_chat_counters.update");
-      processed++;
-    }
-    return { processed };
+    });
+    return { processed: targets.length };
   },
 );

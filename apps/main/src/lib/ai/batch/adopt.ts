@@ -20,7 +20,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 import type { BatchablePurpose } from "./types";
+
+// #1789 — each stranded anthropic_batch_id group is adopted independently
+// (its own find-or-create job + CAS link); no ordering between groups.
+const ADOPT_CONCURRENCY = 10;
 
 // Only adopt rows stranded longer than this. A healthy flush stamps
 // submitted_at=now and links within milliseconds, so its rows never match;
@@ -76,34 +81,40 @@ export async function adoptStrandedBatches(args: {
     byBatch.set(row.anthropic_batch_id, list);
   }
 
-  for (const [anthropicBatchId, rows] of byBatch) {
-    const jobId = await findOrCreateJob({
-      db,
-      anthropicBatchId,
-      purpose: rows[0]!.purpose,
-      requestCount: rows.length,
-    });
+  const linkedCounts = await mapWithConcurrency(
+    [...byBatch.entries()],
+    ADOPT_CONCURRENCY,
+    async ([anthropicBatchId, rows]) => {
+      const jobId = await findOrCreateJob({
+        db,
+        anthropicBatchId,
+        purpose: rows[0]!.purpose,
+        requestCount: rows.length,
+      });
 
-    // Link only rows still stranded — CAS-guard so a concurrent flush that
-    // finished its own link in the meantime isn't clobbered (D-091 #7).
-    const linked = await safeAwait(
-      db
-        // d091-allow:service-role-tenant — platform recovery sweep links one batch's rows across all tenants by design.
-        .from("ai_batch_requests")
-        .update({ batch_job_id: jobId })
-        .in(
-          "id",
-          rows.map((r) => r.id),
-        )
-        .eq("status", "submitted")
-        .is("batch_job_id", null)
-        .select("id"),
-      "ai_batch_requests.adopt_link",
-    );
+      // Link only rows still stranded — CAS-guard so a concurrent flush that
+      // finished its own link in the meantime isn't clobbered (D-091 #7).
+      const linked = await safeAwait(
+        db
+          // d091-allow:service-role-tenant — platform recovery sweep links one batch's rows across all tenants by design.
+          .from("ai_batch_requests")
+          .update({ batch_job_id: jobId })
+          .in(
+            "id",
+            rows.map((r) => r.id),
+          )
+          .eq("status", "submitted")
+          .is("batch_job_id", null)
+          .select("id"),
+        "ai_batch_requests.adopt_link",
+      );
 
-    result.batches_adopted++;
-    result.requests_adopted += linked?.length ?? 0;
-  }
+      return linked?.length ?? 0;
+    },
+  );
+
+  result.batches_adopted = linkedCounts.length;
+  result.requests_adopted = linkedCounts.reduce((sum, n) => sum + n, 0);
 
   return result;
 }

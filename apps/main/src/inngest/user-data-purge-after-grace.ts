@@ -11,6 +11,10 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { purgeUserDataPerRetention } from "@/lib/privacy/purge-user-data";
 import { createNotification } from "@/lib/notifications/create";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each active user's in-app notification is an independent insert.
+const NOTIFY_CONCURRENCY = 20;
 
 // #742: validate the event payload with Zod so a crafted event (compromised
 // signing key) cannot skip the 30-day grace period by providing a past purge_at.
@@ -122,8 +126,8 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
         .select("id")
         .eq("tenant_id", tenantId)
         .eq("status", "active");
-      for (const u of ((users ?? []) as Array<{ id: string }>)) {
-        await createNotification({
+      await mapWithConcurrency((users ?? []) as Array<{ id: string }>, NOTIFY_CONCURRENCY, (u) =>
+        createNotification({
           db,
           tenant_id: tenantId,
           user_id: u.id,
@@ -131,8 +135,8 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
           title: "Customer removed under CCPA — review your notes for residual PII",
           body: "A customer exercised CCPA deletion. Notes you wrote about them are retained but their identifier was anonymized. Review and redact any PII in the note text.",
           link_url: "/tenant-admin/crm/anonymized-notes",
-        });
-      }
+        }),
+      );
     }
 
     return {

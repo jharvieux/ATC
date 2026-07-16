@@ -114,14 +114,26 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
         const tenantIds = tenants.map((t) => t.id);
         const ragChunkCounts = await fetchRagTenantChunkCounts(tenantIds);
 
+        // #1789 — was one tier_definitions lookup per tenant inside the loop
+        // below. Batch-fetch every distinct tier_id referenced by this run's
+        // tenants up front (mirrors the ragChunkCounts pre-batch above) and
+        // look up in-memory per tenant instead.
+        const uniqueTierIds = [...new Set(tenants.map((t) => t.tier_id).filter((id): id is string => !!id))];
+        const tierCodeById = new Map<string, string>();
+        if (uniqueTierIds.length > 0) {
+          const { data: tierRows } = await db.from("tier_definitions").select("id, code").in("id", uniqueTierIds);
+          for (const row of (tierRows ?? []) as Array<{ id: string; code: string }>) {
+            tierCodeById.set(row.id, row.code);
+          }
+        }
+
         for (const t of tenants) {
           tenantsProcessed++;
 
-          // Tier code lookup.
+          // Tier code lookup (pre-batched above).
           let tier_code: TenantRevenueSnapshot["tier_code"] = "byo_research";
           if (t.tier_id) {
-            const { data: td } = await db.from("tier_definitions").select("code").eq("id", t.tier_id).maybeSingle();
-            const c = (td as { code?: string } | null)?.code;
+            const c = tierCodeById.get(t.tier_id);
             if (c && TIER_CODES.has(c)) tier_code = c as TenantRevenueSnapshot["tier_code"];
           }
           const tenantSnapshot: TenantRevenueSnapshot & { tenant_id: string } = {

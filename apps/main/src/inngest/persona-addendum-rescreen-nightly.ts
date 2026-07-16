@@ -24,6 +24,11 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 import { HAIKU_MODEL, SCREENING_SYSTEM_PROMPT, parseScreenResult } from "./persona-addendum-screen";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each addendum's enqueue is an independent DB insert (no Anthropic
+// call happens here — the batch flush cron submits to Anthropic separately).
+const ENQUEUE_CONCURRENCY = 20;
 
 const RescreenBatchResultPayloadSchema = z.object({
   tenant_id: z.string(),
@@ -62,8 +67,7 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
       content: string;
     }>;
 
-    let enqueued = 0;
-    for (const row of approved) {
+    const outcomes = await mapWithConcurrency(approved, ENQUEUE_CONCURRENCY, async (row) => {
       try {
         await enqueueBatchRequest({
           tenant_id: row.tenant_id,
@@ -86,15 +90,17 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
           },
           db,
         });
-        enqueued++;
+        return true;
       } catch (e) {
         console.error(
           "[persona-addendum-rescreen-nightly] enqueue failed addendum=%s: %s",
           row.id,
           e instanceof Error ? e.message : String(e),
         );
+        return false;
       }
-    }
+    });
+    const enqueued = outcomes.filter(Boolean).length;
 
     console.info("[persona-addendum-rescreen-nightly] enqueued=%d total_approved=%d", enqueued, approved.length);
     return { enqueued, total_approved: approved.length };

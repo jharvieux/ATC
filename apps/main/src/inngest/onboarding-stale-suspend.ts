@@ -25,6 +25,12 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { writeAuditLog } from "@/lib/audit/write";
 import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each candidate tenant's CAS-guarded suspend is independent of
+// every other tenant's; the CAS guard protects the single row, not
+// cross-tenant ordering.
+const SUSPEND_CONCURRENCY = 10;
 
 // 14 days from signup. Short enough to deter the abuse vector, long
 // enough that legitimate customers who take their time setting up
@@ -81,8 +87,11 @@ export const onboardingStaleSuspend = inngest.createFunction(
         }>;
         recordQuery({ op: "select", table: "tenants", row_count: rows.length });
 
-        let suspended = 0;
-        for (const t of rows) {
+        // #1789 — each tenant's CAS-guarded suspend + audit + shadow-event
+        // is independent of every other tenant's; fan out across tenants,
+        // keep the three steps for one tenant sequential (audit/shadow-
+        // event must follow that tenant's own successful suspend).
+        const suspendedFlags = await mapWithConcurrency(rows, SUSPEND_CONCURRENCY, async (t) => {
           // CAS-guarded transition (.eq("status", "onboarding") on the
           // UPDATE) so a tenant that finished onboarding between the
           // SELECT above and this UPDATE doesn't get suspended.
@@ -111,34 +120,35 @@ export const onboardingStaleSuspend = inngest.createFunction(
               .select("id"),
             "tenants.update.auto_suspend_stale_onboarding",
           )) as Array<{ id: string }> | null;
-          if (updated && updated.length === 1) {
-            suspended++;
-            console.info(
-              "[onboarding-stale-suspend] suspended tenant=%s slug=%s stage=%s created_at=%s",
-              t.id, t.slug, t.onboarding_stage ?? "null", t.created_at,
-            );
-            await writeAuditLog(
-              {
-                tenant_id: t.id,
-                actor_user_id: null,
-                actor_type: "system",
-                action: "tenant.auto_suspended_stale_onboarding",
-                resource_type: "tenant",
-                resource_id: t.id,
-                changes: {
-                  slug: t.slug,
-                  onboarding_stage: t.onboarding_stage,
-                  created_at: t.created_at,
-                  stale_threshold_days: STALE_ONBOARDING_DAYS,
-                  cron_id: "onboarding-stale-suspend",
-                },
+          if (!updated || updated.length !== 1) return false;
+
+          console.info(
+            "[onboarding-stale-suspend] suspended tenant=%s slug=%s stage=%s created_at=%s",
+            t.id, t.slug, t.onboarding_stage ?? "null", t.created_at,
+          );
+          await writeAuditLog(
+            {
+              tenant_id: t.id,
+              actor_user_id: null,
+              actor_type: "system",
+              action: "tenant.auto_suspended_stale_onboarding",
+              resource_type: "tenant",
+              resource_id: t.id,
+              changes: {
+                slug: t.slug,
+                onboarding_stage: t.onboarding_stage,
+                created_at: t.created_at,
+                stale_threshold_days: STALE_ONBOARDING_DAYS,
+                cron_id: "onboarding-stale-suspend",
               },
-              { throwOnError: true },
-            );
-            // Propagate the suspension to RAG so retrieval is cut off.
-            await publishTenantShadowEvent(db, t.id, "tenant.status_changed");
-          }
-        }
+            },
+            { throwOnError: true },
+          );
+          // Propagate the suspension to RAG so retrieval is cut off.
+          await publishTenantShadowEvent(db, t.id, "tenant.status_changed");
+          return true;
+        });
+        const suspended = suspendedFlags.filter(Boolean).length;
 
         return { ok: true, candidates: rows.length, suspended };
       },
