@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-357 — 2026-07-16 — Sweep hygiene overhaul: verify-or-close before implementing, closing keywords are negation-blind (mechanical close-set check + explicit squash body), fix-inline-by-default criteria for en-route/audit findings, dup-check before filing, blockers surfaced as yes/no asks at the plan gate; both /issue-sweep copies + pr-workflow.md.
 - D-356 — 2026-07-16 — Sweep #4: 9 PRs merged / 38 issues filed. 6 of the issues worked were stale — but worse bugs sat under three of them (silently-dead nightly reminders, half-applied settings writes + RAG-sync, an issue that *proposed* an auth fail-open). Repo-wide merge freeze traced to an orphaned table whose migration-0007 DROP never landed; regenerated snapshot was byte-identical. Closing-keyword trap bit 3× (negation doesn't help; hides in commit messages) — verify with GraphQL `closingIssuesReferences`, never prose.
 - D-355 — 2026-07-13 — #444 tier-lookup family shipped (PR #1917): phantom tier codes were silently killing the AI hero-image gate; update_seats gained the missing §15.15 agency-only gate.
 - D-354 — 2026-07-13 — GH hardening: main protected, Dependency Review required check, GHAS runbook'd; merge queue blocked (user-owned repo) but PR #1915's test-DB reset kills the ledger-orphan class and the migration merge-train ordering constraint.

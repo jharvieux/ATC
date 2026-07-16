@@ -26,6 +26,17 @@ The comments are **summaries** (scope, finding one-liners, standalone `Status` l
 
 A single `Closes` on a multi-issue PR leaves the other issues open forever. 2026-07-12 lesson: PRs #1736/#1765 resolved six issues between them but auto-close-linked only one — the six stayed open and a later sweep burned a full batch re-verifying already-done work. Rules: every COMPLETED issue gets its own `Closes #<n>` line; a PARTIALLY-completed issue gets a remainder comment on the issue (scope done / scope left / acceptance criteria), never a `Closes` line. At merge, confirm the links actually closed the issues; close stragglers with a comment naming the PR.
 
+## Closing keywords: the parser is negation-blind (applies to EVERY PR)
+
+GitHub closes issue #N for any `close(s|d)` / `fix(es|ed)` / `resolve(s|d)` immediately preceding `#N` in a PR body or in a commit message that reaches `dev` — **even inside a sentence that negates it**. "Does not close #1919" closes #1919. This bit three separate times in the 2026-07-16 sweep, and it hides in commit messages because squash merges autofill the merge commit from COMMIT_MESSAGES.
+
+- A closing keyword may appear **only** as an intentional standalone `Closes #<n>` line in a PR body.
+- Everywhere else — commit messages, PR prose, issue comments — reference issues keyword-free: bare `#N`, `refs #N`, `part of #N`, `remainder in #N`. The conventional-commit form `fix(#N):` is parenthesized and safe.
+- Never write a negated closing phrase ("doesn't fix #N", "does not resolve #N") — the negation does nothing; rewrite it ("leaves #N open", "refs #N").
+- **Verify the close-set mechanically, never by reading prose:** before merging, `gh pr view <n> --json closingIssuesReferences` and compare against the intended set. Extra issue → hunt down the stray keyword and neutralize it; missing issue → add the `Closes` line.
+- On a PR whose commits reference issues it must not close (partial fixes especially), squash-merge with an explicit `--subject`/`--body` containing only the intended `Closes` lines instead of the COMMIT_MESSAGES autofill.
+- If a merge closed something it shouldn't have anyway: reopen it immediately with a comment — GitHub does not do it for you.
+
 Related audit-workflow note: **auditors and rebind re-audits must diff against `origin/dev`** (`git fetch origin dev` first, cross-check against `gh pr view <n> --json files`) — worktree-local `dev` refs go stale as the merge train moves and produce phantom out-of-scope findings (five instances on 2026-07-12).
 
 ## Merge trains (multiple PRs queued to merge in sequence)
