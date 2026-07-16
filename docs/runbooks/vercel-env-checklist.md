@@ -106,4 +106,50 @@ These are configured correctly.
 
 ## F. atc-rag project (separate Vercel project)
 
-The RAG service has only `PLATFORM_PRIMARY_DOMAIN` configured. Its env schema (`apps/rag/src/lib/env.ts`) needs reviewing for required vars before that project can deploy. Out of scope for this checklist — file a follow-up.
+The RAG service is deployed via automated pipeline (PR #1851). Required environment variables are derived from `apps/rag/src/lib/env.ts` (boot-time schema) and `apps/rag/instrumentation.ts` (validator).
+
+Currently configured in the Vercel `atc-rag` project: `PLATFORM_PRIMARY_DOMAIN` only.
+
+### Required vars (must be set before deploy boots)
+
+| Variable | What to provide | Source / Notes |
+|---|---|---|
+| `PLATFORM_PRIMARY_DOMAIN` | Platform identity domain (shared across main + RAG) | Same value as atc-main's `PLATFORM_PRIMARY_DOMAIN` |
+| `SUPABASE_RAG_URL` | RAG Supabase project URL | Supabase dashboard → Project Settings → API → URL |
+| `SUPABASE_RAG_ANON_KEY` | RAG Supabase anon key | Supabase dashboard → Project Settings → API → Project API keys → `anon public` |
+| `SUPABASE_RAG_SERVICE_ROLE_KEY` | RAG Supabase service-role key | Supabase dashboard → Project Settings → API → Project API keys → `service_role` (⚠️ secret) |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings | platform.openai.com → API keys → starts with `sk-` |
+| `SERVICE_JWT_PUBLIC_KEY` | Public key (PEM) for service-to-service auth verification | Ed25519 public key corresponding to main app's `SERVICE_JWT_PRIVATE_KEY` |
+| `SERVICE_JWT_KEY_ID_CURRENT` | Key ID for the public key above | Short identifier (e.g., `v1`); must match main app's `SERVICE_JWT_KEY_ID_CURRENT` |
+| `SERVICE_JWT_ACCEPTED_KEY_IDS` | Comma-separated list of accepted key IDs | Must include `SERVICE_JWT_KEY_ID_CURRENT`; also include `SERVICE_JWT_KEY_ID_PREVIOUS` during rotation |
+| `REDIS_URL` | Redis connection URL (jti replay cache) | Upstash or similar Redis provider — URL format `redis://...` (⚠️ secret) |
+| `MAIN_APP_URL` | URL of the deployed main app | https://ai-travelconcierge.com (or custom domain) |
+| `MAIN_APP_ADMIN_API_KEY` | Admin API key for main app callbacks | Generate via main app's key-generation process (⚠️ secret) |
+| `RAG_WEBHOOK_SECRET` | HMAC secret for incoming tenant-events webhooks from main | `openssl rand -hex 32` (⚠️ secret); **must match main app's `RAG_WEBHOOK_SECRET`** |
+| `INNGEST_SIGNING_KEY` | Signing key for Inngest function invocations | Inngest dashboard → Environment → Signing key (⚠️ secret); **required in production only** — code explicitly throws if missing in production |
+
+Set each in **both Preview and Production** environments in the Vercel project.
+
+### Optional vars (call sites handle absence with defaults)
+
+| Variable | Default | When to set |
+|---|---|---|
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Only if using a different OpenAI embedding model |
+| `OPENAI_EMBEDDING_DIMENSIONS` | `1536` | Only if using a different model; spec requires 1536 dimensions for text-embedding-3-small |
+| `SERVICE_JWT_PUBLIC_KEY_PREVIOUS` | (not set) | During JWT public-key rotation overlap only; **if set, `SERVICE_JWT_KEY_ID_PREVIOUS` is required** |
+| `SERVICE_JWT_KEY_ID_PREVIOUS` | (not set) | During JWT public-key rotation overlap only; **if set, `SERVICE_JWT_PUBLIC_KEY_PREVIOUS` is required** |
+| `RAG_SUPABASE_DB_URL` | (not set) | CI/operator use only; direct Postgres connection for running RAG migrations locally |
+| `SENTRY_DSN` / `SENTRY_ENVIRONMENT` | (not set) | If using Sentry for error reporting |
+| `LOG_LEVEL` | `info` | Set to `debug`, `warn`, or `error` only if adjusting observability |
+| `NEXT_PUBLIC_SUPABASE_URL` | (inferred from `SUPABASE_RAG_URL`) | Set explicitly to same value as `SUPABASE_RAG_URL` to ensure health readiness probe works correctly |
+| `NODE_ENV` | `development` | Auto-set by Vercel to `production` — do not override |
+| `GIT_COMMIT_SHA` | (not set) | Auto-populated by Vercel during deployments; read-only |
+| `VERCEL_ENV` | (not set) | Auto-set by Vercel to `production` or `preview` — do not configure |
+
+---
+
+### Key constraints & rotation
+
+- **main ↔ RAG secrets must match:** `RAG_WEBHOOK_SECRET`, `SERVICE_JWT_KEY_ID_CURRENT`, `SERVICE_JWT_ACCEPTED_KEY_IDS` must be coordinated with main app settings. Mismatch silently breaks webhook/auth flows.
+- **JWT key rotation:** During rotation, set both `_CURRENT` and `_PREVIOUS` pairs together. Both kids must appear in `SERVICE_JWT_ACCEPTED_KEY_IDS`. Once all in-flight tokens expire, remove `_PREVIOUS` vars and their kid from the accepted list.
+- **Redis URL:** Fail-closed design — if Redis is unreachable, incoming service-to-service requests are rejected (jti dedup cache unavailable). **Do not set a fallback; losing Redis availability must fail loudly.**
