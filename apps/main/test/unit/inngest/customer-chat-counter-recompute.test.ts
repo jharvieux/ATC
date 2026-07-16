@@ -76,7 +76,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const delayMs = filters.user_id === "u-1" ? 10 : 0;
           return Promise.resolve().then(async () => {
             if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
-            resolve({ data: Array.from({ length: count }, (_, i) => ({ id: `m-${i}` })), error: null });
+            // count: "exact", head: true — PostgREST returns the count, no rows.
+            resolve({ data: null, count, error: null });
           });
         },
       };
@@ -115,5 +116,14 @@ describe("customerChatCounterRecompute — concurrent per-row attribution (#1789
 
     const byUser = Object.fromEntries(counters.map((c) => [c.user_id, c.current_count]));
     expect(byUser).toEqual({ "u-1": 7, "u-2": 3, "u-3": 1 });
+  });
+
+  it("#1956 — a user with more than 1000 messages in the window gets an accurate current_count, not capped at 1000", async () => {
+    counters = [{ user_id: "u-heavy", tenant_id: "t-1", current_count: 0 }];
+    messageCountFor = { "u-heavy:t-1": 1547 };
+
+    await runCron();
+
+    expect(counters[0]!.current_count).toBe(1547);
   });
 });

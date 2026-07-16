@@ -29,14 +29,14 @@ export const customerChatCounterRecompute = inngest.createFunction(
 
     const targets = (rows ?? []) as Array<{ user_id: string; tenant_id: string }>;
     await mapWithConcurrency(targets, RECOMPUTE_CONCURRENCY, async (row) => {
-      const { data: msgs } = await svc
+      const { count: msgCount } = await svc
         .from("messages")
-        .select("id, conversations!inner(user_id, tenant_id)")
+        .select("id, conversations!inner(user_id, tenant_id)", { count: "exact", head: true })
         .eq("role", "user")
         .gte("created_at", since)
         .eq("conversations.user_id", row.user_id)
         .eq("conversations.tenant_id", row.tenant_id);
-      const count = Array.isArray(msgs) ? msgs.length : 0;
+      const count = msgCount ?? 0;
       await safeAwait(svc
         .from("customer_chat_counters")
         .update({ current_count: count })
