@@ -108,7 +108,7 @@ Steps, in order:
    - Helper functions called only once (inline at the call site).
    - try/catch blocks that just re-throw or swallow (let the error propagate).
    - JSDoc paragraphs on simple functions (one-line max).
-   - TODOs without an owner or issue ref (rewrite as `TODO(owner)` or `TODO(#123)` — `atc/no-orphan-todo` enforces this).
+   - TODOs without an owner or issue ref (rewrite as `TODO(@handle)` or `TODO(#123)` — `atc/no-orphan-todo` enforces this).
    - Defensive validation for inputs that can't actually be invalid (trust internal code).
 
    Optionally run `pnpm slop-check` against the current diff for a mechanical scan.

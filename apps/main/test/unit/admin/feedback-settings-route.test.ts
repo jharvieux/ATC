@@ -1,24 +1,25 @@
-// #1888 — feedback-settings PUT mirrors retrieval-weights: parallel per-key
-// platform_settings updates (allSettled, not fail-fast), generic dbErrorResponse
-// on any failure (no key names in the client body), and — because these four
-// keys ARE sync-eligible — a publishPlatformEvent enqueue after a successful
-// write. These tests pin those guarantees plus the per-key validation bounds
-// (adjustment_limit is fractional; the day/count knobs are positive integers).
+// #1936 (D-091 #22) — feedback-settings PUT mirrors retrieval-weights: every
+// per-key platform_settings change is applied through ONE atomic RPC
+// (platform_settings_apply_updates), not a per-key fan-out. A mixed PUT where
+// one key's row is missing must leave NO key applied and publish no RAG-sync
+// event (the pre-#1936 fan-out committed the applied key and diverged main from
+// the rag replica for up to 24h). These tests pin: a single rpc call carrying
+// every requested key (the mock db exposes no .update, so a fan-out regression
+// throws); any RPC failure aborts the whole PUT with a generic db_error 500 and
+// no publish; plus the per-key validation bounds (adjustment_limit is
+// fractional; the day/count knobs are positive integers).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  updates: [] as Array<{ key: string; value: unknown }>,
+  rpcCalls: [] as Array<Array<{ key: string; value: unknown }>>,
+  // Keys that make the atomic RPC fail with a DB error (rollback: no key applied).
   failKeys: new Set<string>(),
-  // Keys whose update "succeeds" (error:null) but matches zero rows — the
-  // #1909 silent-no-op case, distinct from noUpdatedAt's row-without-a-column.
-  emptyRowKeys: new Set<string>(),
+  // Keys that make the atomic RPC RAISE "matched no row" — also a full rollback.
+  missingRowKeys: new Set<string>(),
   currentRows: [] as Array<{ key: string; value: unknown }>,
   // When set, the loadCurrent read returns this error instead of rows.
   readError: null as { message: string } | null,
-  // When true, updates succeed (error:null) but the returned row carries no
-  // updated_at — exercises the empty-updatedAts fail-loud guard.
-  noUpdatedAt: false,
   publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
 }));
 
@@ -37,22 +38,26 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
     fn: (db: unknown, recordQuery: (q: unknown) => void) => Promise<unknown>,
   ) => {
     const db = {
+      // No `.update`: the route must go through `.rpc`. A regression to a
+      // per-key `.from(...).update(...)` fan-out throws "update is not a function".
       from: (_table: string) => ({
-        update: (payload: { value: unknown }) => ({
-          eq: (_col: string, key: string) => ({
-            select: async (_cols: string) => {
-              h.updates.push({ key, value: payload.value });
-              if (h.failKeys.has(key)) return { data: null, error: { message: `write failed for ${key}` } };
-              if (h.emptyRowKeys.has(key)) return { data: [], error: null };
-              if (h.noUpdatedAt) return { data: [{}] as Array<{ updated_at: string }>, error: null };
-              return { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
-            },
-          }),
-        }),
         select: () => ({
           in: async () => (h.readError ? { data: null, error: h.readError } : { data: h.currentRows, error: null }),
         }),
       }),
+      rpc: async (_fn: string, args: { p_changes: Array<{ key: string; value: unknown }> }) => {
+        h.rpcCalls.push(args.p_changes);
+        const failed = args.p_changes.find((c) => h.failKeys.has(c.key));
+        if (failed) return { data: null, error: { message: `apply_updates failed at ${failed.key}` } };
+        const missing = args.p_changes.find((c) => h.missingRowKeys.has(c.key));
+        if (missing) {
+          return { data: null, error: { message: `platform_settings key ${missing.key} matched no row`, code: "P0002" } };
+        }
+        return {
+          data: args.p_changes.map((c) => ({ setting_key: c.key, setting_updated_at: "2026-07-13T00:00:00.000Z" })),
+          error: null,
+        };
+      },
     };
     return fn(db, () => {});
   },
@@ -69,30 +74,27 @@ function req(body: unknown): Request {
 }
 
 beforeEach(() => {
-  h.updates = [];
+  h.rpcCalls = [];
   h.failKeys = new Set();
-  h.emptyRowKeys = new Set();
+  h.missingRowKeys = new Set();
   h.currentRows = [];
   h.readError = null;
-  h.noUpdatedAt = false;
   h.publishPlatformEvent.mockClear();
 });
 
-describe("PUT /api/admin/feedback-settings — zero-row update (#1909)", () => {
-  // D-091 #7: supabase-js v2 returns error:null + data:[] when an UPDATE
-  // matches no row. The pre-#1909 route only failed when EVERY key came back
-  // empty, so a mixed PUT — one seeded key, one missing row — reported 200 and
-  // published a RAG-sync event while the missing key silently never persisted.
-  // Reverting to the aggregate check must fail this test.
-  it("fails the whole PUT when ONE key's row is missing even though a sibling key applied", async () => {
-    h.emptyRowKeys = new Set(["feedback_period_days"]);
+describe("PUT /api/admin/feedback-settings — missing seed row (#1909, now via the atomic RPC RAISE)", () => {
+  // A missing platform_settings row makes the RPC RAISE "matched no row",
+  // aborting the whole transaction. A mixed PUT where one key's row is missing
+  // must leave NO key applied and publish nothing — the pre-#1936 fan-out
+  // committed the sibling key and diverged main from the rag replica.
+  it("fails the whole PUT when ONE key's row is missing even though a sibling key would apply", async () => {
+    h.missingRowKeys = new Set(["feedback_period_days"]);
     const res = await PUT(req({ feedback_period_days: 30, feedback_min_signal_count: 5 }));
 
     expect(res.status).toBe(500);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ error: "db_error" });
-    // Nothing may reach rag: publishing a partial change would sync the
-    // applied key and leave the lost one silently diverged.
+    expect(h.rpcCalls).toHaveLength(1);
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });
@@ -108,6 +110,24 @@ describe("GET /api/admin/feedback-settings — read error (#1909)", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ error: "db_error" });
     expect(body).not.toMatchObject({ feedback_adjustment_limit: 0.05 });
+  });
+
+  // #1937 — the read used to throw `... ${String(error)}`, logging
+  // "[object Object]" on a PostgrestError. The thrown error handed to
+  // dbErrorResponse must now carry the real DB message.
+  it("surfaces the underlying DB message to the server log, not [object Object] (#1937)", async () => {
+    h.readError = { message: "permission denied for table platform_settings" };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await GET(new Request("https://app.example.com/api/admin/feedback-settings"));
+    expect(res.status).toBe(500);
+
+    const logged = errorSpy.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? (a.stack ?? a.message) : String(a)))
+      .join(" ");
+    expect(logged).toContain("permission denied for table platform_settings");
+    expect(logged).not.toContain("[object Object]");
+    errorSpy.mockRestore();
   });
 });
 
@@ -126,8 +146,8 @@ describe("GET /api/admin/feedback-settings", () => {
   });
 });
 
-describe("PUT /api/admin/feedback-settings — parallel per-key updates", () => {
-  it("updates every requested key and returns the re-read values", async () => {
+describe("PUT /api/admin/feedback-settings — atomic apply (#1936)", () => {
+  it("applies every requested key through a single RPC and returns the re-read values", async () => {
     h.currentRows = [
       { key: "feedback_adjustment_limit", value: 0.1 },
       { key: "feedback_period_days", value: 60 },
@@ -144,31 +164,34 @@ describe("PUT /api/admin/feedback-settings — parallel per-key updates", () => 
       feedback_min_signal_count: 2,
       feedback_decay_halflife_days: 90,
     });
-    expect(h.updates.map((u) => u.key).sort()).toEqual([
+    expect(h.rpcCalls).toHaveLength(1);
+    expect(h.rpcCalls[0]!.map((c) => c.key).sort()).toEqual([
       "feedback_adjustment_limit",
       "feedback_period_days",
     ]);
   });
 
-  it("one key failing still attempts the sibling updates (allSettled, not fail-fast)", async () => {
+  it("a single failing key aborts the whole PUT — no key applied, no sync (atomicity)", async () => {
     h.failKeys = new Set(["feedback_period_days"]);
     const res = await PUT(
       req({ feedback_period_days: 30, feedback_min_signal_count: 3, feedback_decay_halflife_days: 120 }),
     );
 
-    // Failure surfaces as the generic db_error 500 — no key names / raw DB
-    // details in the client-visible body.
+    // Generic db_error 500 — no key names / raw DB details in the client body.
     expect(res.status).toBe(500);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ error: "db_error" });
     expect(JSON.stringify(body)).not.toContain("feedback_period_days");
 
-    // All three updates were attempted despite the mid-batch failure.
-    expect(h.updates.map((u) => u.key).sort()).toEqual([
+    // All three keys went into ONE transactional RPC that rolled back — no
+    // per-key path could have persisted a subset.
+    expect(h.rpcCalls).toHaveLength(1);
+    expect(h.rpcCalls[0]!.map((c) => c.key).sort()).toEqual([
       "feedback_decay_halflife_days",
       "feedback_min_signal_count",
       "feedback_period_days",
     ]);
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });
 
@@ -179,7 +202,7 @@ describe("PUT /api/admin/feedback-settings — validation", () => {
     const body = (await res.json()) as { error: string; key: string };
     expect(body.error).toBe("invalid_feedback_setting");
     expect(body.key).toBe("feedback_adjustment_limit");
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 
   // Spec §6.10 bounds adjustment_limit to [0, 0.5]. 0.8 is a finite fractional
@@ -191,7 +214,7 @@ describe("PUT /api/admin/feedback-settings — validation", () => {
     const body = (await res.json()) as { error: string; key: string };
     expect(body.error).toBe("invalid_feedback_setting");
     expect(body.key).toBe("feedback_adjustment_limit");
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 
   // min_signal_count spec max is 100 (was 1000); decay_halflife spec max is 365
@@ -199,19 +222,19 @@ describe("PUT /api/admin/feedback-settings — validation", () => {
   it("rejects a min_signal_count above the §6.10 spec max (100)", async () => {
     const res = await PUT(req({ feedback_min_signal_count: 500 }));
     expect(res.status).toBe(422);
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 
   it("rejects a decay_halflife_days above the §6.10 spec max (365)", async () => {
     const res = await PUT(req({ feedback_decay_halflife_days: 1000 }));
     expect(res.status).toBe(422);
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 
   it("rejects a non-integer for an integer-only key before touching the DB", async () => {
     const res = await PUT(req({ feedback_min_signal_count: 2.5 }));
     expect(res.status).toBe(422);
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 
   it("rejects an empty body with no eligible keys", async () => {
@@ -219,7 +242,7 @@ describe("PUT /api/admin/feedback-settings — validation", () => {
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("no_settings_provided");
-    expect(h.updates).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
   });
 });
 
@@ -239,7 +262,7 @@ describe("PUT /api/admin/feedback-settings — RAG-sync publish", () => {
       payload: { changes: Array<{ key: string; value: unknown }> };
     };
     expect(event.event_type).toBe("platform_settings.updated");
-    // source_revision comes from the updated row's updated_at, not Date.now().
+    // source_revision comes from the RPC's returned updated_at, not Date.now().
     expect(event.source_revision).toBe(Math.floor(new Date("2026-07-13T00:00:00.000Z").getTime() / 1000));
     expect(event.payload.changes.slice().sort((a, b) => a.key.localeCompare(b.key))).toEqual([
       { key: "feedback_adjustment_limit", value: 0.1 },
@@ -251,21 +274,6 @@ describe("PUT /api/admin/feedback-settings — RAG-sync publish", () => {
     h.failKeys = new Set(["feedback_period_days"]);
     const res = await PUT(req({ feedback_period_days: 30 }));
     expect(res.status).toBe(500);
-    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
-  });
-
-  // A write that succeeds (error:null) but returns a row without updated_at
-  // trips the same per-key assert as the #1909 zero-row case (both collapse
-  // to `data?.[0]?.updated_at === undefined`) and throws before the route
-  // ever reaches the Math.max(...updatedAts) call below — so the -Infinity
-  // poisoned-source_revision case this test originally guarded against
-  // (#1887) is now structurally unreachable, not merely fixed up after.
-  it("throws (db_error) and does not publish when no updated_at is returned", async () => {
-    h.noUpdatedAt = true;
-    const res = await PUT(req({ feedback_period_days: 30 }));
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ error: "db_error" });
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 });

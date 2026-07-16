@@ -27,30 +27,33 @@ const TOKEN = `${Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT" })).toStr
 function makeClient(opts: {
   getClaims?: unknown;
   session?: unknown;
-}): { client: SupabaseClient; getClaims: ReturnType<typeof vi.fn> } {
+}): {
+  client: SupabaseClient;
+  getClaims: ReturnType<typeof vi.fn>;
+  getSession: ReturnType<typeof vi.fn>;
+} {
   const getClaims = vi.fn().mockResolvedValue(
     opts.getClaims ?? { data: { claims: { sub: AUTH_USER_ID } }, error: null },
   );
+  const getSession = vi
+    .fn()
+    .mockResolvedValue(
+      opts.session ?? { data: { session: { access_token: TOKEN } }, error: null },
+    );
   const client = {
-    auth: {
-      getClaims,
-      getSession: vi
-        .fn()
-        .mockResolvedValue(
-          opts.session ?? { data: { session: { access_token: TOKEN } }, error: null },
-        ),
-    },
+    auth: { getClaims, getSession },
   } as unknown as SupabaseClient;
-  return { client, getClaims };
+  return { client, getClaims, getSession };
 }
 
 describe("verifyIdentity", () => {
   it("returns the identity asserted by a signature-verified JWT", async () => {
-    const { client } = makeClient({});
+    const { client, getClaims } = makeClient({});
     const identity = await verifyIdentity(client, TOKEN);
+    // The explicit bearer token is the thing whose signature gets verified.
+    expect(getClaims).toHaveBeenCalledWith(TOKEN);
     expect(identity).toEqual({
       authUserId: AUTH_USER_ID,
-      accessToken: TOKEN,
       claims: { sub: AUTH_USER_ID },
     });
   });
@@ -108,28 +111,34 @@ describe("verifyIdentity", () => {
     expect(await verifyIdentity(client, TOKEN)).toBeNull();
   });
 
-  // Guards the §26.3 auth_time contract: callers read auth_time from the token
-  // verifyIdentity returns. If that were a DIFFERENT token than the one whose
-  // signature was checked, the re-auth gate would be reading attacker-supplied
-  // bytes — the precise footgun #1585 removed from assert-permission.
-  it("returns the exact token whose signature was verified", async () => {
-    const { client, getClaims } = makeClient({});
-    const identity = await verifyIdentity(client, TOKEN);
-    expect(getClaims).toHaveBeenCalledWith(TOKEN);
-    expect(identity?.accessToken).toBe(TOKEN);
-  });
-
   // Cookie callers pass no explicit token; getClaims() must still be invoked so
-  // the session's token gets verified rather than merely parsed.
-  it("verifies the session token for cookie callers", async () => {
+  // the session's token gets cryptographically verified rather than parsed. The
+  // verified claims are what verifyIdentity hands back (§26.3 reads auth_time
+  // from them) — never a value recovered from a separate read.
+  it("returns the verified claims for cookie callers", async () => {
     const { client, getClaims } = makeClient({});
     const identity = await verifyIdentity(client);
     expect(getClaims).toHaveBeenCalledWith(undefined);
-    expect(identity?.accessToken).toBe(TOKEN);
+    expect(identity?.claims).toEqual({ sub: AUTH_USER_ID });
   });
 
-  it("fails closed when claims verify but no access token can be resolved", async () => {
-    const { client } = makeClient({ session: { data: { session: null }, error: null } });
-    expect(await verifyIdentity(client)).toBeNull();
+  // #1939 regression guard. verifyIdentity used to call getSession() a SECOND
+  // time after getClaims() to recover the raw token bytes. auth-js can rotate
+  // the token in that window (EXPIRY_MARGIN_MS), so the recovered bytes were
+  // not provably the ones just verified — "exact bytes verified" was convention,
+  // not construction. The re-read is gone: callers consume the verified claims
+  // directly. This test fails the moment any post-verification session re-read
+  // is reintroduced. The session mock even returns a DIFFERENT token, so a
+  // reintroduced re-read could not slip through by echoing the same value.
+  it("never re-reads the session after verifying (no rotation seam)", async () => {
+    const { client, getSession } = makeClient({
+      session: {
+        data: { session: { access_token: "rotated.different.token" } },
+        error: null,
+      },
+    });
+    expect((await verifyIdentity(client))?.authUserId).toBe(AUTH_USER_ID);
+    expect((await verifyIdentity(client, TOKEN))?.authUserId).toBe(AUTH_USER_ID);
+    expect(getSession).not.toHaveBeenCalled();
   });
 });

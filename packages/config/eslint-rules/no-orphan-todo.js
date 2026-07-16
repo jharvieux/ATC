@@ -2,26 +2,68 @@
 
 // D-091 slop-reduction — ESLint rule: no-orphan-todo
 //
-// Flags TODO/FIXME/XXX/HACK comments that lack an owner or issue reference.
+// Flags TODO/FIXME/XXX/HACK comments that lack a VALID owner or issue reference.
 // Required format (one of):
-//   TODO(#123): description       — issue link
-//   TODO(@octocat): description   — github handle
-//   TODO(owner): description       — bare owner name
+//   TODO(#123): description       — issue link (PREFERRED: durable, linkable, verifiable)
+//   TODO(@octocat): description   — github handle (specific person)
+//   TODO(<whitelisted-owner>): description — enumerated domain owner (see below)
 //   FIXME(#456) ...                — colon optional
 //
-// Why: orphan TODOs accumulate and never get addressed because no one
-// is named or linked. Requiring a reference keeps them actionable.
+// Why: orphan TODOs accumulate because no one is named or linked durably. Issue refs
+// (#N) are strongest (durable, linkable, verifiable). @handles are specific (named
+// person). Bare owners are restricted to an ENUMERATED whitelist of the actual
+// identifiers in use in this codebase — no open-ended prefix patterns (bp*, BP*,
+// §*, haiku-*, help-*), since those accept arbitrary trailing text and defeat the
+// whole point (e.g. TODO(haiku-i-will-fix-this-later) used to pass).
 
 const MARKERS = ["TODO", "FIXME", "XXX", "HACK"];
 const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
 
+// Valid owner patterns (in priority order):
+//   1. #\d+ : issue reference (PREFERRED: durable, linkable)
+//   2. @\w[\w-]* : GitHub handle (specific person)
+//   3. Whitelisted bare owners — enumerated literals for actual domain concepts
+//      found in the codebase, plus two bounded structural forms (prompt-\d+ and
+//      [a-z]+-haiku — single-segment prefixes only, can't swallow free text).
+//
+// Rejected: anything not on the list below, including generic placeholders
+// (owner, name, verify, notifications, part-6) and bogus/invented owners.
+//
 // Two patterns count as a marker:
 //   1. Marker at start of a comment line (the classic `// TODO: ...` slop)
 //   2. Marker inside a paren-tag like `(TODO: wire X)`
-// Both must lack an owner/issue ref (no `(owner)` or `: @owner` / `: #123`).
-const LINE_MARKER_RE = new RegExp("^" + MARKER_GROUP + "\\b(?!\\s*\\()");
+// Both must have a valid owner: either #<digits>, @<handle>, or a whitelisted bare owner.
+const WHITELISTED_BARE_OWNERS = [
+  // Roles
+  "legal-attorney",
+  "legal-counsel",
+  "operator",
+  // Subsystem/feature refs
+  "usps-validator",
+  "rag-service-count",
+  "pre-cruise-emails",
+  "rbac-tenant-admin",
+  // Spec references (§N, BPN) — enumerated literals, not open-ended
+  "bp27-abuse-signals",
+  "BP19/§18",
+  "§22\\.4-haiku-redaction",
+  "§27\\.12-cost-display",
+  "§24-tone-content",
+  "§26",
+  // Haiku model features — enumerated literals, not open-ended
+  "haiku-pii-redaction",
+  "help-ai-confidence-haiku",
+  "help-screenshot-pii-haiku",
+  "[a-z]+-haiku", // bounded structural form: tone-haiku, etc.
+  // Numbered prompt configs — bounded structural form
+  "prompt-\\d+",
+].join("|");
+
+const LINE_MARKER_RE = new RegExp(
+  "^" + MARKER_GROUP + "\\b(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+);
 const PAREN_MARKER_RE = new RegExp(
-  "\\(\\s*" + MARKER_GROUP + "\\b(?!\\s*[@#]|\\(|\\s+[@#])",
+  "\\(\\s*" + MARKER_GROUP + "\\b(?!\\s*(?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + ")|\\())"
 );
 
 module.exports = {
@@ -29,14 +71,14 @@ module.exports = {
     type: "suggestion",
     docs: {
       description:
-        "Require TODO/FIXME/XXX/HACK comments to include an owner or issue reference: TODO(#123) or TODO(owner).",
+        "Require TODO/FIXME/XXX/HACK comments to include a valid owner or issue reference: TODO(#123), TODO(@handle), or TODO(whitelisted-owner).",
       category: "Slop reduction",
       recommended: true,
     },
     schema: [],
     messages: {
       orphanMarker:
-        "{{kind}} should include an owner or issue reference: {{kind}}(#123) or {{kind}}(owner). Got: {{snippet}}",
+        "{{kind}} must reference an issue ({{kind}}(#123)), a GitHub handle ({{kind}}(@user)), or a whitelisted owner. Bogus placeholders like 'notifications-dedup' or 'owner' are not allowed. Got: {{snippet}}",
     },
   },
   create(context) {

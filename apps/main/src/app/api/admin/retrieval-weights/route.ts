@@ -20,9 +20,11 @@
 // platform-settings-reconcile.ts, identical allowlist) catches drift from
 // any dropped delivery.
 
+import type { PostgrestError } from "@supabase/supabase-js";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { publishPlatformEvent } from "@/lib/rag-sync/publish-platform-event";
 
 type WeightKey = "match" | "authority" | "recency" | "feedback";
@@ -38,30 +40,30 @@ const MAX_WEIGHT = 10;
 interface PlatformDb {
   from: (table: string) => {
     select: (cols: string) => {
-      in: (col: string, vals: string[]) => Promise<{ data: Array<{ key: string; value: unknown }> | null; error: unknown }>;
-    };
-    update: (row: Record<string, unknown>) => {
-      eq: (
+      in: (
         col: string,
-        val: string,
-      ) => {
-        select: (cols: string) => Promise<{ data: Array<{ updated_at: string }> | null; error: unknown }>;
-      };
+        vals: string[],
+      ) => Promise<{ data: Array<{ key: string; value: unknown }> | null; error: PostgrestError | null }>;
     };
   };
+  rpc: (
+    fn: "platform_settings_apply_updates",
+    args: { p_changes: Array<{ key: string; value: number }> },
+  ) => Promise<{ data: Array<{ setting_key: string; setting_updated_at: string }> | null; error: PostgrestError | null }>;
 }
 
 async function loadCurrent(
   db: PlatformDb,
 ): Promise<Record<WeightKey, number>> {
-  const { data, error } = await db
-    .from("platform_settings")
-    .select("key, value")
-    .in("key", WEIGHT_KEYS.map(settingKey));
   // #1909 — a failed read used to be discarded, rendering the seed defaults as
   // if they were the live config. An admin would see 1.0 across the board and
-  // could "correct" a value that was never actually wrong.
-  if (error) throw new Error(`retrieval-weights read failed: ${String(error)}`);
+  // could "correct" a value that was never actually wrong. #1937 — unwrap via
+  // safeAwait surfaces the PostgrestError's message/code/details into the
+  // thrown error; the old `String(error)` logged "[object Object]", erasing it.
+  const data = await safeAwait(
+    db.from("platform_settings").select("key, value").in("key", WEIGHT_KEYS.map(settingKey)),
+    "platform_settings.select.retrieval_weights",
+  );
   const out: Record<WeightKey, number> = { match: 1, authority: 1, recency: 1, feedback: 1 };
   for (const row of data ?? []) {
     for (const w of WEIGHT_KEYS) {
@@ -134,58 +136,35 @@ export async function PUT(req: Request): Promise<Response> {
     const result = await withPlatformAdminAudit(
       { admin_user_id: adminUserId, reason: "retrieval_weights_change", operation: "retrieval_weights.update" },
       async (db, recordQuery) => {
-        // Each weight lives on its own platform_settings row (different key),
-        // so the updates are independent — fan out instead of one
-        // round-trip per key. allSettled (not all) because the weights are
-        // a cohesive scoring config read together downstream: a fail-fast
-        // rejection would race the still-in-flight sibling updates and lose
-        // track of which keys actually applied. On any failure, report the
-        // applied/failed split in the thrown error so the audit log and
-        // server logs show the true partial state.
+        // #1936 (D-091 #22) — apply every requested key in ONE transaction via
+        // the platform_settings_apply_updates RPC. A per-key fan-out would
+        // autocommit each UPDATE independently (withPlatformAdminAudit opens no
+        // transaction), so a mixed PUT where one key matched no row left the
+        // applied key durably committed in main while the route threw 500 and
+        // published no RAG-sync event — main and the rag replica diverged until
+        // the nightly reconcile cron (up to 24h) and the admin never learned a
+        // key had taken effect. The RPC RAISEs on any zero-row key, rolling
+        // back the whole call, so a partial PUT applies nothing.
         const entries = Object.entries(requested) as Array<[WeightKey, number]>;
-        const settled = await Promise.allSettled(
-          entries.map(async ([w, value]) => {
-            recordQuery({ op: "update", table: "platform_settings" });
-            const { data, error } = await (db as unknown as PlatformDb)
-              .from("platform_settings")
-              .update({ value })
-              .eq("key", settingKey(w))
-              .select("updated_at");
-            if (error) throw new Error(`update ${settingKey(w)} failed: ${String(error)}`);
-            // #1909 — zero matched rows is error:null + data:[] in supabase-js
-            // v2 (D-091 #7). Asserting per-key, not in aggregate: a PUT of
-            // {match, authority} where only authority's row exists would pass
-            // an any-key-returned-updated_at check while match silently never
-            // persisted, and the admin would see 200.
-            const updatedAt = data?.[0]?.updated_at;
-            if (updatedAt === undefined) {
-              throw new Error(`update ${settingKey(w)} matched no row — setting not persisted`);
-            }
-            return updatedAt;
-          }),
+        const changes = entries.map(([w, value]) => ({ key: settingKey(w), value }));
+        recordQuery({ op: "rpc", table: "platform_settings", rpc_name: "platform_settings_apply_updates" });
+        const applied = await safeAwait(
+          (db as unknown as PlatformDb).rpc("platform_settings_apply_updates", { p_changes: changes }),
+          "platform_settings.rpc.apply_updates",
         );
-        const failedKeys = entries
-          .filter((_, i) => settled[i]?.status === "rejected")
-          .map(([w]) => settingKey(w));
-        if (failedKeys.length > 0) {
-          const appliedKeys = entries
-            .filter((_, i) => settled[i]?.status === "fulfilled")
-            .map(([w]) => settingKey(w));
-          throw new Error(
-            `retrieval-weights update partial failure — failed: [${failedKeys.join(", ")}], applied: [${appliedKeys.join(", ")}]`,
-          );
+        // Success returns one row per applied key. An empty/null result without
+        // a raised error would mean the function committed nothing — fail loud
+        // rather than publish a sync for state that may not have persisted (and
+        // it keeps source_revision's Math.max off the -Infinity path, #1887).
+        if (!applied || applied.length === 0) {
+          throw new Error("platform_settings_apply_updates returned no rows");
         }
-        // source_revision mirrors the platform-settings GET route: the DB
-        // row's updated_at, not wall-clock at call time, so RAG-side
-        // stale-write detection compares against the actual DB write.
-        // Reaching here means every key threw or returned an updated_at, and
-        // no key threw — so updatedAts is non-empty and Math.max can't yield
-        // the -Infinity that would poison source_revision and make the
-        // rag-side stale-revision guard skip a key forever (#1887).
-        const updatedAts = settled
-          .filter((s): s is PromiseFulfilledResult<string> => s.status === "fulfilled")
-          .map((s) => s.value);
-        const sourceRevision = Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)));
+        // source_revision mirrors the platform-settings GET route: the DB row's
+        // updated_at (actual write time), floored to epoch seconds, so RAG-side
+        // stale-write detection compares against the real write.
+        const sourceRevision = Math.max(
+          ...applied.map((r) => Math.floor(new Date(r.setting_updated_at).getTime() / 1000)),
+        );
 
         // #1826 — enqueue the RAG-sync event after the write commits.
         // publishPlatformEvent never throws (enqueue failures alert
@@ -194,7 +173,7 @@ export async function PUT(req: Request): Promise<Response> {
         await publishPlatformEvent({
           event_type: "platform_settings.updated",
           source_revision: sourceRevision,
-          payload: { changes: entries.map(([w, value]) => ({ key: settingKey(w), value })) },
+          payload: { changes },
         });
 
         const updated: WeightKey[] = entries.map(([w]) => w);
