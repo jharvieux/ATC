@@ -14,13 +14,19 @@ import { AuthApiError, AuthRetryableFetchError } from "@supabase/supabase-js";
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
   getTenantByCustomDomain: vi.fn(),
+  getTenantByAuthUserId: vi.fn(),
   getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+  // #1932 hybrid — default is a clean local miss ({data:null}), which hands
+  // off to getUser(). That makes every pre-existing test in this file exercise
+  // the handoff path, i.e. exactly the pre-#1932 network behavior they pin.
+  getClaims: vi.fn().mockResolvedValue({ data: null, error: null }),
   applyRefreshedSession: vi.fn(<T>(res: T): T => res),
 }));
 
 vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantBySlug: mocks.getTenantBySlug,
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+  getTenantByAuthUserId: mocks.getTenantByAuthUserId,
 }));
 
 // Keep the real isInvalidSessionError + clearAuthCookies (the self-heal logic
@@ -28,7 +34,7 @@ vi.mock("@/lib/tenancy/resolve-tenant", () => ({
 vi.mock("@/lib/auth/ssr-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/ssr-client")>()),
   createMiddlewareClient: () => ({
-    supabase: { auth: { getUser: mocks.getUser } },
+    supabase: { auth: { getUser: mocks.getUser, getClaims: mocks.getClaims } },
     applyRefreshedSession: mocks.applyRefreshedSession,
   }),
 }));
@@ -46,6 +52,8 @@ function req(host: string, pathname = "/", headers: Record<string, string> = {})
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+  mocks.getClaims.mockResolvedValue({ data: null, error: null });
+  mocks.getTenantByAuthUserId.mockResolvedValue(null);
   mocks.applyRefreshedSession.mockImplementation(<T>(res: T): T => res);
   process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
   process.env.PLATFORM_DOMAIN_REGEX = "^atc-([a-z0-9-]+)\\.ai-travelconcierge\\.com$";
@@ -132,6 +140,7 @@ describe("proxy() session refresh", () => {
       mocks.applyRefreshedSession.mockImplementation(<T>(res: T): T => res);
       const res = await proxy(req("ai-travelconcierge.com", p));
       expect(mocks.getUser, `getUser should not be called for ${p}`).not.toHaveBeenCalled();
+      expect(mocks.getClaims, `getClaims should not be called for ${p}`).not.toHaveBeenCalled();
       expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
       expect(mocks.applyRefreshedSession.mock.calls[0]?.[0]).toBe(res);
     }
@@ -243,5 +252,104 @@ describe("proxy() invalid-session self-heal", () => {
     expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get("sb-abc-auth-token")?.maxAge).not.toBe(0);
     expect(mocks.getUser).not.toHaveBeenCalled();
+  });
+});
+
+// #1932 — hybrid local verification. The hot path verifies the session JWT
+// locally (verifyIdentity → getClaims, ES256 vs cached JWKS) and only pays the
+// getUser() network round-trip when the local verify misses. These tests pin
+// the load-bearing invariants: a local success must never call getUser, every
+// local miss must hand off to getUser (whose error alone drives the #1361
+// heal), and the kill switch must restore the unconditional-getUser behavior.
+describe("proxy() hybrid local verification (#1932)", () => {
+  const COOKIE = "sb-abc-auth-token=live-token";
+  function localVerified(sub = "user-1") {
+    mocks.getClaims.mockResolvedValue({
+      data: { claims: { sub, exp: Math.floor(Date.now() / 1000) + 3600 } },
+      error: null,
+    });
+  }
+
+  it("locally-verified session: getUser is NOT called, and the response still passes through applyRefreshedSession", async () => {
+    localVerified();
+    const res = await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(mocks.getClaims).toHaveBeenCalledTimes(1);
+    expect(mocks.getUser).not.toHaveBeenCalled();
+    // A refresh can happen INSIDE getClaims (getSession auto-refreshes within
+    // its 90s margin); applyRefreshedSession must still wrap the response so
+    // any rotation is flushed.
+    expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
+    expect(mocks.applyRefreshedSession.mock.calls[0]?.[0]).toBe(res);
+  });
+
+  it("locally-verified identity feeds tenant resolution with the verified sub", async () => {
+    localVerified("user-42");
+    await proxy(req("ai-travelconcierge.com", "/concierge", { cookie: COOKIE }));
+    expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("user-42");
+    expect(mocks.getUser).not.toHaveBeenCalled();
+  });
+
+  it("login gate behaves identically under local verification: verified passes, unverified redirects", async () => {
+    localVerified();
+    const authed = await proxy(req("ai-travelconcierge.com", "/signup/complete", { cookie: COOKIE }));
+    expect(authed.status).toBe(200);
+    expect(authed.headers.get("location")).toBeNull();
+
+    vi.clearAllMocks();
+    mocks.getClaims.mockResolvedValue({ data: null, error: null });
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    mocks.applyRefreshedSession.mockImplementation(<T>(r: T): T => r);
+    const anon = await proxy(req("ai-travelconcierge.com", "/signup/complete"));
+    expect(anon.status).toBe(307);
+    expect(new URL(anon.headers.get("location")!).pathname).toBe("/auth/reauth");
+  });
+
+  it("local-verify miss hands off to getUser; a definitive getUser rejection still heals (garbage cookie can't wedge)", async () => {
+    mocks.getClaims.mockResolvedValue({
+      data: null,
+      // Shape-only stand-in for AuthInvalidJwtError: local errors must NOT
+      // drive the heal directly — only the getUser() handoff result may.
+      error: Object.assign(new Error("Invalid JWT signature"), { name: "AuthInvalidJwtError" }),
+    });
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthApiError("invalid claim", 403, "bad_jwt"),
+    });
+    const res = await proxy(req("ai-travelconcierge.com", "/admin", { cookie: COOKIE }));
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/reauth");
+    expect(res.cookies.get("sb-abc-auth-token")?.maxAge).toBe(0);
+  });
+
+  it("local-verify miss + transient getUser failure does NOT heal (no mass logout on an auth-server blip)", async () => {
+    mocks.getClaims.mockResolvedValue({
+      data: null,
+      error: Object.assign(new Error("JWKS fetch failed"), { name: "AuthInvalidJwtError" }),
+    });
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthRetryableFetchError("auth server unreachable", 0),
+    });
+    const res = await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.cookies.get("sb-abc-auth-token")?.maxAge).not.toBe(0);
+  });
+
+  it("getClaims THROWING (exotic decode failure rethrows non-AuthErrors) hands off to getUser instead of crashing", async () => {
+    mocks.getClaims.mockRejectedValue(new SyntaxError("Unexpected token in JSON"));
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    const res = await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(res.status).toBe(200);
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("kill switch AUTH_MIDDLEWARE_LOCAL_VERIFY=disabled restores unconditional getUser (no getClaims call)", async () => {
+    process.env.AUTH_MIDDLEWARE_LOCAL_VERIFY = "disabled";
+    localVerified(); // would succeed locally — must be ignored
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(mocks.getClaims).not.toHaveBeenCalled();
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
   });
 });

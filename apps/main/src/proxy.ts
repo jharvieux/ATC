@@ -20,6 +20,7 @@ import {
   isInvalidSessionError,
   AUTH_TOKEN_COOKIE_RE,
 } from "@/lib/auth/ssr-client";
+import { verifyIdentity } from "@/lib/auth/verify-identity";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import {
@@ -262,17 +263,44 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 1b. Session refresh (§17.x). With cookie-based PKCE sessions the SERVER
-  //     refreshes — the browser no longer holds tokens. getUser() rotates the
-  //     access token when it has expired; applyRefreshedSession flushes the
-  //     rotated cookies (and Supabase's no-cache headers) onto whichever
-  //     response a resolution branch returns. Supabase rotates the refresh
-  //     token on every use, so skipping this kills sessions at the 1h mark.
-  //     Runs after the admin gate + test bypass (neither uses cookie sessions)
-  //     and before tenant resolution so cloneAndScrubHeaders forwards the
-  //     freshened Cookie header downstream.
+  // 1b. Session verify + refresh (§17.x, #1932). With cookie-based PKCE
+  //     sessions the SERVER refreshes — the browser no longer holds tokens.
+  //     applyRefreshedSession flushes any rotated cookies (and Supabase's
+  //     no-cache headers) onto whichever response a resolution branch returns.
+  //     Supabase rotates the refresh token on every use, so skipping the
+  //     refresh kills sessions at the 1h mark. Runs after the admin gate +
+  //     test bypass (neither uses cookie sessions) and before tenant
+  //     resolution so cloneAndScrubHeaders forwards the freshened Cookie
+  //     header downstream.
   //
-  //     PKCE safety: /api/auth/* routes are exempt from getUser(). auth-js
+  //     Hybrid verification (#1932) — this used to be an unconditional
+  //     getUser() network round-trip on every request. Now the hot path is
+  //     verifyIdentity() → getClaims(): a LOCAL ES256 signature check against
+  //     auth-js's cached JWKS. Refresh timing is unchanged because no-arg
+  //     getClaims() reads the session via getSession(), which itself calls
+  //     _callRefreshToken when the access token is within EXPIRY_MARGIN_MS
+  //     (90s) of expiry — the exact same margin getUser() refreshed under —
+  //     and that rotation fires the middleware client's setAll capture just
+  //     like getUser()'s did. Steady-state requests pay zero GoTrue calls.
+  //
+  //     Fail-safe handoff: ANY local-verify miss — no session, bad signature,
+  //     refresh rejected, JWKS cold-cache fetch failure, or an exotic decode
+  //     throw (getClaims rethrows non-AuthErrors, e.g. bad JSON inside valid
+  //     base64url) — falls through to the network getUser(), and ONLY its
+  //     error feeds the #1361 self-heal below. Local error objects
+  //     (AuthInvalidJwtError) never reach isInvalidSessionError: it only
+  //     recognizes server-issued AuthApiError, so classifying local failures
+  //     here would either break the heal or clear cookies on a JWKS blip.
+  //     The handoff keeps the heal's discrimination byte-for-byte identical
+  //     to the pre-#1932 behavior at the cost of one network call on the
+  //     (rare) failure path.
+  //
+  //     Kill switch: AUTH_MIDDLEWARE_LOCAL_VERIFY=disabled restores the
+  //     unconditional-getUser() behavior without a code revert (staged
+  //     rollout / instant fallback if the local path misbehaves in beta).
+  //
+  //     PKCE safety: /api/auth/* routes are exempt from session verification
+  //     entirely (neither getClaims nor getUser runs). auth-js
   //     _removeSession() clears the PKCE code_verifier from removedItems
   //     BEFORE firing SIGNED_OUT, so applyServerStorage includes the
   //     code_verifier deletion in its setAll call. The middleware setAll calls
@@ -282,10 +310,23 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   //     throws AuthPKCECodeVerifierMissingError. Auth routes manage their own
   //     session state and do not need server-side refresh.
   const { supabase, applyRefreshedSession } = createMiddlewareClient(req);
-  const sessionResult = pathname.startsWith("/api/auth/")
-    ? null
-    : await supabase.auth.getUser();
-  const authUser = sessionResult?.data.user ?? null;
+  let authUser: { id: string } | null = null;
+  let sessionError: unknown = null;
+  if (!pathname.startsWith("/api/auth/")) {
+    if (process.env.AUTH_MIDDLEWARE_LOCAL_VERIFY !== "disabled") {
+      try {
+        const identity = await verifyIdentity(supabase);
+        if (identity) authUser = { id: identity.authUserId };
+      } catch {
+        // Exotic decode failure — fall through to the authoritative path.
+      }
+    }
+    if (!authUser) {
+      const sessionResult = await supabase.auth.getUser();
+      authUser = sessionResult.data.user;
+      sessionError = sessionResult.error;
+    }
+  }
 
   // 1b-heal (§17.x, #1361) — self-heal a present-but-invalid session. When the
   //   request carries an auth cookie but getUser() DEFINITIVELY rejects it (a
@@ -297,11 +338,12 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   //   Supabase outage can't mass-log-out everyone. Runs before the admin/login
   //   gates so a bad-cookie visitor re-auths instead of hitting a 404. The
   //   re-auth surface itself (isAuthFlowPath) is cleared but not redirected, to
-  //   avoid a loop.
+  //   avoid a loop. sessionError is populated ONLY by the getUser() handoff
+  //   (see §1b) — a locally-verified session can never reach this block.
   if (
     !authUser &&
     hasSupabaseAuthCookie(req) &&
-    isInvalidSessionError(sessionResult?.error)
+    isInvalidSessionError(sessionError)
   ) {
     // Both returns skip applyRefreshedSession by design: a failed getUser()
     // never ran the middleware setAll, so there are no rotated tokens to flush —
