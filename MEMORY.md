@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-360 — 2026-07-16 — Sweep #5 (portable /issue-sweep): 11 PRs merged, 29 issues closed / 7 filed (net −22)
+
+**Decision.** Ran the portable issue-sweep across all 61 triageable open issues (13 Haiku triage agents → 12 batches). Operator included ALL supervised include-asks; decision rulings recorded on-issue: #1923 residual risk accepted+closed, #1948/#1949 leave-serial+closed, #1247/#1805/#1921/#1931/#1950 parked, #1932 approved as a dedicated post-sweep Fable task, #1968 canary fix approved, prod migration apply DECLINED (prod-drift-check stays red by design; #1623 tracks).
+
+**Why it went this way.** Every PR got both audit agents; audit fix rounds were applied in-PR per the fix-inline criteria (D-357) rather than filed — 6 of 11 PRs needed ≥1 fix round, and audits caught real defects pre-merge: a prod fail-open on chat quota (count error → 0 written to the enforcement counter), a silent-skip in ICA compliance flagging, a mid-purge CCPA notify-audience loss, 4 bypass classes in the grants-pin analyzer, and 5 open-ended lint whitelist prefixes that would have reopened #1957's bug class. The #1912 flake fix (PR #1967) turned out to be a REAL product bug (post-save reload wiping selections), found only because the pre-pr auditor caught the executor misdescribing its own diff.
+
+**Rejected.** Filing audit findings as follow-ups instead of fixing in-PR (D-357 forbids); a third audit round on #1970's non-gating mock-fidelity WARNING (dropped with rationale — guarded behavior tested, collision unreachable); parallelizing task-reminders/re-encrypt/reconcile (operator: leave serial).
+
+**Residuals the operator owns.** Prod is behind on migrations (email_retry_content) — drift alarm red until an operator-gated apply; #1953 caching options documented on-issue; #1950 unruled; #1982 flake persists post-#1967 (3 sightings). Filed: #1974 (step.run isolation), #1975 (counter SET-vs-RPC race), #1979 (email-templates refactor remainder), #1980 (mid-sentence TODOs), #1982 (flake), #1984 (idempotency-key pins), #1985 (serial-await CI gate).
+
+**Related artifacts.** PRs #1967, #1969–#1973, #1976–#1978, #1981, #1983; issues above; D-356/D-357/D-358 (prior sweep lessons all applied — zero stray closing-keyword merges this time, close-set verified mechanically pre-merge on every PR).
+
+---
+
 ## D-359 — 2026-07-16 — Persona prompt truth pass: fact-checked rebuild of all six travel personas (PR #1965)
 
 **Decision.** Rebuilt all six travel-persona base-blocks from the Agent Backstories docx character overviews plus a primary-source fact-check (six parallel research agents, July 2026). Every checkable domain claim was verified; wrong claims replaced (operator direction: prior drafts "contain errors" — overrides any conflicting documented prompt content). Key rulings baked in:
