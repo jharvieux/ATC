@@ -69,6 +69,47 @@ describe("authenticated retains EXECUTE on RLS helper functions (#1922)", () => 
     expect(schemaWideExecuteRevokeHitsAuthenticated(sql)).toBe(true);
   });
 
+  it("trips on a per-function REVOKE with a trailing CASCADE (suffix-swallow regression)", () => {
+    // The lazy role capture swallows a trailing `CASCADE` into the role token
+    // (`authenticated cascade` !== `authenticated`), so without whitespace-split +
+    // keyword-filter in rolesInList the revoke reads as a no-op and authenticated
+    // is falsely reported as still granted.
+    const sql = [
+      "REVOKE EXECUTE ON FUNCTION public.auth_user_in_tenant(uuid) FROM public;",
+      "GRANT  EXECUTE ON FUNCTION public.auth_user_in_tenant(uuid) TO authenticated;",
+      "REVOKE EXECUTE ON FUNCTION public.auth_user_in_tenant(uuid) FROM authenticated CASCADE;",
+    ].join("\n");
+    expect(authenticatedHoldsExecute(sql, "auth_user_in_tenant")).toBe(false);
+  });
+
+  it("flags a schema-wide REVOKE ON ALL FUNCTIONS FROM authenticated CASCADE (suffix-swallow regression)", () => {
+    // Same CASCADE swallow in the schema-wide backstop: `authenticated cascade`
+    // would fail the roles.includes("authenticated") check and let the bulk revoke
+    // sail through.
+    const sql =
+      "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM authenticated CASCADE;";
+    expect(schemaWideExecuteRevokeHitsAuthenticated(sql)).toBe(true);
+  });
+
+  it("trips on a quoted per-function REVOKE undoing an unquoted grant (quoted-identifier regression)", () => {
+    // `FROM "authenticated"` — the `"` was excluded from the role-list char class,
+    // so the whole statement failed to match and the revoke was dropped from the
+    // replay entirely, falsely reporting authenticated as still granted.
+    const sql = [
+      "REVOKE EXECUTE ON FUNCTION public.tenant_is_active(uuid) FROM public;",
+      "GRANT  EXECUTE ON FUNCTION public.tenant_is_active(uuid) TO authenticated;",
+      'REVOKE EXECUTE ON FUNCTION public.tenant_is_active(uuid) FROM "authenticated";',
+    ].join("\n");
+    expect(authenticatedHoldsExecute(sql, "tenant_is_active")).toBe(false);
+  });
+
+  it("flags a schema-wide quoted REVOKE ON ALL FUNCTIONS FROM \"authenticated\" (quoted-identifier regression)", () => {
+    // Same quoted-identifier blind spot in the schema-wide backstop.
+    const sql =
+      'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "authenticated";';
+    expect(schemaWideExecuteRevokeHitsAuthenticated(sql)).toBe(true);
+  });
+
   it("reports false after DROP + CREATE + REVOKE FROM public with no re-grant (DROP resets grants)", () => {
     // WARNING fix: a prior GRANT to authenticated does NOT survive a DROP of the
     // function. If the analyzer treated old grants as eternal, this sequence —

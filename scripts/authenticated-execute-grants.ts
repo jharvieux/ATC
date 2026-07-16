@@ -48,11 +48,17 @@ export function readAllMigrations(dir: string = MIGRATIONS_DIR): string {
     .join("\n");
 }
 
+// Splits a captured role list into normalized role tokens. Splits on whitespace
+// as well as commas (so a trailing `CASCADE`/`RESTRICT` swallowed into the
+// capture, and space-separated lists, both decompose), strips surrounding double
+// quotes (so `"authenticated"` compares equal to `authenticated`), and drops the
+// `cascade`/`restrict` drop-behavior keywords which are grammar, not roles.
 function rolesInList(list: string): string[] {
   return list
-    .split(",")
-    .map((r) => r.trim().toLowerCase())
-    .filter(Boolean);
+    .split(/[\s,]+/)
+    .map((r) => r.trim().replace(/^"|"$/g, "").toLowerCase())
+    .filter(Boolean)
+    .filter((r) => r !== "cascade" && r !== "restrict");
 }
 
 // Replays every DROP / GRANT / REVOKE EXECUTE statement targeting `funcName`, in
@@ -82,7 +88,7 @@ export function authenticatedHoldsExecute(sql: string, funcName: string): boolea
       `|` +
       String.raw`\b(GRANT|REVOKE)\s+(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)\s+ON\s+FUNCTION\s+(?:public\.)?` +
       funcName +
-      String.raw`\s*\([^)]*\)\s+(TO|FROM)\s+([\w\s,]+?)\s*;`,
+      String.raw`\s*\([^)]*\)\s+(TO|FROM)\s+([\w\s,"]+?)\s*;`,
     "gi",
   );
 
@@ -114,7 +120,7 @@ export function authenticatedHoldsExecute(sql: string, funcName: string): boolea
 // statement is present in the ledger.
 export function schemaWideExecuteRevokeHitsAuthenticated(sql: string): boolean {
   const re =
-    /\bREVOKE\s+(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)\s+ON\s+ALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+public\s+FROM\s+([\w\s,]+?)\s*;/gi;
+    /\bREVOKE\s+(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)\s+ON\s+ALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+public\s+FROM\s+([\w\s,"]+?)\s*;/gi;
   for (const m of sql.matchAll(re)) {
     const roles = rolesInList(m[1]);
     if (roles.includes("authenticated") || roles.includes("public")) return true;
