@@ -44,6 +44,7 @@ type ClaimsOverride = {
   jti?: string | null;
   iss?: string;
   aud?: string;
+  service_identifier?: string;
 };
 
 async function makeToken(overrides: ClaimsOverride = {}) {
@@ -54,6 +55,9 @@ async function makeToken(overrides: ClaimsOverride = {}) {
     tenant_id: overrides.tenant_id !== undefined ? overrides.tenant_id : "tenant-uuid-placeholder",
     scope: overrides.scope ?? "read",
     ...(jti !== null ? { jti } : {}),
+    ...(overrides.service_identifier !== undefined
+      ? { service_identifier: overrides.service_identifier }
+      : {}),
   })
     .setProtectedHeader({ alg: "RS256", kid: overrides.kid ?? KEY_ID })
     .setIssuedAt(overrides.iat ?? now)
@@ -419,5 +423,92 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const handler = freshWrapper(async () => Response.json({ ok: true }));
     const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
+  });
+
+  // ── #1843: the warn is the ROLLOUT SIGNAL, so it is load-bearing ──────────
+  // Operators decide the strict flip is safe by watching absent-claim warns
+  // fall to zero in prod. If the warn silently stopped firing on absent claims,
+  // that signal would read "zero" while claimless tokens were still in flight —
+  // and the flip would 401 live traffic. These two tests are what stop a future
+  // refactor from breaking the instrument the rollout decision depends on.
+  it("warn-logs absent iss/aud with kid + tenant + service attribution", async () => {
+    vi.resetModules();
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { tenant_id: "active-tenant", status: "active" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    vi.doMock("@/lib/redis/client", () => ({
+      getRedis: () => ({ set: async () => "OK" }),
+    }));
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
+
+    const token = await makeToken({
+      tenant_id: "active-tenant",
+      service_identifier: "platform-admin",
+    });
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    await handler(makeReq(token), { params: Promise.resolve({}) });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("missing iss/aud claims"),
+      expect.objectContaining({
+        kid: KEY_ID,
+        tenant_id: "active-tenant",
+        service_identifier: "platform-admin",
+        missing: "iss+aud",
+      }),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT warn when iss and aud are both present and correct", async () => {
+    vi.resetModules();
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { tenant_id: "active-tenant", status: "active" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    vi.doMock("@/lib/redis/client", () => ({
+      getRedis: () => ({ set: async () => "OK" }),
+    }));
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
+
+    const token = await makeToken({
+      tenant_id: "active-tenant",
+      iss: SERVICE_JWT_ISSUER,
+      aud: SERVICE_JWT_AUDIENCE,
+    });
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("missing iss/aud claims"),
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
   });
 });
