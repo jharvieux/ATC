@@ -62,13 +62,6 @@ interface Fixture {
 const STRIPE_KEY = process.env.STRIPE_TEST_SECRET_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY_TEST;
 
-if (!STRIPE_KEY || !ANTHROPIC_KEY) {
-  console.error(
-    "Error: STRIPE_TEST_SECRET_KEY and ANTHROPIC_API_KEY_TEST must be set.",
-  );
-  process.exit(1);
-}
-
 function readFixture(relPath: string): Fixture {
   return JSON.parse(
     fs.readFileSync(path.join(FIXTURES_ROOT, relPath), "utf8"),
@@ -102,6 +95,30 @@ async function stripeFetch(
     );
   }
   return { status: res.status, body: JSON.parse(text) as unknown };
+}
+
+type StripeFetchFn = (
+  method: string,
+  endpoint: string,
+  body?: Record<string, unknown>,
+) => Promise<{ status: number; body: unknown }>;
+
+// Attaching pm_card_visa materializes a distinct attached PaymentMethod with
+// its own pm_... id (#1968) — the literal "pm_card_visa" token is a Stripe
+// test-mode shorthand accepted only by the attach endpoint, not a real PM id.
+// Passing the token itself as default_payment_method 400s because Stripe
+// resolves it to the canonical (unattached) visa PM, not the one just attached.
+export async function attachDefaultPaymentMethod(
+  customerId: string,
+  fetchFn: StripeFetchFn,
+): Promise<void> {
+  const attach = await fetchFn("POST", `/v1/payment_methods/pm_card_visa/attach`, {
+    customer: customerId,
+  });
+  const attachedPmId = (attach.body as { id: string }).id;
+  await fetchFn("POST", `/v1/customers/${customerId}`, {
+    invoice_settings: { default_payment_method: attachedPmId },
+  });
 }
 
 async function anthropicFetch(
@@ -186,12 +203,7 @@ async function recordStripeFixtures(): Promise<void> {
       // pm_card_visa is a Stripe-provided test payment method ID that is always
       // available in test mode — no fixture is recorded for this setup step.
       const customerId = subs.cus_test_placeholder as string;
-      await stripeFetch("POST", `/v1/payment_methods/pm_card_visa/attach`, {
-        customer: customerId,
-      });
-      await stripeFetch("POST", `/v1/customers/${customerId}`, {
-        invoice_settings: { default_payment_method: "pm_card_visa" },
-      });
+      await attachDefaultPaymentMethod(customerId, stripeFetch);
       console.log(`Stripe: attached test payment method to ${customerId}`);
     }
 
@@ -307,13 +319,23 @@ async function recordAnthropicFixtures(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (!STRIPE_KEY || !ANTHROPIC_KEY) {
+    console.error(
+      "Error: STRIPE_TEST_SECRET_KEY and ANTHROPIC_API_KEY_TEST must be set.",
+    );
+    process.exit(1);
+  }
   console.log("Recording contract fixtures...");
   await recordStripeFixtures();
   await recordAnthropicFixtures();
   console.log("Done.");
 }
 
-main().catch((err: unknown) => {
-  console.error(redactSecrets(err));
-  process.exit(1);
-});
+// Only run when invoked directly (`tsx scripts/record-contracts.ts`);
+// importing the module for unit tests must NOT trigger the recorder or exit.
+if (process.argv[1] && import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  main().catch((err: unknown) => {
+    console.error(redactSecrets(err));
+    process.exit(1);
+  });
+}
