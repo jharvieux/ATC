@@ -16,7 +16,10 @@ describe("abuseStateTransitionNotify — §27.8 (#1580)", () => {
       "utf8"
     );
 
-    expect(fileText).toContain('import { sendEmail }');
+    // #1935 — the import also picks up the shared TENANT_BRANDING_COLUMNS
+    // constant, so match sendEmail as an import token rather than the whole
+    // (now multi-name) import clause.
+    expect(fileText).toMatch(/import\s*\{\s*sendEmail\b/);
     expect(fileText).toContain('from "@/lib/email/send"');
     // Comments may reference the fork, but the import/calls should not.
     const noCommentText = fileText.split("\n").filter((line: string) => !line.trim().startsWith("//")).join("\n");

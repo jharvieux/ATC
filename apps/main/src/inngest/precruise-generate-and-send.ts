@@ -22,7 +22,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
-import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { sendEmail, type SendEmailInput, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
@@ -313,6 +313,8 @@ interface EmailCtx {
     tenant_resend_api_key_encrypted?: string;
     email_from_address?: string;
     email_from_name?: string;
+    email_from_domain?: string;
+    email_from_domain_verified_at?: string;
   };
   customerName: string;
   shipName: string;
@@ -383,7 +385,9 @@ export async function loadEmailContext(args: {
 
   const { data: brandingRaw } = await svc
     .from("tenant_branding")
-    .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+    // #1935 — shared column list across all five branding-reading crons so
+    // a verified custom domain (email_from_domain*) can't drift out again.
+    .select(TENANT_BRANDING_COLUMNS)
     .eq("tenant_id", tenant_id)
     .maybeSingle();
   const branding = (brandingRaw as EmailCtx["branding"] | null) ?? {};
@@ -550,6 +554,9 @@ async function buildAndSend(args: {
     tenant_resend_api_key_encrypted: emailCtx.branding.tenant_resend_api_key_encrypted ?? null,
     email_from_address: emailCtx.branding.email_from_address ?? null,
     email_from_name: emailCtx.branding.email_from_name ?? null,
+    // #1935 — verified custom domain, now read alongside the rest of branding.
+    email_from_domain: emailCtx.branding.email_from_domain ?? null,
+    email_from_domain_verified_at: emailCtx.branding.email_from_domain_verified_at ?? null,
   };
 
   const result = await sendEmail({
