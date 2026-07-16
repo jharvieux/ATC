@@ -18,6 +18,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { decodeJwt } from "jose";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import {
@@ -28,7 +29,8 @@ import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
 import { createRequestScopedClient, createBearerClient, extractBearerToken } from "./ssr-client";
-import { getCachedUser } from "./get-cached-user";
+import { verifyIdentity } from "./verify-identity";
+import { getCachedMembership, type MembershipRow } from "./membership-cache";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -104,6 +106,44 @@ interface AssertPermissionOpts {
 // #712 — 5-minute throttle on last_used_at writes to avoid a DB write on every request.
 const PAT_LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
 
+/**
+ * #1585 — Resolves the caller's `users` row for (authUserId, tenantId),
+ * preferring the copy tenantContextFromRequest already fetched on this same
+ * request and querying only on a miss.
+ *
+ * The `status !== "active"` check runs on BOTH paths, cached or fresh: the
+ * cache is a query-dedup, never an authorization shortcut. `makeClient` is
+ * lazy so the fallback client is only constructed when a query is actually
+ * needed.
+ */
+async function loadMembership(
+  req: Request,
+  makeClient: () => SupabaseClient,
+  authUserId: string,
+  tenantId: string,
+): Promise<User> {
+  let row = getCachedMembership(req, authUserId, tenantId) as MembershipRow | null | undefined;
+  if (!row) {
+    const { data, error } = await makeClient()
+      .from("users")
+      .select("id, auth_user_id, tenant_id, status, role")
+      .eq("auth_user_id", authUserId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`assertPermission: DB error: ${error.message}`);
+    }
+    row = data as MembershipRow | null;
+  }
+
+  if (!row || row.status !== "active") {
+    throw new Error(
+      "assertPermission: user is not an active member of the resolved tenant.",
+    );
+  }
+  return row as User;
+}
+
 export async function assertPermission(
   req: Request,
   opts: AssertPermissionOpts,
@@ -163,46 +203,36 @@ export async function assertPermission(
     if (pending.length > 0) {
       throw new ConsentPendingError(pathname, pending);
     }
-    // A second users-row SELECT is unavoidable: tenantContextFromRequest's
-    // membership check only fetches `id, status`; we need `role` for RBAC.
-    const supabase = createBearerClient(bearerToken);
-    const { data: bearerRow, error: bearerRowErr } = await supabase
-      .from("users")
-      .select("id, auth_user_id, tenant_id, status, role")
-      .eq("auth_user_id", authUserId)
-      .eq("tenant_id", ctx.tenant_id)
-      .maybeSingle();
-    if (bearerRowErr) {
-      throw new Error(`assertPermission: DB error: ${bearerRowErr.message}`);
-    }
-    if (!bearerRow || (bearerRow as { status: string }).status !== "active") {
-      throw new Error(
-        "assertPermission: user is not an active member of the resolved tenant.",
-      );
-    }
-    const bearerUser = bearerRow as User;
+    // #1585 — tenantContextFromRequest just fetched this exact row (same
+    // request, same principal, same tenant) and now selects `role` too, so
+    // reuse it. A miss re-queries: the cache can remove a duplicate SELECT,
+    // never authorize a caller on its own.
+    const bearerUser = await loadMembership(
+      req,
+      () => createBearerClient(bearerToken),
+      authUserId,
+      ctx.tenant_id,
+    );
     if (!isPermitted(bearerUser.role, opts.resource, opts.action)) {
       throw new AuthForbidden(opts.resource, opts.action, bearerUser.role);
     }
     return { ctx, user: bearerUser };
   }
 
-  // #679 — getCachedUser shares one supabase.auth.getUser() round-trip
-  // with the (tenant)/layout's getSiteHeaderProps for server-rendered
-  // pages. On pure /api/* routes there's no layout above, so the cache
-  // is a no-op but harmless. The cached client uses a placeholder
-  // request shape but the same Cookie header, so the verified JWT
-  // payload is identical to what a `req`-bound client would produce.
-  const { user: authUser } = await getCachedUser();
-  if (!authUser) {
+  // #1585 — verify the session JWT's signature locally (JWKS, no network)
+  // instead of the getCachedUser() GoTrue round-trip. #679 used getCachedUser
+  // to share one verification with the (tenant)/layout's getSiteHeaderProps;
+  // its own comment conceded the React cache is a no-op on /api/* routes,
+  // which is where this gate mostly runs. Local verification beats a shared
+  // network call on both counts and drops the trust assumption that the
+  // placeholder-request client saw the same cookies as `req` — we now verify
+  // the token bound to THIS request.
+  const supabase = createRequestScopedClient(req);
+  const identity = await verifyIdentity(supabase);
+  if (!identity) {
     throw new Error("assertPermission: invalid or expired access token.");
   }
-
-  // Separate supabase client for the sensitive-routes getSession() below.
-  // Both clients build from the same incoming Cookie header, so the
-  // session payload is identical to what the cached client would see —
-  // see the "SAFETY DEPENDS ON CALL ORDER" block on the getSession use.
-  const supabase = createRequestScopedClient(req);
+  const authUser = { id: identity.authUserId };
 
   // §17.4 Versioned consent gate. If the caller has pending user_consent_pending
   // rows (new document version published since their last acceptance), block
@@ -216,22 +246,17 @@ export async function assertPermission(
     throw new ConsentPendingError(pathname, pending);
   }
 
-  // §26.3 sensitive-action re-auth check. The access_token now lives in the
-  // session cookie; pull it out via getSession() (cheap — cookie parse only,
-  // no network) and decode auth_time.
+  // §26.3 sensitive-action re-auth check — is the JWT's auth_time ≤ 4h old?
   //
-  // SAFETY DEPENDS ON CALL ORDER: getSession reads the cookie payload WITHOUT
-  // verifying the JWT signature. We trust the payload only because getCachedUser
-  // above just verified the same token bytes against the auth server in the
-  // same request — both supabase clients (the cached one inside getCachedUser
-  // and `supabase` here) build from the same incoming Cookie header, so the
-  // session payload is identical to what was verified. Do NOT reorder this
-  // block above the getCachedUser call, and do NOT use getSession in this file
-  // for any other purpose.
+  // #1585 removed a footgun here. This used to re-read the token via
+  // getSession() (an UNVERIFIED cookie-payload parse) and rely on a documented
+  // "SAFETY DEPENDS ON CALL ORDER" invariant: the bytes were trustworthy only
+  // because a getUser() higher up had verified the same cookie. Any reorder
+  // silently turned this into an attacker-controlled read. verifyIdentity now
+  // hands back the exact token whose signature it verified, so auth_time is
+  // read from verified bytes by construction rather than by convention.
   if (isSensitiveRoute(pathname)) {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token ?? null;
-    const authTime = accessToken ? readAuthTime(accessToken) : null;
+    const authTime = readAuthTime(identity.accessToken);
     if (authTime === null) {
       throw new AuthReauthRequired(pathname);
     }
@@ -241,23 +266,9 @@ export async function assertPermission(
     }
   }
 
-  const { data: row, error } = await supabase
-    .from("users")
-    .select("id, auth_user_id, tenant_id, status, role")
-    .eq("auth_user_id", authUser.id)
-    .eq("tenant_id", ctx.tenant_id)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`assertPermission: DB error: ${error.message}`);
-  }
-  if (!row || row.status !== "active") {
-    throw new Error(
-      "assertPermission: user is not an active member of the resolved tenant.",
-    );
-  }
-
-  const user = row as User;
+  // #1585 — reuses the row tenantContextFromRequest already fetched for this
+  // request; falls back to its own SELECT on a miss.
+  const user = await loadMembership(req, () => supabase, authUser.id, ctx.tenant_id);
 
   // §26.2 RBAC check — deny if the user's role lacks the (resource, action)
   // grant in permission-grants.ts. Closes audit Finding 5.

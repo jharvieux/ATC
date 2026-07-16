@@ -70,7 +70,11 @@ interface PlatformDb {
 }
 
 async function loadCurrent(db: PlatformDb): Promise<Record<FeedbackKey, number>> {
-  const { data } = await db.from("platform_settings").select("key, value").in("key", KEYS);
+  const { data, error } = await db.from("platform_settings").select("key, value").in("key", KEYS);
+  // #1909 — a failed read used to be discarded, rendering the seed defaults as
+  // if they were the live config. An admin would see the defaults and could
+  // "correct" a value that was never actually wrong.
+  if (error) throw new Error(`feedback-settings read failed: ${String(error)}`);
   const out = { ...Object.fromEntries(KEYS.map((k) => [k, FEEDBACK_KEYS[k].default])) } as Record<FeedbackKey, number>;
   for (const row of data ?? []) {
     if ((KEYS as string[]).includes(row.key)) {
@@ -162,7 +166,16 @@ export async function PUT(req: Request): Promise<Response> {
               .eq("key", key)
               .select("updated_at");
             if (error) throw new Error(`update ${key} failed: ${String(error)}`);
-            return data?.[0]?.updated_at;
+            // #1909 — zero matched rows is error:null + data:[] in supabase-js
+            // v2 (D-091 #7). Asserting per-key, not in aggregate: a PUT of two
+            // keys where only one row exists would pass an any-key-returned
+            // check while the other silently never persisted, and the admin
+            // would see 200.
+            const updatedAt = data?.[0]?.updated_at;
+            if (updatedAt === undefined) {
+              throw new Error(`update ${key} matched no row — setting not persisted`);
+            }
+            return updatedAt;
           }),
         );
         const failedKeys = entries.filter((_, i) => settled[i]?.status === "rejected").map(([k]) => k);
@@ -176,20 +189,13 @@ export async function PUT(req: Request): Promise<Response> {
         // source_revision mirrors the platform-settings GET route: the DB
         // row's updated_at (actual write time), not wall-clock at call time,
         // so RAG-side stale-write detection compares against the real write.
+        // Reaching here means every key threw or returned an updated_at, and
+        // no key threw — so updatedAts is non-empty and Math.max can't yield
+        // the -Infinity that would poison source_revision and make the
+        // rag-side stale-revision guard skip a key forever.
         const updatedAts = settled
-          .filter((s): s is PromiseFulfilledResult<string | undefined> => s.status === "fulfilled")
-          .map((s) => s.value)
-          .filter((v): v is string => v !== undefined);
-        // Empty-updatedAts guard (matches retrieval-weights, #1900): every
-        // entry above either threw (caught as a settled rejection) or returned
-        // an updated_at, so an empty array means the update succeeded with
-        // error:null but the row had no updated_at. Math.max(...[]) is
-        // -Infinity — a poison source_revision that would make the rag-side
-        // stale-revision guard skip every key forever. Fail loud instead of
-        // publishing it.
-        if (updatedAts.length === 0) {
-          throw new Error("feedback-settings update: no updated_at returned for any key");
-        }
+          .filter((s): s is PromiseFulfilledResult<string> => s.status === "fulfilled")
+          .map((s) => s.value);
         const sourceRevision = Math.max(...updatedAts.map((v) => Math.floor(new Date(v).getTime() / 1000)));
 
         // Enqueue the RAG-sync event after the write commits. These four keys

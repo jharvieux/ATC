@@ -115,6 +115,10 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
 
   let payload: ServiceJwtPayload;
   let jti: string;
+  // Captured from the SIGNATURE-VERIFIED protected header (not an unverified
+  // decode) so the rollout warn below attributes absent-claim traffic to a real
+  // signing key rather than to attacker-controlled input (#1843).
+  let verifiedKid: string | undefined;
 
   try {
     // We need the header kid before we can pick the right key.
@@ -131,6 +135,7 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
       { algorithms: ["RS256"] },
     );
     payload = result.payload;
+    verifiedKid = result.protectedHeader.kid;
   } catch (err) {
     if (err instanceof ServiceAuthError) throw err;
     throw new ServiceAuthError("signature_invalid", 401);
@@ -144,7 +149,8 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
   // verifier (atc-rag) are separate Vercel apps deploying at different times,
   // so short-TTL tokens minted by a not-yet-upgraded signer can still be in
   // flight when this code goes live. The strict flip — hard-reject absence —
-  // is the #1773 follow-up, done once both services carry the claims.
+  // is tracked by #1843, done once both services are DEPLOYED with the claims
+  // (merge to dev is not enough) and absent-claim warns have gone to zero.
   // Read as widened strings: payload is untrusted, so the mismatch branches
   // must stay live (the schema's literal iss/aud types would otherwise narrow
   // these to the trusted values and make the checks statically dead).
@@ -162,9 +168,21 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
     throw new ServiceAuthError("signature_invalid", 401, "aud mismatch");
   }
   if (issClaim === undefined || audValues.length === 0) {
+    // Attributable rollout signal (#1843). The strict flip is safe to ship only
+    // once absent-claim traffic reaches zero in prod; these fields are what make
+    // that judgement evidence-based — kid identifies the signing key still
+    // minting claimless tokens, and tenant/service identify the caller to chase.
+    // All three are non-PII. Operators watch this warn's rate: sustained zero
+    // across a full token TTL after both apps carry the claims = flip-safe.
     console.warn(
       "[verifyServiceJwt] token missing iss/aud claims — allowing during #1773 rollout; " +
-        "will hard-reject once the strict flip lands",
+        "will hard-reject once the #1843 strict flip lands",
+      {
+        kid: verifiedKid ?? "(none)",
+        tenant_id: payload.tenant_id ?? "(none)",
+        service_identifier: payload.service_identifier ?? "(none)",
+        missing: issClaim === undefined ? (audValues.length === 0 ? "iss+aud" : "iss") : "aud",
+      },
     );
   }
 
