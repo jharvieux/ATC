@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-358 — 2026-07-16 — Partial completions close-and-split; wrap-up mechanically reconciles the expected close-set
+
+**Decision:** Operator-directed follow-on to D-357, in both `/issue-sweep` copies + `docs/runbooks/pr-workflow.md`:
+
+1. **Close-and-split replaces the remainder-comment rule** (reverses the 2026-07-12 convention). A partially-completed issue is never left open under its stale description: before the PR merges, the executor files a remainder issue (scope shipped + PR, scope left with file paths, acceptance criteria, inherited labels/priority), cross-links it on the original, and `Closes` the original with a `remainder: #new` note. Executor summaries gain a `split: [{original, remainder}]` field; per-PR finalization verifies each remainder exists, is open, and is cross-linked (a `Closes` on a partial without its remainder = silent scope loss).
+2. **"Completed" is pinned**: every acceptance criterion met, or — if the issue lists none — the defect as described fully gone with the verification stated in the PR body. "Mostly done" is a partial. This removes the incentive to round up: claiming completion is no longer cheaper than admitting a partial.
+3. **Wrap-up reconciles the expected close-set mechanically**: union of every merged PR's intended `Closes` set + `closed_stale` + `split` originals, each checked via `gh issue view --json state`; still-open → close-with-comment or investigate; every split remainder verified open and both-ways linked. Result reported in the checkpoint.
+
+**Why:** Two operator-observed failure modes beyond D-357's scope: issues left open though the work was complete (close links that never fired, nobody verifying at the end), and issues claimed complete that were only mostly complete — the leftover scope then evaporated or the stale open issue misled the next sweep.
+
+**Rejected:** Keeping the original open with a remainder comment (the 2026-07-12 rule) — an open issue whose description no longer matches the remaining work is a stale-tracker generator, the very D-356 pattern. Orchestrator-side re-verification of each completion claim against the diff (expensive duplicate review; the pinned completed-definition plus audit agents are the right layer).
+
+**Related artifacts:** `.claude/commands/issue-sweep.md`, `~/.claude/commands/issue-sweep.md`, `docs/runbooks/pr-workflow.md`, D-357, D-356.
+
+---
+
 ## D-357 — 2026-07-16 — Sweep hygiene overhaul: verify-or-close, negation-blind closing keywords, fix-inline-by-default, blockers surfaced at the plan gate
 
 **Decision:** Operator-directed process tightening after D-356's failure pattern (38 filed vs ~12 closed, 6 stale issues worked, closing-keyword trap ×3). Four rule changes, landed in BOTH `/issue-sweep` copies (repo `.claude/commands/issue-sweep.md` + user-level portable) and `docs/runbooks/pr-workflow.md`:

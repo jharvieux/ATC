@@ -1,6 +1,8 @@
-# Session state — last updated 2026-07-16 08:45 CDT (sweep-hygiene process fixes)
+# Session state — last updated 2026-07-16 09:15 CDT (sweep-hygiene process fixes, rounds 1+2)
 
 ## Just completed
+
+**D-358 close-and-split + close-set reconciliation** (second operator round, same session): partially-completed issues are now closed and split — remainder issue filed BEFORE merge with cross-links, original closed via `Closes` + `remainder: #new` note; "completed" pinned to every-acceptance-criterion-met; wrap-up mechanically reconciles the expected close-set (`gh issue view --json state` over intended Closes + closed_stale + split originals) and verifies every remainder is open and both-ways linked. Reverses the 2026-07-12 remainder-comment rule. Both `/issue-sweep` copies + `pr-workflow.md`.
 
 **D-357 sweep-hygiene overhaul merged** (PR #1962) — operator-directed fixes for the three failure modes from the D-356 retrospective:
 
