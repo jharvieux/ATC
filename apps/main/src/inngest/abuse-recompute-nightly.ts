@@ -121,7 +121,15 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
         const uniqueTierIds = [...new Set(tenants.map((t) => t.tier_id).filter((id): id is string => !!id))];
         const tierCodeById = new Map<string, string>();
         if (uniqueTierIds.length > 0) {
-          const { data: tierRows } = await db.from("tier_definitions").select("id, code").in("id", uniqueTierIds);
+          // Throw rather than discard: an empty map would silently drop EVERY
+          // tenant in the run to the "byo_research" default — the lowest tier —
+          // and tier_code feeds resolveThresholdsSync via checkStateTransition-
+          // IfNeeded, so one blip would mass-false-positive abuse enforcement
+          // against paying customers. Failing lets Inngest retry instead.
+          const tierRows = await safeAwait(
+            db.from("tier_definitions").select("id, code").in("id", uniqueTierIds),
+            "tier_definitions.select.batch",
+          );
           for (const row of (tierRows ?? []) as Array<{ id: string; code: string }>) {
             tierCodeById.set(row.id, row.code);
           }
