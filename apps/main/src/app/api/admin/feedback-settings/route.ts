@@ -71,11 +71,15 @@ interface PlatformDb {
 }
 
 async function loadCurrent(db: PlatformDb): Promise<Record<FeedbackKey, number>> {
-  const { data, error } = await db.from("platform_settings").select("key, value").in("key", KEYS);
   // #1909 — a failed read used to be discarded, rendering the seed defaults as
   // if they were the live config. An admin would see the defaults and could
-  // "correct" a value that was never actually wrong.
-  if (error) throw new Error(`feedback-settings read failed: ${String(error)}`);
+  // "correct" a value that was never actually wrong. #1937 — unwrap via
+  // safeAwait surfaces the PostgrestError's message/code/details into the
+  // thrown error; the old `String(error)` logged "[object Object]", erasing it.
+  const data = await safeAwait(
+    db.from("platform_settings").select("key, value").in("key", KEYS),
+    "platform_settings.select.feedback_settings",
+  );
   const out = { ...Object.fromEntries(KEYS.map((k) => [k, FEEDBACK_KEYS[k].default])) } as Record<FeedbackKey, number>;
   for (const row of data ?? []) {
     if ((KEYS as string[]).includes(row.key)) {

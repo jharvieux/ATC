@@ -111,6 +111,24 @@ describe("GET /api/admin/feedback-settings — read error (#1909)", () => {
     expect(body).toMatchObject({ error: "db_error" });
     expect(body).not.toMatchObject({ feedback_adjustment_limit: 0.05 });
   });
+
+  // #1937 — the read used to throw `... ${String(error)}`, logging
+  // "[object Object]" on a PostgrestError. The thrown error handed to
+  // dbErrorResponse must now carry the real DB message.
+  it("surfaces the underlying DB message to the server log, not [object Object] (#1937)", async () => {
+    h.readError = { message: "permission denied for table platform_settings" };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await GET(new Request("https://app.example.com/api/admin/feedback-settings"));
+    expect(res.status).toBe(500);
+
+    const logged = errorSpy.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? (a.stack ?? a.message) : String(a)))
+      .join(" ");
+    expect(logged).toContain("permission denied for table platform_settings");
+    expect(logged).not.toContain("[object Object]");
+    errorSpy.mockRestore();
+  });
 });
 
 describe("GET /api/admin/feedback-settings", () => {

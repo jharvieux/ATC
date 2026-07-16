@@ -209,4 +209,23 @@ describe("GET /api/admin/retrieval-weights — read error (#1909)", () => {
     expect(body).toMatchObject({ error: "db_error" });
     expect(body).not.toMatchObject({ match: 1 });
   });
+
+  // #1937 — the read used to throw `... ${String(error)}`, which on a
+  // PostgrestError object logged "[object Object]" and destroyed the
+  // diagnostic. The thrown error handed to dbErrorResponse must now carry the
+  // real DB message. Regressing to String(error) fails this test.
+  it("surfaces the underlying DB message to the server log, not [object Object] (#1937)", async () => {
+    h.readError = { message: "permission denied for table platform_settings" };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await GET(new Request("https://app.example.com/api/admin/retrieval-weights"));
+    expect(res.status).toBe(500);
+
+    const logged = errorSpy.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? (a.stack ?? a.message) : String(a)))
+      .join(" ");
+    expect(logged).toContain("permission denied for table platform_settings");
+    expect(logged).not.toContain("[object Object]");
+    errorSpy.mockRestore();
+  });
 });

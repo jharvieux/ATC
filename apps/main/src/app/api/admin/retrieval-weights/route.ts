@@ -55,14 +55,15 @@ interface PlatformDb {
 async function loadCurrent(
   db: PlatformDb,
 ): Promise<Record<WeightKey, number>> {
-  const { data, error } = await db
-    .from("platform_settings")
-    .select("key, value")
-    .in("key", WEIGHT_KEYS.map(settingKey));
   // #1909 — a failed read used to be discarded, rendering the seed defaults as
   // if they were the live config. An admin would see 1.0 across the board and
-  // could "correct" a value that was never actually wrong.
-  if (error) throw new Error(`retrieval-weights read failed: ${String(error)}`);
+  // could "correct" a value that was never actually wrong. #1937 — unwrap via
+  // safeAwait surfaces the PostgrestError's message/code/details into the
+  // thrown error; the old `String(error)` logged "[object Object]", erasing it.
+  const data = await safeAwait(
+    db.from("platform_settings").select("key, value").in("key", WEIGHT_KEYS.map(settingKey)),
+    "platform_settings.select.retrieval_weights",
+  );
   const out: Record<WeightKey, number> = { match: 1, authority: 1, recency: 1, feedback: 1 };
   for (const row of data ?? []) {
     for (const w of WEIGHT_KEYS) {
