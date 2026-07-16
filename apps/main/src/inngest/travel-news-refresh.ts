@@ -165,8 +165,27 @@ async function refreshFeed(
 
   const scoreMap = new Map(scored.map((r) => [r.guid, r.score]));
 
+  // #1955 — dedupe by guid before the concurrent upsert fan-out: without this,
+  // two same-link/title items fall back to the same guid and the parallel
+  // upserts (onConflict: feed_id,guid) race — whichever lands last wins
+  // nondeterministically. Newest pubDate wins the tie-break, deterministically.
+  const byGuid = new Map<string, RssItem>();
+  for (const item of filtered) {
+    const existing = byGuid.get(item.guid);
+    if (!existing) {
+      byGuid.set(item.guid, item);
+      continue;
+    }
+    const existingTime = existing.pubDate ? Date.parse(existing.pubDate) : NaN;
+    const itemTime = item.pubDate ? Date.parse(item.pubDate) : NaN;
+    if (!Number.isNaN(itemTime) && (Number.isNaN(existingTime) || itemTime > existingTime)) {
+      byGuid.set(item.guid, item);
+    }
+  }
+  const deduped = Array.from(byGuid.values());
+
   // Upsert all scored articles (including sub-threshold ones — stored but not shown).
-  await mapWithConcurrency(filtered, UPSERT_CONCURRENCY, (item) => {
+  await mapWithConcurrency(deduped, UPSERT_CONCURRENCY, (item) => {
     const score = scoreMap.get(item.guid) ?? null;
     const publishedAt = item.pubDate ? new Date(item.pubDate).toISOString() : null;
 
