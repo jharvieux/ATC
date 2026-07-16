@@ -14,7 +14,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
-import { sendEmail } from "@/lib/email/send";
+import { sendEmail, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
@@ -87,7 +87,9 @@ export const groupReminderCadence = inngest.createFunction(
       svc.from("tenants").select("id, legal_name, mailing_address").in("id", tenantIds),
       svc
         .from("tenant_branding")
-        .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at")
+        // #1935 — shared column list across all five branding-reading crons
+        // so the projection can't drift out of sync again.
+        .select(TENANT_BRANDING_COLUMNS)
         .in("tenant_id", tenantIds),
     ]);
     // A failed read here would silently send every reminder with the placeholder
@@ -115,7 +117,7 @@ export const groupReminderCadence = inngest.createFunction(
       email_from_domain_verified_at: string | null;
     };
     const tenantMap = new Map(((tenantRows ?? []) as TenantRow[]).map((t) => [t.id, t]));
-    const brandingMap = new Map(((brandingRows ?? []) as BrandingRow[]).map((b) => [b.tenant_id, b]));
+    const brandingMap = new Map(((brandingRows ?? []) as unknown as BrandingRow[]).map((b) => [b.tenant_id, b]));
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
     const { renderToStaticMarkup } = await import("react-dom/server");
 

@@ -30,7 +30,11 @@ function daysAhead(n: number) { return new Date(Date.now() + n * 86_400_000).toI
 
 function chainable(leaf: object): object {
   const c: Record<string, unknown> = { ...leaf };
-  for (const k of ["eq", "in", "order", "limit"]) {
+  // `range` is included so the #1958 recovery path (empty affected set →
+  // recoverAffectedTenantIds → contacts.select().eq().range()) resolves cleanly
+  // against this fake — the chained value is itself thenable/plain, so an
+  // awaited `.range()` yields the leaf's `then` result (or the object, empty).
+  for (const k of ["eq", "in", "order", "limit", "range"]) {
     c[k] = () => c;
   }
   return c;
@@ -38,6 +42,9 @@ function chainable(leaf: object): object {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The purge mock returns an empty affected_tenant_ids, which now triggers the
+  // #1958 hash-recovery fallback; deriveCustomerHash requires PLATFORM_PEPPER.
+  vi.stubEnv("PLATFORM_PEPPER", "test-pepper");
   const usersChain = chainable({
     maybeSingle: async () => ({ data: { deleted_at: daysAgo(30), status: "deleted" }, error: null }),
     then: (r: (v: unknown) => unknown) => Promise.resolve(r({ data: [], error: null })),

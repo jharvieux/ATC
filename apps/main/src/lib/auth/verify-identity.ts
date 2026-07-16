@@ -40,12 +40,11 @@ export interface VerifiedIdentity {
   /** auth.users.id — the `sub` claim of a signature-verified JWT. */
   authUserId: string;
   /**
-   * The raw access token whose signature was just verified. Callers that need
-   * claims beyond `sub` (e.g. the §26.3 auth_time re-auth check) read them from
-   * THIS token — never from a separately-parsed one.
+   * The signature-verified claims payload. Callers that need claims beyond
+   * `sub` (e.g. the §26.3 `auth_time` re-auth check) read them from HERE —
+   * these are the exact bytes getClaims() verified, so there is no re-read
+   * seam between "the token that was verified" and "the claims that are used".
    */
-  accessToken: string;
-  /** Verified claims payload. `auth_time`/`amr` are read from here. */
   claims: Record<string, unknown>;
 }
 
@@ -73,17 +72,11 @@ export async function verifyIdentity(
   const sub = claims.sub;
   if (typeof sub !== "string" || sub.length === 0) return null;
 
-  // getClaims() resolves the token from the session when `token` is omitted;
-  // re-read it so callers get the exact bytes that were verified.
-  const accessToken = token ?? (await readSessionAccessToken(supabase));
-  if (!accessToken) return null;
-
-  return { authUserId: sub, accessToken, claims };
-}
-
-async function readSessionAccessToken(supabase: SupabaseClient): Promise<string | null> {
-  // Cookie parse only — no network. Safe because the caller only reaches here
-  // after getClaims() verified this same session's token signature.
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token ?? null;
+  // Return the verified claims directly. Earlier this helper re-read the
+  // session (a second getSession()) to hand back the raw token bytes, but
+  // that opened a seam: auth-js may rotate the token between the getClaims()
+  // verification and that re-read, so the returned bytes weren't provably the
+  // verified ones. `claims` IS the verified payload — callers read auth_time
+  // from it, so the "exact bytes verified" guarantee is now structural (#1939).
+  return { authUserId: sub, claims };
 }
