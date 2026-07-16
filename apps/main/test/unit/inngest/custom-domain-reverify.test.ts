@@ -42,14 +42,14 @@ vi.mock("@/lib/dns/doh-resolver", () => ({
   },
 }));
 
-const vercelRemoveDomain = vi.fn(async () => {});
+const vercelRemoveDomain = vi.fn(async (..._args: unknown[]) => {});
 class CrownJewelGuardError extends Error {}
 vi.mock("@/lib/vercel/domain-client", () => ({
   vercelRemoveDomain: (...args: unknown[]) => vercelRemoveDomain(...args),
   CrownJewelGuardError,
 }));
 
-const sendTenantNotification = vi.fn(async () => {});
+const sendTenantNotification = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("@/lib/email/notifications", () => ({
   sendTenantNotification: (...args: unknown[]) => sendTenantNotification(...args),
 }));
