@@ -18,7 +18,7 @@ import * as React from "react";
 import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { sendEmail } from "@/lib/email/send";
+import { sendEmail, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { AbuseStateTransition } from "@/emails/AbuseStateTransition";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -94,7 +94,9 @@ export const abuseStateTransitionNotify = inngest.createFunction(
 
         const { data: bRow } = await db
           .from("tenant_branding")
-          .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at")
+          // #1935 — shared column list across all five branding-reading crons
+          // so the projection can't drift out of sync again.
+          .select(TENANT_BRANDING_COLUMNS)
           .eq("tenant_id", data.tenant_id)
           .maybeSingle();
         const branding = bRow as {
