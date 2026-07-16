@@ -121,7 +121,7 @@ async function loadMembership(
   authUserId: string,
   tenantId: string,
 ): Promise<User> {
-  let row = getCachedMembership(req, authUserId, tenantId) as MembershipRow | null | undefined;
+  let row: MembershipRow | null | undefined = getCachedMembership(req, authUserId, tenantId);
   if (!row) {
     const { data, error } = await makeClient()
       .from("users")
