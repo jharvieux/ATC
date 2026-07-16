@@ -43,6 +43,10 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
 
     let purged = 0;
     const start = Date.now();
+    // serial-await-ok (#1952): TIME_BUDGET_MS wall-clock drain guard. Tenants are
+    // independent, but the per-iteration budget check IS the throttle — fanning
+    // out would launch every purge before the guard can stop the run, blowing the
+    // wall-clock cap (same drain-semantics hazard as #1948).
     for (const tenant of tenants ?? []) {
       if (Date.now() - start >= TIME_BUDGET_MS) break;
 

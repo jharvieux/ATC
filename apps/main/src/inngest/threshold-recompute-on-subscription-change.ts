@@ -218,6 +218,10 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
         }
 
         // Audit + notify per transition.
+        // serial-await-ok (#1952): each iteration writes the audit row BEFORE
+        // emitting abuse.state_transition (D-091 #10 idempotency ordering), and
+        // `transitions` is tiny (0–2 per tenant). Parallelizing loses the
+        // audit-before-send ordering for no measurable win.
         for (const t of transitions) {
           await safeAwait(db.from("usage_limit_events").insert({
             tenant_id,

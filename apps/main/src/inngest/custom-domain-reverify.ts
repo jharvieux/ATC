@@ -6,12 +6,20 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 // Caps per-run to prevent FUNCTION_INVOCATION_TIMEOUT as custom-domain tenant count grows.
 // Cursor: custom_domain_last_reverified_at ASC NULLS FIRST — processed domains always sort
 // later than unprocessed ones, so each drain batch covers fresh territory.
 const BATCH_LIMIT = 200;
 const TIME_BUDGET_MS = 55_000;
+// #1789 — each row does two serial DoH lookups; a 200-row batch serialized them
+// into 400 sequential network round-trips. Rows are independent (each updates only
+// its OWN tenant by id, no cross-row ordering), so fan them out with a bounded
+// limit — enough to hide DNS latency without hammering the DoH resolver. The
+// per-batch cursor still advances only after the whole batch resolves, so this
+// does not touch the outer time-budget/drain semantics (unlike #1948).
+const REVERIFY_CONCURRENCY = 20;
 
 export const customDomainReverify = inngest.createFunction(
   {
@@ -48,7 +56,7 @@ export const customDomainReverify = inngest.createFunction(
       batches++;
       if (batch.length === 0) break;
 
-      for (const row of batch) {
+      await mapWithConcurrency(batch, REVERIFY_CONCURRENCY, async (row) => {
         checked++;
         try {
           const [cnameTarget, txtValues] = await Promise.all([
@@ -64,7 +72,7 @@ export const customDomainReverify = inngest.createFunction(
               .from("tenants")
               .update({ custom_domain_last_reverified_at: new Date().toISOString() })
               .eq("id", row.id), "tenants.update");
-            continue;
+            return;
           }
 
           if (!cnameOk) {
@@ -85,7 +93,7 @@ export const customDomainReverify = inngest.createFunction(
             drifted++;
             console.warn("[custom-domain-reverify] CNAME drift tenant=%s domain=%s", row.id, row.custom_domain);
             await notifyDomainDrift(db, row.id, row.custom_domain, "cname_drifted");
-            continue;
+            return;
           }
 
           // TXT drifted — keep binding for 72h grace, set status.
@@ -107,7 +115,7 @@ export const customDomainReverify = inngest.createFunction(
             .update({ custom_domain_last_reverified_at: new Date().toISOString() })
             .eq("id", row.id), "tenants.update.reverify_error");
         }
-      }
+      });
 
       if (batch.length < BATCH_LIMIT) break;
     }
