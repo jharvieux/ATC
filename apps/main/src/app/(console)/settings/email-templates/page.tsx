@@ -183,6 +183,12 @@ export default function EmailTemplatesSettingsPage() {
   });
 
   const bookingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the selectedType the cascade reset last ran for. `templates` gets a
+  // new array reference on every load() — including the reload after save()/
+  // resetToDefault() — so gating on selectedType alone (not just the effect's
+  // dep array) stops a post-save refresh from firing the switch-reset and
+  // wiping sailing/booking selections the user never asked to clear (#1912).
+  const resetForTypeRef = useRef<string | null>(null);
 
   // ── Load templates ───────────────────────────────────────────────────────
   async function load() {
@@ -268,6 +274,8 @@ export default function EmailTemplatesSettingsPage() {
 
   useEffect(() => {
     if (!selected) return;
+    if (resetForTypeRef.current === editState.selectedType) return;
+    resetForTypeRef.current = editState.selectedType;
     setEditState((s) => ({
       ...s,
       subject: selected.override?.subject_template ?? "",
