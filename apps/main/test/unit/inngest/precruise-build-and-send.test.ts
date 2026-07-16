@@ -32,6 +32,10 @@ vi.mock("@/lib/email/template-resolve", () => ({
 
 vi.mock("@/lib/email/send", () => ({
   sendEmail: async () => mocks.sendEmailResult,
+  TENANT_BRANDING_COLUMNS:
+    "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
+    "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
+    "email_from_name, email_from_domain, email_from_domain_verified_at",
 }));
 
 import { buildAndSend } from "@/inngest/precruise-generate-and-send";

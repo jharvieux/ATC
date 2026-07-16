@@ -23,7 +23,7 @@ import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
-import { sendEmail } from "@/lib/email/send";
+import { sendEmail, TENANT_BRANDING_COLUMNS, type EmailSendResult } from "@/lib/email/send";
 import { InactivityReminder, type InactivityNudgeLevel } from "@/emails/InactivityReminder";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
@@ -33,6 +33,15 @@ import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 // concurrency keeps a platform-wide fan-out from hammering the DB while
 // still cutting nightly runtime from O(tenants) sequential round-trips.
 const NIGHTLY_CONCURRENCY = 20;
+
+// #1933 — PostgREST caps any single response at ~1000 rows (db-max-rows)
+// regardless of a requested .limit(), which would silently truncate the
+// tenants/branding reads past the cap: dropped tenants skip their ICA-drift
+// check and, worse, their branding row goes missing so the `??
+// "platform_resend"` coalescing sends them from the platform domain instead
+// of their own. Page in 1000-row windows (same pattern as
+// dob-estimate-reprompt-eligible.ts, #1745) so nothing is dropped.
+const PAGE = 1000;
 
 type NudgeLevel = "30d" | "60d" | "90d" | "180d";
 
@@ -81,6 +90,10 @@ interface TenantBrandingRow {
   tenant_resend_api_key_encrypted: string | null;
   email_from_address: string | null;
   email_from_name: string | null;
+  // #1935 — verified-custom-domain fields; must be read alongside the rest
+  // of the branding row so this cron's from-address matches the other four.
+  email_from_domain: string | null;
+  email_from_domain_verified_at: string | null;
 }
 
 export const complianceNightly = inngest.createFunction(
@@ -100,38 +113,48 @@ export const complianceNightly = inngest.createFunction(
     );
 
     // ── Active tenants ─────────────────────────────────────────────────────
-    const { data: tenantsRaw, error: tenantErr } = await db
-      .from("tenants")
-      .select(
-        "id, status, support_email, legal_name, display_name, mailing_address, " +
-        "subscription_status, non_paying_since, is_platform_internal",
-      )
-      .eq("status", "active");
-
     // #1740 — a bare `return` here is what hid the branding-column bug for
     // weeks: the run reported success, so no retry and no failed-run alert
     // while every nightly nudge silently went unsent. Throw so Inngest retries
     // and surfaces the failure. Same for the branding read below.
-    if (tenantErr) throw new Error(`tenants.select failed: ${tenantErr.message}`);
+    const tenantsRaw: TenantContactRow[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error: tenantErr } = await db
+        .from("tenants")
+        .select(
+          "id, status, support_email, legal_name, display_name, mailing_address, " +
+          "subscription_status, non_paying_since, is_platform_internal",
+        )
+        .eq("status", "active")
+        .order("id", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (tenantErr) throw new Error(`tenants.select failed: ${tenantErr.message}`);
+      const batch = (page ?? []) as unknown as TenantContactRow[];
+      tenantsRaw.push(...batch);
+      if (batch.length < PAGE) break;
+    }
 
     // §15.16 — skip past-grace tenants. Inactivity reminders go to PAYING
     // customers; past-grace is the middleware redirect's job.
-    const tenants = excludeNonPayingPastGrace(
-      (tenantsRaw ?? []) as unknown as TenantContactRow[],
-    );
+    const tenants = excludeNonPayingPastGrace(tenantsRaw);
 
-    const { data: brandingRaw, error: brandingErr } = await db
-      .from("tenant_branding")
-      .select(
-        "tenant_id, email_send_pattern, tenant_resend_api_key_encrypted, " +
-        "email_from_address, email_from_name",
-      )
-      .in("tenant_id", tenants.map((t) => t.id));
-
-    if (brandingErr) throw new Error(`tenant_branding.select failed: ${brandingErr.message}`);
+    const tenantIds = tenants.map((t) => t.id);
+    const brandingRaw: TenantBrandingRow[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error: brandingErr } = await db
+        .from("tenant_branding")
+        .select(TENANT_BRANDING_COLUMNS)
+        .in("tenant_id", tenantIds.length > 0 ? tenantIds : ["00000000-0000-0000-0000-000000000000"])
+        .order("tenant_id", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (brandingErr) throw new Error(`tenant_branding.select failed: ${brandingErr.message}`);
+      const batch = (page ?? []) as unknown as TenantBrandingRow[];
+      brandingRaw.push(...batch);
+      if (batch.length < PAGE) break;
+    }
 
     const brandingByTenant = new Map<string, TenantBrandingRow>(
-      ((brandingRaw ?? []) as unknown as TenantBrandingRow[]).map((b) => [b.tenant_id, b]),
+      brandingRaw.map((b) => [b.tenant_id, b]),
     );
 
     // Each tenant's inactivity check is independent — bounded-concurrency
@@ -141,15 +164,20 @@ export const complianceNightly = inngest.createFunction(
     );
     let sentEmails = 0;
     let levelLoggedNoEmail = 0;
+    let sendFailures = 0;
     for (const result of inactivityResults) {
       if (result === "email_sent") sentEmails++;
       else if (result === "level_logged_no_email") levelLoggedNoEmail++;
+      else if (result === "send_failed") sendFailures++;
     }
 
     return {
       tenants_processed: tenants.length,
       reminders_sent: sentEmails,
       level_logged_no_email: levelLoggedNoEmail,
+      // #1934 — visibility into sends that failed and were left unrecorded
+      // (so they retry next run) instead of being silently swallowed.
+      send_failed: sendFailures,
       ica_reacceptance_flagged: icaFlagged,
     };
   },
@@ -178,16 +206,27 @@ async function checkIcaVersionDrift(
   if (!latest) return 0;
 
   // All active tenants not already flagged.
-  const { data: tenants } = await db
-    .from("tenants")
-    .select("id")
-    .eq("status", "active")
-    .eq("requires_ica_reacceptance", false);
+  // #1933 (adjacent instance, same file) — same unbounded-SELECT class as the
+  // tenants/branding reads below: past 1000 active tenants this would
+  // silently stop flagging drift for the rest. Paginate for the same reason.
+  const tenants: Array<{ id: string }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page } = await db
+      .from("tenants")
+      .select("id")
+      .eq("status", "active")
+      .eq("requires_ica_reacceptance", false)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    const batch = (page ?? []) as Array<{ id: string }>;
+    tenants.push(...batch);
+    if (batch.length < PAGE) break;
+  }
 
   // Each tenant's consent check + flag update is independent — bounded
   // concurrency fan out instead of one tenant at a time.
   const flaggedResults = await mapWithConcurrency(
-    (tenants ?? []) as Array<{ id: string }>,
+    tenants,
     NIGHTLY_CONCURRENCY,
     async (t) => {
       const { data: consentRows } = await db
@@ -213,7 +252,7 @@ async function checkIcaVersionDrift(
   return flaggedResults.filter(Boolean).length;
 }
 
-type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" | "email_sent" | "level_logged_no_email";
+type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" | "email_sent" | "level_logged_no_email" | "send_failed";
 
 async function checkInactivity(
   db: ReturnType<typeof createServiceRoleClient>,
@@ -265,22 +304,16 @@ async function checkInactivity(
     .maybeSingle();
   if (existing) return "already_sent";
 
-  // Record the nudge regardless of whether we end up sending the email,
-  // so the "only send once per level" guard still works.
-  await safeAwait(db.from("tenant_inactivity_nudges").insert({
-    tenant_id: tenant.id,
-    nudge_level: level,
-    sent_at: now.toISOString(),
-  }), "tenant_inactivity_nudges.insert");
-  console.info(
-    "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
-    level, tenant.id, Math.floor(daysSinceActivity),
-  );
-
   if (!EMAIL_LEVELS.has(level)) {
-    // 180d — no email, just the breadcrumb above. Replaces the prior
+    // 180d — no email, just the breadcrumb below. Replaces the prior
     // auto-suspend behaviour (deliberate policy change — paying tenants
-    // don't lose access for inactivity).
+    // don't lose access for inactivity). Nothing async can fail after this
+    // point, so recording immediately is safe.
+    await recordNudge(db, tenant.id, level, now);
+    console.info(
+      "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
+      level, tenant.id, Math.floor(daysSinceActivity),
+    );
     return "level_logged_no_email";
   }
 
@@ -289,11 +322,44 @@ async function checkInactivity(
       "[compliance-nightly] Skipping reminder for tenant=%s — no support_email on row",
       tenant.id,
     );
+    await recordNudge(db, tenant.id, level, now);
     return "level_logged_no_email";
   }
 
-  await sendReminderEmail({ db, tenant, branding, level: level as InactivityNudgeLevel, daysSinceActivity });
+  // #1934 — the nudge row used to be written BEFORE this send. A throw or a
+  // non-throwing send failure (sendEmail never throws on a Resend error; it
+  // returns status:"failed") left the row in place, so the `already_sent`
+  // guard above permanently suppressed the retry. Only record the nudge
+  // once the send actually succeeds — a failed send leaves nothing behind,
+  // so the next nightly run tries again.
+  const sendResult = await sendReminderEmail({ db, tenant, branding, level: level as InactivityNudgeLevel, daysSinceActivity });
+  if (sendResult.status !== "sent") {
+    console.warn(
+      "[compliance-nightly] Nudge level=%s NOT recorded for tenant=%s — send status=%s, will retry next run",
+      level, tenant.id, sendResult.status,
+    );
+    return "send_failed";
+  }
+
+  await recordNudge(db, tenant.id, level, now);
+  console.info(
+    "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
+    level, tenant.id, Math.floor(daysSinceActivity),
+  );
   return "email_sent";
+}
+
+async function recordNudge(
+  db: ReturnType<typeof createServiceRoleClient>,
+  tenantId: string,
+  level: NudgeLevel,
+  now: Date,
+): Promise<void> {
+  await safeAwait(db.from("tenant_inactivity_nudges").insert({
+    tenant_id: tenantId,
+    nudge_level: level,
+    sent_at: now.toISOString(),
+  }), "tenant_inactivity_nudges.insert");
 }
 
 async function sendReminderEmail(args: {
@@ -302,7 +368,7 @@ async function sendReminderEmail(args: {
   branding: TenantBrandingRow | null;
   level: InactivityNudgeLevel;
   daysSinceActivity: number;
-}): Promise<void> {
+}): Promise<EmailSendResult> {
   const { db, tenant, branding, level, daysSinceActivity } = args;
   const appUrl = process.env.MAIN_APP_URL ?? "https://ai-travelconcierge.com";
   const helpUrl = `${appUrl.replace(/\/$/, "")}/help`;
@@ -326,7 +392,7 @@ async function sendReminderEmail(args: {
     }),
   );
 
-  await sendEmail({
+  return sendEmail({
     db,
     tenant: {
       id: tenant.id,
@@ -336,6 +402,10 @@ async function sendReminderEmail(args: {
       tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
       email_from_address: branding?.email_from_address ?? null,
       email_from_name: branding?.email_from_name ?? null,
+      // #1935 — must be forwarded so a verified custom domain is honored the
+      // same way it is by the other four crons.
+      email_from_domain: branding?.email_from_domain ?? null,
+      email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
     },
     to: tenant.support_email!,
     subject: SUBJECT_BY_LEVEL[level],

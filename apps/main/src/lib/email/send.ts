@@ -24,6 +24,17 @@ import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/re
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementEmailSent } from "@/lib/abuse/counters";
 
+// #1935 — shared tenant_branding column projection for every cron/job that
+// reads branding before sending mail. Two crons omitted email_from_domain /
+// email_from_domain_verified_at, so a tenant with a verified custom domain
+// got a different from-address depending on which cron sent — importing
+// this constant instead of hand-writing the column list is what keeps them
+// from drifting apart again.
+export const TENANT_BRANDING_COLUMNS =
+  "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
+  "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
+  "email_from_name, email_from_domain, email_from_domain_verified_at";
+
 export interface SendEmailInput {
   db: SupabaseClient;
   tenant: {
