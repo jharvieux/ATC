@@ -17,7 +17,6 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { decodeJwt } from "jose";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
@@ -252,11 +251,12 @@ export async function assertPermission(
   // getSession() (an UNVERIFIED cookie-payload parse) and rely on a documented
   // "SAFETY DEPENDS ON CALL ORDER" invariant: the bytes were trustworthy only
   // because a getUser() higher up had verified the same cookie. Any reorder
-  // silently turned this into an attacker-controlled read. verifyIdentity now
-  // hands back the exact token whose signature it verified, so auth_time is
-  // read from verified bytes by construction rather than by convention.
+  // silently turned this into an attacker-controlled read. #1939 finished the
+  // job: auth_time is read straight from the signature-verified `claims`
+  // payload getClaims() returned — no token bytes are re-decoded, so there is
+  // no seam between the verified data and the used data.
   if (isSensitiveRoute(pathname)) {
-    const authTime = readAuthTime(identity.accessToken);
+    const authTime = readAuthTimeFromClaims(identity.claims);
     if (authTime === null) {
       throw new AuthReauthRequired(pathname);
     }
@@ -386,37 +386,34 @@ async function assertPermissionWithPAT(
 }
 
 /**
- * Reads the authentication timestamp (Unix seconds) from a Supabase JWT.
- * Supabase GoTrue does not emit `auth_time`; the equivalent is the most
- * recent `amr[].timestamp` entry. We check `auth_time` first for forward
- * compatibility with custom auth hooks that may set it explicitly.
- * Returns null if neither is present or the JWT is malformed.
- * We do NOT verify the signature — Supabase auth already did in getUser().
+ * Reads the authentication timestamp (Unix seconds) from a signature-verified
+ * claims payload. Supabase GoTrue does not emit `auth_time`; the equivalent is
+ * the most recent `amr[].timestamp` entry. We check `auth_time` first for
+ * forward compatibility with custom auth hooks that may set it explicitly.
+ * Returns null if neither is present.
+ *
+ * #1939 — takes the verified `claims` object (from verifyIdentity) rather than
+ * a raw JWT string, so the sensitive-route re-auth gate never re-decodes an
+ * unverified token: the value it reads is exactly what getClaims() verified.
  */
-export function readAuthTime(jwt: string): number | null {
-  try {
-    const payload = decodeJwt(jwt) as Record<string, unknown>;
-
-    const auth_time = payload.auth_time;
-    if (typeof auth_time === "number" && Number.isFinite(auth_time)) {
-      return auth_time;
-    }
-
-    // Supabase uses amr[].timestamp — take the most recent entry.
-    const amr = payload.amr;
-    if (Array.isArray(amr) && amr.length > 0) {
-      let latest = 0;
-      for (const entry of amr) {
-        if (entry && typeof entry === "object") {
-          const ts = (entry as Record<string, unknown>).timestamp;
-          if (typeof ts === "number" && ts > latest) latest = ts;
-        }
-      }
-      if (latest > 0) return latest;
-    }
-
-    return null;
-  } catch {
-    return null;
+export function readAuthTimeFromClaims(payload: Record<string, unknown>): number | null {
+  const auth_time = payload.auth_time;
+  if (typeof auth_time === "number" && Number.isFinite(auth_time)) {
+    return auth_time;
   }
+
+  // Supabase uses amr[].timestamp — take the most recent entry.
+  const amr = payload.amr;
+  if (Array.isArray(amr) && amr.length > 0) {
+    let latest = 0;
+    for (const entry of amr) {
+      if (entry && typeof entry === "object") {
+        const ts = (entry as Record<string, unknown>).timestamp;
+        if (typeof ts === "number" && ts > latest) latest = ts;
+      }
+    }
+    if (latest > 0) return latest;
+  }
+
+  return null;
 }
