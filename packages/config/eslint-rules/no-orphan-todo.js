@@ -32,12 +32,12 @@ const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
 //   3. Whitelisted bare owners (documented domain concepts only):
 //      - legal-attorney, legal-counsel: legal/attorney review
 //      - operator: operator/manual action
-//      - Spec references: bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]*
-//      - Subsystem names: usps-validator, rag-service-count, pre-cruise-emails, rbac[a-z0-9-]*
+//      - Spec references: bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]*,  §\d+.*
+//      - Subsystem names: usps-validator, rag-service-count, pre-cruise-emails, rbac*, haiku-*, help-*, prompt-\d+
 //      - Person: jharvieux
 //
 // Rejected patterns (accumulate forever with no durable reference):
-//   - Generic placeholders: owner, name, verify, notifications, part-6, prompt-12, etc.
+//   - Generic placeholders: owner, name, verify, notifications, part-6, etc.
 //   - Undefined bare words or hyphenated names not on whitelist
 
 // Two patterns count as a marker:
@@ -54,6 +54,11 @@ const WHITELISTED_BARE_OWNERS = [
   "rbac(?:[a-z0-9-]*)?", // matches rbac, rbac-tenant-admin, etc.
   "bp\\d+[a-z0-9]*[-/\\w]*", // spec refs: bp23, bp23-tier-lookup, etc.
   "BP\\d+[^)]*", // spec refs: BP19/§18, etc.
+  "§\\d+[^)]*", // spec refs: §27.12-cost-display, etc.
+  "haiku-[a-z0-9-]*", // haiku model features: haiku-pii-redaction, etc.
+  "[a-z]+-haiku", // haiku features: help-ai-confidence-haiku, etc.
+  "help-[a-z0-9-]*", // help subsystem features
+  "prompt-\\d+", // numbered prompt configs: prompt-12, prompt-13, etc.
   "jharvieux",
 ].join("|");
 

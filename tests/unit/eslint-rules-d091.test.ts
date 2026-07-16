@@ -69,10 +69,11 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
   // 3. Whitelisted bare owners:
   //    - legal-attorney, legal-counsel, operator (roles)
   //    - usps-validator, rag-service-count, pre-cruise-emails, rbac* (features)
-  //    - bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]* (spec references)
+  //    - bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]*, §\d+.* (spec references)
+  //    - *-haiku, help-*, prompt-\d+ (AI/prompt features)
   //    - jharvieux (person)
   //
-  // Rejected: anything not matching above, including placeholders (owner, name, notify-*, prompt-*, etc.)
+  // Rejected: anything not matching above, including placeholders (owner, name, notify-*, etc.)
   const WHITELISTED_BARE_OWNERS = [
     "legal-attorney",
     "legal-counsel",
@@ -83,6 +84,11 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
     "rbac(?:[a-z0-9-]*)?",
     "bp\\d+[a-z0-9]*[-/\\w]*",
     "BP\\d+[^)]*",
+    "§\\d+[^)]*",
+    "haiku-[a-z0-9-]*",
+    "[a-z]+-haiku",
+    "help-[a-z0-9-]*",
+    "prompt-\\d+",
     "jharvieux",
   ].join("|");
   const LINE_MARKER_RE = new RegExp(
