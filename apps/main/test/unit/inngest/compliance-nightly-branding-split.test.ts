@@ -35,8 +35,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
       chain["select"] = (arg: string) => {
         mocks.selectArgs.push({ table, arg });
         if (table === "tenants") {
-          return {
-            eq: () => result([{
+          // #1933 — the real query now paginates via .order().range(); a
+          // second .eq() (the ICA-drift path) must also stay chainable, but
+          // that path never reaches here in this suite (empty legal_documents
+          // short-circuits it first).
+          const tenantsChain: Record<string, unknown> = {
+            eq: () => tenantsChain,
+            order: () => ({ range: () => result([{
               id: "t1",
               status: "active",
               support_email: "owner@tenant.com",
@@ -46,18 +51,24 @@ vi.mock("@/lib/db/service-role-client", () => ({
               subscription_status: "active",
               non_paying_since: null,
               is_platform_internal: false,
-            }]),
+            }]) }),
           };
+          return tenantsChain;
         }
         if (table === "tenant_branding") {
+          // #1933/#1935 — real query now paginates via .order().range().
           return {
-            in: () => result([{
-              tenant_id: "t1",
-              email_send_pattern: "tenant_resend",
-              tenant_resend_api_key_encrypted: "enc-key",
-              email_from_address: "concierge@tenant.com",
-              email_from_name: "Tenant Concierge",
-            }]),
+            in: () => ({
+              order: () => ({ range: () => result([{
+                tenant_id: "t1",
+                email_send_pattern: "tenant_resend",
+                tenant_resend_api_key_encrypted: "enc-key",
+                email_from_address: "concierge@tenant.com",
+                email_from_name: "Tenant Concierge",
+                email_from_domain: null,
+                email_from_domain_verified_at: null,
+              }]) }),
+            }),
           };
         }
         if (table === "conversations" || table === "bookings") {
@@ -91,8 +102,9 @@ vi.mock("@/lib/db/service-role-client", () => ({
 vi.mock("@/lib/email/send", () => ({
   sendEmail: (args: Record<string, unknown>) => {
     mocks.sendEmailArgs.push(args);
-    return Promise.resolve();
+    return Promise.resolve({ status: "sent" });
   },
+  TENANT_BRANDING_COLUMNS: "tenant_id, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at",
 }));
 
 import { complianceNightly } from "@/inngest/compliance-nightly";
