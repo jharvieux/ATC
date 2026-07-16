@@ -138,6 +138,19 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
       affectedTenantIds = result.affected_tenant_ids;
       purgeCounts = result.counts;
       forensicsSnapshotId = result.forensics_snapshot_id;
+
+      // #1958 audit fix — purgeUserDataPerRetention is non-transactional. A
+      // prior attempt can have anonymized the contacts (Step 5: user_id nulled,
+      // anonymized_customer_hash stamped) and then thrown BEFORE Step 8 flipped
+      // status='purged'. status is still 'deleted', so this retry re-enters the
+      // fresh-purge branch — but Step 5's `.eq("user_id", user_id)` now matches
+      // zero rows, so affected_tenant_ids comes back EMPTY and we'd notify
+      // nobody. Recover the original audience from the deterministic
+      // anonymized_customer_hash. A user who genuinely never had contacts in any
+      // tenant recovers empty too, which is correct (notify nobody, no error).
+      if (affectedTenantIds.length === 0) {
+        affectedTenantIds = await recoverAffectedTenantIds(db, user_id);
+      }
     }
 
     // §25.4a Category 3 — notify the affected tenants' admins so they can

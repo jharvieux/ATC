@@ -60,11 +60,16 @@ export async function createNotification(input: CreateNotificationInput): Promis
   const result = await db.from("notifications").insert(row).select("id").single();
   if (result.error) {
     if (result.error.code === "23505") {
+      // Look up ONLY by dedup_key — the UNIQUE index is on (dedup_key) alone
+      // (notifications_dedup_key_uidx), so keying the lookup on dedup_key alone
+      // resolves to exactly one row. Adding `.eq("tenant_id", …)` narrowed the
+      // filter below the index key: a cross-tenant dedup_key collision would
+      // then match zero rows and make `.single()` throw instead of resolving.
       return await safeAwaitRequired<{ id: string }>(
         db
+          // d091-allow:service-role-tenant — post-23505 lookup MUST key on the exact UNIQUE index (dedup_key alone); adding .eq("tenant_id",…) narrows below the index and makes .single() throw on a cross-tenant key collision.
           .from("notifications")
           .select("id")
-          .eq("tenant_id", tenant_id)
           .eq("dedup_key", dedup_key)
           .single(),
         "notifications.dedup_lookup",

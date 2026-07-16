@@ -213,6 +213,51 @@ describe("userDataPurgeAfterGrace — notification resumability (#1958)", () => 
     expect(state.plainInserts).toHaveLength(0);
   });
 
+  it("recovers the notify audience when a mid-purge retry re-runs an already-anonymized purge (#1958 audit)", async () => {
+    // First attempt: purgeUserDataPerRetention is non-transactional. Step 5
+    // anonymized the contacts (stamping anonymized_customer_hash, nulling
+    // user_id) but the run threw before Step 8 flipped status='purged', so it
+    // reports an error and status stays 'deleted'.
+    // Retry: status is still 'deleted' → the fresh-purge branch re-runs the
+    // purge, but Step 5 now matches zero rows (contacts already anonymized), so
+    // the purge succeeds with an EMPTY affected_tenant_ids. Without the
+    // hash-recovery fallback the handler would notify nobody.
+    let purgeCall = 0;
+    mocks.purgeUser.mockImplementation(async () => {
+      purgeCall++;
+      if (purgeCall === 1) {
+        return { purge_outcome: "error", error_detail: "threw after anonymize", counts: {} };
+      }
+      state.usersRow.status = "purged";
+      return {
+        purge_outcome: "success",
+        counts: {},
+        forensics_snapshot_id: null,
+        affected_tenant_ids: [],
+      };
+    });
+
+    // Run 1: purge fails after anonymizing → handler returns ok:false, no notifies.
+    const first = await invoke();
+    expect(first).toMatchObject({ ok: false });
+    expect(state.notifications.size).toBe(0);
+    expect(state.usersRow.status).toBe("deleted");
+
+    // Run 2 = Inngest retry. Fresh-purge branch, empty affected set → the
+    // fallback recovers [TENANT_A] from the anonymized_customer_hash.
+    const second = await invoke();
+    expect(second).toMatchObject({ ok: true, already_purged: false, affected_tenant_ids: [TENANT_A] });
+    expect(mocks.purgeUser).toHaveBeenCalledTimes(2);
+
+    // The original audience (TENANT_A admins u1, u2) is notified exactly once.
+    expect(state.notifications.size).toBe(2);
+    expect([...state.notifications.keys()].sort()).toEqual([
+      `ccpa_purge:${USER_ID}:u1`,
+      `ccpa_purge:${USER_ID}:u2`,
+    ]);
+    expect(state.plainInserts).toHaveLength(0);
+  });
+
   it("a clean retry after full success re-runs the idempotent loop without duplicating", async () => {
     // Run 1: everything succeeds.
     const first = await invoke();
