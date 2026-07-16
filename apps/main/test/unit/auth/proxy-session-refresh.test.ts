@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import { AuthApiError, AuthRetryableFetchError } from "@supabase/supabase-js";
+import { AuthApiError, AuthRetryableFetchError, AuthSessionMissingError } from "@supabase/supabase-js";
 
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
@@ -304,7 +304,7 @@ describe("proxy() hybrid local verification (#1932)", () => {
     expect(new URL(anon.headers.get("location")!).pathname).toBe("/auth/reauth");
   });
 
-  it("local-verify miss hands off to getUser; a definitive getUser rejection still heals (garbage cookie can't wedge)", async () => {
+  it("local-verify miss hands off to getUser; a definitive getUser rejection still heals (server-rejected token)", async () => {
     mocks.getClaims.mockResolvedValue({
       data: null,
       // Shape-only stand-in for AuthInvalidJwtError: local errors must NOT
@@ -320,6 +320,38 @@ describe("proxy() hybrid local verification (#1932)", () => {
     expect(res.status).toBe(307);
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/reauth");
     expect(res.cookies.get("sb-abc-auth-token")?.maxAge).toBe(0);
+  });
+
+  it("dead-refresh-token inside getClaims still heals: the handoff sees AuthSessionMissingError, not AuthApiError (the _removeSession seam)", async () => {
+    // Faithful sequencing of the real auth-js integration (PR #1987 audit
+    // finding): a dead/rotated refresh token fails the refresh INSIDE
+    // getClaims, whose _callRefreshToken runs _removeSession() before
+    // returning — so the handoff getUser() reads EMPTY session storage and
+    // reports AuthSessionMissingError. The pre-#1932 single getUser() would
+    // have surfaced the refresh's AuthApiError here; the heal must treat
+    // session-missing-with-cookie-present as equally definitive or the #1361
+    // redirect silently dies for its primary scenario.
+    mocks.getClaims.mockResolvedValue({
+      data: null,
+      error: new AuthApiError("Invalid Refresh Token: Already Used", 400, "refresh_token_already_used"),
+    });
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthSessionMissingError(),
+    });
+    const res = await proxy(req("ai-travelconcierge.com", "/admin", { cookie: COOKIE }));
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/reauth");
+    expect(res.cookies.get("sb-abc-auth-token")?.maxAge).toBe(0);
+  });
+
+  it("AuthSessionMissingError WITHOUT an auth cookie does not heal (anonymous visitors are untouched)", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthSessionMissingError(),
+    });
+    const res = await proxy(req("ai-travelconcierge.com", "/"));
+    expect(res.headers.get("location")).toBeNull();
   });
 
   it("local-verify miss + transient getUser failure does NOT heal (no mass logout on an auth-server blip)", async () => {
@@ -344,8 +376,8 @@ describe("proxy() hybrid local verification (#1932)", () => {
     expect(mocks.getUser).toHaveBeenCalledTimes(1);
   });
 
-  it("kill switch AUTH_MIDDLEWARE_LOCAL_VERIFY=disabled restores unconditional getUser (no getClaims call)", async () => {
-    process.env.AUTH_MIDDLEWARE_LOCAL_VERIFY = "disabled";
+  it("kill switch AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED=true restores unconditional getUser (no getClaims call)", async () => {
+    process.env.AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED = "true";
     localVerified(); // would succeed locally — must be ignored
     mocks.getUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
     await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
