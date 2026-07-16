@@ -19,6 +19,8 @@ import "server-only";
 import type { TenantContext } from "./tenant-context";
 import { tryTestBypass } from "../auth/test-bypass";
 import { createRequestScopedClient, createBearerClient, extractBearerToken } from "../auth/ssr-client";
+import { verifyIdentity } from "../auth/verify-identity";
+import { cacheMembership, type MembershipRow } from "../auth/membership-cache";
 import { RESOLVED_TENANT_ID_HEADER } from "../tenancy/header-names";
 
 /**
@@ -70,19 +72,26 @@ export async function tenantContextFromRequest(
     ? createBearerClient(bearerToken)
     : createRequestScopedClient(req);
 
-  const { data: userData, error: userErr } = bearerToken
-    ? await supabase.auth.getUser(bearerToken)
-    : await supabase.auth.getUser();
-  if (userErr || !userData?.user) {
+  // #1585 — verify the JWT's signature LOCALLY (JWKS) rather than paying a
+  // GoTrue round-trip. This is still a full cryptographic verification: a
+  // forged or expired token is rejected here exactly as it was before. See
+  // lib/auth/verify-identity.ts for why local verification — not a trusted
+  // header forwarded from the middleware — is the safe way to close this.
+  const identity = await verifyIdentity(supabase, bearerToken ?? undefined);
+  if (!identity) {
     throw new Error(
       "tenantContextFromRequest: invalid or expired access token.",
     );
   }
-  const authUserId = userData.user.id;
+  const authUserId = identity.authUserId;
 
+  // #1585 — select the FULL membership row (not just id/status) so
+  // assertPermission can reuse it for its RBAC check instead of issuing an
+  // identical second SELECT. Still filtered by auth_user_id AND tenant_id,
+  // still executed under the user's own JWT so RLS applies (D-091 #4).
   const { data: row, error } = await supabase
     .from("users")
-    .select("id, status")
+    .select("id, auth_user_id, tenant_id, status, role")
     .eq("auth_user_id", authUserId)
     .eq("tenant_id", tenantId)
     .maybeSingle();
@@ -97,6 +106,11 @@ export async function tenantContextFromRequest(
       "tenantContextFromRequest: authenticated user is not an active member of the resolved tenant.",
     );
   }
+
+  // #1585 — hand the verified row to assertPermission (same request only).
+  // Only an ACTIVE membership is ever cached, so a reader can never resurrect
+  // a suspended one; assertPermission re-checks status regardless.
+  cacheMembership(req, authUserId, tenantId, row as MembershipRow);
 
   return {
     tenant_id: tenantId,
