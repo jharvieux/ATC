@@ -254,9 +254,12 @@ describe("PUT /api/admin/feedback-settings — RAG-sync publish", () => {
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
   });
 
-  // A write that succeeds (error:null) but returns no updated_at would make
-  // Math.max(...[]) === -Infinity, a poison source_revision. The route must
-  // fail loud (db_error) and NOT publish rather than emit an unorderable event.
+  // A write that succeeds (error:null) but returns a row without updated_at
+  // trips the same per-key assert as the #1909 zero-row case (both collapse
+  // to `data?.[0]?.updated_at === undefined`) and throws before the route
+  // ever reaches the Math.max(...updatedAts) call below — so the -Infinity
+  // poisoned-source_revision case this test originally guarded against
+  // (#1887) is now structurally unreachable, not merely fixed up after.
   it("throws (db_error) and does not publish when no updated_at is returned", async () => {
     h.noUpdatedAt = true;
     const res = await PUT(req({ feedback_period_days: 30 }));

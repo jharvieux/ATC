@@ -14,8 +14,8 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ key: string; value: unknown }>,
   // Keys whose update should fail with a DB error.
   failKeys: new Set<string>(),
-  // Keys whose update "succeeds" (error: null) but returns no row — the
-  // #1887 source_revision guard test.
+  // Keys whose update "succeeds" (error: null) but returns no matched row —
+  // exercises the #1909 per-key zero-row assert (D-091 #7).
   emptyRowKeys: new Set<string>(),
   // Rows returned by the post-update loadCurrent read.
   currentRows: [] as Array<{ key: string; value: unknown }>,
@@ -198,13 +198,18 @@ describe("GET /api/admin/retrieval-weights — read error (#1909)", () => {
   });
 });
 
-describe("PUT /api/admin/retrieval-weights — source_revision guard (#1887)", () => {
-  it("fails loud instead of computing Math.max(...[]) = -Infinity when no row returns updated_at", async () => {
-    // error: null but data: [] for every requested key — the write
-    // "succeeded" per Supabase yet no updated_at came back. Math.max over an
-    // empty array used to silently yield -Infinity, which would poison
-    // source_revision and make the rag-side stale-revision guard skip the
-    // key forever now that retrieval_weight_* actually reaches rag (#1887).
+describe("PUT /api/admin/retrieval-weights — all-keys-empty case still fails (#1887, now via #1909 per-key assert)", () => {
+  it("fails loud when the only requested key's row is missing, before source_revision's Math.max ever runs", async () => {
+    // #1887 originally guarded this exact all-keys-empty case with an
+    // aggregate `updatedAts.length === 0` check ahead of
+    // `Math.max(...updatedAts.map(...))`, which would otherwise silently
+    // yield -Infinity and poison source_revision. #1909 replaced that
+    // aggregate check with a per-key throw inside the allSettled map (see
+    // the "zero-row update (#1909)" describe block above), which now fires
+    // for this same request before the route ever reaches the Math.max
+    // call — so the -Infinity path is structurally unreachable rather than
+    // merely guarded. This test is kept to confirm a single-key request
+    // with a missing row still fails loud under the new mechanism.
     h.emptyRowKeys = new Set(["retrieval_weight_match"]);
     const res = await PUT(req({ match: 3 }));
     expect(res.status).toBe(500);
