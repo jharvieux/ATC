@@ -17,8 +17,12 @@
 // non-queue flow (no more orphan-row wedging). See #1896 groundwork, #1914.
 //
 // Usage: tsx scripts/ci-reset-test-db.ts [--target=main|rag]
-// --target only affects the log label below; defaults to "main" for the
-// original call site's backward compatibility. Drops + recreates `public`
+// --target is a LOG LABEL ONLY — it does NOT select a database. Both values
+// take byte-identical code paths; RESET_TARGET_DB_URL is the sole selector of
+// what gets dropped, so `--target=rag` against a main URL resets MAIN. It
+// exists to keep the CLI shape consistent with rls-snapshot-diff.ts and to
+// make the logs say which DB the caller believed it was resetting. Defaults to
+// "main" for the original call site's backward compatibility. Drops + recreates `public`
 // — the only schema either app's migrations own, matching scripts/db-reset.ts's
 // proven local reset — and empties the migration ledger. Supabase-managed
 // schemas (auth, storage, graphql, realtime, vault) are owned by
@@ -44,9 +48,13 @@
 //
 // Safety: refuses to run unless CONFIRM_TEST_DB_RESET=true is set by the
 // caller, so merely having RESET_TARGET_DB_URL in the environment can never wipe
-// a DB. A secret-less run (Dependabot, or RAG's SUPABASE_RAG_TEST_DB_URL when
-// unset) has no URL and skips (exit 0), the same posture as the apply step
-// that follows it.
+// a DB. A secret-less run (Dependabot) has no URL and skips (exit 0), the same
+// posture as the apply step that follows it. That skip is for callers that
+// legitimately run without secrets — a caller which REQUIRES the reset to have
+// happened must check the URL itself before invoking (nightly-full-test.yml's
+// RAG reset step does exactly that: on schedule/dispatch an unset secret means
+// misnamed/rotated, and silently skipping would let the push re-wedge on 42P07
+// with only a log line to show for it).
 
 import postgres from "postgres";
 import { redactSecrets } from "./lib/redact-secrets";
