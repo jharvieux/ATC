@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   emptyRowKeys: new Set<string>(),
   // Rows returned by the post-update loadCurrent read.
   currentRows: [] as Array<{ key: string; value: unknown }>,
+  // When set, the loadCurrent read returns this error instead of rows.
+  readError: null as { message: string } | null,
   publishPlatformEvent: vi.fn(async (_event: unknown) => undefined),
 }));
 
@@ -53,7 +55,7 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
           }),
         }),
         select: () => ({
-          in: async () => ({ data: h.currentRows, error: null }),
+          in: async () => (h.readError ? { data: null, error: h.readError } : { data: h.currentRows, error: null }),
         }),
       }),
     };
@@ -61,7 +63,7 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
   },
 }));
 
-import { PUT } from "@/app/api/admin/retrieval-weights/route";
+import { GET, PUT } from "@/app/api/admin/retrieval-weights/route";
 
 function req(body: unknown): Request {
   return new Request("https://app.example.com/api/admin/retrieval-weights", {
@@ -76,6 +78,7 @@ beforeEach(() => {
   h.failKeys = new Set();
   h.emptyRowKeys = new Set();
   h.currentRows = [];
+  h.readError = null;
   h.publishPlatformEvent.mockClear();
 });
 
@@ -157,6 +160,41 @@ describe("PUT /api/admin/retrieval-weights — RAG-sync publish (#1826)", () => 
     const res = await PUT(req({ match: 3 }));
     expect(res.status).toBe(500);
     expect(h.publishPlatformEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/admin/retrieval-weights — zero-row update (#1909)", () => {
+  // D-091 #7: supabase-js v2 returns error:null + data:[] when an UPDATE
+  // matches no row. The pre-#1909 route only failed when EVERY key came back
+  // empty, so a mixed PUT — one seeded key, one missing row — reported 200 and
+  // published a RAG-sync event while the missing key silently never persisted.
+  // The admin's change was lost with no signal. Reverting to the aggregate
+  // check (or dropping the per-key assert) must fail this test.
+  it("fails the whole PUT when ONE key's row is missing even though a sibling key applied", async () => {
+    h.emptyRowKeys = new Set(["retrieval_weight_match"]);
+    const res = await PUT(req({ match: 3, authority: 4 }));
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: "db_error" });
+    // Nothing may reach rag: publishing a partial change would sync the
+    // applied key and leave the lost one silently diverged.
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/admin/retrieval-weights — read error (#1909)", () => {
+  // A discarded read error rendered the seed defaults (1.0 across the board)
+  // as if they were live config — an admin could "correct" a value that was
+  // never wrong. The read must fail loud instead.
+  it("returns db_error rather than seed defaults when the settings read fails", async () => {
+    h.readError = { message: "connection reset" };
+    const res = await GET(new Request("https://app.example.com/api/admin/retrieval-weights"));
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: "db_error" });
+    expect(body).not.toMatchObject({ match: 1 });
   });
 });
 

@@ -10,7 +10,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   updates: [] as Array<{ key: string; value: unknown }>,
   failKeys: new Set<string>(),
+  // Keys whose update "succeeds" (error:null) but matches zero rows — the
+  // #1909 silent-no-op case, distinct from noUpdatedAt's row-without-a-column.
+  emptyRowKeys: new Set<string>(),
   currentRows: [] as Array<{ key: string; value: unknown }>,
+  // When set, the loadCurrent read returns this error instead of rows.
+  readError: null as { message: string } | null,
   // When true, updates succeed (error:null) but the returned row carries no
   // updated_at — exercises the empty-updatedAts fail-loud guard.
   noUpdatedAt: false,
@@ -38,13 +43,14 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
             select: async (_cols: string) => {
               h.updates.push({ key, value: payload.value });
               if (h.failKeys.has(key)) return { data: null, error: { message: `write failed for ${key}` } };
+              if (h.emptyRowKeys.has(key)) return { data: [], error: null };
               if (h.noUpdatedAt) return { data: [{}] as Array<{ updated_at: string }>, error: null };
               return { data: [{ updated_at: "2026-07-13T00:00:00.000Z" }], error: null };
             },
           }),
         }),
         select: () => ({
-          in: async () => ({ data: h.currentRows, error: null }),
+          in: async () => (h.readError ? { data: null, error: h.readError } : { data: h.currentRows, error: null }),
         }),
       }),
     };
@@ -65,9 +71,44 @@ function req(body: unknown): Request {
 beforeEach(() => {
   h.updates = [];
   h.failKeys = new Set();
+  h.emptyRowKeys = new Set();
   h.currentRows = [];
+  h.readError = null;
   h.noUpdatedAt = false;
   h.publishPlatformEvent.mockClear();
+});
+
+describe("PUT /api/admin/feedback-settings — zero-row update (#1909)", () => {
+  // D-091 #7: supabase-js v2 returns error:null + data:[] when an UPDATE
+  // matches no row. The pre-#1909 route only failed when EVERY key came back
+  // empty, so a mixed PUT — one seeded key, one missing row — reported 200 and
+  // published a RAG-sync event while the missing key silently never persisted.
+  // Reverting to the aggregate check must fail this test.
+  it("fails the whole PUT when ONE key's row is missing even though a sibling key applied", async () => {
+    h.emptyRowKeys = new Set(["feedback_period_days"]);
+    const res = await PUT(req({ feedback_period_days: 30, feedback_min_signal_count: 5 }));
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: "db_error" });
+    // Nothing may reach rag: publishing a partial change would sync the
+    // applied key and leave the lost one silently diverged.
+    expect(h.publishPlatformEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/admin/feedback-settings — read error (#1909)", () => {
+  // A discarded read error rendered the seed defaults as if they were live
+  // config — an admin could "correct" a value that was never wrong.
+  it("returns db_error rather than seed defaults when the settings read fails", async () => {
+    h.readError = { message: "connection reset" };
+    const res = await GET(new Request("https://app.example.com/api/admin/feedback-settings"));
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: "db_error" });
+    expect(body).not.toMatchObject({ feedback_adjustment_limit: 0.05 });
+  });
 });
 
 describe("GET /api/admin/feedback-settings", () => {
