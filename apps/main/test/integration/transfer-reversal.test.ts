@@ -253,10 +253,9 @@ describeIf("process_transfer_reversal", () => {
       // this cleanup previously went through the PostgREST admin client,
       // whose per-request transaction can't carry the SET LOCAL override,
       // so every nightly run failed here). Use the raw `sql` connection so
-      // the override and the DELETE share one transaction, matching the
-      // established pattern in import-promote-atomicity.test.ts (scalar
-      // DELETE per row, not an array — a bare JS array interpolated in a
-      // tagged template doesn't serialize to a valid array literal here).
+      // the override and the DELETE share one transaction. rls.test.ts:165
+      // does the same with ANY(${array}); the scalar-per-row loop here
+      // follows import-promote-atomicity.test.ts:131-134 — either form works.
       await sql.begin(async (tx) => {
         await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
         for (const tid of tids) {
