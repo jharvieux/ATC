@@ -12,8 +12,17 @@ import { describe, it, expect, vi } from "vitest";
 import { verifyIdentity } from "@/lib/auth/verify-identity";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const TOKEN = "header.payload.signature";
 const AUTH_USER_ID = "auth-user-uuid-1234";
+
+// A realistic 3-segment JWT: header/payload are valid base64url JSON (so a
+// bare decodeJwt() decodes it successfully), but the signature segment is
+// not a real signature over any key. Every "fails closed" test below asserts
+// that on a bad signature; getClaims() is mocked to report exactly that. If
+// verifyIdentity were ever "simplified" into a decode-only check, this TOKEN
+// must not make that mutant pass by accident — it has to actually decode.
+const TOKEN = `${Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT" })).toString("base64url")}.${Buffer.from(
+  JSON.stringify({ sub: AUTH_USER_ID, exp: 9999999999 }),
+).toString("base64url")}.invalidsignature`;
 
 function makeClient(opts: {
   getClaims?: unknown;

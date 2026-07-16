@@ -76,7 +76,10 @@ function installFetchRouter() {
       primary_contact: { first_name: "Jamie", last_name: "Rivera" },
     },
   ];
-  const fetchMock = vi.fn((url: string) => {
+  const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    if (init?.method === "PUT" && url.startsWith("/api/tenant/email-templates/")) {
+      return Promise.resolve(jsonRes({ ok: true }));
+    }
     if (url === "/api/tenant/email-templates") {
       return Promise.resolve(jsonRes({ templates: [templateEntry(), welcomeEntry()] }));
     }
@@ -217,5 +220,78 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     const bookingCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/bookings"));
     expect(bookingCalls).toHaveLength(1);
     expect(String(bookingCalls[0]?.[0])).toContain(encodeURIComponent("Jami"));
+  });
+});
+
+describe("EmailTemplatesSettingsPage — save-triggered reload (#1912)", () => {
+  it("keeps sailing/booking selections and in-progress edits after a save reloads templates with an unchanged selectedType", async () => {
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await screen.findByRole("heading", { name: "Booking confirmation" });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => u === "/api/cruise-lines")).toBe(true);
+    });
+
+    // Resolve the full sailing cascade.
+    fireEvent.click(screen.getByLabelText(/Sailing from catalog/));
+    const selects = () => Array.from(document.querySelectorAll<HTMLSelectElement>("select"));
+    const [lineSelect, shipSelect, dateSelect] = selects() as [
+      HTMLSelectElement,
+      HTMLSelectElement,
+      HTMLSelectElement,
+    ];
+    fireEvent.change(lineSelect, { target: { value: "line-1" } });
+    await waitFor(() => expect(shipSelect.disabled).toBe(false));
+    fireEvent.change(shipSelect, { target: { value: "ship-1" } });
+    await waitFor(() => expect(dateSelect.disabled).toBe(false));
+    fireEvent.change(dateSelect, { target: { value: "sailing-1" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Load preview" }) as HTMLButtonElement).toHaveProperty(
+        "disabled",
+        false,
+      );
+    });
+
+    // Also resolve a booking selection — previewSource is a single radio, but
+    // the underlying sailing and booking selection state are independent, so
+    // both stay populated at once.
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    const bookingSearchInput = screen.getByPlaceholderText("Type a customer name…") as HTMLInputElement;
+    fireEvent.change(bookingSearchInput, { target: { value: "Jamie" } });
+    const result = await screen.findByText("Jamie Rivera");
+    fireEvent.click(result);
+    await screen.findByText("Clear selection");
+
+    // Dirty the subject too, then save it.
+    const subjectInput = screen.getByPlaceholderText(
+      "Your trip is confirmed, {{customer_name}}!",
+    ) as HTMLInputElement;
+    fireEvent.change(subjectInput, { target: { value: "Edited subject" } });
+    await screen.findByDisplayValue("Edited subject");
+
+    // save() PUTs, then calls load() again on success. load() replaces
+    // `templates` with a brand-new array reference, but selectedType never
+    // changed — this is the exact shape that used to re-fire the
+    // template-switch reset cascade and wipe the sailing/booking selections
+    // above even though the user never touched the template-type nav (#1912).
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/Saved at/);
+
+    // The just-typed subject survives the reload (it isn't reset back to the
+    // mocked override's "Custom subject").
+    expect((screen.getByDisplayValue("Edited subject") as HTMLInputElement).value).toBe("Edited subject");
+
+    // The booking selection survives — the input still shows the picked
+    // contact, not the blank/query state the reset cascade would produce.
+    expect(screen.getByText("Clear selection")).toBeTruthy();
+    expect(bookingSearchInput.value).toBe("Jamie Rivera — Wanderer");
+
+    // The sailing selection survives too: switching the data-source radio
+    // back to "sailing" shows the same line/ship/date still selected.
+    fireEvent.click(screen.getByLabelText(/Sailing from catalog/));
+    const [lineAfter, shipAfter, dateAfter] = selects() as [HTMLSelectElement, HTMLSelectElement, HTMLSelectElement];
+    expect(lineAfter.value).toBe("line-1");
+    expect(shipAfter.value).toBe("ship-1");
+    expect(dateAfter.value).toBe("sailing-1");
   });
 });

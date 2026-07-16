@@ -84,10 +84,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Reset main test DB before apply (#1660 / #1896)
+        id: reset-main
         # Same reset-then-apply as deploy.yml's rls-snapshot-diff: rebuild the
         # main test DB from scratch so an orphaned ledger row from an abandoned
         # branch's CI run can't wedge this nightly's push. Serialized against
         # deploy.yml via the shared-test-db group above.
+        #
+        # Guarded exactly like the RAG reset below (#1961): an empty
+        # RESET_TARGET_DB_URL means the SUPABASE_TEST_DB_URL secret was
+        # rotated/renamed/removed. Report it via reset_main_status rather than
+        # letting the step exit non-zero — an unguarded failure makes Actions
+        # skip every later step INCLUDING `Open issue on failure`, so a missing
+        # DB secret would produce a bare red X and no `nightly-failure` issue:
+        # silence in the one channel operators are told to watch. The reset
+        # script itself exits 0 (skip) on an unset URL for secret-less callers,
+        # so this explicit check is what turns "silently ran nothing" into a
+        # reported failure for this schedule-only workflow.
         env:
           CONFIRM_TEST_DB_RESET: "true"
           # Distinctly-named target var (#1896 audit): the reset script reads
@@ -95,19 +107,44 @@ jobs:
           # destructive step can only ever be pointed at the test DB — never the
           # prod DB that SUPABASE_DB_URL binds to in prod-drift-check.yml.
           RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
-        run: pnpm db:reset:ci
+        run: |
+          if [ -z "$RESET_TARGET_DB_URL" ]; then
+            echo "::error::SUPABASE_TEST_DB_URL is empty — the main test DB reset cannot run (#1961)."
+            echo "reset_main_status=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          pnpm db:reset:ci
+          STATUS=$?
+          echo "reset_main_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Apply Supabase migrations to test DB
+        id: migrate-main
         # Ensures the test DB schema matches dev before running integration tests.
         # Without this, RPC-signature changes (e.g. adding a parameter) leave the
         # test DB on the old signature, causing integration tests to fail with 500.
+        #
+        # Gated on the reset above succeeding (#1961). That gate also subsumes
+        # the missing-secret case: SUPABASE_DB_URL (job env) and the reset step's
+        # RESET_TARGET_DB_URL are the SAME secret expression (secrets.
+        # SUPABASE_TEST_DB_URL), so an unset secret always surfaces as
+        # reset_main_status != 0 and this step never runs — which is why the old
+        # `-z "$SUPABASE_DB_URL"` / `exit 1` guard is gone (that exit 1 was the
+        # unguarded abort #1961 is about). On a real push failure we capture the
+        # exit code (set +e + PIPESTATUS, D-349) and hand it to the issue-open
+        # step as a DISTINCT signal instead of hard-failing the job with a bare
+        # red X and no issue. The teed log is redacted through
+        # parse-nightly-failures.mjs before any of it reaches the PUBLIC issue
+        # body (#1851).
+        if: steps.reset-main.outputs.reset_main_status == '0'
         working-directory: apps/main
         run: |
-          if [ -z "$SUPABASE_DB_URL" ]; then
-            echo "::error::SUPABASE_DB_URL is empty (check SUPABASE_TEST_DB_URL secret). Aborting."
-            exit 1
-          fi
-          npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
+          set +e
+          npx supabase db push --include-all --db-url "$SUPABASE_DB_URL" 2>&1 | tee main-migrate-console.log
+          STATUS=${PIPESTATUS[0]}
+          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Reset RAG test DB before apply (#1914)
         id: reset-rag
@@ -202,10 +239,27 @@ jobs:
           exit 0
 
       - name: Seed Tier-2 fixture tenant
+        id: seed-tier2
         # The DB-backed inngest probes act on the Tier-2 fixture tenant; seed it
-        # idempotently so their FK targets exist. Fails the run loudly (no issue
-        # filed) if seeding breaks — that's an infra fault, not a test regression.
-        run: pnpm tsx scripts/seed-tier2-test.ts
+        # idempotently so their FK targets exist.
+        #
+        # Gated on the main reset + migrate succeeding — a bad/absent schema
+        # would make the seed fail for a downstream reason. Previously this ran
+        # `pnpm tsx ...` unguarded and "failed loudly with no issue filed"; that
+        # was the silent-nightly hole #1961 closes — a seed failure (e.g. the
+        # test DB secret rotating) aborted the job before `Open issue on
+        # failure`, so no `nightly-failure` issue was filed. Now it captures its
+        # status (set +e + PIPESTATUS, D-349) and the issue-open step reports it
+        # as a schema/infra section. Its stdout/stderr still lands in the run log
+        # for triage; not teed to a file because the section points at the run
+        # log rather than embedding the (potentially URL-bearing) output.
+        if: steps.reset-main.outputs.reset_main_status == '0' && steps.migrate-main.outputs.exit_status == '0'
+        run: |
+          set +e
+          pnpm tsx scripts/seed-tier2-test.ts
+          STATUS=${PIPESTATUS[0]}
+          echo "seed_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Run full vitest suite
         id: vitest
@@ -235,6 +289,15 @@ jobs:
         # each pipeline component's exit status, index 0 = vitest — so a
         # green `tee` can never mask a red test run (regression: tonight's
         # run 29227645576 reported success on a real 1-failed suite).
+        #
+        # Gated on the main DB prep (reset + migrate) succeeding (#1961): a
+        # failed reset/migrate means the schema is absent or stale, so running
+        # the suite would only bury the real prep failure under a wall of
+        # unrelated errors. When skipped, exit_status is never written and the
+        # issue-open step handles the empty MAIN_STATUS explicitly. Not gated on
+        # the Tier-2 seed — a seed failure is reported as its own section while
+        # the suite still runs, so non-probe coverage isn't lost.
+        if: steps.reset-main.outputs.reset_main_status == '0' && steps.migrate-main.outputs.exit_status == '0'
         run: |
           set +e
           pnpm vitest run --reporter=default --reporter=json --outputFile=vitest-report.json --no-file-parallelism 2>&1 | tee vitest-console.log
@@ -269,10 +332,13 @@ jobs:
           exit 0
 
       - name: Open issue on failure
-        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0' || steps.reset-rag.outputs.reset_status != '0'
+        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0' || steps.reset-rag.outputs.reset_status != '0' || steps.reset-main.outputs.reset_main_status != '0' || steps.migrate-main.outputs.exit_status != '0' || steps.seed-tier2.outputs.seed_status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAIN_STATUS: ${{ steps.vitest.outputs.exit_status }}
+          MAIN_RESET_STATUS: ${{ steps.reset-main.outputs.reset_main_status }}
+          MAIN_MIGRATE_STATUS: ${{ steps.migrate-main.outputs.exit_status }}
+          MAIN_SEED_STATUS: ${{ steps.seed-tier2.outputs.seed_status }}
           RAG_STATUS: ${{ steps.vitest-rag.outputs.exit_status }}
           RAG_MIGRATE_STATUS: ${{ steps.rag-migrate.outputs.exit_status }}
           RAG_RESET_STATUS: ${{ steps.reset-rag.outputs.reset_status }}
@@ -296,11 +362,49 @@ jobs:
           # when THAT suite's own exit code was non-zero (#1863) — either
           # suite can fail independently, and a passing suite's "no per-test
           # detail" fallback would otherwise read as a false failure.
-          if [ "$MAIN_STATUS" != "0" ]; then
+          # MAIN_STATUS is empty when the main suite was skipped because a main
+          # DB prep step (reset/migrate, #1961) failed — handle that explicitly,
+          # like RAG_STATUS below, so the `!= "0"` arm doesn't parse a
+          # non-existent report and read as a phantom test failure. The prep
+          # failure itself is reported by the MAIN_RESET/MAIN_MIGRATE sections.
+          if [ -z "$MAIN_STATUS" ]; then
+            MAIN_SECTION="### apps/main"$'\n\n'"(skipped — the main test DB reset or migration apply failed; see the schema section below)"
+          elif [ "$MAIN_STATUS" != "0" ]; then
             node scripts/parse-nightly-failures.mjs vitest-report.json vitest-console.log nightly-failing-list.md nightly-unhandled-section.md
             MAIN_SECTION="### apps/main"$'\n\n'"$(cat nightly-failing-list.md)"$'\n'"$(cat nightly-unhandled-section.md)"
           else
             MAIN_SECTION=""
+          fi
+          # A failed main test DB reset (#1961) means the DB was never rebuilt,
+          # so the migrate, Tier-2 seed, and main suite below it were skipped.
+          # Most likely cause is a missing/rotated SUPABASE_TEST_DB_URL. Report
+          # it here so it surfaces as a `nightly-failure` issue instead of a log
+          # line nobody reads — the RAG path still runs and reports independently.
+          if [ -n "$MAIN_RESET_STATUS" ] && [ "$MAIN_RESET_STATUS" != "0" ]; then
+            MAIN_RESET_SECTION="### apps/main — test DB reset FAILED (exit $MAIN_RESET_STATUS)"$'\n\n'"The main test DB was not reset, so the migration apply, Tier-2 seed, and the main suite were skipped. Check that the \`SUPABASE_TEST_DB_URL\` secret exists and is valid, then see the run log for the reset step's \`::error::\` output. Triage as schema/infra, not a test regression."
+          else
+            MAIN_RESET_SECTION=""
+          fi
+          # A non-zero main migration apply is a schema/infra failure, NOT a test
+          # regression (#1961) — surface it as its own section, mirroring the RAG
+          # one below. Empty when skipped on a failed reset (covered above), so
+          # `-n`-guard it. The teed push log is redacted (public repo, #1851) via
+          # the parser's `migrate` mode before it lands here.
+          if [ -n "$MAIN_MIGRATE_STATUS" ] && [ "$MAIN_MIGRATE_STATUS" != "0" ]; then
+            node scripts/parse-nightly-failures.mjs migrate apps/main/main-migrate-console.log nightly-main-migrate-section.md
+            MAIN_MIGRATE_SECTION="### apps/main — test DB migration apply FAILED (exit $MAIN_MIGRATE_STATUS)"$'\n\n'"\`supabase db push\` to the main test DB failed before the suite ran, so the main suite was skipped rather than run against a stale or absent schema. Triage this as a schema/infra failure, not a test regression."$'\n\n'"$(cat nightly-main-migrate-section.md)"
+          else
+            MAIN_MIGRATE_SECTION=""
+          fi
+          # A non-zero Tier-2 seed (#1961) leaves the DB-backed inngest probes
+          # without their FK targets. The main suite still ran (it's only gated
+          # on reset+migrate), so its probe failures appear above; this section
+          # names the seed as the root cause so triage doesn't chase them as
+          # independent regressions. Empty when skipped on a failed reset/migrate.
+          if [ -n "$MAIN_SEED_STATUS" ] && [ "$MAIN_SEED_STATUS" != "0" ]; then
+            MAIN_SEED_SECTION="### apps/main — Tier-2 fixture seed FAILED (exit $MAIN_SEED_STATUS)"$'\n\n'"Seeding the Tier-2 fixture tenant failed, so any DB-backed inngest probe results in the main suite above ran without their FK targets. See the seed step's output in the run log. Triage as schema/infra, not a test regression."
+          else
+            MAIN_SEED_SECTION=""
           fi
           # vitest-rag is gated on rag-migrate succeeding (#1893 audit finding
           # 1), which is itself gated on the reset succeeding (#1914) — so a
@@ -356,6 +460,9 @@ jobs:
 
           **Failing tests**:
           $MAIN_SECTION
+          $MAIN_RESET_SECTION
+          $MAIN_MIGRATE_SECTION
+          $MAIN_SEED_SECTION
           $RAG_RESET_SECTION
           $RAG_MIGRATE_SECTION
           $RAG_SECTION

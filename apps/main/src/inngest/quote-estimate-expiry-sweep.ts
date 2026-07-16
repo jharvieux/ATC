@@ -19,7 +19,7 @@
 import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { sendEmail, type SendEmailInput, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { QuoteEstimateExpiredEmail } from "@/emails/QuoteEstimateExpiredEmail";
@@ -98,7 +98,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     const { data: brandingsRaw, error: brandingsErr } = await db
       .from("tenant_branding")
-      .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+      // #1935 — shared column list across all five branding-reading crons so
+      // a verified custom domain (email_from_domain*) can't drift out again.
+      .select(TENANT_BRANDING_COLUMNS)
       .in("tenant_id", tenantIds);
 
     if (brandingsErr) {
@@ -123,7 +125,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     type ContactRow = { id: string; first_name: string | null; last_name: string | null; email: string | null };
     type TenantRow = { id: string; legal_name: string | null; mailing_address: unknown };
-    type BrandingRow = { tenant_id: string; logo_url: string | null; primary_color: string | null; secondary_color: string | null; accent_color: string | null; slogan: string | null; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null };
+    type BrandingRow = { tenant_id: string; logo_url: string | null; primary_color: string | null; secondary_color: string | null; accent_color: string | null; slogan: string | null; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null; email_from_domain: string | null; email_from_domain_verified_at: string | null };
 
     const contactMap = new Map<string, ContactRow>(
       ((contactsRaw ?? []) as ContactRow[]).map((c) => [c.id, c]),
@@ -132,7 +134,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       ((tenantsRaw ?? []) as TenantRow[]).map((t) => [t.id, t]),
     );
     const brandingMap = new Map<string, BrandingRow>(
-      ((brandingsRaw ?? []) as BrandingRow[]).map((b) => [b.tenant_id, b]),
+      ((brandingsRaw ?? []) as unknown as BrandingRow[]).map((b) => [b.tenant_id, b]),
     );
 
     type SweepOptionRow = {
@@ -242,6 +244,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         tenant_resend_api_key_encrypted: (branding as BrandingRow).tenant_resend_api_key_encrypted ?? null,
         email_from_address: (branding as BrandingRow).email_from_address ?? null,
         email_from_name: (branding as BrandingRow).email_from_name ?? null,
+        // #1935 — verified custom domain, now read alongside the rest of branding.
+        email_from_domain: (branding as BrandingRow).email_from_domain ?? null,
+        email_from_domain_verified_at: (branding as BrandingRow).email_from_domain_verified_at ?? null,
       };
 
       // Default subject comes from the template registry; when there's no
@@ -259,6 +264,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         html,
         ...(r.user_id ? { user_id: r.user_id } : {}),
         ...(r.contact_id ? { contact_id: r.contact_id } : {}),
+        // Keyed on the quote only — one expiry notice per quote, so a step
+        // retry of this same sweep run doesn't double-send.
+        idempotencyKey: `quote_estimate_expired:${r.id}`,
       });
 
       if (result.status === "sent") {

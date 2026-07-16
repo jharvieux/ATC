@@ -38,6 +38,10 @@ vi.mock("@/lib/email/send", () => ({
     mocks.sendEmailCalls++;
     return { status: "sent", email_log_id: "log-1" };
   },
+  TENANT_BRANDING_COLUMNS:
+    "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
+    "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
+    "email_from_name, email_from_domain, email_from_domain_verified_at",
 }));
 
 vi.mock("@/lib/email/template-resolve", () => ({
