@@ -20,6 +20,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 interface TenantRow {
   id: string;
@@ -31,6 +32,10 @@ interface Aggregate {
   rejected_count: number;
   approval_rate: number;
 }
+
+// #1789 — each tenant's approval-rate aggregation is an independent pair of
+// read-only count queries; no ordering or shared state between tenants.
+const TENANT_CONCURRENCY = 10;
 
 export const ragTenantApprovalRateNightly = inngest.createFunction(
   {
@@ -62,33 +67,35 @@ export const ragTenantApprovalRateNightly = inngest.createFunction(
       }>,
     );
 
-    const aggregates: Aggregate[] = [];
-    for (const t of tenants) {
-      const { count: approved } = await db
-        .from("rag_submissions")
-        .select("*", { count: "exact", head: true })
-        .eq("tenant_id", t.id)
-        .eq("review_status", "approved")
-        .gte("tenant_review_decision_at", since);
-      const { count: rejected } = await db
-        .from("rag_submissions")
-        .select("*", { count: "exact", head: true })
-        .eq("tenant_id", t.id)
-        .eq("review_status", "rejected")
-        .gte("tenant_review_decision_at", since);
+    const perTenant = await mapWithConcurrency(tenants, TENANT_CONCURRENCY, async (t) => {
+      const [{ count: approved }, { count: rejected }] = await Promise.all([
+        db
+          .from("rag_submissions")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", t.id)
+          .eq("review_status", "approved")
+          .gte("tenant_review_decision_at", since),
+        db
+          .from("rag_submissions")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", t.id)
+          .eq("review_status", "rejected")
+          .gte("tenant_review_decision_at", since),
+      ]);
 
       const a = approved ?? 0;
       const r = rejected ?? 0;
       const total = a + r;
-      if (total === 0) continue;
+      if (total === 0) return null;
 
-      aggregates.push({
+      return {
         tenant_id: t.id,
         approved_count: a,
         rejected_count: r,
         approval_rate: a / total,
-      });
-    }
+      };
+    });
+    const aggregates: Aggregate[] = perTenant.filter((a): a is Aggregate => a !== null);
 
     // TODO(bp27-abuse-signals): persist to tenant_rag_approval_rate_30d once
     // the BP27 schema lands. Until then, log so operators can spot patterns.

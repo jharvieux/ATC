@@ -24,8 +24,11 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 const BATCH_LIMIT = 500;
+// #1789 — audit-log writes for already-deleted rows are independent inserts.
+const AUDIT_CONCURRENCY = 20;
 
 export const purgeParsedDocuments = inngest.createFunction(
   {
@@ -93,8 +96,8 @@ export const purgeParsedDocuments = inngest.createFunction(
       return { error: delErr.message };
     }
 
-    for (const row of rows) {
-      await writeAuditLog({
+    await mapWithConcurrency(rows, AUDIT_CONCURRENCY, (row) =>
+      writeAuditLog({
         tenant_id: row.tenant_id,
         actor_type: "system",
         action: "document.purged",
@@ -105,8 +108,8 @@ export const purgeParsedDocuments = inngest.createFunction(
           source_ref: row.source_ref,
           had_file: row.uploaded_file_path !== null,
         },
-      });
-    }
+      }),
+    );
 
     return { purged: rows.length };
   },

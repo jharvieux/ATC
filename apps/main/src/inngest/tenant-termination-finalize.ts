@@ -12,6 +12,11 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { finalizeTermination } from "./tenant-on-terminated";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each tenant's finalize is an independent CAS transition; the
+// existing per-tenant try/catch already isolates failures from each other.
+const FINALIZE_CONCURRENCY = 10;
 
 export const tenantTerminationFinalize = inngest.createFunction(
   {
@@ -37,17 +42,24 @@ export const tenantTerminationFinalize = inngest.createFunction(
       termination_kind: "voluntary" | "involuntary_content" | "involuntary_other";
     }>;
 
-    let finalizedCount = 0;
-    const failures: Array<{ tenant_id: string; error: string }> = [];
-
-    for (const t of rows) {
+    const results = await mapWithConcurrency(rows, FINALIZE_CONCURRENCY, async (t) => {
       try {
         const { finalized } = await finalizeTermination(db, t.id, t.termination_kind);
-        if (finalized) finalizedCount++;
+        return { tenant_id: t.id, ok: true as const, finalized };
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         console.error("[tenant-termination-finalize] tenant %s failed: %s", t.id, message);
-        failures.push({ tenant_id: t.id, error: message });
+        return { tenant_id: t.id, ok: false as const, error: message };
+      }
+    });
+
+    let finalizedCount = 0;
+    const failures: Array<{ tenant_id: string; error: string }> = [];
+    for (const r of results) {
+      if (r.ok) {
+        if (r.finalized) finalizedCount++;
+      } else {
+        failures.push({ tenant_id: r.tenant_id, error: r.error });
       }
     }
 

@@ -11,6 +11,10 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { purgeUserDataPerRetention } from "@/lib/privacy/purge-user-data";
 import { createNotification } from "@/lib/notifications/create";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
+
+// #1789 — each active user's in-app notification is an independent insert.
+const NOTIFY_CONCURRENCY = 20;
 
 // #742: validate the event payload with Zod so a crafted event (compromised
 // signing key) cannot skip the 30-day grace period by providing a past purge_at.
@@ -116,23 +120,50 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
     // exists today (§26 ships RBAC); for now we notify every active user
     // in each affected tenant — operators can narrow later.
     // TODO(rbac-tenant-admin): target only tenant_admin once roles ship.
+    // createNotification throws (safeAwaitRequired). Letting that reject out of
+    // mapWithConcurrency's Promise.all would abandon up to NOTIFY_CONCURRENCY-1
+    // in-flight inserts mid-run, and `notifications` has no unique constraint
+    // for this shape — so Inngest's retry duplicates whatever landed.
+    // TODO(#1954): a UNIQUE(tenant_id,user_id,category,title)
+    // index + 23505 swallow is the durable fix (needs a migration);
+    // collect-and-throw-once bounds the damage until then.
+    const notifyFailures: Array<{ tenant_id: string; user_id: string; error: string }> = [];
     for (const tenantId of result.affected_tenant_ids) {
       const { data: users } = await db
         .from("users")
         .select("id")
         .eq("tenant_id", tenantId)
         .eq("status", "active");
-      for (const u of ((users ?? []) as Array<{ id: string }>)) {
-        await createNotification({
-          db,
-          tenant_id: tenantId,
-          user_id: u.id,
-          category: "system",
-          title: "Customer removed under CCPA — review your notes for residual PII",
-          body: "A customer exercised CCPA deletion. Notes you wrote about them are retained but their identifier was anonymized. Review and redact any PII in the note text.",
-          link_url: "/tenant-admin/crm/anonymized-notes",
-        });
-      }
+      await mapWithConcurrency((users ?? []) as Array<{ id: string }>, NOTIFY_CONCURRENCY, async (u) => {
+        try {
+          await createNotification({
+            db,
+            tenant_id: tenantId,
+            user_id: u.id,
+            category: "system",
+            title: "Customer removed under CCPA — review your notes for residual PII",
+            body: "A customer exercised CCPA deletion. Notes you wrote about them are retained but their identifier was anonymized. Review and redact any PII in the note text.",
+            link_url: "/tenant-admin/crm/anonymized-notes",
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          console.error(
+            "[user-data-purge] notification failed tenant=%s user=%s: %s",
+            tenantId,
+            u.id,
+            message,
+          );
+          notifyFailures.push({ tenant_id: tenantId, user_id: u.id, error: message });
+        }
+      });
+    }
+
+    // Fail loud so Inngest retries — but only AFTER every tenant's admins were
+    // attempted, so one bad row can't starve the rest of the notifications.
+    if (notifyFailures.length > 0) {
+      throw new Error(
+        `[user-data-purge] ${notifyFailures.length} notification(s) failed: ${JSON.stringify(notifyFailures)}`,
+      );
     }
 
     return {
