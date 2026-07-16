@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-356 — 2026-07-16 — Sweep #4: 9 PRs merged, 38 issues filed; the tracker was staler than the code, and a repo-wide merge freeze traced to an orphaned table
+
+**Decision:** Ran the portable `/issue-sweep` over 49 open issues (43 triaged, 12 batches). Merged 9 batches; parked 2 as already-fixed; 1 (#1959) in audit at checkpoint.
+
+**Why it matters — 6 of the issues worked were stale or misdiagnosed.** #1876 (fixed by #1907), #1523 (hardening already present since the original migration), #1773 (tolerant phase shipped by #1842), #1904 (fixed by `55ba3f4b`), #1909's stated symptom (fixed by #1900/#1906), #1912's framing. Executors were instructed to verify each issue was still live before implementing — that instruction is what surfaced this, and it should be standard in every future sweep. **A stale-but-open issue reads identically to a live one at triage time**; Haiku triage cannot detect it from issue text alone.
+
+But staleness did not mean "no work": under three of those stale issues sat *worse* bugs than the ones reported:
+- **#1740** — `compliance-nightly` SELECTed `email_send_pattern` from `tenants` (it lives on `tenant_branding`). The failed SELECT tripped `if (tenantErr) return`, so the cron aborted nightly at 04:00 UTC and **30/60/90-day inactivity reminders were silently never sent**. The #1190 sweep fixed three sibling crons and missed this one.
+- **#1909** — the existing guard only fired when *every* key returned zero rows; a mixed PUT returned 200 **and published a RAG-sync event** for the applied key while the other silently diverged.
+- **#1585** — the issue *proposed* a fail-open. Its "trusted internal header" idea would have handed unverified identity to the six `/api/auth/*` routes that call `assertPermission` (that path is exempt from the proxy's `getUser()` — `proxy.ts:285-287`). The executor refused it and verified locally instead.
+
+**The merge freeze (#1944).** Every PR was blocked by `RLS Snapshot Diff` for hours. Root cause: `public.tenant_registry` was an **orphaned relic** — migration `0007` declares `DROP TABLE IF EXISTS ... CASCADE`, but the DROP never took effect on the live RAG DB while the ledger recorded 0007 as applied. Same divergence class as #1740 on atc-main, inverted (there an ADD never landed). Not a security exposure: 0 rows, no SELECT grant, 0 code refs. Operator approved the drop; **the regenerated snapshot came back byte-identical**, proving the committed snapshot was always correct and the orphan was the sole discrepancy.
+
+**What was rejected:**
+- **Regenerating the snapshot to go green.** It would have recorded the orphan as the expected baseline, permanently blessing a table migration 0007 says should not exist. The byte-identical regen retroactively proved this was the right call — even though the stated reason at the time (a suspected security regression) was wrong.
+- **Shipping #1843's strict flip.** Prod is ~172 commits behind dev (v0.9.1 tagged 07-09; #1842 merged 07-13, in neither `main` nor the tag), so hard-rejecting absent `iss`/`aud` would have 401'd live RAG traffic.
+- **Parallelizing four perf sites** (#1948–#1951): double-send incident history, a secrets path, payout-adjacent writes, and tool handlers that mutate shared state. A latency win that introduces a race is a bad trade.
+- **Caching two pages** (#1953): the companion page would serve incomplete PII from a placeholder-phase cache hit; caching the supervisor page would skip an in-handler platform-admin check — an auth bypass.
+
+**The closing-keyword hazard — bit 3× in one sweep.** GitHub parses `close #N`/`fixes #N`/`resolves #N` **even inside a sentence that negates it**: PR #1925's body said "does not resolve #1740" and closed #1740 anyway. The trap also hides in **commit messages** (repo squashes with `COMMIT_MESSAGES`). `fix(#N):` is parenthesized and safe. **Standing rule: verify with `closingIssuesReferences` via GraphQL — never by reading prose — and merge partial-fix PRs with an explicit `--body`.**
+
+**Supervisor errors worth recording** (all caught by dispatched agents, not by me): a false claim that `ANY(${array})` is broken in postgres.js (it isn't — `rls.test.ts:165` has used it since the original DB commit); conflating two PRs' audit findings; citing a sibling that logs instead of throws; a wrong issue number in a TODO; over-dispatching past the 3-agent cap; and dispatching re-audits *then* pushing, staling the markers I'd just requested. **Agents that verify their brief rather than comply with it caught every one.** That property is worth more than their throughput.
+
+**Related artifacts:** PRs #1924/#1925/#1929/#1930/#1938/#1943/#1945/#1946/#1947/#1959. Issues #1921–#1958. #1944 (orphan, closed), #1941 (auto-drift, closed — note its own suggested fix, "regenerate the snapshot," would *not* have worked). #1912 reopened (#1943 narrowed the flake but didn't close it). #1926 (both drift detectors dark simultaneously). `deploy.yml:415` skips the drift step on `dev` pushes, so `dev` structurally cannot catch this class.
+
+---
+
 ## D-350 — 2026-07-13 — Sweep #3: 15 batches / 15 PRs merged, 14 issues closed; adversarial audits caught 5 real defects pre-merge
 
 **Decision:** Third /issue-sweep of the day executed with operator approvals recorded per-item (supervised "all", #1858 deferred until real payments, #1860 retrofit, #1805 deferred, #1826 wire-the-publisher, #1565 LLM-draft + admin editor, "Migrations approved" for the #1680 RPC, concurrency raised to 5). Merged: #1872 #1874 #1878 #1879 #1880 #1881 #1884 #1886 #1889 #1890 #1891 #1892 #1894 #1897 (+#1889's fix round). Closed: #1854 #1844 #1856 #1862 #1860 #1855 #1866 #1865 #1863 #1680 #1875 #1565 (+#1871 dup).
