@@ -115,12 +115,13 @@ describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)",
       "Your trip is confirmed, {{customer_name}}!",
     ) as HTMLInputElement;
     fireEvent.change(subjectInput, { target: { value: "Edited subject" } });
-    expect(subjectInput.value).toBe("Edited subject");
+    // Wait for the controlled input to reflect the state change
+    await screen.findByDisplayValue("Edited subject");
 
     // Switch the preview data source to "booking" and populate a selection —
     // this is the state the reset must clear on template-type switch.
     fireEvent.click(screen.getByLabelText(/Customer booking/));
-    const bookingSearchInput = screen.getByPlaceholderText("Type a customer name…");
+    const bookingSearchInput = screen.getByPlaceholderText("Type a customer name…") as HTMLInputElement;
     fireEvent.change(bookingSearchInput, { target: { value: "Jamie" } });
     const result = await screen.findByText("Jamie Rivera");
     fireEvent.click(result);
@@ -133,12 +134,18 @@ describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)",
     await waitFor(() => {
       expect(screen.getByPlaceholderText("Welcome, {{customer_name}}!")).toBeTruthy();
     });
+    // Wait for the new template's subject input value to be cleared by the reset cascade
     const newSubjectInput = screen.getByPlaceholderText("Welcome, {{customer_name}}!") as HTMLInputElement;
-    expect(newSubjectInput.value).toBe("");
+    await waitFor(() => {
+      expect(newSubjectInput.value).toBe("");
+    });
 
     // The booking selection was cleared by the reset (back to the empty search box).
     expect(screen.queryByText("Clear selection")).toBeNull();
-    expect((screen.getByPlaceholderText("Type a customer name…") as HTMLInputElement).value).toBe("");
+    // Wait for the booking search input value to be cleared
+    await waitFor(() => {
+      expect(bookingSearchInput.value).toBe("");
+    });
 
     // previewSource itself is NOT in the reset list — "Customer booking" stays checked.
     const bookingRadio = screen.getByLabelText(/Customer booking/) as HTMLInputElement;
