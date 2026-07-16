@@ -254,10 +254,14 @@ describeIf("process_transfer_reversal", () => {
       // whose per-request transaction can't carry the SET LOCAL override,
       // so every nightly run failed here). Use the raw `sql` connection so
       // the override and the DELETE share one transaction, matching the
-      // established pattern in rls.test.ts / import-promote-atomicity.test.ts.
+      // established pattern in import-promote-atomicity.test.ts (scalar
+      // DELETE per row, not an array — a bare JS array interpolated in a
+      // tagged template doesn't serialize to a valid array literal here).
       await sql.begin(async (tx) => {
         await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
-        await tx`DELETE FROM public.tenants WHERE id = ANY(${tids})`;
+        for (const tid of tids) {
+          await tx`DELETE FROM public.tenants WHERE id = ${tid}`;
+        }
       });
     } finally {
       await sql.end();
