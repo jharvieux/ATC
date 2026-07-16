@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-359 — 2026-07-16 — Persona prompt truth pass: fact-checked rebuild of all six travel personas (PR #1965)
+
+**Decision.** Rebuilt all six travel-persona base-blocks from the Agent Backstories docx character overviews plus a primary-source fact-check (six parallel research agents, July 2026). Every checkable domain claim was verified; wrong claims replaced (operator direction: prior drafts "contain errors" — overrides any conflicting documented prompt content). Key rulings baked in:
+
+- **The docx is authoritative for CHARACTER only, not domain facts** — several of its embedded prompt claims were wrong at publication (St. Maarten "tender port", Glacier Bay "16 tidewater glaciers", Regent "includes business-class air", Disney "6 ships", Anan "brown bears near Ketchikan", Norwegian Aqua "49 accessible staterooms"). Its photo-generation and Claude-Code maintenance sections were ignored per operator instruction (they also reference an obsolete `agents`-table schema).
+- **`KNOWLEDGE_FRESHNESS_BLOCK`** added code-side in `assemble-persona-prompt.ts` for every travel persona (not stored per-row, so admin edits can't drop it): baked-in knowledge is mid-2026 working knowledge; retrieved KNOWLEDGE CONTEXT / pricing anchors / lookups always win; never state prices/availability/schedules from memory. Each persona also gained a domain-specific "never quote X from memory as current" anti-rule (fees/caps for Marco, fare inclusions for Priya, promo terms for Jenny, tender status for Maya).
+- **Migration `20260722000024` intentionally overwrites the personas DB rows** (including any admin edits) — mechanically dollar-quoted from PERSONA_DEFAULTS like the seed, `version = version + 1` for prompt-cache invalidation. A one-time disclosed content correction, not a regression of D-138's editor.
+- **customer_bio + AGENT_CATALOG bios** were pre-docx POC copy that contradicted the backstories (Priya "Taj Mahal Palace", Marco "Venice and Bari", Dave "ran expedition ships") — rewritten to match the docx.
+
+**Why.** The personas are the product's front line for both customer travelers and paying TA members (D-193); prompts asserting stale/wrong facts as current knowledge are worse than no knowledge, and the freshness block converts baked-in facts from a liability into a floor.
+
+**Rejected.** Putting the freshness rules in each prompt_body (6× duplication, admin-deletable); guarding the migration's UPDATEs on `updated_by IS NULL` (operator wants the erroneous content gone everywhere); deleting the old alignment report (still valid for the biography dimension).
+
+**Related.** PR #1965; `docs/specs/persona-fact-check-2026-07.md` (per-claim corrections + maintenance guidance: facts have a July-2026 vintage — re-verify port infrastructure, fare inclusions, fleet counts, program age bands, and overtourism rules on the next refresh); [[D-138]], [[D-193]], [[D-317]].
+
+---
+
 ## D-358 — 2026-07-16 — Partial completions close-and-split; wrap-up mechanically reconciles the expected close-set
 
 **Decision:** Operator-directed follow-on to D-357, in both `/issue-sweep` copies + `docs/runbooks/pr-workflow.md`:

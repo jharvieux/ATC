@@ -1,26 +1,19 @@
-# Session state — last updated 2026-07-16 09:15 CDT (sweep-hygiene process fixes, rounds 1+2)
+# Session state — last updated 2026-07-16 14:45 CDT (persona prompt truth pass)
 
 ## Just completed
 
-**D-358 close-and-split + close-set reconciliation** (second operator round, same session): partially-completed issues are now closed and split — remainder issue filed BEFORE merge with cross-links, original closed via `Closes` + `remainder: #new` note; "completed" pinned to every-acceptance-criterion-met; wrap-up mechanically reconciles the expected close-set (`gh issue view --json state` over intended Closes + closed_stale + split originals) and verifies every remainder is open and both-ways linked. Reverses the 2026-07-12 remainder-comment rule. Both `/issue-sweep` copies + `pr-workflow.md`.
+**D-359 persona prompt truth pass merged (PR #1965).** All six travel-persona base-blocks rebuilt: character cores kept faithful to the Agent Backstories docx; every checkable domain claim fact-checked by six parallel research agents against primary sources (July 2026) and corrected — headline fixes: St. Maarten is a dock port, Glacier Bay has 7 tidewater glaciers with line-specific access, Regent no longer bundles air, Silversea's Door-to-Door fares retired, Seabourn is a 5-ship fleet, Disney runs 8 ships, Anan is a Wrangell black-bear site, Norwegian Aqua has 42 accessible staterooms, Nennella/Pinotxo both moved. 2025-2026 industry state added (port caps, Greek cruise tax, private-island arms race, new luxury entrants, Mendenhall recession). customer_bio + AGENT_CATALOG bios fixed (old POC copy contradicted the backstories). New code-side `KNOWLEDGE_FRESHNESS_BLOCK` on all travel personas: retrieved data beats memory, never state prices/availability from memory. Research record: `docs/specs/persona-fact-check-2026-07.md`. MEMORY D-359 logged.
 
-**D-357 sweep-hygiene overhaul merged** (PR #1962) — operator-directed fixes for the three failure modes from the D-356 retrospective:
-
-1. **Stale/dup issue work** — executors now verify a defect still exists (code read / failing test / `git log` on touched paths) before implementing; already-fixed issues are closed with evidence under a new `closed_stale` summary field. Wrap-up issue-filing gains a mandatory dup-check (open AND closed issues, plus deduping the sweep's own follow-up list) — comment/reopen instead of filing twins.
-2. **Negation-blind closing keywords** — "does not close #N" still closes #N, and strays hide in commit messages via the COMMIT_MESSAGES squash autofill. New rules in both `/issue-sweep` copies AND `docs/runbooks/pr-workflow.md` (general-PR scope): keywords only as intentional standalone `Closes #n` PR-body lines; keyword-free refs everywhere else; pre-merge `gh pr view --json closingIssuesReferences` check; explicit `--subject`/`--body` on squash merges; immediately reopen wrong closes.
-3. **Net issue growth** — fix-inline-by-default criteria for en-route findings and audit findings (same subsystem, no supervised path/migration/new route, same verify run, doesn't ~double the diff); `follow_ups` must name a concrete blocker; wrap-up gains a drop-with-rationale disposition for nits and a net closed/filed ledger. Triage JSON gains `blockers[]`; the plan gate presents each blocker as a concrete yes/no ask so the operator grants permissions upfront (supervised-file edits, secrets, prod actions, spec rulings) instead of batches parking mid-sweep.
-
-User-level portable copy (`~/.claude/commands/issue-sweep.md`) updated in lockstep. MEMORY D-357 logged.
-
-Also observed: PR #1959 (RAG test-DB reset) merged before this session's PR; sweep ledger was already deleted.
+Audits: first run Opus×2 (migration risk trigger) — d091 clean, pre-pr 2 warnings (unearned export/test gap) → fixed with explicit freshness-block assertions → Sonnet×2 re-audit clean → gate green → squash-merged with explicit subject/body (no closing keywords; none intended).
 
 ## In flight
 
-Nothing in flight — clean checkpoint.
+Nothing in flight — clean checkpoint. (This docs PR is the last item.)
 
 ## Next step
 
-Next `/issue-sweep` runs under the new rules — watch the wrap-up net ledger to confirm the filed-vs-closed trend inverts. Carried-over operator items below are unchanged.
+- Migration `20260722000024_persona_prompt_truth_pass.sql` applies to the beta/test DB via the dev-merge pipeline automatically. **Prod apply is release-gated as usual** — the live prod personas keep the old (erroneous) prompts until the next release cut.
+- Optional operator verification once beta deploys: run the docx test conversations (e.g., ask Marco about 8 hours in Santorini; ask Maya about power-wheelchair planning; ask Priya Haven vs Retreat) and confirm the personas hedge on prices/availability and cite retrieved data.
 
 ## Blocked on user
 
@@ -28,10 +21,12 @@ Next `/issue-sweep` runs under the new rules — watch the wrap-up net ledger to
 - **#1740** — 2 of 3 errors need prod DDL (`review_submitted_at` ledger/DDL divergence can't self-heal; `attribution_rollup` MV refresh).
 - **#1926** — `prod-drift-check` + `contracts-canary` failing daily.
 - **#1950** — is `reconcile-statement-automated.ts` in scope for perf work?
-- **Prod is ~170+ commits behind dev**; release cut is a scheduling call (blocks #1843 strict flip).
+- **Prod is ~170+ commits behind dev**; release cut is a scheduling call (blocks #1843 strict flip, and now also the persona-prompt prod refresh).
 - Carried over: #1911, #1868–#1870, #444 sub-issues (#1257/#1260 operator, #1258/#1259 attorney via #427, #1262 launch gate).
 
 ## Open questions
 
 - `deploy.yml:415` skips the RLS drift step on `dev` pushes — dev can't catch out-of-band drift until it blocks every PR at once. Worth a decision.
 - #1912 reopened — durable fix is gating the reset effect on an actual type change (PR #1943 only narrowed the flake window).
+- Stale orphan shim `apps/main/node_modules/.bin/tsx` (May 20, points at removed tsx@4.22.3) shadows the root shim for `pnpm exec tsx` from apps/main — harmless to delete locally; noting in case another session hits "Cannot find module tsx@4.22.3".
+- Persona facts have a July-2026 vintage — `docs/specs/persona-fact-check-2026-07.md` lists which categories to re-verify on the next refresh.
