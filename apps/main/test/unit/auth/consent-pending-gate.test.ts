@@ -22,7 +22,8 @@ import { respondToAuthError } from "@/lib/auth/respond";
 const mocks = vi.hoisted(() => ({
   getConsentPending: vi.fn(),
   tenantContextFromRequest: vi.fn(),
-  getCachedUser: vi.fn(),
+  getClaims: vi.fn(),
+  getSession: vi.fn(),
   usersMaybeSingle: vi.fn(),
 }));
 
@@ -34,18 +35,19 @@ vi.mock("@/lib/db/factories", () => ({
   tenantContextFromRequest: mocks.tenantContextFromRequest,
 }));
 
-// #679 — assertPermission now reads the verified user from getCachedUser
-// (request-scoped React.cache memoization) instead of calling
-// supabase.auth.getUser directly. Mock the helper, not the underlying
-// client, so the test doesn't need to wire up next/headers.
-vi.mock("@/lib/auth/get-cached-user", () => ({
-  getCachedUser: mocks.getCachedUser,
-}));
-
+// #1585 — assertPermission verifies the session JWT locally via
+// supabase.auth.getClaims() (JWKS signature check, no GoTrue round-trip)
+// rather than the former getCachedUser() call. Mock at the client boundary so
+// the real verifyIdentity code path — including its fail-closed handling —
+// still runs.
 vi.mock("@/lib/auth/ssr-client", () => ({
   extractBearerToken: () => null,
   createBearerClient: () => ({}),
   createRequestScopedClient: () => ({
+    auth: {
+      getClaims: mocks.getClaims,
+      getSession: mocks.getSession,
+    },
     from: () => ({
       select: () => ({
         eq: () => ({
@@ -89,9 +91,13 @@ describe("assertPermission — consent gate", () => {
       tenant_id: "t-1",
       source: { kind: "http_request", user_id: "auth-1" },
     });
-    mocks.getCachedUser.mockResolvedValue({
-      isAuthenticated: true,
-      user: { id: "auth-1" },
+    mocks.getClaims.mockResolvedValue({
+      data: { claims: { sub: "auth-1" } },
+      error: null,
+    });
+    mocks.getSession.mockResolvedValue({
+      data: { session: { access_token: "header.payload.sig" } },
+      error: null,
     });
     mocks.usersMaybeSingle.mockResolvedValue({
       data: {
@@ -145,5 +151,43 @@ describe("assertPermission — consent gate", () => {
     });
     expect(result.user.id).toBe("user-1");
     expect(result.user.role).toBe("tenant_owner");
+  });
+
+  // #1585 — the cookie path swapped a GoTrue getUser() round-trip for a local
+  // JWKS signature check. That is only equivalent if a token failing
+  // verification still denies. If verifyIdentity's error handling regressed
+  // (or a future refactor decoded the JWT instead of verifying it), a forged
+  // cookie would authenticate and this test is what catches it.
+  it("denies when the session JWT fails signature verification", async () => {
+    mocks.getConsentPending.mockResolvedValue([]);
+    mocks.getClaims.mockResolvedValue({
+      data: null,
+      error: { name: "AuthInvalidJwtError", message: "Invalid JWT signature" },
+    });
+    const { assertPermission } = await import("@/lib/auth/assert-permission");
+    await expect(
+      assertPermission(makeReq(), { resource: "contacts", action: "list" }),
+    ).rejects.toThrow(/invalid or expired access token/);
+  });
+
+  // Fail-closed on membership (D-091 #2): a verified identity is NOT an
+  // authorization. A suspended user holds a valid JWT — the users-row status
+  // check is the only thing standing between them and a live session.
+  it("denies a cryptographically valid identity whose membership is not active", async () => {
+    mocks.getConsentPending.mockResolvedValue([]);
+    mocks.usersMaybeSingle.mockResolvedValue({
+      data: {
+        id: "user-1",
+        auth_user_id: "auth-1",
+        tenant_id: "t-1",
+        status: "suspended",
+        role: "tenant_owner",
+      },
+      error: null,
+    });
+    const { assertPermission } = await import("@/lib/auth/assert-permission");
+    await expect(
+      assertPermission(makeReq(), { resource: "contacts", action: "list" }),
+    ).rejects.toThrow(/not an active member/);
   });
 });
