@@ -108,10 +108,11 @@ export const complianceNightly = inngest.createFunction(
       )
       .eq("status", "active");
 
-    if (tenantErr) {
-      console.error("[compliance-nightly] Failed to fetch tenants: %s", tenantErr.message);
-      return;
-    }
+    // #1740 — a bare `return` here is what hid the branding-column bug for
+    // weeks: the run reported success, so no retry and no failed-run alert
+    // while every nightly nudge silently went unsent. Throw so Inngest retries
+    // and surfaces the failure. Same for the branding read below.
+    if (tenantErr) throw new Error(`tenants.select failed: ${tenantErr.message}`);
 
     // §15.16 — skip past-grace tenants. Inactivity reminders go to PAYING
     // customers; past-grace is the middleware redirect's job.
@@ -127,10 +128,7 @@ export const complianceNightly = inngest.createFunction(
       )
       .in("tenant_id", tenants.map((t) => t.id));
 
-    if (brandingErr) {
-      console.error("[compliance-nightly] Failed to fetch tenant branding: %s", brandingErr.message);
-      return;
-    }
+    if (brandingErr) throw new Error(`tenant_branding.select failed: ${brandingErr.message}`);
 
     const brandingByTenant = new Map<string, TenantBrandingRow>(
       ((brandingRaw ?? []) as unknown as TenantBrandingRow[]).map((b) => [b.tenant_id, b]),

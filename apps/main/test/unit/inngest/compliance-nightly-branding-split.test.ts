@@ -17,13 +17,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   selectArgs: [] as Array<{ table: string; arg: string }>,
   sendEmailArgs: [] as Array<Record<string, unknown>>,
+  // Per-table read failure injection — drives the fail-loud tests below.
+  readErrors: {} as Record<string, { message: string } | undefined>,
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => {
     const builder = (table: string) => {
       const chain: Record<string, unknown> = {};
-      const result = (data: unknown) => Promise.resolve({ data, error: null });
+      const result = (data: unknown) => {
+        const err = mocks.readErrors[table];
+        return err
+          ? Promise.resolve({ data: null, error: err })
+          : Promise.resolve({ data, error: null });
+      };
 
       chain["select"] = (arg: string) => {
         mocks.selectArgs.push({ table, arg });
@@ -98,6 +105,7 @@ describe("compliance-nightly — #1740 tenants/tenant_branding column split", ()
   beforeEach(() => {
     mocks.selectArgs.length = 0;
     mocks.sendEmailArgs.length = 0;
+    for (const k of Object.keys(mocks.readErrors)) delete mocks.readErrors[k];
   });
 
   it("never selects branding-only columns from tenants (the column-does-not-exist bug)", async () => {
@@ -136,5 +144,33 @@ describe("compliance-nightly — #1740 tenants/tenant_branding column split", ()
     expect(tenantArg["email_send_pattern"]).toBe("tenant_resend");
     expect(tenantArg["email_from_address"]).toBe("concierge@tenant.com");
     expect(tenantArg["tenant_resend_api_key_encrypted"]).toBe("enc-key");
+  });
+});
+
+// #1740 root cause was not the wrong column — it was that the wrong column was
+// UNOBSERVABLE. A read error that `return`s makes the Inngest run report
+// success: no retry, no failed-run alert, and nudges silently stop. These tests
+// fail if either guard regresses to a bare return, because a bare return
+// resolves instead of rejecting.
+describe("compliance-nightly — read failures fail loud", () => {
+  beforeEach(() => {
+    mocks.selectArgs.length = 0;
+    mocks.sendEmailArgs.length = 0;
+    for (const k of Object.keys(mocks.readErrors)) delete mocks.readErrors[k];
+  });
+
+  it("throws when the tenants read fails, so Inngest retries instead of reporting success", async () => {
+    mocks.readErrors["tenants"] = { message: 'column tenants.bogus does not exist' };
+
+    await expect(runCron()).rejects.toThrow(/tenants\.select failed/);
+  });
+
+  it("throws when the tenant_branding read fails rather than sending with wrong email config", async () => {
+    mocks.readErrors["tenant_branding"] = { message: 'column tenant_branding.bogus does not exist' };
+
+    await expect(runCron()).rejects.toThrow(/tenant_branding\.select failed/);
+    // Proceeding past this guard would send every reminder through
+    // platform_resend with the tenant's own domain dropped.
+    expect(mocks.sendEmailArgs).toHaveLength(0);
   });
 });
