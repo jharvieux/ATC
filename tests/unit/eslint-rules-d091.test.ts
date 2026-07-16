@@ -63,20 +63,66 @@ describe("no-credentials-in-url — regex behavior", () => {
 });
 
 describe("no-orphan-todo — pattern coverage (re-derived)", () => {
-  const LINE_MARKER_RE = /^(TODO|FIXME|XXX|HACK)\b(?!\s*\()/;
-  const PAREN_MARKER_RE = /\(\s*(TODO|FIXME|XXX|HACK)\b(?!\s*[@#]|\(|\s+[@#])/;
+  // Mirrors the regexes in the rule. Valid owners:
+  // 1. #\d+ — issue reference (PREFERRED)
+  // 2. @\w[\w-]* — GitHub handle
+  // 3. Whitelisted bare owners:
+  //    - legal-attorney, legal-counsel, operator (roles)
+  //    - usps-validator, rag-service-count, pre-cruise-emails, rbac* (features)
+  //    - bp\d+[a-z0-9]*[-/\w]*, BP\d+[^)]* (spec references)
+  //    - jharvieux (person)
+  //
+  // Rejected: anything not matching above, including placeholders (owner, name, notify-*, prompt-*, etc.)
+  const WHITELISTED_BARE_OWNERS = [
+    "legal-attorney",
+    "legal-counsel",
+    "operator",
+    "usps-validator",
+    "rag-service-count",
+    "pre-cruise-emails",
+    "rbac(?:[a-z0-9-]*)?",
+    "bp\\d+[a-z0-9]*[-/\\w]*",
+    "BP\\d+[^)]*",
+    "jharvieux",
+  ].join("|");
+  const LINE_MARKER_RE = new RegExp(
+    "^(TODO|FIXME|XXX|HACK)\\b(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+  );
+  const PAREN_MARKER_RE = new RegExp(
+    "\\(\\s*(TODO|FIXME|XXX|HACK)\\b(?!\\s*(?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + ")|\\())"
+  );
 
-  it("flags TODO: at start of comment line", () => {
+  it("flags TODO: at start of comment line (no owner)", () => {
     expect(LINE_MARKER_RE.test("TODO: derive from tier_id")).toBe(true);
   });
-  it("does not flag TODO(owner)", () => {
+  it("does not flag TODO(#123) issue reference", () => {
+    expect(LINE_MARKER_RE.test("TODO(#1234): derive from tier_id")).toBe(false);
+  });
+  it("does not flag TODO(@handle) GitHub handle", () => {
+    expect(LINE_MARKER_RE.test("TODO(@jharvieux): derive")).toBe(false);
+  });
+  it("does not flag TODO(bp23-tier-lookup) whitelisted bare owner", () => {
     expect(LINE_MARKER_RE.test("TODO(bp23-tier-lookup): derive")).toBe(false);
   });
-  it("flags (TODO) paren-tag", () => {
+  it("does not flag TODO(legal-attorney) whitelisted bare owner", () => {
+    expect(LINE_MARKER_RE.test("TODO(legal-attorney): review required")).toBe(false);
+  });
+  it("flags TODO(notifications-dedup) bogus placeholder owner", () => {
+    expect(LINE_MARKER_RE.test("TODO(notifications-dedup): defer work")).toBe(true);
+  });
+  it("flags TODO(owner) generic placeholder owner", () => {
+    expect(LINE_MARKER_RE.test("TODO(owner): someone fix this")).toBe(true);
+  });
+  it("flags (TODO) paren-tag without owner", () => {
     expect(PAREN_MARKER_RE.test("refactor to a pg client (TODO).")).toBe(true);
   });
-  it("does not flag (TODO(#123))", () => {
-    // First strip JSDoc *; then check.
+  it("does not flag (TODO(#123)) with issue reference", () => {
     expect(PAREN_MARKER_RE.test("(TODO(#123): wire X)")).toBe(false);
+  });
+  it("does not flag (TODO(@user)) with GitHub handle", () => {
+    expect(PAREN_MARKER_RE.test("(TODO(@alice): wire X)")).toBe(false);
+  });
+  it("does not flag (TODO(operator)) whitelisted bare owner", () => {
+    expect(PAREN_MARKER_RE.test("(TODO(operator): manual step)")).toBe(false);
   });
 });
