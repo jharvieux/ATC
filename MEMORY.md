@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-357 — 2026-07-16 — Sweep hygiene overhaul: verify-or-close, negation-blind closing keywords, fix-inline-by-default, blockers surfaced at the plan gate
+
+**Decision:** Operator-directed process tightening after D-356's failure pattern (38 filed vs ~12 closed, 6 stale issues worked, closing-keyword trap ×3). Four rule changes, landed in BOTH `/issue-sweep` copies (repo `.claude/commands/issue-sweep.md` + user-level portable) and `docs/runbooks/pr-workflow.md`:
+
+1. **Verify-or-close first.** Executors confirm the defect still exists (code read / failing test / `git log` on touched paths) before writing any fix; already-fixed → close with evidence under a new `closed_stale` summary field, never re-implement. Wrap-up issue-filing gains a mandatory dup-check (search open AND closed, dedupe the sweep's own list) — comment/reopen instead of filing twins.
+2. **Closing keywords are negation-blind** — "does not close #N" still closes #N, and strays hide in commit messages via the COMMIT_MESSAGES squash autofill. Keywords allowed ONLY as standalone `Closes #<n>` PR-body lines; everywhere else keyword-free refs (`refs #N`, `part of #N`, `fix(#N):` is safe). Close-set verified mechanically pre-merge via `gh pr view --json closingIssuesReferences` (verified working); partial-fix PRs squash-merge with explicit `--subject`/`--body`; wrong closes reopened immediately. Now a general-PR rule in pr-workflow.md, not just a sweep rule.
+3. **Fix-inline-by-default.** Executors and audit fix-agents fix en-route findings in the current PR when ALL: same subsystem/touched code; no supervised path/migration/new route/API change; covered by the same `pnpm verify`; doesn't ~double the diff. `follow_ups` entries must name which test failed (`blocker` field); "non-blocking" alone never justifies filing. Wrap-up adds a drop-with-rationale disposition for nits and a net ledger (`closed N / filed K`) with an explicit miss-callout when filed ≥ closed.
+4. **Blockers surface at the plan gate.** Triage JSON gains `blockers[]` (supervised file, secret, prod action, spec ruling, external dep); the plan presents each as a concrete yes/no ask the operator answers inside the approval reply, instead of the batch parking mid-sweep.
+
+**Why:** Three operator-reported failure modes: re-working completed issues (stale tracker + improper closes + dup filing), issues wrongly closed by negated closing phrases GitHub parses anyway, and sweeps that consistently open more issues than they close (deferral-by-default for every non-blocking audit finding + blockers discovered mid-sweep instead of at approval).
+
+**Rejected:** Triage-phase staleness detection (Haiku classification agents shouldn't investigate; executor verify-first is the right layer). Dropping CLAUDE.md's "every deferral gets an issue" rule (the fix is deferring less, not tracking less — genuine deferrals still get issues, now dup-checked). Numeric line-count thresholds for inline fixes (qualitative "doesn't double the diff / same verify run" ages better than a magic number).
+
+**Related artifacts:** `.claude/commands/issue-sweep.md`, `~/.claude/commands/issue-sweep.md`, `docs/runbooks/pr-workflow.md`, D-356 (the sweep that exposed all three), D-328/D-330/D-331 (prior sweep-skill iterations).
+
+---
+
 ## D-356 — 2026-07-16 — Sweep #4: 9 PRs merged, 38 issues filed; the tracker was staler than the code, and a repo-wide merge freeze traced to an orphaned table
 
 **Decision:** Ran the portable `/issue-sweep` over 49 open issues (43 triaged, 12 batches). Merged 9 batches; parked 2 as already-fixed; 1 (#1959) in audit at checkpoint.
