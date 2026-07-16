@@ -249,11 +249,16 @@ describeIf("process_transfer_reversal", () => {
         .in("tenant_id", tids);
       if (auditErr) throw new Error(`audit_log cleanup: ${auditErr.message}`);
 
-      const { error: tenantErr } = await admin
-        .from("tenants")
-        .delete()
-        .in("id", tids);
-      if (tenantErr) throw new Error(`tenants cleanup: ${tenantErr.message}`);
+      // Tenants are hard-delete-protected by a DB trigger (#1919/#1920 —
+      // this cleanup previously went through the PostgREST admin client,
+      // whose per-request transaction can't carry the SET LOCAL override,
+      // so every nightly run failed here). Use the raw `sql` connection so
+      // the override and the DELETE share one transaction, matching the
+      // established pattern in rls.test.ts / import-promote-atomicity.test.ts.
+      await sql.begin(async (tx) => {
+        await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
+        await tx`DELETE FROM public.tenants WHERE id = ANY(${tids})`;
+      });
     } finally {
       await sql.end();
     }
