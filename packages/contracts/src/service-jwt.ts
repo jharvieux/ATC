@@ -35,7 +35,8 @@ export const ServiceJwtClaimsSchema = z.object({
   // freshly-minted token always satisfies these. They are optional in the
   // schema because the verifier still accepts in-flight pre-rollout tokens
   // that lack them; the strict flip (making these required + hard-rejecting
-  // absence) is the #1773 follow-up once both services carry the claims.
+  // absence) is tracked by #1843, once both services are deployed with the
+  // claims and absent-claim traffic has gone to zero.
   iss: z.literal(SERVICE_JWT_ISSUER).optional(),
   aud: z.literal(SERVICE_JWT_AUDIENCE).optional(),
 });
