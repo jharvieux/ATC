@@ -109,6 +109,98 @@ jobs:
           fi
           npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
 
+      - name: Reset RAG test DB before apply (#1914)
+        id: reset-rag
+        # Symmetric reset for the RAG test DB, same rationale as the main-DB
+        # reset above (#1660 / #1896) — but this one is the confirmed live
+        # fix for #1919/#1920: a failed RAG push (0001 applies, 0002 fails)
+        # left the RAG test DB's schema and ledger diverged, wedging every
+        # nightly since with "relation ... already exists" (SQLSTATE 42P07)
+        # on the push below. Resetting first makes each run's push
+        # self-contained, same as the main-DB reset already does. Serialized
+        # against deploy.yml via the shared-test-db group above.
+        #
+        # Placed here — directly before its apply and BEFORE the long vitest
+        # step — deliberately. Between the DROP SCHEMA and the push below the
+        # RAG test DB is EMPTY, and that DB is shared: deploy.yml binds it as
+        # SUPABASE_RAG_DB_URL for `rls-snapshot-diff` (a REQUIRED check) and
+        # never re-seeds it. If the job dies inside that window (OOM, 6h
+        # timeout, cancellation), the empty schema drifts from
+        # db/rls-snapshot-rag.sql and turns that required check red on EVERY
+        # PR until the next nightly succeeds. Keeping reset and push adjacent
+        # holds the window to seconds; gating them behind vitest would widen
+        # it to the length of the whole suite. Behaviour-neutral: the RAG
+        # suite still runs after the push, and the main suite never connects
+        # to the RAG DB.
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+          # Distinctly-named target var (#1896 audit) — see main-DB reset
+          # step above for why this is never the generic SUPABASE_RAG_DB_URL.
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+        # The reset script skips (exit 0) on an unset URL for secret-less
+        # callers (Dependabot on deploy.yml). This workflow has no such
+        # callers — it only ever runs on schedule / workflow_dispatch, where
+        # the secret must be present — so an empty URL here means the secret
+        # was misnamed, rotated, or removed. That must be reported, not
+        # silently skipped: a no-op reset lets the push below re-wedge on
+        # 42P07 and retires the #1914 fix in a way only a log-reader would
+        # notice.
+        #
+        # Report it via reset_status rather than `exit 1`, though. An
+        # unguarded non-zero step makes Actions skip EVERY later step — which
+        # would take out both the main vitest suite (this workflow's stated
+        # purpose) and the issue-open step, so a missing RAG secret would
+        # produce a bare red X and no `nightly-failure` issue: silence in the
+        # one channel operators are told to watch. Same set +e / $? capture /
+        # exit 0 idiom as rag-migrate below; downstream RAG-only steps gate on
+        # the output, and the issue-open step turns it into a real issue.
+        run: |
+          if [ -z "$RESET_TARGET_DB_URL" ]; then
+            echo "::error::SUPABASE_RAG_TEST_DB_URL is empty — the RAG test DB reset cannot run (#1914)."
+            echo "reset_status=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          pnpm db:reset:ci -- --target=rag
+          STATUS=$?
+          echo "reset_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Apply Supabase migrations to RAG test DB
+        id: rag-migrate
+        # Mirrors the "Apply Supabase migrations to test DB" step above, but for
+        # the RAG app's own DB and migration set (apps/rag/supabase/migrations),
+        # so the RAG suite below runs against a schema matching dev instead of
+        # drifted/stale schema (#1893). No ledger pre-check like deploy.yml's
+        # rls-snapshot-diff job: that guards a race between two un-diffed PR
+        # BRANCHES; this runs on already-merged `dev` where every migration is
+        # applied, so the push is idempotent.
+        #
+        # Gated on the reset above succeeding. That gate also subsumes the
+        # missing-secret case: SUPABASE_RAG_DB_URL (job env, above) and the
+        # reset step's RESET_TARGET_DB_URL are the SAME secret expression, so
+        # an unset secret always shows up here as reset_status != 0 and this
+        # step never runs. No `-z "$SUPABASE_RAG_DB_URL"` check inside — it
+        # could never fire. Pushing to an un-reset DB is the 42P07 wedge
+        # #1914 exists to prevent.
+        #
+        # On a real push failure we capture the exit code (set +e + PIPESTATUS,
+        # D-349 — same idiom as the vitest steps, which is why the output is
+        # teed) and hand it to the issue-open step as a DISTINCT signal, instead
+        # of letting `bash -e` hard-fail the job with a bare red X and no issue.
+        # That's what makes an apply/drift failure distinguishable from a test
+        # regression in the nightly issue body (#1893 acceptance criterion). The
+        # teed log is redacted through parse-nightly-failures.mjs before any of
+        # it reaches the PUBLIC issue body (#1851).
+        if: steps.reset-rag.outputs.reset_status == '0'
+        working-directory: apps/rag
+        run: |
+          set +e
+          npx supabase db push --include-all --db-url "$SUPABASE_RAG_DB_URL" 2>&1 | tee rag-migrate-console.log
+          STATUS=${PIPESTATUS[0]}
+          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Seed Tier-2 fixture tenant
         # The DB-backed inngest probes act on the Tier-2 fixture tenant; seed it
         # idempotently so their FK targets exist. Fails the run loudly (no issue
@@ -150,42 +242,6 @@ jobs:
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Apply Supabase migrations to RAG test DB
-        id: rag-migrate
-        # Mirrors the "Apply Supabase migrations to test DB" step above, but for
-        # the RAG app's own DB and migration set (apps/rag/supabase/migrations),
-        # so the RAG suite below runs against a schema matching dev instead of
-        # drifted/stale schema (#1893). No ledger pre-check like deploy.yml's
-        # rls-snapshot-diff job: that guards a race between two un-diffed PR
-        # BRANCHES; this runs on already-merged `dev` where every migration is
-        # applied, so the push is idempotent.
-        #
-        # SUPABASE_RAG_DB_URL is the RAG-suite activation secret (job env). When
-        # it's unset the RAG suite describe.skips, so skip the push too (a push
-        # to no DB would error) — skip-with-notice, exit_status=0, same posture
-        # as deploy.yml's apply step.
-        #
-        # On a real push failure we capture the exit code (set +e + PIPESTATUS,
-        # D-349 — same idiom as the vitest steps, which is why the output is
-        # teed) and hand it to the issue-open step as a DISTINCT signal, instead
-        # of letting `bash -e` hard-fail the job with a bare red X and no issue.
-        # That's what makes an apply/drift failure distinguishable from a test
-        # regression in the nightly issue body (#1893 acceptance criterion). The
-        # teed log is redacted through parse-nightly-failures.mjs before any of
-        # it reaches the PUBLIC issue body (#1851).
-        working-directory: apps/rag
-        run: |
-          if [ -z "$SUPABASE_RAG_DB_URL" ]; then
-            echo "SUPABASE_RAG_DB_URL not set — skipping RAG migration apply; the RAG suite describe.skips without it."
-            echo "exit_status=0" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          set +e
-          npx supabase db push --include-all --db-url "$SUPABASE_RAG_DB_URL" 2>&1 | tee rag-migrate-console.log
-          STATUS=${PIPESTATUS[0]}
-          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
-          exit 0
-
       - name: Run apps/rag vitest suite
         id: vitest-rag
         # The root vitest.config.ts only includes tests/** and apps/main/test/**
@@ -213,12 +269,13 @@ jobs:
           exit 0
 
       - name: Open issue on failure
-        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0'
+        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0' || steps.reset-rag.outputs.reset_status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAIN_STATUS: ${{ steps.vitest.outputs.exit_status }}
           RAG_STATUS: ${{ steps.vitest-rag.outputs.exit_status }}
           RAG_MIGRATE_STATUS: ${{ steps.rag-migrate.outputs.exit_status }}
+          RAG_RESET_STATUS: ${{ steps.reset-rag.outputs.reset_status }}
         run: |
           set -euo pipefail
           DATE=$(date -u +%Y-%m-%d)
@@ -246,30 +303,41 @@ jobs:
             MAIN_SECTION=""
           fi
           # vitest-rag is gated on rag-migrate succeeding (#1893 audit finding
-          # 1), so a rag-migrate failure means the step never ran and never
-          # wrote its exit_status output — RAG_STATUS is empty, not "0" or a
-          # nonzero code. Handle that explicitly with its own branch instead
+          # 1), which is itself gated on the reset succeeding (#1914) — so a
+          # failure of either means the step never ran and never wrote its
+          # exit_status output: RAG_STATUS is empty, not "0" or a nonzero
+          # code. Handle that explicitly with its own branch instead
           # of falling into the `!= "0"` arm below: that arm calls the parser
           # against report/console files that don't exist (the run never
           # happened), and its "(no JSON report; see run logs)" fallback would
           # read like an unexplained test failure duplicating the
           # RAG_MIGRATE_SECTION below rather than pointing at it.
           if [ -z "$RAG_STATUS" ]; then
-            RAG_SECTION="### apps/rag"$'\n\n'"(skipped — RAG migration apply failed; see the schema section above)"
+            RAG_SECTION="### apps/rag"$'\n\n'"(skipped — the RAG test DB reset or migration apply failed; see the schema section above)"
           elif [ "$RAG_STATUS" != "0" ]; then
             node scripts/parse-nightly-failures.mjs apps/rag/rag-vitest-report.json apps/rag/rag-vitest-console.log nightly-rag-failing-list.md nightly-rag-unhandled-section.md
             RAG_SECTION="### apps/rag"$'\n\n'"$(cat nightly-rag-failing-list.md)"$'\n'"$(cat nightly-rag-unhandled-section.md)"
           else
             RAG_SECTION=""
           fi
+          # A failed RAG reset (#1914) means the DB was never rebuilt, so the
+          # apply and suite below it were skipped rather than run against a
+          # possibly-wedged schema. Most likely cause is a missing/rotated
+          # SUPABASE_RAG_TEST_DB_URL. Report it here so it surfaces as a
+          # `nightly-failure` issue instead of a log line nobody reads — the
+          # main suite still ran and reports independently above.
+          if [ -n "$RAG_RESET_STATUS" ] && [ "$RAG_RESET_STATUS" != "0" ]; then
+            RAG_RESET_SECTION="### apps/rag — test DB reset FAILED (exit $RAG_RESET_STATUS)"$'\n\n'"The RAG test DB was not reset, so the migration apply and the RAG suite were skipped. Check that the \`SUPABASE_RAG_TEST_DB_URL\` secret exists and is valid, then see the run log for the reset step's \`::error::\` output. Triage as schema/infra, not a test regression."
+          else
+            RAG_RESET_SECTION=""
+          fi
           # A non-zero RAG migration apply is a schema/infra failure, NOT a test
           # regression — surface it as its own section so triage doesn't chase a
           # phantom test bug (#1893). The teed push log is redacted (public repo,
           # #1851) via the parser's `migrate` mode before it lands here.
-          # RAG_MIGRATE_STATUS is always written (either a real exit code or
-          # the skip-with-notice "0" for the no-secret case) — no `-n` guard
-          # needed, unlike RAG_STATUS above which genuinely can be empty.
-          if [ "$RAG_MIGRATE_STATUS" != "0" ]; then
+          # Empty when the step was skipped on a failed reset — the section
+          # above covers that case, so `-n`-guard this the same as RAG_STATUS.
+          if [ -n "$RAG_MIGRATE_STATUS" ] && [ "$RAG_MIGRATE_STATUS" != "0" ]; then
             node scripts/parse-nightly-failures.mjs migrate apps/rag/rag-migrate-console.log nightly-rag-migrate-section.md
             RAG_MIGRATE_SECTION="### apps/rag — test DB migration apply FAILED (exit $RAG_MIGRATE_STATUS)"$'\n\n'"\`supabase db push\` to the RAG test DB failed before the suite ran, so any RAG results below ran against a stale or absent schema. Triage this as a schema/infra failure, not a test regression."$'\n\n'"$(cat nightly-rag-migrate-section.md)"
           else
@@ -288,6 +356,7 @@ jobs:
 
           **Failing tests**:
           $MAIN_SECTION
+          $RAG_RESET_SECTION
           $RAG_MIGRATE_SECTION
           $RAG_SECTION
 
