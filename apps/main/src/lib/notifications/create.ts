@@ -2,8 +2,8 @@
 // Called from Inngest event handlers and API routes to insert notification rows.
 // Caller must pass a service-role SupabaseClient.
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { safeAwaitRequired } from "@/lib/db/safe-mutation";
+import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
+import { safeAwaitRequired, unwrapRequired, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 export type NotificationCategory =
   | "booking_update"
@@ -21,6 +21,13 @@ export interface CreateNotificationInput {
   body?: string;
   link_url?: string;
   icon?: string;
+  // Opt-in idempotency key (#1954). When set, a partial UNIQUE index
+  // (notifications_dedup_key_uidx) makes the insert idempotent: a retry that
+  // re-inserts the same key is a no-op that returns the existing row's id
+  // instead of writing a duplicate. Callers that fan out one notification per
+  // recipient across an operation that Inngest may retry must set a
+  // deterministic key (e.g. `ccpa_purge:<purged_user_id>:<recipient_user_id>`).
+  dedup_key?: string;
 }
 
 // Throws SupabaseMutationError on a failed insert rather than returning null:
@@ -28,21 +35,62 @@ export interface CreateNotificationInput {
 // a dropped notification was silently lost (D-091, #400). The sole caller is
 // an Inngest handler where a throw correctly triggers a retry.
 export async function createNotification(input: CreateNotificationInput): Promise<{ id: string }> {
-  const { db, tenant_id, user_id, category, title, body, link_url, icon } = input;
-  return await safeAwaitRequired<{ id: string }>(
-    db
-      .from("notifications")
-      .insert({
-        tenant_id,
-        user_id,
-        category,
-        title,
-        ...(body ? { body } : {}),
-        ...(link_url ? { link_url } : {}),
-        ...(icon ? { icon } : {}),
-      })
-      .select("id")
-      .single(),
-    "notifications.insert",
-  );
+  const { db, tenant_id, user_id, category, title, body, link_url, icon, dedup_key } = input;
+  const row = {
+    tenant_id,
+    user_id,
+    category,
+    title,
+    ...(body ? { body } : {}),
+    ...(link_url ? { link_url } : {}),
+    ...(icon ? { icon } : {}),
+    ...(dedup_key ? { dedup_key } : {}),
+  };
+
+  if (!dedup_key) {
+    return await safeAwaitRequired<{ id: string }>(
+      db.from("notifications").insert(row).select("id").single(),
+      "notifications.insert",
+    );
+  }
+
+  // Idempotent path (#1954): insert, and on a unique-violation (23505) treat it
+  // as an already-delivered no-op — return the pre-existing row's id so a retry
+  // produces exactly one row per dedup_key, never a duplicate.
+  const result = await db.from("notifications").insert(row).select("id").single();
+  if (result.error) {
+    if (result.error.code === "23505") {
+      // Look up ONLY by dedup_key — the UNIQUE index is on (dedup_key) alone
+      // (notifications_dedup_key_uidx), so keying the lookup on dedup_key alone
+      // resolves to exactly one row. Adding `.eq("tenant_id", …)` narrowed the
+      // filter below the index key: a cross-tenant dedup_key collision would
+      // then match zero rows and make `.single()` throw instead of resolving.
+      const dedupRow = await safeAwaitRequired<{ id: string; tenant_id: string }>(
+        db
+          // Safe only because every caller's dedup_key embeds two users.id PKs (e.g.
+          // `ccpa_purge:<purged_user_id>:<recipient_user_id>`), which are tenant-scoped
+          // by construction. The tenant_id assertion below turns any FUTURE caller that
+          // breaks that invariant (a non-globally-unique key) into a loud throw instead
+          // of a silent cross-tenant row resolution.
+          // d091-allow:service-role-tenant — post-23505 lookup MUST key on the exact UNIQUE index (dedup_key alone); adding .eq("tenant_id",…) narrows below the index and makes .single() throw on a cross-tenant key collision.
+          .from("notifications")
+          .select("id, tenant_id")
+          .eq("dedup_key", dedup_key)
+          .single(),
+        "notifications.dedup_lookup",
+      );
+      if (dedupRow.tenant_id !== tenant_id) {
+        throw new SupabaseMutationError("notifications.dedup_lookup", {
+          message: `dedup_key lookup resolved to tenant_id=${dedupRow.tenant_id}, expected tenant_id=${tenant_id} (row id=${dedupRow.id}) — cross-tenant dedup_key collision`,
+          code: "DEDUP_TENANT_MISMATCH",
+          hint: "dedup_key must be globally unique across tenants; check the caller's key construction.",
+          details: null,
+          name: "DedupTenantMismatch",
+        } as unknown as PostgrestError);
+      }
+      return { id: dedupRow.id };
+    }
+    throw new SupabaseMutationError("notifications.insert", result.error);
+  }
+  return unwrapRequired(result, "notifications.insert");
 }
