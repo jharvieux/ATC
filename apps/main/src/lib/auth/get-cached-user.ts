@@ -7,11 +7,16 @@
 // assertPermission() → getUser(). Without cache that's two cookie-
 // parses + two Supabase JWT verifications per nav. With cache it's one.
 //
-// #679 closed the cross-helper doubling: assertPermission now reads
-// the verified user from this cache too instead of doing its own
-// supabase.auth.getUser() call. The `user` field carries the full
-// Supabase User so assertPermission can consume `user.id` for the
-// consent gate + tenant-membership lookups without re-verifying.
+// #679 closed the cross-helper doubling by having assertPermission read
+// the verified user from this cache. #1585 moved assertPermission OFF it:
+// on /api/* routes there is no layout above, so the React cache was a
+// no-op there and the call was a full GoTrue round-trip. assertPermission
+// now verifies the request's JWT locally (lib/auth/verify-identity.ts).
+//
+// This cache remains the right tool for its actual beneficiaries — server
+// components and layouts, which DO share a render tree (so the memoization
+// bites) and need the full Supabase User for display metadata, not just a
+// verified `sub`.
 
 import { cache as reactCache } from "react";
 import { headers } from "next/headers";
