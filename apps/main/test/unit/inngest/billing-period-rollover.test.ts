@@ -5,14 +5,13 @@
 // per-item catch), and that a >concurrency fan-out neither drops nor
 // double-processes a tenant.
 //
-// Also surfaces (does NOT fix — tests-only per #1885 scope) a real
-// idempotency gap: the tenant_usage_metrics upsert is correctly
-// ON CONFLICT DO NOTHING (dedups across reruns), but the 4
-// usage_limit_events audit inserts per tenant have no such guard, so a
-// retry of the same period re-inserts a fresh set of audit rows. Tracked
-// as #1901.
+// Also covers idempotency across reruns for BOTH writes: the
+// tenant_usage_metrics upsert (ON CONFLICT DO NOTHING) and — since #1901 —
+// the 4 usage_limit_events audit inserts per tenant, which now carry a
+// deterministic resolution_action key backed by usage_limit_events_rollover_uidx
+// so a retry of the same period no longer re-inserts a fresh set of audit rows.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
@@ -95,6 +94,20 @@ function makeDb(state: State, opts: { failEventInsertFor?: Set<string> } = {}) {
         if (table === "usage_limit_events" && opts.failEventInsertFor?.has(p.tenant_id)) {
           return { data: null, error: { message: "simulated write failure", code: "XX000" } };
         }
+        // Mirror usage_limit_events_rollover_uidx: a partial UNIQUE index on
+        // resolution_action scoped to the 'rollover:%' namespace. A re-insert
+        // with the same deterministic key rejects with 23505, which the
+        // handler treats as "already recorded". Without this the mock would
+        // silently accept duplicates and the dedup fix couldn't be tested.
+        const key = p.resolution_action;
+        if (
+          table === "usage_limit_events" &&
+          typeof key === "string" &&
+          key.startsWith("rollover:") &&
+          state.events.some((e) => e.resolution_action === key)
+        ) {
+          return { data: null, error: { message: "duplicate key value violates unique constraint", code: "23505" } };
+        }
         rowsFor().push({ id: `row-${++seq}`, ...p } as unknown as Record<string, unknown>);
         return { data: null, error: null };
       };
@@ -164,6 +177,10 @@ async function runRollover(): Promise<unknown> {
 beforeEach(() => {
   delete process.env.STAGING_MODE;
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("#1885 — billing-period-rollover outcome tallies", () => {
@@ -242,20 +259,70 @@ describe("#1885 — billing-period-rollover idempotent re-run", () => {
     expect(second).toMatchObject({ tenants_seeded: 2 });
   });
 
-  it("KNOWN GAP (tests-only, not fixed here): usage_limit_events is NOT deduped across reruns — a retry doubles the audit rows", async () => {
-    // This pins the current (buggy) behavior so a future fix has a failing
-    // test to flip green, per #1885's "idempotent re-run" acceptance
-    // criterion surfacing exactly this kind of gap. Tracked as #1901
-    // rather than fixed in this tests-only PR.
+  it("does NOT duplicate usage_limit_events audit rows across reruns — a retry stays at 4, not 8 (#1901)", async () => {
+    // WHY this matters: usage_limit_events is the audit trail platform admins
+    // read to explain a tenant's usage/limit history, and any downstream
+    // aggregation that sums those rows would double-count on every retry.
+    // Inngest retries this function on transient failures (and it has no
+    // per-tenant error isolation — one tenant's failure retries the WHOLE
+    // batch), so an un-deduped audit insert multiplies the trail by however
+    // many attempts a run took to succeed. The fix keys each insert on
+    // (tenant, period, dimension) and lets the partial unique index reject the
+    // re-insert with 23505, treated as "already recorded". This test fails the
+    // moment that dedup key or its 23505 handling regresses.
     const state = makeState([makeTenant("t-1")]);
     currentDb = makeDb(state);
     await runRollover();
     expect(state.events).toHaveLength(4);
 
     currentDb = makeDb(state);
+    const second = await runRollover();
+
+    expect(state.events).toHaveLength(4);
+    // Rerun still reports a full tally — the 23505 is swallowed, not surfaced
+    // as a per-tenant failure that would abort the batch.
+    expect(second).toMatchObject({ tenants_seeded: 1, rollover_events: 4 });
+  });
+
+  it("dedupes per (tenant, period, dimension) — distinct tenants each keep their own 4 rows across a rerun (#1901)", async () => {
+    // Guards against a too-broad key (e.g. 'rollover:%' alone, or dropping
+    // tenant_id) that would let one tenant's rollover suppress another's audit
+    // rows. Two tenants must each retain exactly 4 rows, and a rerun must not
+    // grow either.
+    const state = makeState([makeTenant("t-1"), makeTenant("t-2")]);
+    currentDb = makeDb(state);
+    await runRollover();
+    expect(state.events).toHaveLength(8);
+
+    currentDb = makeDb(state);
     await runRollover();
 
     expect(state.events).toHaveLength(8);
+    expect(state.events.filter((e) => e.tenant_id === "t-1")).toHaveLength(4);
+    expect(state.events.filter((e) => e.tenant_id === "t-2")).toHaveLength(4);
+  });
+
+  it("grows usage_limit_events across a real period change instead of being suppressed as duplicates (#1901)", async () => {
+    // The two dedup tests above rerun the SAME period, so they never exercise
+    // the `:${period}` segment of the resolution_action key — a regression
+    // dropping period from the key would pass them both while silently
+    // 23505-suppressing every subsequent month's rollover audit rows. Here we
+    // advance the mocked clock a real month between runs so newPeriodRange()
+    // returns a distinct value, and assert the audit trail grows (4 -> 8)
+    // rather than staying flat.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-15T00:00:00.000Z"));
+    const state = makeState([makeTenant("t-1")]);
+    currentDb = makeDb(state);
+    await runRollover();
+    expect(state.events).toHaveLength(4);
+
+    vi.setSystemTime(new Date("2026-02-15T00:00:00.000Z"));
+    currentDb = makeDb(state);
+    const second = await runRollover();
+
+    expect(state.events).toHaveLength(8);
+    expect(second).toMatchObject({ tenants_seeded: 1, rollover_events: 4 });
   });
 });
 

@@ -9,7 +9,7 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 
 // #1789 — up to 5000 tenants per monthly run; bounded concurrency turns a
@@ -92,17 +92,31 @@ export const billingPeriodRollover = inngest.createFunction(
           // Audit rollover for each dimension (any monotonic resets are
           // visible in the events table). The 4 dimensions are independent
           // rows — fan out within the tenant too.
+          //
+          // D-091 #24 / #23 (#1901) — like the counter upsert above, these
+          // audit inserts must be idempotent across Inngest retries and
+          // duplicate cron fires. A deterministic resolution_action key
+          // (tenant + period + dimension) backed by a partial unique index
+          // (usage_limit_events_rollover_uidx, scoped to 'rollover:%') makes
+          // the DB reject a re-insert with 23505, which we treat as "already
+          // recorded" — so a run that retried N times still leaves exactly 4
+          // rollover audit rows per tenant, not 4N.
           await Promise.all(
-            USAGE_DIMENSIONS.map((dim) =>
-              safeAwait(db.from("usage_limit_events").insert({
-                tenant_id: t.id,
-                dimension: dim,
-                from_state: "rollover",
-                to_state: "ok",
-                metric_value: "0",
-                threshold_crossed: "0",
-              }), "usage_limit_events.insert"),
-            ),
+            USAGE_DIMENSIONS.map(async (dim) => {
+              try {
+                await safeAwait(db.from("usage_limit_events").insert({
+                  tenant_id: t.id,
+                  dimension: dim,
+                  from_state: "rollover",
+                  to_state: "ok",
+                  metric_value: "0",
+                  threshold_crossed: "0",
+                  resolution_action: `rollover:${t.id}:${period}:${dim}`,
+                }), "usage_limit_events.insert");
+              } catch (err) {
+                if (!(err instanceof SupabaseMutationError) || err.code !== "23505") throw err;
+              }
+            }),
           );
 
           return { created: !upsertErr };

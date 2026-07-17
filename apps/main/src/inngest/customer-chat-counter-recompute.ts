@@ -24,10 +24,14 @@ export const customerChatCounterRecompute = inngest.createFunction(
 
     const { data: rows } = await svc
       .from("customer_chat_counters")
-      .select("user_id, tenant_id")
+      .select("user_id, tenant_id, last_message_at")
       .limit(5000);
 
-    const targets = (rows ?? []) as Array<{ user_id: string; tenant_id: string }>;
+    const targets = (rows ?? []) as Array<{
+      user_id: string;
+      tenant_id: string;
+      last_message_at: string | null;
+    }>;
     await mapWithConcurrency(targets, RECOMPUTE_CONCURRENCY, async (row) => {
       const { count: msgCount, error } = await svc
         .from("messages")
@@ -47,11 +51,32 @@ export const customerChatCounterRecompute = inngest.createFunction(
         return;
       }
       const count = msgCount ?? 0;
-      await safeAwait(svc
+
+      // CAS on last_message_at (#1975). increment_customer_chat_count bumps
+      // last_message_at = NOW() on every live increment, so guarding the write
+      // on the snapshot we read means a concurrent increment (which moved the
+      // timestamp) matches zero rows here — its fresh count wins instead of
+      // being clobbered by this slightly-stale recompute. Drift correction
+      // retries next night. Rows are only ever created by the RPC (which sets
+      // last_message_at), but guard the null case defensively anyway.
+      const guarded = svc
         .from("customer_chat_counters")
         .update({ current_count: count })
         .eq("user_id", row.user_id)
-        .eq("tenant_id", row.tenant_id), "customer_chat_counters.update");
+        .eq("tenant_id", row.tenant_id);
+      const cas = row.last_message_at === null
+        ? guarded.is("last_message_at", null)
+        : guarded.eq("last_message_at", row.last_message_at);
+      const updated = await safeAwait(
+        cas.select("user_id"),
+        "customer_chat_counters.update",
+      );
+      if (!updated || updated.length === 0) {
+        console.info("[customer-chat-counter-recompute] concurrent increment, skipping row", {
+          user_id: row.user_id,
+          tenant_id: row.tenant_id,
+        });
+      }
     });
     return { processed: targets.length };
   },
