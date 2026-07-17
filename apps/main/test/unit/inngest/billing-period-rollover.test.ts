@@ -11,7 +11,7 @@
 // deterministic resolution_action key backed by usage_limit_events_rollover_uidx
 // so a retry of the same period no longer re-inserts a fresh set of audit rows.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
@@ -179,6 +179,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("#1885 — billing-period-rollover outcome tallies", () => {
   it("seeds a fresh tenant_usage_metrics row + 4 audit events per active tenant", async () => {
     const state = makeState([makeTenant("t-1"), makeTenant("t-2")]);
@@ -296,6 +300,29 @@ describe("#1885 — billing-period-rollover idempotent re-run", () => {
     expect(state.events).toHaveLength(8);
     expect(state.events.filter((e) => e.tenant_id === "t-1")).toHaveLength(4);
     expect(state.events.filter((e) => e.tenant_id === "t-2")).toHaveLength(4);
+  });
+
+  it("grows usage_limit_events across a real period change instead of being suppressed as duplicates (#1901)", async () => {
+    // The two dedup tests above rerun the SAME period, so they never exercise
+    // the `:${period}` segment of the resolution_action key — a regression
+    // dropping period from the key would pass them both while silently
+    // 23505-suppressing every subsequent month's rollover audit rows. Here we
+    // advance the mocked clock a real month between runs so newPeriodRange()
+    // returns a distinct value, and assert the audit trail grows (4 -> 8)
+    // rather than staying flat.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-15T00:00:00.000Z"));
+    const state = makeState([makeTenant("t-1")]);
+    currentDb = makeDb(state);
+    await runRollover();
+    expect(state.events).toHaveLength(4);
+
+    vi.setSystemTime(new Date("2026-02-15T00:00:00.000Z"));
+    currentDb = makeDb(state);
+    const second = await runRollover();
+
+    expect(state.events).toHaveLength(8);
+    expect(second).toMatchObject({ tenants_seeded: 1, rollover_events: 4 });
   });
 });
 
