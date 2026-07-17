@@ -116,7 +116,7 @@ afterEach(() => {
 // Retrying until the value sticks is deterministic: the first attempt's act
 // flushes the pending reset (which also sets resetForTypeRef, so it can never
 // fire again for this type), and the retry always lands.
-async function typeUntilItSticks(input: HTMLInputElement, value: string) {
+async function typeUntilItSticks(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
   await waitFor(() => {
     fireEvent.change(input, { target: { value } });
     expect(input.value).toBe(value);
@@ -134,6 +134,10 @@ describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)",
       "Your trip is confirmed, {{customer_name}}!",
     ) as HTMLInputElement;
     await typeUntilItSticks(subjectInput, "Edited subject");
+    const bodyInput = screen.getByPlaceholderText(
+      "Leave blank to use the platform default body.",
+    ) as HTMLTextAreaElement;
+    await typeUntilItSticks(bodyInput, "Edited body");
 
     // Switch the preview data source to "booking" and populate a selection —
     // this is the state the reset must clear on template-type switch.
@@ -156,6 +160,13 @@ describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)",
     await waitFor(() => {
       expect(newSubjectInput.value).toBe("");
     });
+    // The body field is reset too — same cascade, same fields.
+    const newBodyInput = screen.getByPlaceholderText(
+      "Leave blank to use the platform default body.",
+    ) as HTMLTextAreaElement;
+    await waitFor(() => {
+      expect(newBodyInput.value).toBe("");
+    });
 
     // The booking selection was cleared by the reset (back to the empty search box).
     expect(screen.queryByText("Clear selection")).toBeNull();
@@ -167,6 +178,91 @@ describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)",
     // previewSource itself is NOT in the reset list — "Customer booking" stays checked.
     const bookingRadio = screen.getByLabelText(/Customer booking/) as HTMLInputElement;
     expect(bookingRadio.checked).toBe(true);
+  });
+
+  it("clears the sailing selection chain and any loaded preview html on template-type switch", async () => {
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await screen.findByRole("heading", { name: "Booking confirmation" });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => u === "/api/cruise-lines")).toBe(true);
+    });
+
+    // Resolve the full sailing cascade and load a preview from it — this is
+    // the state the switch-reset must clear (line/ship/date selects back to
+    // their disabled placeholder state, iframe gone) even though the radio
+    // itself (previewSource) isn't reset.
+    fireEvent.click(screen.getByLabelText(/Sailing from catalog/));
+    const selects = () => Array.from(document.querySelectorAll<HTMLSelectElement>("select"));
+    const [lineSelect, shipSelect, dateSelect] = selects() as [
+      HTMLSelectElement,
+      HTMLSelectElement,
+      HTMLSelectElement,
+    ];
+    fireEvent.change(lineSelect, { target: { value: "line-1" } });
+    await waitFor(() => expect(shipSelect.disabled).toBe(false));
+    fireEvent.change(shipSelect, { target: { value: "ship-1" } });
+    await waitFor(() => expect(dateSelect.disabled).toBe(false));
+    fireEvent.change(dateSelect, { target: { value: "sailing-1" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Load preview" }) as HTMLButtonElement).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
+    await waitFor(() => expect(document.querySelector("iframe")).toBeTruthy());
+
+    // Switch template type.
+    fireEvent.click(screen.getByText("Welcome"));
+    await screen.findByPlaceholderText("Welcome, {{customer_name}}!");
+
+    // The loaded preview html is cleared.
+    await waitFor(() => expect(document.querySelector("iframe")).toBeNull());
+
+    // previewSource stays on "sailing" (not reset), but the chain underneath
+    // it is empty again — same disabled-cascade shape as first mount.
+    const sailingRadio = screen.getByLabelText(/Sailing from catalog/) as HTMLInputElement;
+    expect(sailingRadio.checked).toBe(true);
+    const [lineAfter, shipAfter, dateAfter] = selects() as [
+      HTMLSelectElement,
+      HTMLSelectElement,
+      HTMLSelectElement,
+    ];
+    expect(lineAfter.value).toBe("");
+    expect(shipAfter.disabled).toBe(true);
+    expect(dateAfter.disabled).toBe(true);
+  });
+});
+
+describe("EmailTemplatesSettingsPage — template-switch clears banners (#1979)", () => {
+  it("clears the saved-at success banner when switching to a new template type", async () => {
+    installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await screen.findByRole("heading", { name: "Booking confirmation" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/Saved at/);
+
+    fireEvent.click(screen.getByText("Welcome"));
+    await waitFor(() => expect(screen.queryByText(/Saved at/)).toBeNull());
+  });
+
+  it("clears the error banner when switching to a new template type", async () => {
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await screen.findByRole("heading", { name: "Booking confirmation" });
+
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve({ ok: false, status: 403, json: async () => ({}) } as Response),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Only the workspace owner can edit email templates.");
+
+    fireEvent.click(screen.getByText("Welcome"));
+    await waitFor(() =>
+      expect(screen.queryByText("Only the workspace owner can edit email templates.")).toBeNull(),
+    );
   });
 });
 
