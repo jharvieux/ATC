@@ -157,3 +157,61 @@ describe("no-orphan-todo — pattern coverage (re-derived)", () => {
     expect(LINE_MARKER_RE.test("TODO(rbacnonsense): x")).toBe(true);
   });
 });
+
+describe("no-orphan-todo — mid-sentence marker detection", () => {
+  // Mirrors the mid-sentence regex from the rule (see no-orphan-todo.js).
+  // Mid-sentence markers: appear mid-line, followed by `:` or `(`, with invalid owner.
+  // (LINE_MARKER_RE catches line-start, PAREN_MARKER_RE catches after `(`, so MID_SENTENCE
+  // handles anything else with `:` or `(` following.)
+  const WHITELISTED_BARE_OWNERS = [
+    "legal-attorney",
+    "legal-counsel",
+    "operator",
+    "usps-validator",
+    "rag-service-count",
+    "pre-cruise-emails",
+    "rbac-tenant-admin",
+    "bp27-abuse-signals",
+    "BP19/§18",
+    "§22\\.4-haiku-redaction",
+    "§27\\.12-cost-display",
+    "§24-tone-content",
+    "§26",
+    "haiku-pii-redaction",
+    "help-ai-confidence-haiku",
+    "help-screenshot-pii-haiku",
+    "[a-z]+-haiku",
+    "prompt-\\d+",
+  ].join("|");
+  const MID_SENTENCE_MARKER_RE = new RegExp(
+    "(TODO|FIXME|XXX|HACK)\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+  );
+
+  it("flags mid-sentence TODO(notifications) with invalid owner", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("some text TODO(notifications) here")).toBe(true);
+  });
+  it("flags mid-sentence TODO(part-6) with invalid owner", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("Consumer is TODO(part-6).")).toBe(true);
+  });
+  it("flags mid-sentence TODO(notifications) with backticks (invalid owner)", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("`TODO(notifications)` markers prior")).toBe(true);
+  });
+  it("does not flag mid-sentence TODO(§26) with valid whitelisted owner", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("metrics. TODO(§26): replace with later")).toBe(false);
+  });
+  it("does not flag mid-sentence TODO(#123) with issue reference", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("some text TODO(#123) fix needed")).toBe(false);
+  });
+  it("does not flag mid-sentence TODO(@handle) with GitHub handle", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("refactor logic TODO(@alice) later")).toBe(false);
+  });
+  it("does not flag mid-sentence FIXME(operator) with whitelisted owner", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("manual step FIXME(operator) required")).toBe(false);
+  });
+  it("does not flag mid-sentence XXX(prompt-42) with numbered prompt", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("template XXX(prompt-42) config")).toBe(false);
+  });
+  it("does not flag mid-sentence TODO with no : or ( following (prose text)", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("The TODO marker needs fixing")).toBe(false);
+  });
+});

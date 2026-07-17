@@ -29,10 +29,11 @@ const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
 // Rejected: anything not on the list below, including generic placeholders
 // (owner, name, verify, notifications, part-6) and bogus/invented owners.
 //
-// Two patterns count as a marker:
+// Three patterns count as a marker:
 //   1. Marker at start of a comment line (the classic `// TODO: ...` slop)
 //   2. Marker inside a paren-tag like `(TODO: wire X)`
-// Both must have a valid owner: either #<digits>, @<handle>, or a whitelisted bare owner.
+//   3. Marker mid-sentence: preceded by space, not at line-start, not in parens
+// All must have a valid owner: either #<digits>, @<handle>, or a whitelisted bare owner.
 const WHITELISTED_BARE_OWNERS = [
   // Roles
   "legal-attorney",
@@ -65,6 +66,9 @@ const LINE_MARKER_RE = new RegExp(
 const PAREN_MARKER_RE = new RegExp(
   "\\(\\s*" + MARKER_GROUP + "\\b(?!\\s*(?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + ")|\\())"
 );
+const MID_SENTENCE_MARKER_RE = new RegExp(
+  MARKER_GROUP + "\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+);
 
 module.exports = {
   meta: {
@@ -87,12 +91,13 @@ module.exports = {
       Program() {
         for (const comment of sourceCode.getAllComments()) {
           // Walk each line of the comment body. Strip leading whitespace and
-          // a leading JSDoc `*`. Check both line-start and paren-tag patterns.
+          // a leading JSDoc `*`. Check line-start, paren-tag, and mid-sentence patterns.
           for (const rawLine of comment.value.split("\n")) {
             const line = rawLine.replace(/^\s*\*?\s*/, "");
             const lineMatch = LINE_MARKER_RE.exec(line);
             const parenMatch = PAREN_MARKER_RE.exec(line);
-            const match = lineMatch || parenMatch;
+            const midMatch = MID_SENTENCE_MARKER_RE.exec(line);
+            const match = lineMatch || parenMatch || midMatch;
             if (!match) continue;
             context.report({
               node: comment,
