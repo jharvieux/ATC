@@ -215,7 +215,7 @@ describe("no-orphan-todo — mid-sentence marker detection", () => {
     expect(MID_SENTENCE_MARKER_RE.test("The TODO marker needs fixing")).toBe(false);
   });
 
-  // #1980/#1983 fix: marker text embedded in a larger word (no boundary before
+  // #1980 fix: marker text embedded in a larger word (no boundary before
   // the marker group) used to false-positive, e.g. OLDTODO(part-6).
   it("does not flag marker text embedded in a larger word (OLDTODO)", () => {
     expect(
