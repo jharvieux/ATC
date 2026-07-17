@@ -26,6 +26,14 @@
 // directly above it. Suppressed loops are excluded so a future sweep does not
 // re-litigate a decision already made (e.g. the #1952 sites).
 //
+// CI gate (#1985): FREEZE-EXISTING / BLOCK-NEW, same doctrine as
+// check-unbounded-select.ts. Pre-existing un-annotated findings are frozen in
+// scripts/serial-await-baseline.txt (count-keyed by file, line-independent —
+// loop lines drift as files change). The guard fails only when a file's live
+// finding count exceeds its baseline. Suppress a genuinely-serial loop with
+// `serial-await-ok` instead of adding to the baseline; only use the baseline
+// for sites still awaiting review.
+//
 // Usage: tsx scripts/check-serial-await-in-loop.ts [srcDir ...]   # default: the two dirs above
 
 import fs from "node:fs";
@@ -33,6 +41,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const BASELINE_FILE = path.join(REPO_ROOT, "scripts/serial-await-baseline.txt");
 
 export interface SerialAwaitFinding {
   file: string;
@@ -241,6 +250,20 @@ function defaultDirs(): string[] {
   return dirs;
 }
 
+function loadBaseline(): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!fs.existsSync(BASELINE_FILE)) return map;
+  for (const raw of fs.readFileSync(BASELINE_FILE, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const sp = line.indexOf(" ");
+    const count = Number(line.slice(0, sp));
+    const file = line.slice(sp + 1);
+    if (Number.isFinite(count) && count > 0 && file) map.set(file, count);
+  }
+  return map;
+}
+
 function main(): void {
   const argDirs = process.argv.slice(2);
   const dirs = argDirs.length > 0 ? argDirs.map((d) => path.resolve(d)) : defaultDirs();
@@ -248,14 +271,38 @@ function main(): void {
   const findings = files.flatMap((abs) =>
     findSerialAwaitsInLoops(path.relative(REPO_ROOT, abs), fs.readFileSync(abs, "utf8")),
   );
-  if (findings.length === 0) {
-    console.log("serial-await-in-loop guard: ok — no per-iteration awaits found.");
-    return;
+
+  const liveCounts = new Map<string, number>();
+  for (const f of findings) liveCounts.set(f.file, (liveCounts.get(f.file) ?? 0) + 1);
+
+  const baseline = loadBaseline();
+  const fresh: { file: string; excess: number }[] = [];
+  for (const [file, count] of liveCounts) {
+    const based = baseline.get(file) ?? 0;
+    if (count > based) fresh.push({ file, excess: count - based });
   }
+  const stale = [...baseline].filter(([file, based]) => (liveCounts.get(file) ?? 0) < based);
+
+  if (fresh.length > 0) {
+    console.error(
+      "serial-await-in-loop guard: NEW per-iteration await(s) — review for Promise.all / mapWithConcurrency," +
+        " or suppress with `serial-await-ok: <reason>` if the loop must stay serial:\n",
+    );
+    for (const f of findings) {
+      if (fresh.some((e) => e.file === f.file)) console.error(`  ${f.file}:${f.loopLine}  (${f.loopKind})`);
+    }
+    console.error(
+      `\n${fresh.reduce((n, e) => n + e.excess, 0)} NEW finding(s) beyond scripts/serial-await-baseline.txt.`,
+    );
+    process.exit(1);
+  }
+
+  const note = stale.length > 0 ? ` (${stale.length} stale baseline entr(y/ies) — trim them)` : "";
   console.log(
-    `serial-await-in-loop guard: ${findings.length} loop(s) awaiting per-iteration — review for Promise.all / mapWithConcurrency:\n`,
+    `serial-await-in-loop guard passed: ${findings.length} pre-existing site(s) baselined, 0 new` +
+      note +
+      ".",
   );
-  for (const f of findings) console.log(`  ${f.file}:${f.loopLine}  (${f.loopKind})`);
 }
 
 // Only run main() when invoked directly (not when imported by the unit test).
