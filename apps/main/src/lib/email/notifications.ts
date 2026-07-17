@@ -1,5 +1,5 @@
-// §23 — Notification email helpers for the operational sites that had
-// `TODO(notifications)` markers prior to 2026-05-25.
+// §23 — Notification email helpers for operational sites.
+// Consolidates work previously tracked under placeholder markers prior to 2026-05-25.
 //
 // Two flavors:
 //
