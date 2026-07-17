@@ -107,19 +107,33 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// #1982 — the cascade reset runs as a PASSIVE effect after templates land. If
+// a findBy* resolves on a poll tick outside an act() boundary, that queued
+// effect doesn't flush until the NEXT act — which is the fireEvent below — so
+// the reset's functional update lands AFTER the typed value in the same flush
+// and wipes it. The window is sub-frame in a real browser (no user can type
+// inside it); only test schedulers hit it, and only under full-suite load.
+// Retrying until the value sticks is deterministic: the first attempt's act
+// flushes the pending reset (which also sets resetForTypeRef, so it can never
+// fire again for this type), and the retry always lands.
+async function typeUntilItSticks(input: HTMLInputElement, value: string) {
+  await waitFor(() => {
+    fireEvent.change(input, { target: { value } });
+    expect(input.value).toBe(value);
+  });
+}
+
 describe("EmailTemplatesSettingsPage — template-switch cascade reset (#1812)", () => {
   it("resets edit + preview state when switching template type, but leaves previewSource alone", async () => {
     installFetchRouter();
     render(<EmailTemplatesSettingsPage />);
     await screen.findByRole("heading", { name: "Booking confirmation" });
 
-    // Dirty the edit fields.
+    // Dirty the edit fields (retry-resilient: see typeUntilItSticks / #1982).
     const subjectInput = screen.getByPlaceholderText(
       "Your trip is confirmed, {{customer_name}}!",
     ) as HTMLInputElement;
-    fireEvent.change(subjectInput, { target: { value: "Edited subject" } });
-    // Wait for the controlled input to reflect the state change
-    await screen.findByDisplayValue("Edited subject");
+    await typeUntilItSticks(subjectInput, "Edited subject");
 
     // Switch the preview data source to "booking" and populate a selection —
     // this is the state the reset must clear on template-type switch.
@@ -262,12 +276,11 @@ describe("EmailTemplatesSettingsPage — save-triggered reload (#1912)", () => {
     fireEvent.click(result);
     await screen.findByText("Clear selection");
 
-    // Dirty the subject too, then save it.
+    // Dirty the subject too, then save it (retry-resilient: #1982).
     const subjectInput = screen.getByPlaceholderText(
       "Your trip is confirmed, {{customer_name}}!",
     ) as HTMLInputElement;
-    fireEvent.change(subjectInput, { target: { value: "Edited subject" } });
-    await screen.findByDisplayValue("Edited subject");
+    await typeUntilItSticks(subjectInput, "Edited subject");
 
     // save() PUTs, then calls load() again on success. load() replaces
     // `templates` with a brand-new array reference, but selectedType never
