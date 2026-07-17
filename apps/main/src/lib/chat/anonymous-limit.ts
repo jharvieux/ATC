@@ -149,7 +149,7 @@ export async function recordLimitHitAndCheckBurst(
       .gte("limit_hit_at", since);
     const hitCount = Array.isArray(data) ? data.length : 0;
     if (hitCount >= 3) {
-      // §24.8: emit for §27 abuse signal consumer. Consumer is TODO(part-6).
+      // §24.8: emit for §27 abuse signal consumer.
       await inngest.send({
         name: "chat.anonymous_chat_burst_detected",
         data: { tenant_id: input.tenant_id, ip: input.ip },
