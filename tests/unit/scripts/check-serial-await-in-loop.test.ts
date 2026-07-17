@@ -3,7 +3,12 @@
 // cases that must stay serial-looking to a scanner: for-await async iteration,
 // awaits already fanned out inside a callback, and awaits outside any loop.
 import { describe, it, expect } from "vitest";
-import { findSerialAwaitsInLoops } from "../../../scripts/check-serial-await-in-loop";
+import {
+  findSerialAwaitsInLoops,
+  loadBaseline,
+  diffAgainstBaseline,
+  noFilesScannedMessage,
+} from "../../../scripts/check-serial-await-in-loop";
 
 const F = "apps/main/src/inngest/job.ts";
 
@@ -59,5 +64,57 @@ describe("findSerialAwaitsInLoops", () => {
   it("ignores test files and non-ts", () => {
     expect(findSerialAwaitsInLoops("apps/main/src/x.test.ts", `for (const x of i) {\n await y(); \n}`)).toEqual([]);
     expect(findSerialAwaitsInLoops("apps/main/src/x.css", `for (const x of i) {\n await y(); \n}`)).toEqual([]);
+  });
+});
+
+// #1985 CI-gate additions — the baseline-diffing logic decides pass/fail, so a
+// regression here would either mask new serial-await sites (silently widening
+// the baseline) or spuriously fail every PR that touches a baselined file.
+describe("diffAgainstBaseline", () => {
+  it("reports a file fresh when its live count exceeds its baselined count", () => {
+    const live = new Map([["apps/main/src/inngest/job.ts", 2]]);
+    const baseline = new Map([["apps/main/src/inngest/job.ts", 1]]);
+    const { fresh } = diffAgainstBaseline(live, baseline);
+    expect(fresh).toEqual([{ file: "apps/main/src/inngest/job.ts", excess: 1 }]);
+  });
+
+  it("reports nothing fresh when the live count exactly matches the baseline", () => {
+    const live = new Map([["apps/main/src/inngest/job.ts", 3]]);
+    const baseline = new Map([["apps/main/src/inngest/job.ts", 3]]);
+    expect(diffAgainstBaseline(live, baseline).fresh).toEqual([]);
+  });
+
+  it("fails closed: with an empty baseline (missing file), every live finding is fresh", () => {
+    const live = new Map([
+      ["apps/main/src/inngest/job.ts", 2],
+      ["apps/main/src/lib/cron/sweep.ts", 1],
+    ]);
+    const { fresh } = diffAgainstBaseline(live, new Map());
+    expect(fresh.sort((a, b) => a.file.localeCompare(b.file))).toEqual([
+      { file: "apps/main/src/inngest/job.ts", excess: 2 },
+      { file: "apps/main/src/lib/cron/sweep.ts", excess: 1 },
+    ]);
+  });
+
+  it("flags a baseline entry as stale when the live count drops below it", () => {
+    const baseline = new Map([["apps/main/src/inngest/job.ts", 5]]);
+    const { stale } = diffAgainstBaseline(new Map(), baseline);
+    expect(stale).toEqual([["apps/main/src/inngest/job.ts", 5]]);
+  });
+});
+
+describe("loadBaseline", () => {
+  it("returns an empty map when the baseline file does not exist (fail-closed)", () => {
+    expect(loadBaseline("/nonexistent/path/does-not-exist-1985.txt")).toEqual(new Map());
+  });
+});
+
+describe("noFilesScannedMessage — #1985 BLOCKER: fail loud on zero files scanned", () => {
+  it("returns an error message when zero files were scanned (renamed/moved dirs)", () => {
+    expect(noFilesScannedMessage(0)).toMatch(/no files found under scanned dirs/);
+  });
+
+  it("returns null when at least one file was scanned", () => {
+    expect(noFilesScannedMessage(1)).toBeNull();
   });
 });

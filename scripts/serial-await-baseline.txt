@@ -1,0 +1,36 @@
+# Serial-await-in-loop guard baseline (scripts/check-serial-await-in-loop.ts, #1985).
+# Frozen pre-existing per-iteration-await loops not yet reviewed/annotated. The
+# guard blocks NEW occurrences only. Each line: <count> <relpath> (count-keyed,
+# line-independent — loop lines drift as files change).
+# Reviewed a site? Either add a `serial-await-ok: <reason>` comment (preferred —
+# removes it from the live count entirely) or lower/remove its line here once
+# fixed with Promise.all / mapWithConcurrency. DO NOT add new entries to silence
+# the guard.
+1 apps/main/src/inngest/abuse-recompute-nightly.ts
+3 apps/main/src/inngest/backfill-cruise-fk.ts
+1 apps/main/src/inngest/backfill-cruisemapper-ports.ts
+3 apps/main/src/inngest/compliance-nightly.ts
+2 apps/main/src/inngest/custom-domain-reverify.ts
+3 apps/main/src/inngest/data-retention-purge.ts
+2 apps/main/src/inngest/dob-estimate-reprompt-eligible.ts
+1 apps/main/src/inngest/duplicate-high-rate-signal.ts
+1 apps/main/src/inngest/email-bounce-rate-monitor.ts
+1 apps/main/src/inngest/email-retry-content-purge.ts
+1 apps/main/src/inngest/evaluate-price-watches.ts
+1 apps/main/src/inngest/group-reminder-cadence.ts
+2 apps/main/src/inngest/payouts-execute-transfer.ts
+1 apps/main/src/inngest/persona-addendum-rescreen-nightly.ts
+1 apps/main/src/inngest/persona-addendum-screen.ts
+1 apps/main/src/inngest/pre-cruise-email-scheduler.ts
+1 apps/main/src/inngest/quality-low-approval-signal.ts
+1 apps/main/src/inngest/quote-estimate-expiry-sweep.ts
+2 apps/main/src/inngest/rag-cost-reconcile.ts
+2 apps/main/src/inngest/re-encrypt-old-records.ts
+2 apps/main/src/inngest/reconcile-statement-automated.ts
+2 apps/main/src/inngest/refresh-cruisemapper-sailings.ts
+7 apps/main/src/inngest/refresh-cruisemapper-static.ts
+2 apps/main/src/inngest/sub-host-review-sla-monitor.ts
+2 apps/main/src/inngest/travel-news-refresh.ts
+2 apps/main/src/inngest/user-data-purge-after-grace.ts
+2 apps/main/src/lib/cron/payouts-reconcile-processing.ts
+2 apps/main/src/lib/cron/task-reminders-fire.ts
