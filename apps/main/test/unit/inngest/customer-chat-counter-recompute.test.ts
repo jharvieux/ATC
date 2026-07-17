@@ -238,4 +238,50 @@ describe("customerChatCounterRecompute — CAS vs concurrent increment (#1975)",
 
     expect(counters[0]!.current_count).toBe(12);
   });
+
+  it("applies the recompute for a row whose last_message_at is still null (no increment has ever landed)", async () => {
+    // Rows are only ever created by increment_customer_chat_count, which sets
+    // last_message_at — but the CAS falls back to `.is(..., null)` defensively.
+    // With no concurrent increment, that null snapshot still matches and the
+    // recomputed count is written.
+    counters = [
+      { user_id: "u-null", tenant_id: "t-1", current_count: 0, last_message_at: null },
+    ];
+    messageCountFor = { "u-null:t-1": 8 };
+
+    await runCron();
+
+    expect(counters[0]!.current_count).toBe(8);
+  });
+
+  it("skips the write when a concurrent increment sets last_message_at from null mid-recompute", async () => {
+    // Same race as the T0 case above, but starting from a null snapshot: the
+    // increment's `.is("last_message_at", null)` match window closes the
+    // moment it bumps the timestamp, so the recompute's null-guarded CAS must
+    // miss and the increment's fresh count must survive.
+    counters = [
+      { user_id: "u-null-race", tenant_id: "t-1", current_count: 0, last_message_at: null },
+    ];
+    messageCountFor = { "u-null-race:t-1": 8 };
+    incrementDuringCount = {
+      "u-null-race:t-1": () => {
+        const row = counters[0]!;
+        row.current_count = 1;
+        row.last_message_at = "2026-07-16T04:30:05.000Z"; // NOW() from the RPC
+      },
+    };
+
+    const consoleInfoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const result = (await runCron()) as { processed: number };
+    expect(result).toEqual({ processed: 1 });
+
+    expect(counters[0]!.current_count).toBe(1);
+    expect(consoleInfoSpy).toHaveBeenCalledWith(
+      "[customer-chat-counter-recompute] concurrent increment, skipping row",
+      expect.objectContaining({ user_id: "u-null-race", tenant_id: "t-1" }),
+    );
+
+    consoleInfoSpy.mockRestore();
+  });
 });
