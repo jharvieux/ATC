@@ -12,13 +12,16 @@
 // sandboxed iframe), sailing/booking data sources, and "Send to me" so owners
 // can receive the email in their own inbox for review or manual forwarding.
 //
-// #1812 — the 28 useState hooks are grouped into 4 state objects by concern
-// (same pattern as #1791 / integrations/page.tsx), one useState each. The
-// template-switch cascading-reset effect and the sailing/booking cascades are
+// #1812/#1979 — the 4 concern-grouped state objects (#1946) are now one
+// useReducer, so the cross-cutting template-switch reset — which touches all
+// four groups at once — is a single atomic dispatch instead of 4 sequential
+// setState calls. Every other update is a "patch this slice" action, a 1:1
+// mechanical replacement of the old `setXState((s) => ({ ...s, ... }))` calls.
+// The template-switch cascading-reset and the sailing/booking cascades are
 // pinned by test/unit/settings/email-templates-cascading-state.test.tsx —
-// this grouping preserves exactly which fields each cascade touches.
+// this refactor preserves exactly which fields each cascade touches.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { validateTemplate, renderTemplate, bodyTextToHtml } from "@/lib/email/template-engine";
@@ -124,6 +127,93 @@ interface PreviewSendState {
   sendStatus: { ok: boolean; message: string } | null;
 }
 
+interface PageState {
+  edit: EditState;
+  sailingCascade: SailingCascadeState;
+  bookingSearch: BookingSearchState;
+  previewSend: PreviewSendState;
+}
+
+type PageAction =
+  | { type: "patchEdit"; patch: Partial<EditState> }
+  | { type: "patchSailing"; patch: Partial<SailingCascadeState> }
+  | { type: "patchBooking"; patch: Partial<BookingSearchState> }
+  | { type: "patchPreview"; patch: Partial<PreviewSendState> }
+  | { type: "resetForTypeSwitch"; subject: string; body: string };
+
+const initialPageState: PageState = {
+  edit: {
+    templates: [],
+    selectedType: null,
+    subject: "",
+    body: "",
+    loading: true,
+    saving: false,
+    error: null,
+    savedAt: null,
+  },
+  sailingCascade: {
+    previewSource: "sample",
+    sailingLines: [],
+    sailingShips: [],
+    sailingOptions: [],
+    selectedLineId: "",
+    selectedShipId: "",
+    selectedSailingId: "",
+    loadingSailingShips: false,
+    loadingSailingOptions: false,
+    selectedSailing: null,
+  },
+  bookingSearch: {
+    bookingQuery: "",
+    bookingResults: [],
+    selectedBooking: null,
+    bookingSearching: false,
+  },
+  previewSend: {
+    previewHtml: null,
+    previewFetching: false,
+    sendDialogOpen: false,
+    sendToEmail: "",
+    sending: false,
+    sendStatus: null,
+  },
+};
+
+function pageReducer(state: PageState, action: PageAction): PageState {
+  switch (action.type) {
+    case "patchEdit":
+      return { ...state, edit: { ...state.edit, ...action.patch } };
+    case "patchSailing":
+      return { ...state, sailingCascade: { ...state.sailingCascade, ...action.patch } };
+    case "patchBooking":
+      return { ...state, bookingSearch: { ...state.bookingSearch, ...action.patch } };
+    case "patchPreview":
+      return { ...state, previewSend: { ...state.previewSend, ...action.patch } };
+    case "resetForTypeSwitch":
+      // Resets exactly the fields the previous template's edit/preview state
+      // owned. `previewSource` and `sailingLines` are deliberately NOT reset —
+      // see the "leaves previewSource alone" characterization test.
+      return {
+        ...state,
+        edit: { ...state.edit, subject: action.subject, body: action.body, error: null, savedAt: null },
+        previewSend: { ...state.previewSend, previewHtml: null },
+        sailingCascade: {
+          ...state.sailingCascade,
+          selectedSailing: null,
+          selectedLineId: "",
+          selectedShipId: "",
+          selectedSailingId: "",
+          sailingShips: [],
+          sailingOptions: [],
+        },
+        bookingSearch: { ...state.bookingSearch, selectedBooking: null, bookingQuery: "" },
+      };
+    default:
+      return state;
+  }
+}
+
 const AI_CONTENT_TOKEN_RE = /\{\{\s*ai_content\s*\}\}/;
 
 function AiContentBlock(props: { description: string }) {
@@ -138,49 +228,8 @@ function AiContentBlock(props: { description: string }) {
 }
 
 export default function EmailTemplatesSettingsPage() {
-  // ── Edit state ───────────────────────────────────────────────────────────
-  const [editState, setEditState] = useState<EditState>({
-    templates: [],
-    selectedType: null,
-    subject: "",
-    body: "",
-    loading: true,
-    saving: false,
-    error: null,
-    savedAt: null,
-  });
-
-  // ── Sailing cascade: line → ship → sailing date ─────────────────────────
-  const [sailingCascadeState, setSailingCascadeState] = useState<SailingCascadeState>({
-    previewSource: "sample",
-    sailingLines: [],
-    sailingShips: [],
-    sailingOptions: [],
-    selectedLineId: "",
-    selectedShipId: "",
-    selectedSailingId: "",
-    loadingSailingShips: false,
-    loadingSailingOptions: false,
-    selectedSailing: null,
-  });
-
-  // ── Booking search (debounced) ───────────────────────────────────────────
-  const [bookingSearchState, setBookingSearchState] = useState<BookingSearchState>({
-    bookingQuery: "",
-    bookingResults: [],
-    selectedBooking: null,
-    bookingSearching: false,
-  });
-
-  // ── Full preview + "send to me" ──────────────────────────────────────────
-  const [previewSendState, setPreviewSendState] = useState<PreviewSendState>({
-    previewHtml: null,
-    previewFetching: false,
-    sendDialogOpen: false,
-    sendToEmail: "",
-    sending: false,
-    sendStatus: null,
-  });
+  const [state, dispatch] = useReducer(pageReducer, initialPageState);
+  const { edit: editState, sailingCascade: sailingCascadeState, bookingSearch: bookingSearchState, previewSend: previewSendState } = state;
 
   const bookingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the selectedType the cascade reset last ran for. `templates` gets a
@@ -195,7 +244,7 @@ export default function EmailTemplatesSettingsPage() {
     const res = await fetch("/api/tenant/email-templates");
     if (!res.ok) throw new Error(`load_failed_${res.status}`);
     const data = (await res.json()) as { templates: TemplateEntry[] };
-    setEditState((s) => ({ ...s, templates: data.templates }));
+    dispatch({ type: "patchEdit", patch: { templates: data.templates } });
     return data.templates;
   }
 
@@ -205,7 +254,7 @@ export default function EmailTemplatesSettingsPage() {
       const res = await fetch("/api/cruise-lines");
       if (res.ok) {
         const json = (await res.json()) as { lines: CruiseLine[] };
-        setSailingCascadeState((s) => ({ ...s, sailingLines: json.lines ?? [] }));
+        dispatch({ type: "patchSailing", patch: { sailingLines: json.lines ?? [] } });
       }
     } catch {
       // Silently leave the dropdown empty; user can switch template type to retry.
@@ -214,39 +263,39 @@ export default function EmailTemplatesSettingsPage() {
 
   const loadSailingShips = useCallback(async (lineId: string) => {
     if (!lineId) {
-      setSailingCascadeState((s) => ({ ...s, sailingShips: [] }));
+      dispatch({ type: "patchSailing", patch: { sailingShips: [] } });
       return;
     }
-    setSailingCascadeState((s) => ({ ...s, loadingSailingShips: true }));
+    dispatch({ type: "patchSailing", patch: { loadingSailingShips: true } });
     try {
       const res = await fetch(`/api/cruise-ships?cruise_line_id=${encodeURIComponent(lineId)}`);
       if (res.ok) {
         const json = (await res.json()) as { ships: CruiseShip[] };
-        setSailingCascadeState((s) => ({ ...s, sailingShips: json.ships ?? [] }));
+        dispatch({ type: "patchSailing", patch: { sailingShips: json.ships ?? [] } });
       }
     } catch {
       // Silently leave ships empty; spinner already cleared by finally.
     } finally {
-      setSailingCascadeState((s) => ({ ...s, loadingSailingShips: false }));
+      dispatch({ type: "patchSailing", patch: { loadingSailingShips: false } });
     }
   }, []);
 
   const loadSailingOptions = useCallback(async (shipId: string) => {
     if (!shipId) {
-      setSailingCascadeState((s) => ({ ...s, sailingOptions: [] }));
+      dispatch({ type: "patchSailing", patch: { sailingOptions: [] } });
       return;
     }
-    setSailingCascadeState((s) => ({ ...s, loadingSailingOptions: true }));
+    dispatch({ type: "patchSailing", patch: { loadingSailingOptions: true } });
     try {
       const res = await fetch(`/api/cruise-sailings?cruise_ship_id=${encodeURIComponent(shipId)}`);
       if (res.ok) {
         const json = (await res.json()) as { sailings: CruiseSailingOption[] };
-        setSailingCascadeState((s) => ({ ...s, sailingOptions: json.sailings ?? [] }));
+        dispatch({ type: "patchSailing", patch: { sailingOptions: json.sailings ?? [] } });
       }
     } catch {
       // Silently leave sailings empty; spinner already cleared by finally.
     } finally {
-      setSailingCascadeState((s) => ({ ...s, loadingSailingOptions: false }));
+      dispatch({ type: "patchSailing", patch: { loadingSailingOptions: false } });
     }
   }, []);
 
@@ -256,12 +305,12 @@ export default function EmailTemplatesSettingsPage() {
       try {
         const list = await load();
         if (!cancelled && list.length > 0 && list[0]) {
-          setEditState((s) => ({ ...s, selectedType: list[0]!.type }));
+          dispatch({ type: "patchEdit", patch: { selectedType: list[0]!.type } });
         }
       } catch {
-        if (!cancelled) setEditState((s) => ({ ...s, error: "Failed to load email templates." }));
+        if (!cancelled) dispatch({ type: "patchEdit", patch: { error: "Failed to load email templates." } });
       } finally {
-        if (!cancelled) setEditState((s) => ({ ...s, loading: false }));
+        if (!cancelled) dispatch({ type: "patchEdit", patch: { loading: false } });
       }
     })();
     void loadSailingLines();
@@ -276,25 +325,11 @@ export default function EmailTemplatesSettingsPage() {
     if (!selected) return;
     if (resetForTypeRef.current === editState.selectedType) return;
     resetForTypeRef.current = editState.selectedType;
-    setEditState((s) => ({
-      ...s,
+    dispatch({
+      type: "resetForTypeSwitch",
       subject: selected.override?.subject_template ?? "",
       body: selected.override?.body_template ?? "",
-      error: null,
-      savedAt: null,
-    }));
-    // Reset preview when switching template types.
-    setPreviewSendState((s) => ({ ...s, previewHtml: null }));
-    setSailingCascadeState((s) => ({
-      ...s,
-      selectedSailing: null,
-      selectedLineId: "",
-      selectedShipId: "",
-      selectedSailingId: "",
-      sailingShips: [],
-      sailingOptions: [],
-    }));
-    setBookingSearchState((s) => ({ ...s, selectedBooking: null, bookingQuery: "" }));
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editState.selectedType, editState.templates]);
 
@@ -345,7 +380,7 @@ export default function EmailTemplatesSettingsPage() {
   // ── Save / reset ─────────────────────────────────────────────────────────
   async function save() {
     if (!selected) return;
-    setEditState((s) => ({ ...s, saving: true, error: null, savedAt: null }));
+    dispatch({ type: "patchEdit", patch: { saving: true, error: null, savedAt: null } });
     try {
       const res = await fetch(`/api/tenant/email-templates/${selected.type}`, {
         method: "PUT",
@@ -360,72 +395,73 @@ export default function EmailTemplatesSettingsPage() {
           | { error?: string; issues?: { detail: string }[] }
           | null;
         if (data?.issues?.length) {
-          setEditState((s) => ({ ...s, error: data.issues!.map((i) => i.detail).join(" ") }));
+          dispatch({ type: "patchEdit", patch: { error: data.issues!.map((i) => i.detail).join(" ") } });
         } else if (res.status === 403) {
-          setEditState((s) => ({ ...s, error: "Only the workspace owner can edit email templates." }));
+          dispatch({ type: "patchEdit", patch: { error: "Only the workspace owner can edit email templates." } });
         } else {
-          setEditState((s) => ({ ...s, error: `Save failed (${data?.error ?? res.status}).` }));
+          dispatch({ type: "patchEdit", patch: { error: `Save failed (${data?.error ?? res.status}).` } });
         }
         return;
       }
       await load();
-      setEditState((s) => ({ ...s, savedAt: new Date().toLocaleTimeString() }));
+      dispatch({ type: "patchEdit", patch: { savedAt: new Date().toLocaleTimeString() } });
     } catch {
-      setEditState((s) => ({ ...s, error: "Save failed — network error." }));
+      dispatch({ type: "patchEdit", patch: { error: "Save failed — network error." } });
     } finally {
-      setEditState((s) => ({ ...s, saving: false }));
+      dispatch({ type: "patchEdit", patch: { saving: false } });
     }
   }
 
   async function resetToDefault() {
     if (!selected) return;
     if (!window.confirm(`Reset "${selected.label}" to the platform default?`)) return;
-    setEditState((s) => ({ ...s, saving: true, error: null, savedAt: null }));
+    dispatch({ type: "patchEdit", patch: { saving: true, error: null, savedAt: null } });
     try {
       const res = await fetch(`/api/tenant/email-templates/${selected.type}`, { method: "DELETE" });
       if (!res.ok) {
-        setEditState((s) => ({
-          ...s,
-          error:
-            res.status === 403
-              ? "Only the workspace owner can edit email templates."
-              : `Reset failed (${res.status}).`,
-        }));
+        dispatch({
+          type: "patchEdit",
+          patch: {
+            error:
+              res.status === 403
+                ? "Only the workspace owner can edit email templates."
+                : `Reset failed (${res.status}).`,
+          },
+        });
         return;
       }
       await load();
-      setEditState((s) => ({ ...s, subject: "", body: "", savedAt: new Date().toLocaleTimeString() }));
+      dispatch({ type: "patchEdit", patch: { subject: "", body: "", savedAt: new Date().toLocaleTimeString() } });
     } catch {
-      setEditState((s) => ({ ...s, error: "Reset failed — network error." }));
+      dispatch({ type: "patchEdit", patch: { error: "Reset failed — network error." } });
     } finally {
-      setEditState((s) => ({ ...s, saving: false }));
+      dispatch({ type: "patchEdit", patch: { saving: false } });
     }
   }
 
   // ── Sailing cascade handlers ─────────────────────────────────────────────
   function handleSailingLineChange(lineId: string): void {
-    setSailingCascadeState((s) => ({
-      ...s,
-      selectedLineId: lineId,
-      selectedShipId: "",
-      selectedSailingId: "",
-      selectedSailing: null,
-      sailingShips: [],
-      sailingOptions: [],
-    }));
-    setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+    dispatch({
+      type: "patchSailing",
+      patch: {
+        selectedLineId: lineId,
+        selectedShipId: "",
+        selectedSailingId: "",
+        selectedSailing: null,
+        sailingShips: [],
+        sailingOptions: [],
+      },
+    });
+    dispatch({ type: "patchPreview", patch: { previewHtml: null } });
     void loadSailingShips(lineId);
   }
 
   function handleSailingShipChange(shipId: string): void {
-    setSailingCascadeState((s) => ({
-      ...s,
-      selectedShipId: shipId,
-      selectedSailingId: "",
-      selectedSailing: null,
-      sailingOptions: [],
-    }));
-    setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+    dispatch({
+      type: "patchSailing",
+      patch: { selectedShipId: shipId, selectedSailingId: "", selectedSailing: null, sailingOptions: [] },
+    });
+    dispatch({ type: "patchPreview", patch: { previewHtml: null } });
     void loadSailingOptions(shipId);
   }
 
@@ -433,43 +469,45 @@ export default function EmailTemplatesSettingsPage() {
     const s = sailingCascadeState.sailingOptions.find((x) => x.id === sailingId) ?? null;
     const line = sailingCascadeState.sailingLines.find((x) => x.id === sailingCascadeState.selectedLineId);
     const ship = sailingCascadeState.sailingShips.find((x) => x.id === sailingCascadeState.selectedShipId);
-    setSailingCascadeState((cur) => ({
-      ...cur,
-      selectedSailingId: sailingId,
-      selectedSailing:
-        s && line && ship
-          ? {
-              id: s.id,
-              departure_date: s.departure_date,
-              departure_port: s.departure_port,
-              duration_nights: s.duration_nights,
-              ship_name: ship.canonical_name,
-              cruise_line_name: line.display_name,
-            }
-          : null,
-    }));
-    setPreviewSendState((cur) => ({ ...cur, previewHtml: null }));
+    dispatch({
+      type: "patchSailing",
+      patch: {
+        selectedSailingId: sailingId,
+        selectedSailing:
+          s && line && ship
+            ? {
+                id: s.id,
+                departure_date: s.departure_date,
+                departure_port: s.departure_port,
+                duration_nights: s.duration_nights,
+                ship_name: ship.canonical_name,
+                cruise_line_name: line.display_name,
+              }
+            : null,
+      },
+    });
+    dispatch({ type: "patchPreview", patch: { previewHtml: null } });
   }
 
   // ── Booking search ───────────────────────────────────────────────────────
   const searchBookings = useCallback((q: string) => {
     if (bookingDebounceRef.current) clearTimeout(bookingDebounceRef.current);
     if (!q.trim() || q.trim().length < 2) {
-      setBookingSearchState((s) => ({ ...s, bookingResults: [] }));
+      dispatch({ type: "patchBooking", patch: { bookingResults: [] } });
       return;
     }
     bookingDebounceRef.current = setTimeout(async () => {
-      setBookingSearchState((s) => ({ ...s, bookingSearching: true }));
+      dispatch({ type: "patchBooking", patch: { bookingSearching: true } });
       try {
         const res = await fetch(
           `/api/bookings?contact_query=${encodeURIComponent(q)}&page_size=8`,
         );
         if (res.ok) {
           const data = (await res.json()) as { bookings: BookingResult[] };
-          setBookingSearchState((s) => ({ ...s, bookingResults: data.bookings }));
+          dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings } });
         }
       } finally {
-        setBookingSearchState((s) => ({ ...s, bookingSearching: false }));
+        dispatch({ type: "patchBooking", patch: { bookingSearching: false } });
       }
     }, 400);
   }, []);
@@ -495,32 +533,32 @@ export default function EmailTemplatesSettingsPage() {
   async function loadPreview() {
     const url = previewUrl();
     if (!url) return;
-    setPreviewSendState((s) => ({ ...s, previewFetching: true, previewHtml: null }));
+    dispatch({ type: "patchPreview", patch: { previewFetching: true, previewHtml: null } });
     try {
       const res = await fetch(url);
       if (res.ok) {
         const html = await res.text();
-        setPreviewSendState((s) => ({ ...s, previewHtml: html }));
+        dispatch({ type: "patchPreview", patch: { previewHtml: html } });
       } else {
-        setPreviewSendState((s) => ({
-          ...s,
-          previewHtml: `<p style="color:red;font-family:sans-serif;padding:16px">Preview failed (${res.status}).</p>`,
-        }));
+        dispatch({
+          type: "patchPreview",
+          patch: { previewHtml: `<p style="color:red;font-family:sans-serif;padding:16px">Preview failed (${res.status}).</p>` },
+        });
       }
     } catch {
-      setPreviewSendState((s) => ({
-        ...s,
-        previewHtml: `<p style="color:red;font-family:sans-serif;padding:16px">Preview failed — network error.</p>`,
-      }));
+      dispatch({
+        type: "patchPreview",
+        patch: { previewHtml: `<p style="color:red;font-family:sans-serif;padding:16px">Preview failed — network error.</p>` },
+      });
     } finally {
-      setPreviewSendState((s) => ({ ...s, previewFetching: false }));
+      dispatch({ type: "patchPreview", patch: { previewFetching: false } });
     }
   }
 
   // ── Send to me ───────────────────────────────────────────────────────────
   async function sendPreview() {
     if (!selected || !previewSendState.sendToEmail.trim()) return;
-    setPreviewSendState((s) => ({ ...s, sending: true, sendStatus: null }));
+    dispatch({ type: "patchPreview", patch: { sending: true, sendStatus: null } });
     try {
       const body_payload: Record<string, string> = { to_email: previewSendState.sendToEmail.trim() };
       if (sailingCascadeState.previewSource === "sailing" && sailingCascadeState.selectedSailing) {
@@ -534,31 +572,31 @@ export default function EmailTemplatesSettingsPage() {
         body: JSON.stringify(body_payload),
       });
       if (res.ok) {
-        setPreviewSendState((s) => ({
-          ...s,
-          sendStatus: { ok: true, message: `Preview sent to ${previewSendState.sendToEmail.trim()}.` },
-        }));
+        dispatch({
+          type: "patchPreview",
+          patch: { sendStatus: { ok: true, message: `Preview sent to ${previewSendState.sendToEmail.trim()}.` } },
+        });
       } else if (res.status === 429) {
-        setPreviewSendState((s) => ({
-          ...s,
-          sendStatus: { ok: false, message: "Daily limit reached (10 previews per day)." },
-        }));
+        dispatch({
+          type: "patchPreview",
+          patch: { sendStatus: { ok: false, message: "Daily limit reached (10 previews per day)." } },
+        });
       } else if (res.status === 403) {
-        setPreviewSendState((s) => ({
-          ...s,
-          sendStatus: { ok: false, message: "Only the workspace owner can send preview emails." },
-        }));
+        dispatch({
+          type: "patchPreview",
+          patch: { sendStatus: { ok: false, message: "Only the workspace owner can send preview emails." } },
+        });
       } else {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        setPreviewSendState((s) => ({
-          ...s,
-          sendStatus: { ok: false, message: data?.error ?? `Send failed (${res.status}).` },
-        }));
+        dispatch({
+          type: "patchPreview",
+          patch: { sendStatus: { ok: false, message: data?.error ?? `Send failed (${res.status}).` } },
+        });
       }
     } catch {
-      setPreviewSendState((s) => ({ ...s, sendStatus: { ok: false, message: "Send failed — network error." } }));
+      dispatch({ type: "patchPreview", patch: { sendStatus: { ok: false, message: "Send failed — network error." } } });
     } finally {
-      setPreviewSendState((s) => ({ ...s, sending: false }));
+      dispatch({ type: "patchPreview", patch: { sending: false } });
     }
   }
 
@@ -589,7 +627,7 @@ export default function EmailTemplatesSettingsPage() {
           {editState.templates.map((t) => (
             <button
               key={t.type}
-              onClick={() => setEditState((s) => ({ ...s, selectedType: t.type }))}
+              onClick={() => dispatch({ type: "patchEdit", patch: { selectedType: t.type } })}
               className={`text-left px-3 py-2 rounded text-[13px] border transition-colors ${
                 t.type === editState.selectedType
                   ? "border-blue-500 bg-blue-50 font-semibold"
@@ -619,7 +657,7 @@ export default function EmailTemplatesSettingsPage() {
                   <input
                     className={TEXT_INPUT_CLS}
                     value={editState.subject}
-                    onChange={(e) => setEditState((s) => ({ ...s, subject: e.target.value }))}
+                    onChange={(e) => dispatch({ type: "patchEdit", patch: { subject: e.target.value } })}
                     placeholder={selected.default_subject_template}
                     maxLength={300}
                   />
@@ -630,7 +668,7 @@ export default function EmailTemplatesSettingsPage() {
                   <textarea
                     className={`${TEXT_INPUT_CLS} min-h-[180px] font-mono`}
                     value={editState.body}
-                    onChange={(e) => setEditState((s) => ({ ...s, body: e.target.value }))}
+                    onChange={(e) => dispatch({ type: "patchEdit", patch: { body: e.target.value } })}
                     placeholder="Leave blank to use the platform default body."
                     maxLength={10000}
                   />
@@ -788,8 +826,8 @@ export default function EmailTemplatesSettingsPage() {
                           value={value}
                           checked={sailingCascadeState.previewSource === value}
                           onChange={() => {
-                            setSailingCascadeState((s) => ({ ...s, previewSource: value }));
-                            setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+                            dispatch({ type: "patchSailing", patch: { previewSource: value } });
+                            dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                           }}
                           className="mt-0.5"
                         />
@@ -889,12 +927,11 @@ export default function EmailTemplatesSettingsPage() {
                           : bookingSearchState.bookingQuery
                       }
                       onChange={(e) => {
-                        setBookingSearchState((s) => ({
-                          ...s,
-                          selectedBooking: null,
-                          bookingQuery: e.target.value,
-                        }));
-                        setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+                        dispatch({
+                          type: "patchBooking",
+                          patch: { selectedBooking: null, bookingQuery: e.target.value },
+                        });
+                        dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                       }}
                       placeholder="Type a customer name…"
                     />
@@ -914,12 +951,11 @@ export default function EmailTemplatesSettingsPage() {
                             <li key={b.id}>
                               <button
                                 onClick={() => {
-                                  setBookingSearchState((s) => ({
-                                    ...s,
-                                    selectedBooking: b,
-                                    bookingResults: [],
-                                  }));
-                                  setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+                                  dispatch({
+                                    type: "patchBooking",
+                                    patch: { selectedBooking: b, bookingResults: [] },
+                                  });
+                                  dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                                 }}
                                 className="w-full text-left px-3 py-2 text-[13px] hover:bg-accent"
                               >
@@ -943,8 +979,11 @@ export default function EmailTemplatesSettingsPage() {
                     {bookingSearchState.selectedBooking ? (
                       <button
                         onClick={() => {
-                          setBookingSearchState((s) => ({ ...s, selectedBooking: null, bookingQuery: "" }));
-                          setPreviewSendState((s) => ({ ...s, previewHtml: null }));
+                          dispatch({
+                            type: "patchBooking",
+                            patch: { selectedBooking: null, bookingQuery: "" },
+                          });
+                          dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                         }}
                         className="text-[12px] text-blue-600 mt-1 hover:underline"
                       >
@@ -976,7 +1015,7 @@ export default function EmailTemplatesSettingsPage() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setPreviewSendState((s) => ({ ...s, sendDialogOpen: true, sendStatus: null }));
+                      dispatch({ type: "patchPreview", patch: { sendDialogOpen: true, sendStatus: null } });
                     }}
                     disabled={!canOpenPreview}
                   >
@@ -1007,7 +1046,7 @@ export default function EmailTemplatesSettingsPage() {
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setPreviewSendState((s) => ({ ...s, sendDialogOpen: false }));
+            if (e.target === e.currentTarget) dispatch({ type: "patchPreview", patch: { sendDialogOpen: false } });
           }}
         >
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 flex flex-col gap-4">
@@ -1022,7 +1061,7 @@ export default function EmailTemplatesSettingsPage() {
                 className={TEXT_INPUT_CLS}
                 type="email"
                 value={previewSendState.sendToEmail}
-                onChange={(e) => setPreviewSendState((s) => ({ ...s, sendToEmail: e.target.value }))}
+                onChange={(e) => dispatch({ type: "patchPreview", patch: { sendToEmail: e.target.value } })}
                 placeholder="you@youragency.com"
                 maxLength={254}
                 autoFocus
@@ -1038,7 +1077,7 @@ export default function EmailTemplatesSettingsPage() {
             <div className="flex gap-2 justify-end">
               <Button
                 variant="outline"
-                onClick={() => setPreviewSendState((s) => ({ ...s, sendDialogOpen: false }))}
+                onClick={() => dispatch({ type: "patchPreview", patch: { sendDialogOpen: false } })}
               >
                 Close
               </Button>

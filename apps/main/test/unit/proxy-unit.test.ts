@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   getTenantByAuthUserId: vi.fn(),
   getTenantById: vi.fn(),
   getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+  // #1932 hybrid — clean local miss by default, so this file's tests keep
+  // driving identity through getUser() exactly as they always did.
+  getClaims: vi.fn().mockResolvedValue({ data: null, error: null }),
 }));
 
 vi.mock("@/lib/tenancy/resolve-tenant", () => ({
@@ -31,7 +34,7 @@ vi.mock("@/lib/tenancy/resolve-tenant", () => ({
 vi.mock("@/lib/auth/ssr-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/ssr-client")>()),
   createMiddlewareClient: () => ({
-    supabase: { auth: { getUser: mocks.getUser } },
+    supabase: { auth: { getUser: mocks.getUser, getClaims: mocks.getClaims } },
     applyRefreshedSession: <T>(res: T): T => res,
   }),
 }));
@@ -61,6 +64,7 @@ function makeReq(opts: { host: string; pathname?: string; headers?: Record<strin
 describe("proxy()", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getClaims.mockResolvedValue({ data: null, error: null });
     process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
     process.env.PLATFORM_DOMAIN_REGEX = "^atc-([a-z0-9-]+)\\.ai-travelconcierge\\.com$";
     delete process.env.TEST_AUTH_BYPASS_TOKEN;

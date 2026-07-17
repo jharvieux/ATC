@@ -214,6 +214,16 @@ jobs:
         # error. Presence check; pre-existing sites frozen in the baseline.
         run: pnpm check:unbounded-select
 
+      - name: Serial-await-in-loop guard (#1789/#1951/#1985)
+        # Fails on a NEW loop that awaits once per iteration in a background-job
+        # directory (apps/*/src/inngest/**, apps/*/src/lib/cron/**) — the N+1
+        # serial-await pattern that bounded Promise.all / mapWithConcurrency
+        # fan-out fixes when iterations are independent. Presence check;
+        # pre-existing un-annotated sites frozen in the baseline. Suppress a
+        # genuinely-serial loop with `serial-await-ok: <reason>` instead of
+        # adding to the baseline.
+        run: pnpm check:serial-await
+
       - name: URL-validator guard (#1393/G2)
         # Fails on a new z.string().url() for a stored/rendered URL field —
         # must use safeUrl (@atc/contracts) which denies file://, cloud-metadata,

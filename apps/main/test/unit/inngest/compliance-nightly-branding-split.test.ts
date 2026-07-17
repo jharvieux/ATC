@@ -157,6 +157,19 @@ describe("compliance-nightly — #1740 tenants/tenant_branding column split", ()
     expect(tenantArg["email_from_address"]).toBe("concierge@tenant.com");
     expect(tenantArg["tenant_resend_api_key_encrypted"]).toBe("enc-key");
   });
+
+  // #1984 — pins the idempotencyKey TEMPLATE, not just its presence. If a
+  // refactor drops `level` from the key or swaps the id field, Resend-side
+  // dedup silently breaks (a retry sends a duplicate reminder) with nothing
+  // going red — this test is the thing that goes red instead.
+  it("keys the Resend idempotencyKey as inactivity_reminder:<tenant id>:<level>", async () => {
+    await runCron();
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+    // Fixture: t1 idle 95 days (see conversations/bookings mock above) trips
+    // the 90d nudge level.
+    expect(mocks.sendEmailArgs[0]!["idempotencyKey"]).toBe("inactivity_reminder:t1:90d");
+  });
 });
 
 // #1740 root cause was not the wrong column — it was that the wrong column was
