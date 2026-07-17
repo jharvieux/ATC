@@ -1,26 +1,21 @@
-# Session state — last updated 2026-07-16 23:20 UTC
+# Session state — last updated 2026-07-17 03:15 UTC
 
 ## Just completed
-- Issue sweep #5: 11 PRs merged, 29 issues closed / 7 filed (net −22) — full record in MEMORY D-360.
-- #1932 dedicated task (operator: "on Fable"): hybrid local JWT verify in proxy.ts §1b — PR #1987 open, TWO commits pushed (409ff1fb implementation + 14182a5c audit-fix round). Design + the audit-found `_removeSession` heal seam recorded in MEMORY D-361.
-- #1982 flake root-caused (act-boundary race, test-side) — fix PR #1988 open, both audits CLEAN, `deferred` label created and applied to #1247/#1805/#1921/#1931 per operator.
+- Issue sweep #6 (full record in MEMORY D-362): 8 PRs merged (#1987, #1988, #1990–#1993, #1995, #1996), 9 issues closed (#1932, #1974, #1975, #1979, #1980, #1982, #1984, #1985, #1901), 2 filed (#1994 recompute paging, #1997 kill-switch runbook doc) — net −7.
+- SESSION step-0 backlog cleared: PR #1988 (flake #1982) and PR #1987 (#1932 local JWT verify) audited and merged at the head of the train.
+- #1782 FK-index half re-verified as shipped (PR #1881); trail comment added; issue stays open as the 210-unused-index pruning tracker.
+- Merge-queue question answered for operator: not enabled; recommended against for now (audit-gate hash binding + migration ledger ordering); revisit at ~15+ concurrent PRs per sweep.
 
 ## In flight
-- **PR #1988** (flake fix): audits clean but marker comments UNPOSTED — GitHub's paginated pulls/files API was returning 500/503s all evening (the marker script's compute_diff_hash needs it). All other CI green.
-- **PR #1987** (#1932): audit-fix round pushed but NOT re-audited; `pnpm verify` on this branch trips the #1982 flake near-deterministically until #1988 merges (worker-ordering shift). Deliberately queued behind #1988.
+Nothing in flight — clean checkpoint.
 
 ## Next step
-Strict order, first action of next session:
-1. Probe `gh api repos/jharvieux/ATC/pulls/1988/files --paginate` — once it returns JSON (not HTML), re-run BOTH audit agents on PR #1988 (sonnet; tiny test-only diff; prior reports were clean — this is just to get markers posted), rerun the audit gate, squash-merge #1988 (`Closes #1982`).
-2. Rebase feature/1932-middleware-local-verify onto dev, `pnpm verify` (should now be flake-clean), push.
-3. Fresh audit pair on PR #1987 (Opus for d091 minimum — session-refresh boundary; instruct auditors to verify the `AuthSessionMissingError`-heal widening against the `_removeSession` trace in MEMORY D-361), gate, squash-merge (`Closes #1932`).
-4. Confirm tonight's contracts-canary went green (PR #1983's fix) — if still red, reopen #1968.
+- Confirm the 2026-07-17 ~11:00 UTC contracts-canary run goes green (the last failure at 07-16 11:01 UTC predates PR #1983's fix, merged 21:59 UTC). If still red, reopen #1968.
 
 ## Blocked on user
-- #1950 (reconcile-statement parallelization) — still unruled; "also serial" closes it, or park+label.
+- #1950 (reconcile-statement parallelization) — still unruled; "also serial" closes it, or keep parked.
 - #1953 (companion/supervisor caching) — options on the issue, needs a pick.
-- Prod migration apply (#1623) — declined for now; prod-drift-check stays red by design until scheduled.
+- Prod migration apply (#1623) — declined for now; prod-drift-check stays red by design until scheduled. Note: #1990's and #1881's indexes also reach prod only via that gated apply.
 
 ## Open questions
-- GitHub Files-API outage: if it persists into next session, the audit gate can't be satisfied for ANY PR (compute_diff_hash depends on it) — nothing on our side to fix, just wait.
-- Sweep follow-ups open: #1974, #1975, #1979, #1980, #1984, #1985; #1773 stays open by design pending #1843.
+- Sweep-eligible issues remaining open by design: #1994, #1997 (this sweep's follow-ups), #1782 (pruning tracker, opus, operator-gated), #1728 (deferred large feature — operator wants a dedicated session).
