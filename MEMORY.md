@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-362 — 2026-07-16 — Issue sweep #6: 8 PRs merged, 9 issues closed / 2 filed (net −7)
+
+**Decision.** Ran /issue-sweep (portable variant) over 32 triage candidates. Operator approved the full recommended plan verbatim: include the four supervised batches (#1975 migration-scoped, #1901 billing+migration, #1985 CI wiring, #1782 FK-indexes-only), defer #1728 (large inbound-email feature) to a dedicated session, and land the SESSION.md step-0 PRs (#1988 → #1987) at the head of the merge train.
+
+**Outcomes.** Merged: #1988 (flake #1982), #1987 (#1932 middleware local verify — D-361 seam verified by Opus audit pair), #1992 (#1975 chat-counter CAS race — fixed WITHOUT the predicted migration, CAS on last_message_at), #1990 (#1901 rollover audit dedup — partial unique index 20260722000027), #1991 (#1984 Resend idempotency-key pins; #1974 closed by analysis: only compliance-nightly had the pattern and it's already bounded), #1996 (#1979 email-templates reducer refactor, field-parity verified 1:1), #1993 (#1985 serial-await CI gate), #1995 (#1980 mid-sentence TODO detection). #1782's FK half was stale (already shipped in PR #1881) — issue stays open by owner decision as the 210-unused-index pruning tracker.
+
+**Audit layer earned its cost.** Post-verify audits caught two real defects executors missed: the serial-await guard failed OPEN when its scanned dirs vanish (reproduced, fixed in #1993), and the new lint regex false-flagged marker text embedded in larger words (OLDTODO — reproduced via RuleTester, fixed in #1995). Plus intent-gap test coverage (null-CAS branch in #1992, period key segment in #1990) applied in-PR per the "non-blocking describes when, not where" rule.
+
+**Filed.** #1994 (recompute bulk select unordered vs PostgREST max-rows — out-of-diff d091 finding), #1997 (document AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED kill switch in an ops runbook).
+
+**Dropped with rationale (audit nits not worth staling markers).** 1992 mock is/eq fidelity (pre-existing harness trait; the meaningful mutation IS covered); 1990 23505 catch not constraint-scoped (matches the #1844 convention per the auditor itself); 1991 repeated WHY-comment boilerplate (independent files, informational); 1996 destructure formatting + helper relocation (cosmetic).
+
+**Rejected.** Enabling GitHub merge queue (operator asked): no queue is configured on dev; rejected for now because the hash-bound audit gate would auto-eject queue entries the manual rebind flow handles deliberately, and migration trains need ledger-ownership ordering a time-ordered queue can't express. Revisit if sweeps regularly exceed ~15 concurrent PRs.
+
+**Related.** Sweep ledger pattern per ATC#1620 skill; prior sweep record D-360.
+
+---
+
 ## D-361 — 2026-07-16 — #1932 middleware hybrid local JWT verify (PR #1987, in flight at session end)
 
 **Decision.** proxy.ts §1b verifies sessions locally (verifyIdentity → getClaims, ES256 vs cached JWKS) and calls network getUser() only on a local miss. Refresh timing unchanged — no-arg getClaims reads the session via getSession(), which auto-refreshes within the same 90s EXPIRY_MARGIN_MS getUser() used (verified against installed auth-js 2.108.1 source, not memory). Kill switch: `AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED=true` (repo flag idiom). Staged rollout = beta on dev-merge, prod at next release cut.

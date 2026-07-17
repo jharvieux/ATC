@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-362 — 2026-07-16 — Issue sweep #6: 8 PRs merged, 9 closed / 2 filed (net −7); audits caught fail-open guard + lint false-positive post-verify; merge queue evaluated and rejected (audit-gate hash + migration ledger ordering); #1728 deferred, #1782 stays as pruning tracker.
 - D-361 — 2026-07-16 — #1932 middleware hybrid local JWT verify (PR #1987 in flight): getClaims local-first + getUser handoff; heal widened for the _removeSession seam (AuthSessionMissingError+cookie = dead); kill switch AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED; revocation-latency tradeoff accepted; resume order 1988→rebase→re-audit.
 - D-360 — 2026-07-16 — Sweep #5 (portable /issue-sweep): 11 PRs merged, 29 issues closed / 7 filed (net −22); audits caught 5 real pre-merge defect families incl. a chat-quota fail-open; operator rulings recorded (1923 accept, 1948/1949 serial, 1932 → Fable task, prod apply declined).
 - D-359 — 2026-07-16 — Persona prompt truth pass (PR #1965): all six travel personas rebuilt from docx character + primary-source fact-check; docx authoritative for character NOT domain facts; code-side KNOWLEDGE_FRESHNESS_BLOCK (retrieved data beats memory, no prices from memory); migration 20260722000024 intentionally overwrites admin edits; research record docs/specs/persona-fact-check-2026-07.md.
