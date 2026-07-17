@@ -128,6 +128,20 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
     expect(call.subject).toContain("NCL — Bliss");
   });
 
+  // #1984 — pins the idempotencyKey TEMPLATE, not just its presence. If a
+  // refactor drops the quote id or swaps in a different field, Resend-side
+  // dedup silently breaks (a retry sends a duplicate email) with nothing
+  // going red — this test is the thing that goes red instead.
+  it("keys the Resend idempotencyKey as quote_estimate_expired:<quote id>", async () => {
+    mockSendEmail.mockResolvedValue({ status: "sent" });
+    setupHappyPathMocks();
+
+    await runSweep();
+
+    const call = mockSendEmail.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.idempotencyKey).toBe(`quote_estimate_expired:${QUOTE_ROW.id}`);
+  });
+
   it("§38 — falls back to the generic subject when the quote has no options", async () => {
     mockSendEmail.mockResolvedValue({ status: "sent" });
     let quotesCallCount = 0;

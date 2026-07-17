@@ -165,6 +165,20 @@ describe("group-reminder-cadence — send path (#1102)", () => {
     expect(invitationUpdateSpy).toHaveBeenCalledOnce();
   });
 
+  // #1984 — pins the idempotencyKey TEMPLATE, not just its presence. If a
+  // refactor drops the invitation id or swaps in a different field, Resend-side
+  // dedup silently breaks (a retry sends a duplicate reminder) with nothing
+  // going red — this test is the thing that goes red instead.
+  it("keys the Resend idempotencyKey as group_reminder:<invitation id>", async () => {
+    sendEmailMock.mockResolvedValue({ status: "sent", resend_message_id: "m-1" });
+
+    await run();
+
+    expect(sendEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: `group_reminder:${invitationsPool[0]!.id}` }),
+    );
+  });
+
   it("skips a suppressed recipient without stamping last_email_sent_at", async () => {
     sendEmailMock.mockResolvedValue({ status: "suppressed", reason: "unsubscribe_all" });
 
