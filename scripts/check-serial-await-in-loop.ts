@@ -8,10 +8,10 @@
 // independent.
 //
 // Scope: `apps/*/src/inngest/**` and `apps/*/src/lib/cron/**` (the background-job
-// directories #1789/#1951 name). Report-only (exit 0) — a flagged loop is a
-// REVIEW candidate, not a confirmed defect: the iterations may be genuinely
-// sequential (each needs the prior result), claim/send-ordered, or time-budget
-// guarded, all of which must stay serial.
+// directories #1789/#1951 name). A flagged loop is a REVIEW candidate, not a
+// confirmed defect: the iterations may be genuinely sequential (each needs the
+// prior result), claim/send-ordered, or time-budget guarded, all of which must
+// stay serial.
 //
 // What counts as a finding: an `await` whose nearest enclosing function-or-loop
 // scope is a LOOP (`for`/`for..of`/`for..in`/`while`/`do`). Deliberately EXCLUDED:
@@ -250,24 +250,57 @@ function defaultDirs(): string[] {
   return dirs;
 }
 
-function loadBaseline(): Map<string, number> {
+// Optional `file` param (default: the repo's real baseline) so tests can exercise
+// a missing file without touching the checked-in baseline.
+export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(BASELINE_FILE)) return map;
-  for (const raw of fs.readFileSync(BASELINE_FILE, "utf8").split("\n")) {
+  if (!fs.existsSync(file)) return map;
+  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
     const count = Number(line.slice(0, sp));
-    const file = line.slice(sp + 1);
-    if (Number.isFinite(count) && count > 0 && file) map.set(file, count);
+    const f = line.slice(sp + 1);
+    if (Number.isFinite(count) && count > 0 && f) map.set(f, count);
   }
   return map;
+}
+
+export interface BaselineDiff {
+  fresh: { file: string; excess: number }[];
+  stale: [string, number][];
+}
+
+export function diffAgainstBaseline(
+  liveCounts: Map<string, number>,
+  baseline: Map<string, number>,
+): BaselineDiff {
+  const fresh: { file: string; excess: number }[] = [];
+  for (const [file, count] of liveCounts) {
+    const based = baseline.get(file) ?? 0;
+    if (count > based) fresh.push({ file, excess: count - based });
+  }
+  const stale = [...baseline].filter(([file, based]) => (liveCounts.get(file) ?? 0) < based);
+  return { fresh, stale };
+}
+
+// Zero files scanned means the scanned dirs are gone (renamed/moved) — fail
+// loud instead of silently reporting "0 baselined, 0 new" forever.
+export function noFilesScannedMessage(fileCount: number): string | null {
+  return fileCount === 0
+    ? "serial-await-in-loop guard: no files found under scanned dirs — check paths."
+    : null;
 }
 
 function main(): void {
   const argDirs = process.argv.slice(2);
   const dirs = argDirs.length > 0 ? argDirs.map((d) => path.resolve(d)) : defaultDirs();
   const files = dirs.flatMap(walk);
+  const noFilesMsg = noFilesScannedMessage(files.length);
+  if (noFilesMsg) {
+    console.error(noFilesMsg);
+    process.exit(1);
+  }
   const findings = files.flatMap((abs) =>
     findSerialAwaitsInLoops(path.relative(REPO_ROOT, abs), fs.readFileSync(abs, "utf8")),
   );
@@ -276,12 +309,7 @@ function main(): void {
   for (const f of findings) liveCounts.set(f.file, (liveCounts.get(f.file) ?? 0) + 1);
 
   const baseline = loadBaseline();
-  const fresh: { file: string; excess: number }[] = [];
-  for (const [file, count] of liveCounts) {
-    const based = baseline.get(file) ?? 0;
-    if (count > based) fresh.push({ file, excess: count - based });
-  }
-  const stale = [...baseline].filter(([file, based]) => (liveCounts.get(file) ?? 0) < based);
+  const { fresh, stale } = diffAgainstBaseline(liveCounts, baseline);
 
   if (fresh.length > 0) {
     console.error(
