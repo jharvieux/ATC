@@ -184,7 +184,7 @@ describe("no-orphan-todo — mid-sentence marker detection", () => {
     "prompt-\\d+",
   ].join("|");
   const MID_SENTENCE_MARKER_RE = new RegExp(
-    "(TODO|FIXME|XXX|HACK)\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+    "(?<![A-Za-z0-9_])(TODO|FIXME|XXX|HACK)\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
   );
 
   it("flags mid-sentence TODO(notifications) with invalid owner", () => {
@@ -213,5 +213,21 @@ describe("no-orphan-todo — mid-sentence marker detection", () => {
   });
   it("does not flag mid-sentence TODO with no : or ( following (prose text)", () => {
     expect(MID_SENTENCE_MARKER_RE.test("The TODO marker needs fixing")).toBe(false);
+  });
+
+  // #1980/#1983 fix: marker text embedded in a larger word (no boundary before
+  // the marker group) used to false-positive, e.g. OLDTODO(part-6).
+  it("does not flag marker text embedded in a larger word (OLDTODO)", () => {
+    expect(
+      MID_SENTENCE_MARKER_RE.test(
+        "the legacy OLDTODO(part-6) flag was removed after migration"
+      )
+    ).toBe(false);
+  });
+  it("flags bare-colon mid-sentence marker with no owner (HACK:)", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("some text HACK: fix this")).toBe(true);
+  });
+  it("does not flag mid-sentence TODO(#456): with issue reference and trailing colon", () => {
+    expect(MID_SENTENCE_MARKER_RE.test("deploy note. TODO(#456): rotate key")).toBe(false);
   });
 });

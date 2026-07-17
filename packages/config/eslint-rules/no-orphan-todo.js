@@ -32,7 +32,10 @@ const MARKER_GROUP = "(" + MARKERS.join("|") + ")";
 // Three patterns count as a marker:
 //   1. Marker at start of a comment line (the classic `// TODO: ...` slop)
 //   2. Marker inside a paren-tag like `(TODO: wire X)`
-//   3. Marker mid-sentence: preceded by space, not at line-start, not in parens
+//   3. Marker mid-sentence: not embedded in a larger word (no alnum/underscore
+//      immediately before it, so `OLDTODO` doesn't match), followed by `:` or `(`.
+//      Line-start and paren-tag text are already claimed by patterns 1 and 2
+//      above by the time pattern 3's match is evaluated.
 // All must have a valid owner: either #<digits>, @<handle>, or a whitelisted bare owner.
 const WHITELISTED_BARE_OWNERS = [
   // Roles
@@ -67,7 +70,7 @@ const PAREN_MARKER_RE = new RegExp(
   "\\(\\s*" + MARKER_GROUP + "\\b(?!\\s*(?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + ")|\\())"
 );
 const MID_SENTENCE_MARKER_RE = new RegExp(
-  MARKER_GROUP + "\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
+  "(?<![A-Za-z0-9_])" + MARKER_GROUP + "\\s*(?=[:(])(?!\\s*\\((?:#\\d+|@\\w[\\w-]*|(?:" + WHITELISTED_BARE_OWNERS + "))\\))"
 );
 
 module.exports = {
