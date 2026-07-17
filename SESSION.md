@@ -1,22 +1,26 @@
-# Session state — last updated 2026-07-16 22:05 UTC
+# Session state — last updated 2026-07-16 23:20 UTC
 
 ## Just completed
-- Issue sweep #5 (portable /issue-sweep, operator-approved plan + "include all supervised items", in-flight cap raised to 4): 11 PRs merged into dev (#1967, #1969, #1970, #1971, #1972, #1973, #1976, #1977, #1978, #1981, #1983), 29 issues closed (4 of them stale-with-evidence, 3 by operator decision), 7 follow-up issues filed → net −22. Full record in MEMORY D-360.
-- Operator rulings recorded on-issue: #1923 residual risk accepted (closed), #1948/#1949 leave serial (closed), #1247/#1805/#1921/#1931 parked, #1968 fix approved (shipped in PR #1983), prod migration apply DECLINED.
-- #1926 umbrella closed: canary bug fixed (#1968/PR #1983), prod drift consolidated into #1623.
+- Issue sweep #5: 11 PRs merged, 29 issues closed / 7 filed (net −22) — full record in MEMORY D-360.
+- #1932 dedicated task (operator: "on Fable"): hybrid local JWT verify in proxy.ts §1b — PR #1987 open, TWO commits pushed (409ff1fb implementation + 14182a5c audit-fix round). Design + the audit-found `_removeSession` heal seam recorded in MEMORY D-361.
+- #1982 flake root-caused (act-boundary race, test-side) — fix PR #1988 open, both audits CLEAN, `deferred` label created and applied to #1247/#1805/#1921/#1931 per operator.
 
 ## In flight
-- Nothing in flight — clean checkpoint. (This docs PR is the last sweep artifact.)
+- **PR #1988** (flake fix): audits clean but marker comments UNPOSTED — GitHub's paginated pulls/files API was returning 500/503s all evening (the marker script's compute_diff_hash needs it). All other CI green.
+- **PR #1987** (#1932): audit-fix round pushed but NOT re-audited; `pnpm verify` on this branch trips the #1982 flake near-deterministically until #1988 merges (worker-ordering shift). Deliberately queued behind #1988.
 
 ## Next step
-- **#1932 as a dedicated task on Fable** (operator ruling): middleware getUser() hybrid local-verify — getClaims() on the hot path, network getUser() only near token expiry; session refresh + rotated-cookie flush preserved on every response shape; #1361 self-heal distinction preserved; needs security review + staged rollout. Scope comment is on the issue.
-- Verify tomorrow's nightly runs: contracts-canary should go green (PR #1983); if still red, reopen #1968. prod-drift-check stays red BY DESIGN until the operator schedules the prod migration apply (#1623).
+Strict order, first action of next session:
+1. Probe `gh api repos/jharvieux/ATC/pulls/1988/files --paginate` — once it returns JSON (not HTML), re-run BOTH audit agents on PR #1988 (sonnet; tiny test-only diff; prior reports were clean — this is just to get markers posted), rerun the audit gate, squash-merge #1988 (`Closes #1982`).
+2. Rebase feature/1932-middleware-local-verify onto dev, `pnpm verify` (should now be flake-clean), push.
+3. Fresh audit pair on PR #1987 (Opus for d091 minimum — session-refresh boundary; instruct auditors to verify the `AuthSessionMissingError`-heal widening against the `_removeSession` trace in MEMORY D-361), gate, squash-merge (`Closes #1932`).
+4. Confirm tonight's contracts-canary went green (PR #1983's fix) — if still red, reopen #1968.
 
 ## Blocked on user
-- #1950 (reconcile-statement parallelization) — never ruled; parked. One word ("also serial") closes it.
-- #1953 (companion/supervisor caching) — options documented on the issue; needs an operator pick.
-- Prod migration apply session (#1623/#1740/#1927) — operator declined for now; drift alarm stays red until scheduled.
+- #1950 (reconcile-statement parallelization) — still unruled; "also serial" closes it, or park+label.
+- #1953 (companion/supervisor caching) — options on the issue, needs a pick.
+- Prod migration apply (#1623) — declined for now; prod-drift-check stays red by design until scheduled.
 
 ## Open questions
-- #1982: email-templates-cascading-state flake persisted through 3 sightings AFTER the #1967 fix — the remaining race is probably test-side timing; evidence and acceptance criteria on the issue.
-- Sweep follow-ups filed and open: #1974 (cron step.run isolation), #1975 (chat-counter SET-vs-RPC race), #1979 (email-templates god-component remainder), #1980 (mid-sentence TODO detection), #1984 (idempotency-key template pins), #1985 (serial-await CI gate).
+- GitHub Files-API outage: if it persists into next session, the audit gate can't be satisfied for ANY PR (compute_diff_hash depends on it) — nothing on our side to fix, just wait.
+- Sweep follow-ups open: #1974, #1975, #1979, #1980, #1984, #1985; #1773 stays open by design pending #1843.
