@@ -140,6 +140,9 @@ export const precruiseGenerateAndSend = inngest.createFunction(
           max_tokens: 2048, // wider than direct since it returns combined JSON
           system: prompt.system,
           messages: [{ role: "user", content: prompt.user }],
+          // #2009 — constrain the output to the phase schema so the
+          // consumer can JSON.parse without heuristics.
+          output_config: { format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS[phase] } },
         },
         caller_metadata: {
           booking_id,
@@ -220,8 +223,8 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     const { booking_id, phase } = caller_metadata;
     const svc = createServiceRoleClient();
 
-    // Parse the structured JSON. Tolerate occasional Haiku formatting
-    // wrappers (e.g., ```json fences).
+    // Parse the schema-constrained JSON (see parseStructuredJson for why
+    // anything non-bare-JSON is rejected rather than sliced).
     const generatedContent = parseStructuredJson(result_text);
     if (!generatedContent) {
       console.error(`[precruise:batch-result] failed to parse JSON for booking=${booking_id} phase=${phase}`);
@@ -598,71 +601,84 @@ async function buildAndSend(args: {
   }
 }
 
+// #2009 — provider-constrained structured output for the batched path.
+// The API's output_config.format (json_schema) guarantees the response is
+// bare, schema-valid JSON, replacing the old "Return ONLY a JSON object"
+// prompt-begging + fence/brace slicing in the consumer. Field descriptions
+// carry the per-field content guidance the user prompt used to embed — the
+// schema is the single source of truth for the output shape.
+//
+// Constraints (Anthropic structured outputs): every object needs
+// additionalProperties:false and a full `required` list; no min/max length
+// constraints. Keys per phase MUST stay in sync with what buildEmail and
+// precruiseAiContentText consume — pinned by
+// test/unit/ai/precruise-output-schemas.test.ts.
+function strField(description: string): Record<string, unknown> {
+  return { type: "string", description };
+}
+function strListField(description: string): Record<string, unknown> {
+  return { type: "array", items: { type: "string" }, description };
+}
+function objectSchema(properties: Record<string, Record<string, unknown>>): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: Object.keys(properties),
+    properties,
+  };
+}
+
+export const PRECRUISE_OUTPUT_SCHEMAS: Record<Phase, Record<string, unknown>> = {
+  t_90: objectSchema({
+    documentation_reminder: strField("2 sentences — passport validity, travel insurance, visa check"),
+    destination_teaser: strField("2-3 sentences — exciting preview of the ports"),
+    must_do_experiences: strListField("Exactly 3 must-do experiences at these ports"),
+    did_you_know: strField("1-2 sentences — fascinating fact about cruising or the ports"),
+    suggested_reads: strListField("Always an empty array"),
+  }),
+  t_30: objectSchema({
+    reservation_reminders: strListField(
+      'Exactly: ["Specialty dining reservations", "Shore excursions", "Spa appointments"]',
+    ),
+    checkin_window: strField("2 sentences — when online check-in opens and why to do it early"),
+    final_payment_note: { type: "null", description: "Always null" },
+    personalized_recommendations: strListField(
+      "Exactly 3 personalized recommendations (specialty dining, excursions, spa)",
+    ),
+    specialty_experiences: strListField("Always an empty array"),
+    pack_inspiration: strField("2-3 sentences — packing inspiration / style tips for this cruise"),
+  }),
+  t_7: objectSchema({
+    packing_checklist: strListField("Exactly 8 essential packing items"),
+    ship_highlights: strListField("Exactly 3 ship highlights"),
+    cruise_line_tips: strListField("Exactly 3 cruise-line-specific tips"),
+    embarkation_advice: strField("2-3 sentences — what to expect on embarkation day"),
+    first_day_inspiration: strField("2 sentences — the magic of the first day aboard"),
+  }),
+  // T-1 should never hit the batched path (scheduler skips it) but defining
+  // the schema keeps the consumer DRY-safe if the discriminator slips.
+  t_1: objectSchema({
+    first_port_preview: strField("2 sentences — exciting preview of the first port of call"),
+    day_of_expectations: strField("2-3 sentences — check-in time, muster drill, sail-away"),
+  }),
+};
+
 function buildBatchedPrompt(
   phase: Phase,
   ctx: EmailCtx,
 ): { system: string; user: string } {
   // One structured-JSON request per email — replaces the 4-5 separate
-  // direct-path Haiku calls. Lower token cost AND cleaner consumer.
-  const sys = [
+  // direct-path Haiku calls. Lower token cost AND cleaner consumer. The
+  // output shape and per-field guidance live in PRECRUISE_OUTPUT_SCHEMAS.
+  const system = [
     `You are a travel concierge generating pre-cruise email content for ${ctx.customerName}.`,
     `The cruise is on ${ctx.shipName} (${ctx.cruiseLine}), sailing ${ctx.sailingDate}.`,
     `Ports: ${ctx.ports.join(", ") || "TBD"}.`,
     "",
-    "Return ONLY a JSON object — no prose, no code fences. All fields must be present even if empty arrays / strings.",
+    "Content is concise, enthusiastic, and practical.",
   ].join("\n");
-
-  switch (phase) {
-    case "t_90":
-      return {
-        system: sys,
-        user: `Generate the T-90 pre-cruise email content as JSON with these exact keys:
-{
-  "documentation_reminder": "string (2 sentences — passport validity, travel insurance, visa check)",
-  "destination_teaser": "string (2-3 sentences — exciting preview of the ports)",
-  "must_do_experiences": ["string", "string", "string"],
-  "did_you_know": "string (1-2 sentences — fascinating fact about cruising or the ports)",
-  "suggested_reads": []
-}`,
-      };
-    case "t_30":
-      return {
-        system: sys,
-        user: `Generate the T-30 pre-cruise email content as JSON with these exact keys:
-{
-  "reservation_reminders": ["Specialty dining reservations", "Shore excursions", "Spa appointments"],
-  "checkin_window": "string (2 sentences — when online check-in opens and why to do it early)",
-  "final_payment_note": null,
-  "personalized_recommendations": ["string", "string", "string"],
-  "specialty_experiences": [],
-  "pack_inspiration": "string (2-3 sentences — packing inspiration / style tips for this cruise)"
-}`,
-      };
-    case "t_7":
-      return {
-        system: sys,
-        user: `Generate the T-7 pre-cruise email content as JSON with these exact keys:
-{
-  "packing_checklist": ["8 essential items"],
-  "ship_highlights": ["string", "string", "string"],
-  "cruise_line_tips": ["string", "string", "string"],
-  "embarkation_advice": "string (2-3 sentences — what to expect on embarkation day)",
-  "first_day_inspiration": "string (2 sentences — the magic of the first day aboard)"
-}`,
-      };
-    case "t_1":
-      // T-1 should never hit the batched path (scheduler skips it) but
-      // defining the prompt makes the consumer DRY-safe if the
-      // discriminator slips.
-      return {
-        system: sys,
-        user: `Generate the T-1 pre-cruise email content as JSON with these exact keys:
-{
-  "first_port_preview": "string (2 sentences — exciting preview of the first port of call)",
-  "day_of_expectations": "string (2-3 sentences — check-in time, muster drill, sail-away)"
-}`,
-      };
-  }
+  const labels: Record<Phase, string> = { t_90: "T-90", t_30: "T-30", t_7: "T-7", t_1: "T-1" };
+  return { system, user: `Generate the ${labels[phase]} pre-cruise email content.` };
 }
 
 // #975 — flatten the per-phase AI sections to plain text for the
@@ -719,19 +735,22 @@ export function precruiseAiContentText(
 }
 
 function parseStructuredJson(text: string): Record<string, unknown> | null {
-  // Tolerate ```json fences and leading/trailing prose Haiku
-  // occasionally appends. Find the outermost { ... } substring.
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : text;
-  if (!candidate) return null;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
+  // #2009 — the batched request is schema-constrained (output_config.format),
+  // so a successful result is bare JSON. Anything else — a refusal, a
+  // max_tokens truncation, or a pre-#2009 in-flight row — is rejected
+  // outright rather than fence-stripped or brace-sliced (slicing could
+  // silently accept a truncated object). A rejected row is never marked
+  // sent, so the daily scheduler's sent_at dedup re-fires the booking and
+  // it re-enqueues with the schema constraint.
   try {
-    return JSON.parse(candidate.slice(start, end + 1)) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(text);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
   } catch {
-    return null;
+    // fall through — non-JSON result
   }
+  return null;
 }
 
 // ── Direct-path generation (T-1, hourly cron) ─────────────────────────
