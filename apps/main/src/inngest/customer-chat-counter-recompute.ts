@@ -14,9 +14,13 @@ const RECOMPUTE_CONCURRENCY = 20;
 
 // #1994 — page below any plausible PostgREST db-max-rows setting (historical
 // default 1000) so the row list is never silently truncated by the server.
-// Ordered by the PK (user_id, tenant_id) rather than last_message_at: those
-// columns are immutable, so a row can't shift across a page boundary mid-scan
-// the way it could on the mutable last_message_at the CAS above races against.
+// Paged with keyset pagination on the immutable PK (user_id, tenant_id)
+// rather than OFFSET: an offset scan skips a row whenever an earlier row is
+// removed mid-scan (e.g. a users ON DELETE CASCADE deleting a row), because
+// every later offset shifts up by one. A keyset cursor has no such gap —
+// each page asks for "strictly after the last key seen," so neither
+// reordering nor deletion of an earlier row can skip a row, unlike the
+// mutable last_message_at the CAS below races against.
 const RECOMPUTE_PAGE_SIZE = 1000;
 
 export const customerChatCounterRecompute = inngest.createFunction(
@@ -34,29 +38,37 @@ export const customerChatCounterRecompute = inngest.createFunction(
       tenant_id: string;
       last_message_at: string | null;
     }> = [];
-    // serial-await-ok: each page's existence depends on whether the prior
-    // page came back full — the offset for page N+1 isn't known until page
-    // N resolves, so this can't be parallelized (unlike the per-row work
-    // below, which runs through mapWithConcurrency).
-    for (let offset = 0; ; offset += RECOMPUTE_PAGE_SIZE) {
-      const { data: page, error } = await svc
+    let cursor: { user_id: string; tenant_id: string } | null = null;
+    // serial-await-ok (#1952): each page's existence depends on whether the
+    // prior page came back full — the keyset cursor for page N+1 isn't known
+    // until page N resolves, so this can't be parallelized (unlike the
+    // per-row work below, which runs through mapWithConcurrency).
+    for (;;) {
+      let query = svc
         .from("customer_chat_counters")
         .select("user_id, tenant_id, last_message_at")
         .order("user_id", { ascending: true })
         .order("tenant_id", { ascending: true })
-        .range(offset, offset + RECOMPUTE_PAGE_SIZE - 1);
+        .limit(RECOMPUTE_PAGE_SIZE);
+      if (cursor) {
+        query = query.or(
+          `user_id.gt.${cursor.user_id},and(user_id.eq.${cursor.user_id},tenant_id.gt.${cursor.tenant_id})`,
+        );
+      }
+      const { data: page, error } = await query;
       if (error) {
-        // Fail-closed on the row list itself: stop paging rather than risk an
-        // infinite loop or treating a transient error as "table exhausted".
-        // Rows already collected still get recomputed below.
-        console.error("[customer-chat-counter-recompute] row list page failed, stopping", {
-          offset,
-        });
-        break;
+        // #1740 lesson: a swallowed page error must not report success — it
+        // silently truncates the nightly drift correction with no signal.
+        // Throw so Inngest retries the (idempotent) scan and the failure
+        // surfaces instead of hiding behind a partial `{ processed }`.
+        console.error("[customer-chat-counter-recompute] row list page failed", { cursor });
+        throw new Error(`customer_chat_counters row list page failed: ${error.message}`);
       }
       if (!page || page.length === 0) break;
       targets.push(...page);
       if (page.length < RECOMPUTE_PAGE_SIZE) break;
+      const last = page[page.length - 1]!;
+      cursor = { user_id: last.user_id, tenant_id: last.tenant_id };
     }
     await mapWithConcurrency(targets, RECOMPUTE_CONCURRENCY, async (row) => {
       const { count: msgCount, error } = await svc
