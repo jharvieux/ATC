@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-365 — 2026-07-19 — Issue sweep #7 + Harvey hardening: 13 PRs merged, 24 issues closed / 15 filed (net −9)
+
+**Decision:** Full sweep of the Harvey-audit backlog plus operator-ordered follow-ons, all landed 2026-07-19: 11 planned batches (13 sweep PRs #2013–#2027), the Harvey Tier-1/Tier-3 hardening PR #2030, the PII/retention cluster PR #2036, and the final batch PR #2041. Closed 24 issues (incl. both P1 prod-drift items #1623/#1927 via read-only investigation); filed 15 with full trails; net −9. Sub-decisions logged: #2002 → strategy B (service-JWT replaces MAIN_APP_ADMIN_API_KEY, queued behind the atc-rag deploy); #2006 closed accepted-risk; #2035 keep-dormant (deferred label; pre-approval queue stays unwired by choice); #1782 operator-deferred. Tier 2 of the Harvey adoption = periodic Harvey engagements run by the operator, not CI.
+
+**Why:** Harvey's external audit findings clustered into preventable classes; fixing the instances without adopting the detectors would recreate the backlog next engagement.
+
+**Rejected:** removing the dormant pre-approval table (operator chose keep); filing the mutation-score raw finding (dup of closed #1219 roadmap); implementing #2018 inside the sweep before the migration-ledger serialization point.
+
+**Artifacts:** PRs #2013–#2041; issues #2014–#2040; 5 Harvey-repo issues (brief-sync + 3 missing detectors + triage-process); `.git/issue-sweep-ledger.json` (deleted at wrap-up).
+
+---
+
+## D-364 — 2026-07-19 — Harvey detectors become standing CI gates; D-091 grows to 28
+
+**Decision:** Ported five deterministic detectors from the Harvey audit toolkit as `pnpm check:*` guards (rls-policy-semantics, extension-manifest, mocked-tenant-tests, app-router-boundaries, pii-columns) plus a net-new env-schema-completeness guard, wired into `verify` + Guards & Build with FREEZE-EXISTING baselines, each baseline citing its burn-down issue (#2028 mocked tests 42, #2002 env reads 53, #2011 PII columns 109, rls 106). D-091 gains #27 (no parameter-only SECURITY DEFINER oracles) and #28 (env-schema registration + rotation pairs). Service-role lint now covers Inngest paths; pre-pr-reviewer carries the hand-rolled-primitive checklist. All guard fs access is TOCTOU-free and fail-closed (a malformed extension manifest exits 1).
+
+**Why:** Harvey found 13 issues our 26-pattern catalog and gates missed; the deterministic majority of its checks convert one-shot audit passes into blocked-at-PR classes. Also fixed Harvey-side: its audit brief was derived from a stale 21-item copy of our catalog, so the 5 newest patterns were never audited (Harvey issue filed).
+
+**Rejected:** vendoring Harvey's M6 simplification judgment as a hard gate (LLM-tier, noisy); running the two-tenant pentest per-PR (infra-heavy → operator-run periodic engagements instead).
+
+**Artifacts:** PR #2030; scripts/check-*.{ts,mjs} + baselines; CLAUDE.md D-091 #27/#28; docs/runbooks/anti-patterns.md.
+
+---
+
+## D-363 — 2026-07-19 — Merge-train mechanics: REST names the blocker; RAG migrations apply-before-merge
+
+**Decision:** Three durable procedure changes from this sweep's merge train. (1) When a PR is green-but-blocked, diagnose with the REST merge endpoint — its error names the exact unmet requirement (cancelled required check-run, wedged CodeQL status) where every GraphQL surface just says BLOCKED; documented with remedies and the close/reopen anti-remedy in `docs/runbooks/pr-workflow.md`. (2) The shared-test-DB concurrency group cancels sibling required jobs on every dev merge — so wait for dev's post-merge deploy run to finish before update-branching the next train PR, and check for cancelled required check-runs (REST, filter=all) after every update-branch. (3) RAG migrations must be applied to the live RAG DB BEFORE their PR can merge — the `[rag]` drift gate diffs the committed snapshot against the live DB (no separate RAG test DB); apply via `supabase db push --db-url $SUPABASE_RAG_DB_URL` (records the ledger), operator-approved per instance.
+
+**Why:** ~90 minutes lost to green-but-blocked archaeology on PR #2016; the cancelled-run pattern then recurred on four consecutive train PRs; PR #2024 failed its drift gate until the live apply ran.
+
+**Rejected:** close/reopen to force merge re-evaluation (spawns a run set the concurrency group cancels, and silently cancels armed auto-merge).
+
+**Artifacts:** docs/runbooks/pr-workflow.md ("When the merge is refused but everything looks green"); PRs #2016, #2024.
+
+---
+
 ## D-362 — 2026-07-16 — Issue sweep #6: 8 PRs merged, 9 issues closed / 2 filed (net −7)
 
 **Decision.** Ran /issue-sweep (portable variant) over 32 triage candidates. Operator approved the full recommended plan verbatim: include the four supervised batches (#1975 migration-scoped, #1901 billing+migration, #1985 CI wiring, #1782 FK-indexes-only), defer #1728 (large inbound-email feature) to a dedicated session, and land the SESSION.md step-0 PRs (#1988 → #1987) at the head of the merge train.

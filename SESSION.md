@@ -1,21 +1,26 @@
-# Session state — last updated 2026-07-17 03:15 UTC
+# Session state — last updated 2026-07-19 21:40 HST
 
 ## Just completed
-- Issue sweep #6 (full record in MEMORY D-362): 8 PRs merged (#1987, #1988, #1990–#1993, #1995, #1996), 9 issues closed (#1932, #1974, #1975, #1979, #1980, #1982, #1984, #1985, #1901), 2 filed (#1994 recompute paging, #1997 kill-switch runbook doc) — net −7.
-- SESSION step-0 backlog cleared: PR #1988 (flake #1982) and PR #1987 (#1932 local JWT verify) audited and merged at the head of the train.
-- #1782 FK-index half re-verified as shipped (PR #1881); trail comment added; issue stays open as the 210-unused-index pruning tracker.
-- Merge-queue question answered for operator: not enabled; recommended against for now (audit-gate hash binding + migration ledger ordering); revisit at ~15+ concurrent PRs per sweep.
+- Issue sweep #7 (D-365): 13 PRs merged into dev (#2013 rag-pii-gate, #2015 extension perms, #2016 groups/safeUrl, #2017 format-date TZ, #2020 service-JWT strict flip, #2021 keyset recompute, #2023 precruise structured output + caching, #2024 RAG DB hardening, #2026 kill-switch runbook, #2027 PII datamap, #2029 merge diagnostics, #2036 PII/retention cluster, #2041 final batch). 24 issues closed / 15 filed, net −9.
+- Harvey prevention adoption (D-364): PR #2030 — 6 standing guards with baselines, D-091 #27/#28, service-role lint on Inngest paths. Tier 2 = operator-run periodic Harvey engagements. 5 gap issues filed in the Harvey repo.
+- Prod-drift P1 cluster resolved by read-only investigation: #1623 + #1927 closed with evidence; #1740 diagnosed to a single 2-statement DDL repair (operator).
+- RAG DB: migrations 20260719181701/181740 applied live (operator-approved, ledger recorded) — policy tightening + FK indexes are active server-side.
+- Merge-train mechanics documented (D-363) in docs/runbooks/pr-workflow.md.
 
 ## In flight
-Nothing in flight — clean checkpoint.
+- Nothing in flight — clean checkpoint. All auto-triaged PRs merged; sweep worktrees/branches from THIS session cleaned. (Pre-existing stale worktrees/branches from earlier sessions remain — see Open questions.)
 
 ## Next step
-- Confirm the 2026-07-17 ~11:00 UTC contracts-canary run goes green (the last failure at 07-16 11:01 UTC predates PR #1983's fix, merged 21:59 UTC). If still red, reopen #1968.
+- Operator actions below, then normal work resumes. The #2002 strategy-B implementation (service-JWT replaces MAIN_APP_ADMIN_API_KEY) unblocks once the atc-rag prod deploy lands.
 
 ## Blocked on user
-- #1950 (reconcile-statement parallelization) — still unruled; "also serial" closes it, or keep parked.
-- #1953 (companion/supervisor caching) — options on the issue, needs a pick.
-- Prod migration apply (#1623) — declined for now; prod-drift-check stays red by design until scheduled. Note: #1990's and #1881's indexes also reach prod only via that gated apply.
+1. **#1740 prod DDL repair** (2 statements on atc-main, exact SQL on the issue) — the last prod-drift item; errors recur daily at 04:30 UTC until run.
+2. **atc-rag manual prod deploy** (`cd apps/rag && vercel deploy --prod --yes`) — activates the strict JWT verifier (#1843), the PII-gate fix (#2001), and pairs with the already-applied RAG DB migrations.
+3. **Prod apply of the three new main-DB migrations** (20260722000028 deny policies, ...29 attribution index, ...30 purge indexes) via the operator-gated pipeline step; note ...30's index build briefly blocks inbound-email ingestion — prefer a low-traffic window.
+4. **Extension smoke test**: load unpacked, click Connect, confirm the single-origin permission prompt + cookie read (post-#2015).
+5. **#2025 time-boxed check** within ~48h of the next prod deploy: transitional precruise rows with null sent_at outside the re-scan window.
 
 ## Open questions
-- Sweep-eligible issues remaining open by design: #1994, #1997 (this sweep's follow-ups), #1782 (pruning tracker, opus, operator-gated), #1728 (deferred large feature — operator wants a dedicated session).
+- Alert #103 (js/log-injection) should flip to fixed when dev's next CodeQL analysis runs on the merged tree; verify next session (gh api code-scanning/alerts/103).
+- ~18 stale worktrees + ~95 stale remote sweep branches from sessions ≤ #6 linger; a housekeeping pass needs operator sign-off (branch deletion rule).
+- Open follow-up issues carrying the sweep's remaining work: #1740, #2014, #2019, #2022, #2025, #2028, #2035 (operator-parked), #2037, #2039, #2040.
