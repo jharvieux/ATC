@@ -20,10 +20,10 @@
 -- TABLE: public.rag_media_assets
 CREATE POLICY "rag_media_assets_select" ON public.rag_media_assets
   FOR SELECT TO PUBLIC
-  USING (scope = 'global'::text OR tenant_id::text = current_setting('request.jwt.claim.tenant_id'::text, true));
+  USING (scope = 'global'::text OR tenant_id::text = (( SELECT current_setting('request.jwt.claim.tenant_id'::text, true) AS current_setting)));
 
 -- TABLE: public.rag_retrieval_log_daily
 CREATE POLICY "rag_retrieval_log_daily_select" ON public.rag_retrieval_log_daily
   FOR SELECT TO PUBLIC
-  USING (true);
+  USING (tenant_id::text = (( SELECT current_setting('request.jwt.claim.tenant_id'::text, true) AS current_setting)));
 
