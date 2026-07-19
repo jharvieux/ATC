@@ -1,0 +1,41 @@
+# env-schema-baseline.txt — FREEZE-EXISTING baseline for scripts/check-env-schema-completeness.ts.
+# Burn-down: refs #2002 (MAIN_APP_ADMIN_API_KEY stays undeclared on main until that issue's
+# strategy-B registers it in the env schema with a rotation pair) and #2004 (secret-inventory
+# completeness). Each line freezes pre-existing raw process.env reads of an identifier NOT
+# declared in that app's apps/<app>/src/lib/env.ts. Line format: <count> <app>::<VAR>.
+# Burn a line down by declaring the var in the schema and reading it via the env object.
+1 main::AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED
+1 main::BP34_IMPORT_PIPELINE_DISABLED
+1 main::BP36_ROLLUP_REFRESH_DISABLED
+1 main::BP37_REMINDERS_DISABLED
+1 main::CHAT_STREAMING_ENABLED
+1 main::CRUISEMAPPER_DETAIL_FETCH_ENABLED
+2 main::CRUISEMAPPER_SAILING_INGEST_ENABLED
+1 main::FORENSICS_ENCRYPTION_KEY_ID_PRIOR_1
+1 main::FORENSICS_ENCRYPTION_KEY_ID_PRIOR_2
+1 main::FORUM_GUEST_WRITE_LIMIT_PER_HOUR
+1 main::GMAIL_PUBSUB_AUDIENCE
+1 main::HELP_AI_STREAMING_ENABLED
+1 main::IMPORT_CLASSIFY_HAIKU_MODEL
+1 main::IMPORT_EXTRACT_SONNET_MODEL
+3 main::INTEGRATION_DB
+4 main::MAIN_APP_ADMIN_API_KEY
+1 main::MAIN_APP_URL
+3 main::PLATFORM_APP_URL
+4 main::PLATFORM_DEFAULT_TENANT_ID
+1 main::PLATFORM_LOGO_URL
+1 main::PLATFORM_OPERATOR_EMAIL
+1 main::PLATFORM_OPERATOR_FROM_EMAIL
+1 main::SUPABASE_RAG_SERVICE_ROLE_KEY
+1 main::SUPABASE_RAG_URL
+1 main::TEST_AUTH_BYPASS_PUBLIC_USER_ID
+2 main::TEST_AUTH_BYPASS_TENANT_ID
+2 main::TEST_AUTH_BYPASS_TOKEN
+1 main::TEST_AUTH_BYPASS_USER_ID
+1 main::VERCEL_GIT_COMMIT_SHA
+1 rag::FEEDBACK_RATE_LIMIT_PER_MIN
+1 rag::INNGEST_SIGNING_KEY
+1 rag::NEXT_PHASE
+1 rag::NEXT_PUBLIC_SUPABASE_URL
+1 rag::OPENAI_EMBEDDING_BATCH_ENABLED
+6 rag::STAGING_MODE

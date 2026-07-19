@@ -74,7 +74,9 @@ function isInlineAllowed(lines: string[], idx: number, id: string): boolean {
 // Platform-scoped tables (no tenant_id, or service-role-by-design) — a
 // service-role query on these legitimately has no tenant_id filter. Seeded from
 // db/rls-exceptions.txt (its first token per non-comment line) + a few extras.
-function platformTables(): Set<string> {
+// Exported for check-job-service-role-tenant.ts, which guards exactly the
+// tables this set EXEMPTS (tenant_id-bearing rls-exception tables, refs #2003).
+export function platformTables(): Set<string> {
   const set = new Set<string>([
     "schema_migrations", "tenants", "tenant_registry_shadow", "platform_settings",
     "knowledge_chunks", "knowledge_ingestion_queue", "rag_retrieval_log",
