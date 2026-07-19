@@ -115,10 +115,6 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
 
   let payload: ServiceJwtPayload;
   let jti: string;
-  // Captured from the SIGNATURE-VERIFIED protected header (not an unverified
-  // decode) so the rollout warn below attributes absent-claim traffic to a real
-  // signing key rather than to attacker-controlled input (#1843).
-  let verifiedKid: string | undefined;
 
   try {
     // We need the header kid before we can pick the right key.
@@ -135,22 +131,19 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
       { algorithms: ["RS256"] },
     );
     payload = result.payload;
-    verifiedKid = result.protectedHeader.kid;
   } catch (err) {
     if (err instanceof ServiceAuthError) throw err;
     throw new ServiceAuthError("signature_invalid", 401);
   }
 
-  // Step 2.5: iss/aud defense-in-depth (#1773)
-  // A present claim MUST match the expected value — this is the fail-closed
-  // half: a key reused to mint tokens for another service carries that
-  // service's iss/aud (or none) and is rejected here. Absent claims are
-  // tolerated during the rollout window: the signer (atc-main) and this
-  // verifier (atc-rag) are separate Vercel apps deploying at different times,
-  // so short-TTL tokens minted by a not-yet-upgraded signer can still be in
-  // flight when this code goes live. The strict flip — hard-reject absence —
-  // is tracked by #1843, done once both services are DEPLOYED with the claims
-  // (merge to dev is not enough) and absent-claim warns have gone to zero.
+  // Step 2.5: iss/aud defense-in-depth (#1773, strict flip #1843)
+  // Both claims are now REQUIRED — absence and mismatch are both rejected.
+  // The tolerant rollout window (warn-log + allow absence) has closed: #1842
+  // shipped the signer stamping iss/aud unconditionally, and that release has
+  // been live on atc-main long enough that no valid short-TTL token in flight
+  // can predate it. A key reused to mint tokens for another purpose (or a
+  // pre-rollout stale token) carries a wrong-or-absent iss/aud and is
+  // rejected here.
   // Read as widened strings: payload is untrusted, so the mismatch branches
   // must stay live (the schema's literal iss/aud types would otherwise narrow
   // these to the trusted values and make the checks statically dead).
@@ -161,29 +154,11 @@ export async function verifyServiceJwt(req: Request): Promise<ServiceCallerConte
     : audClaim !== undefined
       ? [audClaim]
       : [];
-  if (issClaim !== undefined && issClaim !== SERVICE_JWT_ISSUER) {
-    throw new ServiceAuthError("signature_invalid", 401, "iss mismatch");
+  if (issClaim === undefined || issClaim !== SERVICE_JWT_ISSUER) {
+    throw new ServiceAuthError("signature_invalid", 401, "iss missing or mismatched");
   }
-  if (audValues.length > 0 && !audValues.includes(SERVICE_JWT_AUDIENCE)) {
-    throw new ServiceAuthError("signature_invalid", 401, "aud mismatch");
-  }
-  if (issClaim === undefined || audValues.length === 0) {
-    // Attributable rollout signal (#1843). The strict flip is safe to ship only
-    // once absent-claim traffic reaches zero in prod; these fields are what make
-    // that judgement evidence-based — kid identifies the signing key still
-    // minting claimless tokens, and tenant/service identify the caller to chase.
-    // All three are non-PII. Operators watch this warn's rate: sustained zero
-    // across a full token TTL after both apps carry the claims = flip-safe.
-    console.warn(
-      "[verifyServiceJwt] token missing iss/aud claims — allowing during #1773 rollout; " +
-        "will hard-reject once the #1843 strict flip lands",
-      {
-        kid: verifiedKid ?? "(none)",
-        tenant_id: payload.tenant_id ?? "(none)",
-        service_identifier: payload.service_identifier ?? "(none)",
-        missing: issClaim === undefined ? (audValues.length === 0 ? "iss+aud" : "iss") : "aud",
-      },
-    );
+  if (audValues.length === 0 || !audValues.includes(SERVICE_JWT_AUDIENCE)) {
+    throw new ServiceAuthError("signature_invalid", 401, "aud missing or mismatched");
   }
 
   // Step 3: Verify exp/iat within ±5-minute window
