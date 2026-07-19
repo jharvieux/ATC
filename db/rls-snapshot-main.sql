@@ -786,9 +786,18 @@ CREATE POLICY "general_pricing_ranges_update" ON public.general_pricing_ranges
   USING (false);
 
 -- TABLE: public.gmail_inbound_messages
+CREATE POLICY "gmail_inbound_delete_service" ON public.gmail_inbound_messages
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "gmail_inbound_insert_service" ON public.gmail_inbound_messages
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
 CREATE POLICY "gmail_inbound_select" ON public.gmail_inbound_messages
   FOR SELECT TO authenticated
   USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "gmail_inbound_update_service" ON public.gmail_inbound_messages
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.gmail_oauth_tokens
 CREATE POLICY "gmail_oauth_tokens_select" ON public.gmail_oauth_tokens
