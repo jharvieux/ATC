@@ -10,6 +10,12 @@
 // increment_customer_chat_count RPC bumps last_message_at on every live
 // increment, so a recompute whose snapshot predates a concurrent increment
 // must match zero rows and skip, leaving the increment's fresh count intact.
+//
+// #1994 — the row list itself is paged with .range() instead of a single
+// .limit(5000): PostgREST's db-max-rows can cap a single request below that,
+// silently dropping every row past the cap from the nightly drift correction.
+// This pins that a table spanning more than one page still gets every row
+// recomputed.
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -75,12 +81,21 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
         };
         return {
-          select: () => ({
-            // Copy rows: PostgREST returns a deserialized snapshot, not the
-            // live store — so a concurrent increment can't retroactively edit
-            // the value the recompute already read.
-            limit: () => Promise.resolve({ data: counters.map((c) => ({ ...c })), error: null }),
-          }),
+          select: () => {
+            // .order().order().range(from, to) — mirrors the paginated row
+            // list. Copies rows: PostgREST returns a deserialized snapshot,
+            // not the live store, so a concurrent increment can't
+            // retroactively edit the value the recompute already read.
+            const pageBuilder = {
+              order: () => pageBuilder,
+              range: (from: number, to: number) =>
+                Promise.resolve({
+                  data: counters.slice(from, to + 1).map((c) => ({ ...c })),
+                  error: null,
+                }),
+            };
+            return pageBuilder;
+          },
           update(p: { current_count: number }) {
             payload = p;
             return builder;
@@ -283,5 +298,28 @@ describe("customerChatCounterRecompute — CAS vs concurrent increment (#1975)",
     );
 
     consoleInfoSpy.mockRestore();
+  });
+});
+
+describe("customerChatCounterRecompute — row-list pagination (#1994)", () => {
+  it("recomputes every row when the table spans more than one page, not just the first 1000", async () => {
+    // One row past the page size forces a second .range() fetch. Before the
+    // fix, a single .limit(5000) call relied on PostgREST returning up to
+    // 5000 rows unordered and uncapped by db-max-rows — if the server's
+    // actual max-rows setting is at or below the table size, rows past the
+    // cap were silently never recomputed, forever.
+    const rowCount = 1001;
+    counters = Array.from({ length: rowCount }, (_, i) => ({
+      user_id: `u-${String(i).padStart(4, "0")}`,
+      tenant_id: "t-1",
+      current_count: 0,
+      last_message_at: T0,
+    }));
+    messageCountFor = Object.fromEntries(counters.map((c) => [`${c.user_id}:t-1`, 1]));
+
+    const result = (await runCron()) as { processed: number };
+
+    expect(result).toEqual({ processed: rowCount });
+    expect(counters.every((c) => c.current_count === 1)).toBe(true);
   });
 });
