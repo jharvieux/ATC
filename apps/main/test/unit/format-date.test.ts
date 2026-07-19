@@ -9,8 +9,13 @@
 // toLocaleDateString (which uses the runtime's local timezone) would shift
 // the displayed day whenever the CI runner's TZ has a negative UTC offset.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { formatDate } from "@/lib/format-date";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const JAN_5_2026 = new Date(2026, 0, 5); // Monday
 
@@ -54,20 +59,19 @@ describe("formatDate", () => {
   // sailing date shown wouldn't match the sailing date stored. Pin the fix
   // by rendering under a real negative-offset zone (UTC-10) so the test
   // fails if the UTC-anchoring regresses.
+  //
+  // #1999: this used to flip `process.env.TZ` in beforeEach/afterEach to
+  // simulate the negative-offset zone. That's not hermetic — Node only
+  // invalidates V8's cached ICU timezone on env-var writes made on the main
+  // thread; under Stryker's vitest-runner (worker_threads pool) the
+  // reassignment silently no-ops and the suite's result instead tracks
+  // whatever TZ the *process* was launched with. formatDate's optional
+  // `timeZone` param sidesteps ambient TZ entirely, so the test is
+  // deterministic under every pool model and launch TZ.
   describe("date-only strings under a negative-UTC-offset timezone", () => {
-    const originalTz = process.env.TZ;
-
-    beforeEach(() => {
-      process.env.TZ = "Pacific/Honolulu"; // UTC-10, no DST
-    });
-
-    afterEach(() => {
-      process.env.TZ = originalTz;
-    });
-
     it("renders the same calendar date as stored, not the day before", () => {
       expect(formatDate("2026-07-06", "medium")).toBe("Jul 6, 2026");
-      expect(formatDate("2026-07-06")).toBe("7/6/2026");
+      expect(formatDate("2026-07-06", "numeric")).toBe("7/6/2026");
     });
 
     it("still renders full timestamps in local time (not forced to UTC)", () => {
@@ -75,7 +79,25 @@ describe("formatDate", () => {
       // rendering — only bare date-only strings get UTC-anchored. 5am UTC
       // is still July 5 in UTC-10; if the fix over-broadly forced every
       // input to UTC, this would wrongly render July 6.
-      expect(formatDate("2026-07-06T05:00:00Z")).toBe("7/5/2026");
+      expect(formatDate("2026-07-06T05:00:00Z", "numeric", "Pacific/Honolulu")).toBe("7/5/2026");
     });
+  });
+
+  // #1999 traded away coverage of the DEFAULT (no-override) branch under a
+  // negative-UTC-offset ambient timezone — every assertion above passes an
+  // explicit `timeZone`, so a regression in the fallback-to-ambient-TZ path
+  // (the `: STYLE_OPTIONS[style]` branch in format-date.ts) would go
+  // uncaught. Reassigning process.env.TZ mid-test doesn't work here (that's
+  // exactly the hermeticity bug #1999 fixed — see the module comment above);
+  // the only reliable way to control ambient TZ is to set it at process
+  // boot. Shell out to a child process launched with TZ=Pacific/Honolulu.
+  it("falls back to the ambient TZ when no override is passed (boot-TZ subprocess)", () => {
+    const stdout = execFileSync(
+      process.execPath,
+      ["--import", "tsx", join(__dirname, "../fixtures/format-date-boot-tz-probe.ts")],
+      // timeout: vitest's testTimeout can't preempt a blocking execFileSync call.
+      { env: { ...process.env, TZ: "Pacific/Honolulu" }, encoding: "utf8", timeout: 15000 },
+    );
+    expect(stdout).toBe("7/5/2026");
   });
 });
