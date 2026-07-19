@@ -14,6 +14,7 @@ import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { ApproveRequestSchema } from "@/lib/schemas/retrieve";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
 
 export const POST = withServiceAuth(async (req, ctx) => {
   if (ctx.scope !== "write") {
@@ -49,6 +50,21 @@ export const POST = withServiceAuth(async (req, ctx) => {
   }
 
   const content = body.edits?.content ?? item.raw_content;
+
+  // Re-run the zero-tolerance PII pre-filter on the resolved content. Ingest
+  // already screened item.raw_content, but a reviewer can override it via
+  // edits.content — that override never went through the ingest screen, so
+  // skipping this would let a reviewer launder PII into an approved chunk.
+  // Mirrors replace-chunk/route.ts. Global scope makes this worse: the
+  // laundered content becomes readable by every tenant.
+  const piiResult = detectZeroTolerancePII(content);
+  if (piiResult.detected) {
+    return Response.json(
+      { error: "zero_tolerance_pii_in_edits", categories: piiResult.categories },
+      { status: 422 },
+    );
+  }
+
   const contentBytes = Buffer.byteLength(content, "utf8");
   if (contentBytes > 500_000) {
     return Response.json({ error: "content_too_large", max_bytes: 500_000, actual_bytes: contentBytes }, { status: 422 });
