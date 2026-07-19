@@ -70,8 +70,8 @@ describe("formatDate", () => {
   // deterministic under every pool model and launch TZ.
   describe("date-only strings under a negative-UTC-offset timezone", () => {
     it("renders the same calendar date as stored, not the day before", () => {
-      expect(formatDate("2026-07-06", "medium", "Pacific/Honolulu")).toBe("Jul 6, 2026");
-      expect(formatDate("2026-07-06", "numeric", "Pacific/Honolulu")).toBe("7/6/2026");
+      expect(formatDate("2026-07-06", "medium")).toBe("Jul 6, 2026");
+      expect(formatDate("2026-07-06", "numeric")).toBe("7/6/2026");
     });
 
     it("still renders full timestamps in local time (not forced to UTC)", () => {
@@ -95,7 +95,8 @@ describe("formatDate", () => {
     const stdout = execFileSync(
       process.execPath,
       ["--import", "tsx", join(__dirname, "../fixtures/format-date-boot-tz-probe.ts")],
-      { env: { ...process.env, TZ: "Pacific/Honolulu" }, encoding: "utf8" },
+      // timeout: vitest's testTimeout can't preempt a blocking execFileSync call.
+      { env: { ...process.env, TZ: "Pacific/Honolulu" }, encoding: "utf8", timeout: 15000 },
     );
     expect(stdout).toBe("7/5/2026");
   });
