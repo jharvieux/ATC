@@ -47,6 +47,18 @@ function cookieBaseName(supabaseUrl) {
   return `sb-${ref}-auth-token`;
 }
 
+// Cookie reads need host permission for the tenant origin. The manifest only
+// declares optional_host_permissions (no origin is granted by default), so
+// each new origin must be requested — this keeps the extension from ever
+// holding standing cookie access to sites other than the platform the user
+// connected to.
+async function ensureHostPermission(tenantUrl, { requestIfMissing }) {
+  const origin = `${new URL(tenantUrl).origin}/*`;
+  if (await chrome.permissions.contains({ origins: [origin] })) return true;
+  if (!requestIfMissing) return false;
+  return chrome.permissions.request({ origins: [origin] });
+}
+
 async function readSupabaseSessionFromCookies(tenantUrl, supabaseUrl) {
   const baseName = cookieBaseName(supabaseUrl);
   const all = await chrome.cookies.getAll({ url: tenantUrl });
@@ -67,7 +79,15 @@ async function readSupabaseSessionFromCookies(tenantUrl, supabaseUrl) {
 // Attempts to connect to the platform at tenantUrl.
 // Returns a session object on success, null if no active platform session exists.
 // Throws an Error with a user-facing message on network/config failure.
-async function tryConnect(tenantUrl) {
+// requestPermission must be true only when called from a user gesture (chrome.permissions.request
+// requires one) — the silent auto-reconnect path on popup load passes false and relies on a
+// previously granted permission.
+async function tryConnect(tenantUrl, { requestPermission } = { requestPermission: true }) {
+  const hasHostPermission = await ensureHostPermission(tenantUrl, { requestIfMissing: requestPermission });
+  if (!hasHostPermission) {
+    throw new Error("Permission to access that platform was not granted.");
+  }
+
   let configRes;
   try {
     configRes = await fetch(`${tenantUrl}/api/extension/config`);
@@ -191,9 +211,11 @@ async function init() {
     await chrome.storage.local.remove("session");
   }
 
-  // Try to read the Supabase session cookie from the platform domain.
+  // Try to read the Supabase session cookie from the platform domain. Popup-load is not a
+  // user gesture chrome.permissions.request can use, so only proceed if permission was
+  // already granted from a prior explicit Connect click.
   try {
-    const result = await tryConnect(candidateUrl);
+    const result = await tryConnect(candidateUrl, { requestPermission: false });
     if (result) {
       displayPlatformUrl.textContent = candidateUrl;
       show(connectedView);

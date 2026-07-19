@@ -25,6 +25,7 @@ The extension connects to the platform using your existing browser session — n
 1. Click the **ATC Knowledge Clipper** icon in your toolbar
 2. Enter your **Platform URL**, e.g. `https://yourteam.atcplatform.com`
 3. Click **Connect**
+4. Chrome will prompt you to allow the extension to read data on that one platform URL — click **Allow**. The extension only ever requests this for the specific platform origin you connect to, never for every site you visit.
 
 **If you are already signed into the platform in this browser**, the extension connects immediately — no further steps needed.
 
@@ -57,6 +58,8 @@ Your session is stored in the extension's local storage and refreshed automatica
 The extension reads the Supabase session cookie set by the platform after you sign in with your OAuth provider (Google, Microsoft, or Facebook). The extension never handles credentials. When the access token is close to expiry, it is refreshed automatically using your Supabase refresh token. If the refresh fails (e.g. after a sign-out on the platform), you will see "Sign in required" and can reconnect in one click.
 
 API calls use `Authorization: Bearer <token>` — the session cookie is only read locally for the token value and is never sent across origins.
+
+The extension does not hold standing cookie access to every site. It requests permission for a single origin (the platform URL you connect to) via Chrome's optional-permissions prompt at connect time, so a compromised or supply-chained extension build can't read session cookies from unrelated sites you visit.
 
 ---
 
