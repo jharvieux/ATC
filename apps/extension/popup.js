@@ -108,6 +108,10 @@ async function tryConnect(tenantUrl, { requestPermission } = { requestPermission
   if (!parsed || !parsed.access_token) return null;
 
   if (isTokenExpired(parsed.expires_at)) {
+    // No host permission is requested for supabaseUrl — GoTrue's CORS handler
+    // (supabase/auth) allows all origins by design (anon key + JWT are the
+    // real auth boundary, not CORS), so this cross-origin fetch works without
+    // it. See "Trust boundary: Supabase auth fetches" in docs/browser-extension.md.
     const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: supabaseAnonKey },
@@ -177,6 +181,7 @@ async function init() {
   tenantUrlInput.value = candidateUrl;
 
   // If we had a stored session try a token refresh before hitting cookies.
+  // No host permission needed here either — see the trust-boundary note above tryConnect's refresh fetch.
   if (stored.session) {
     try {
       const res = await fetch(

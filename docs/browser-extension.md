@@ -59,7 +59,11 @@ The extension reads the Supabase session cookie set by the platform after you si
 
 API calls use `Authorization: Bearer <token>` — the session cookie is only read locally for the token value and is never sent across origins.
 
-The extension does not hold standing cookie access to every site. It requests permission for a single origin (the platform URL you connect to) via Chrome's optional-permissions prompt at connect time, so a compromised or supply-chained extension build can't read session cookies from unrelated sites you visit.
+The extension does not hold standing cookie access to every site. It requests permission for a single origin (the platform URL you connect to) via Chrome's optional-permissions prompt at connect time. `optional_host_permissions` in `manifest.json` still lists `https://*/*` (Chrome requires the broad pattern to be declared up front so it can be requested piecemeal at runtime) — the actual protection is that any such request surfaces a user-visible Chrome permission prompt naming the exact origin, not that the extension is architecturally incapable of asking for more.
+
+### Trust boundary: Supabase auth fetches
+
+Token-refresh calls (`popup.js`, `submit.js`) hit `<supabase_url>/auth/v1/token` directly, and that origin is never covered by `ensureHostPermission` — only the tenant platform origin is requested. This works because Supabase's GoTrue auth server's CORS handler (`supabase/auth`, `internal/api/api.go`) allows all origins by default (its `cors.Options` doesn't set `AllowedOrigins`, and the underlying `rs/cors` library treats that as allow-all), since GoTrue is designed to be called from arbitrary browser origins — the anon key plus JWT verification is the real authorization boundary, not CORS. If the platform ever fronts Supabase Auth with a custom CORS policy that restricts origins, this refresh path would need the Supabase origin added to the `ensureHostPermission` request (combined into the same user gesture as the tenant-origin request, since a second silent `chrome.permissions.request` outside a gesture throws).
 
 ---
 
