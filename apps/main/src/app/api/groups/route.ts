@@ -22,6 +22,7 @@ import { hardDeleteGroup } from "@/lib/groups/delete-group";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
+import { safeUrl } from "@atc/contracts";
 
 interface InviteeInput {
   email: string;
@@ -66,6 +67,16 @@ export async function POST(req: Request): Promise<Response> {
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (sailing_id !== undefined && !UUID_RE.test(sailing_id)) {
       return Response.json({ error: "sailing_id must be a valid UUID" }, { status: 400 });
+    }
+
+    // #2012 — the coordinator-supplied hero_image_url is stored on the group
+    // row and rendered into invitee emails (<img src>) and the public invite
+    // page. Validate it at the boundary with safeUrl (http(s) only, no
+    // internal/loopback/link-local hosts) so a coordinator can't turn an
+    // invitee's mail client into a tracking beacon or internal-host probe.
+    // selectHeroImage's other sources (library / CDN / DALL-E) are trusted.
+    if (hero_image_url !== undefined && !safeUrl.safeParse(hero_image_url).success) {
+      return Response.json({ error: "hero_image_url must be an http(s) URL to a public host" }, { status: 400 });
     }
 
     const svc = createServiceRoleClient();
