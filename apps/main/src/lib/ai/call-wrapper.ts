@@ -401,6 +401,11 @@ export interface BatchRequest {
     max_tokens: number;
     system?: string;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
+    // #2009 — structured outputs: constrains the response to a JSON schema
+    // so consumers can JSON.parse the result text without fence/brace
+    // heuristics. Schema rules: objects need additionalProperties:false;
+    // no numeric/string length constraints (the API rejects them).
+    output_config?: { format: { type: "json_schema"; schema: Record<string, unknown> } };
   };
 }
 
@@ -464,6 +469,7 @@ export async function submitAnthropicBatch(args: {
           max_tokens: r.params.max_tokens,
           ...(r.params.system ? { system: r.params.system } : {}),
           messages: r.params.messages,
+          ...(r.params.output_config ? { output_config: r.params.output_config } : {}),
         },
       })),
     });

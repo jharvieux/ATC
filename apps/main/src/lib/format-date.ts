@@ -23,12 +23,18 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 export function formatDate(
   iso: string | number | Date | null | undefined,
   style: DateDisplayStyle = "numeric",
+  // Explicit override for callers (tests, primarily) that need a deterministic
+  // zone instead of the runtime's ambient one. Ignored for date-only strings,
+  // which always render in UTC per #1768 — see DATE_ONLY comment above.
+  timeZone?: string,
 ): string {
   if (iso == null) return "—";
   const date = iso instanceof Date ? iso : new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
   const options = typeof iso === "string" && DATE_ONLY.test(iso)
     ? { ...STYLE_OPTIONS[style], timeZone: "UTC" }
-    : STYLE_OPTIONS[style];
+    : timeZone
+      ? { ...STYLE_OPTIONS[style], timeZone }
+      : STYLE_OPTIONS[style];
   return date.toLocaleDateString("en-US", options);
 }

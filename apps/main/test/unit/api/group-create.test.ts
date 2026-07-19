@@ -197,6 +197,40 @@ describe("POST /api/groups — hero-image tier (#444)", () => {
   });
 });
 
+describe("POST /api/groups — hero_image_url validation (#2012)", () => {
+  // A coordinator-supplied hero_image_url is persisted and rendered into
+  // invitee emails (<img src>) + the public invite page. An unvalidated URL is
+  // a tracking/deanonymization beacon or an internal-host probe fired from the
+  // invitee's network. The boundary must reject non-http(s) schemes and
+  // internal/loopback/link-local hosts BEFORE the group row is written.
+  it("rejects a link-local / metadata host with 400 and writes no group", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, hero_image_url: "http://169.254.169.254/latest/meta-data" }));
+
+    expect(res.status).toBe(400);
+    expect(groupInsert).not.toHaveBeenCalled();
+    expect(mocks.selectHeroImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-http(s) scheme (e.g. javascript:) with 400", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, hero_image_url: "javascript:alert(1)" }));
+
+    expect(res.status).toBe(400);
+    expect(groupInsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts a public https URL and forwards it to selectHeroImage", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, hero_image_url: "https://cdn.example.com/hero.jpg" }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.selectHeroImage).toHaveBeenCalledWith(
+      expect.objectContaining({ coordinator_url: "https://cdn.example.com/hero.jpg" }),
+    );
+  });
+});
+
 describe("POST /api/groups — immediate invitations", () => {
   // Create-time invitees must be emailed now, not only by the daily reminder cron.
   it("sends an invitation email per invitee at creation", async () => {

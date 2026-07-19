@@ -52,6 +52,25 @@ Investigated in #1671 after a 20-PR sweep burned 2–5 audit-agent pairs per PR 
 3. **Process the queue strictly in sequence:** merge PR A → update-branch PR B (now picks up A's merge) → merge B → update-branch PR C → merge C → ... Don't update-branch all queued PRs upfront in a batch.
 4. **After any branch update, check before you re-dispatch.** Don't reflexively re-run the audit agents just because a branch update happened. Run `scripts/post-audit-comment.sh --check <pr-number>` first — it recomputes the current diff hash (same recipe below) and reports whether each posted marker is still current. Only dispatch fresh agents on a reported "stale"; a "current" result means the update-branch didn't change the effective diff and the existing markers still satisfy the gate.
 
+## When the merge is refused but everything looks green (2026-07-19, PR #2016)
+
+Symptom: every queryable surface says the PR is ready — all required contexts SUCCESS, GraphQL `statusCheckRollup.state` SUCCESS, `mergeable: MERGEABLE`, no review requirement, branch up to date — yet `gh pr merge` fails with the generic "the base branch policy prohibits the merge", `mergeStateStatus` stays `BLOCKED`, and armed auto-merge never fires.
+
+**Diagnostic that actually names the blocker:** attempt the merge through REST, not GraphQL:
+
+```bash
+gh api -X PUT repos/{owner}/{repo}/pulls/<n>/merge -f merge_method=squash
+```
+
+The REST error message names the exact unmet requirement (e.g. `Required status check "RLS Snapshot Diff" is cancelled.`) — `gh pr merge` and every GraphQL field genericize it to BLOCKED. Reach for this the moment green-but-blocked appears; on #2016 it ended ~90 minutes of API archaeology in one call.
+
+Known causes and remedies:
+
+1. **A cancelled duplicate of a required check-run from a superseded run set.** The shared-test-db concurrency group cancels sibling runs; a cancelled required job then sits on the head SHA alongside (or instead of) a successful one, and `gh pr checks` / `statusCheckRollup` can mask it. Confirm with `gh api "repos/{owner}/{repo}/commits/<head-sha>/check-runs?filter=all&per_page=100" --jq '.check_runs[] | select(.conclusion=="cancelled") | .name'`; remedy is `gh run rerun <run-id>` on the owning run. Check for cancelled required runs after **every** update-branch, before trusting the rollup.
+2. **The code-scanning "CodeQL" status check wedged in `queued` while its workflow already succeeded.** CodeQL is a de-facto required check via code-scanning merge protection even though it is absent from `required_status_checks` — a queued/wedged CodeQL check blocks the merge. Remedy: re-run the CodeQL workflow for the branch (`gh run rerun <codeql-run-id>`); the fresh SARIF upload resolves the check.
+
+**Anti-remedy — do not close/reopen the PR to force re-evaluation.** Reopening fires a fresh `pull_request` run set, which the concurrency group may immediately cancel (recreating cause 1), and closing silently cancels any armed auto-merge. It made #2016 worse, not better.
+
 ## Running the agents (in parallel, concurrent with CI)
 
 The two agents are independent — neither reads the other's output. Launch **both in a single message (two Agent calls)** immediately after `gh pr create`, so they run concurrently with each other **and** with CI. Rationale: `pnpm verify` is required before every push and is a superset of most required CI jobs, so a post-push CI failure is rare (mostly infra/e2e flake); overlapping agent time with CI time saves the wall-clock of a full serial pass on every PR, and the worst case (CI forces a fix-commit → re-run agents) is no worse than the old flow.

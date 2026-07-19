@@ -213,14 +213,18 @@ export const importPipeline = inngest.createFunction(
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row: ImportQueueRow): Promise<string | null> {
+export async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row: ImportQueueRow): Promise<string | null> {
   // Email path: read body_text from the gmail_inbound_messages row the
-  // webhook persisted, keyed by Gmail message_id.
+  // webhook persisted, keyed by Gmail message_id. message_id is globally
+  // unique so this predicate isn't reachable cross-tenant today, but the
+  // service-role client has no RLS backstop — the tenant_id filter is
+  // defense-in-depth per D-091 #4 (#2003), not load-bearing uniqueness logic.
   if (row.import_path === "email") {
     const { data } = await svc
       .from("gmail_inbound_messages")
       .select("body_text")
       .eq("message_id", row.source_ref)
+      .eq("tenant_id", row.tenant_id)
       .maybeSingle();
     return (data as { body_text?: string } | null)?.body_text ?? null;
   }
