@@ -28,7 +28,10 @@ async function getValidSession() {
   const nowSec = Math.floor(Date.now() / 1000);
   if (nowSec < session.expiresAt - 60) return session;
 
-  // Token expired — attempt refresh.
+  // Token expired — attempt refresh. No host permission is requested for
+  // supabaseUrl — GoTrue's CORS handler (supabase/auth) allows all origins by
+  // design (anon key + JWT are the real auth boundary, not CORS). See "Trust
+  // boundary: Supabase auth fetches" in docs/browser-extension.md.
   const res = await fetch(
     `${session.supabaseUrl}/auth/v1/token?grant_type=refresh_token`,
     {

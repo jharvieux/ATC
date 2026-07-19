@@ -21,6 +21,7 @@ import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/tem
 import { buildPreviewHtml } from "@/lib/email/preview-builder";
 import { sendEmail } from "@/lib/email/send";
 import { buildPreviewVars, layoutFromRows, type PreviewTenantRow } from "@/lib/email/preview-vars";
+import { isValidEmail } from "@/lib/validation/schemas";
 
 interface TenantRow extends PreviewTenantRow {
   id: string;
@@ -66,7 +67,7 @@ export async function POST(
 
   const raw = body as Record<string, unknown>;
   const toEmail = typeof raw.to_email === "string" ? raw.to_email.trim().slice(0, 254) : null;
-  if (!toEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toEmail)) {
+  if (!toEmail || !isValidEmail(toEmail)) {
     return Response.json({ error: "invalid_to_email" }, { status: 400 });
   }
   const sailingId = typeof raw.sailing_id === "string" ? raw.sailing_id : null;
