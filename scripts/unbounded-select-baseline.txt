@@ -62,5 +62,10 @@
 1 apps/main/src/inngest/quote-estimate-expiry-sweep.ts::contacts
 # §25.4 CCPA user-data purge, scoped to a single user_id/hash — same
 # established pattern as this file's existing bookings/conversations/
-# messages/quotes baseline entries above.
-2 apps/main/src/lib/privacy/purge-user-data.ts::contacts
+# messages/quotes baseline entries above. The 3rd contacts read (#2031)
+# is loadUserEmailAddresses gathering the user's own contact emails.
+3 apps/main/src/lib/privacy/purge-user-data.ts::contacts
+# #2034 — booking_line_items.item_details scrub, bounded to the purged
+# user's already-loaded booking id set (a .limit() here would silently
+# leave PII unpurged past the cap — worse than the finding).
+1 apps/main/src/lib/privacy/purge-user-data.ts::booking_line_items

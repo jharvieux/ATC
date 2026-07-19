@@ -15,10 +15,20 @@
 // after processing. So past its window we NULL raw_event and keep the row,
 // rather than deleting.
 //
-// help_sessions is intentionally EXEMPT: bug_submissions and feature_requests
-// carry a NOT NULL FK to help_sessions(id), so deleting a session would either
-// violate the FK or orphan a submission that has its own (longer) retention.
-// Its retention is governed by the submission lifecycle, not this sweep.
+// bug_submissions / feature_requests are swept on their LIFECYCLE timestamp
+// (#2033): closed_at for bugs, decided_at for feature requests. A row only
+// becomes eligible once it reaches a terminal state — an open/untriaged row
+// has a NULL lifecycle timestamp, which `.lt(col, cutoff)` never matches, so
+// live submissions are preserved and only resolved ones age out. Both tables
+// hold submitter_user_id + free-text fields, so leaving them forever was the
+// silent-retention bug the old "governed by the submission lifecycle" comment
+// papered over.
+//
+// help_sessions itself stays EXEMPT: bug_submissions and feature_requests carry
+// a NOT NULL FK to help_sessions(id), so deleting a session out from under a
+// still-retained submission would violate that FK. Sessions age out indirectly
+// once their submissions are purged (a future sweep could reclaim orphaned
+// sessions; out of scope here).
 //
 // Windows are conservative defaults, each overridable via env; the operator
 // should confirm them against CCPA / §25 retention requirements (see PR body).
@@ -42,6 +52,9 @@ type DeleteTarget = {
   tsColumn: string;
   envVar: string;
   defaultDays: number;
+  // PK column selected then deleted-by. Defaults to "id"; gmail_inbound_messages
+  // keys on message_id (Gmail's globally-unique id), not a synthetic uuid.
+  pkColumn?: string;
 };
 
 // Deliberately conservative defaults; each env var overrides at deploy time.
@@ -52,6 +65,16 @@ const DELETE_TARGETS: DeleteTarget[] = [
   { table: "notifications", tsColumn: "created_at", envVar: "NOTIFICATIONS_RETENTION_DAYS", defaultDays: 90 },
   { table: "attribution_touches", tsColumn: "occurred_at", envVar: "ATTRIBUTION_TOUCHES_RETENTION_DAYS", defaultDays: 365 },
   { table: "auth_attempts", tsColumn: "occurred_at", envVar: "AUTH_ATTEMPTS_RETENTION_DAYS", defaultDays: 90 },
+  // #2031 — inbound customer email content (raw_payload + from/to/subject/body).
+  // Mirrors the outbound analog email_log's 365d window. These hold full
+  // customer email whenever a customer emails a tenant persona address.
+  { table: "gmail_inbound_messages", tsColumn: "received_at", envVar: "GMAIL_INBOUND_RETENTION_DAYS", defaultDays: 365, pkColumn: "message_id" },
+  { table: "inbound_emails", tsColumn: "received_at", envVar: "INBOUND_EMAILS_RETENTION_DAYS", defaultDays: 365 },
+  // #2033 — lifecycle-driven purge: only rows that reached a terminal state
+  // (closed_at / decided_at set) age out; open rows keep a NULL ts and are
+  // never matched. 365d after close mirrors email_log's content window.
+  { table: "bug_submissions", tsColumn: "closed_at", envVar: "BUG_SUBMISSIONS_RETENTION_DAYS", defaultDays: 365 },
+  { table: "feature_requests", tsColumn: "decided_at", envVar: "FEATURE_REQUESTS_RETENTION_DAYS", defaultDays: 365 },
 ];
 
 // stripe_webhook_events raw_event PII scrub window.
@@ -75,15 +98,18 @@ async function purgeTable(
 ): Promise<TableResult> {
   const windowDays = resolveWindowDays(target.envVar, target.defaultDays);
   const cutoff = cutoffIso(windowDays);
+  const pk = target.pkColumn ?? "id";
+  // Alias the PK to `id` so the row-mapping + delete below stay pk-agnostic.
+  const selectExpr = pk === "id" ? "id" : `id:${pk}`;
   let deleted = 0;
 
   for (let batch = 0; batch < MAX_BATCHES; batch++) {
-    // Select a bounded slice of expired PKs, then delete by id. A raw
+    // Select a bounded slice of expired PKs, then delete by PK. A raw
     // `DELETE ... WHERE ts < cutoff` is unbounded and can lock the whole
     // table on the largest ones; batching keeps each statement small.
     const { data: rows, error: selErr } = await svc
       .from(target.table)
-      .select("id")
+      .select(selectExpr)
       .lt(target.tsColumn, cutoff)
       .limit(DELETE_BATCH);
     // #1722 — THROW (don't return) on a DB error so the wrapping step.run rejects
@@ -93,13 +119,16 @@ async function purgeTable(
     if (selErr) {
       throw new Error(`data-retention-purge: ${target.table} select failed: ${selErr.message}`);
     }
-    const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+    // Cast through unknown: the dynamic aliased select string (`id:${pk}`)
+    // defeats supabase-js's literal-based row typing, which otherwise widens
+    // to its error branch. The shape is `{ id }` for every target here.
+    const ids = ((rows ?? []) as unknown as Array<{ id: string }>).map((r) => r.id);
     if (ids.length === 0) break;
 
     const { count, error: delErr } = await svc
       .from(target.table)
       .delete({ count: "exact" })
-      .in("id", ids);
+      .in(pk, ids);
     if (delErr) {
       throw new Error(`data-retention-purge: ${target.table} delete failed: ${delErr.message}`);
     }
