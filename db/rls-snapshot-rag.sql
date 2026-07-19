@@ -25,5 +25,5 @@ CREATE POLICY "rag_media_assets_select" ON public.rag_media_assets
 -- TABLE: public.rag_retrieval_log_daily
 CREATE POLICY "rag_retrieval_log_daily_select" ON public.rag_retrieval_log_daily
   FOR SELECT TO PUBLIC
-  USING (true);
+  USING (tenant_id::text = (( SELECT current_setting('request.jwt.claim.tenant_id'::text, true) AS current_setting)));
 
