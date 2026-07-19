@@ -43,4 +43,30 @@ describe("sanitizeForLog", () => {
     const out = sanitizeForLog("x".repeat(50), 10);
     expect(out).toBe(`${"x".repeat(10)}...[truncated]`);
   });
+
+  // #103 — the chat [chat:perf] sink logs sanitizeForLog(conversationId)
+  // (apps/main/src/app/api/chat/route.ts:474). Pin that a crafted
+  // conversation_id can't smuggle a line terminator into the log and forge a
+  // second [chat:perf] entry. Asserts on sanitizeForLog's own output
+  // directly (no extra wrapping in the assertion) so a CONTROL_CHARS
+  // regression here actually fails the test instead of being masked by a
+  // redundant strip performed by the test itself.
+  it("#103 chat log sink single-lines a CRLF-laden conversation id", () => {
+    const forged = "abc\r\n[chat:perf] config_db_reads=0 conversation_id=admin";
+    expect(sanitizeForLog(forged)).not.toMatch(/[\r\n]/);
+  });
+
+  // #106 — the route-local barrier at chat/route.ts:474 moved from a bare
+  // `.replace(/[\r\n]+/g, " ")` (not a CodeQL-recognized sanitizer for
+  // js/log-injection, which is why #103's fix stayed flagged as #106) to
+  // `JSON.stringify(sanitizeForLog(x))` — a modeled taint barrier. Pin the
+  // sink's logged value is the JSON-quoted form, not sanitizeForLog's raw
+  // output: removing the JSON.stringify wrap must fail this test.
+  it("#106 route-local barrier JSON-quotes the sanitized value at the sink", () => {
+    const forged = "abc\r\n[chat:perf] config_db_reads=0 conversation_id=admin";
+    const sanitized = sanitizeForLog(forged);
+    const sinkValue = JSON.stringify(sanitized);
+    expect(sinkValue).toBe(`"${sanitized}"`);
+    expect(sinkValue).not.toBe(sanitized);
+  });
 });

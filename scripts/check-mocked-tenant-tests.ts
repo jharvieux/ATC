@@ -185,12 +185,16 @@ export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> 
   return map;
 }
 
-function walk(dir: string): string[] {
+export function walk(dir: string, swallowMissing = true): string[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    // defaultDirs()/resolutionDirs() entries are optional (not every app has a
+    // test dir); an explicit CLI dir argument is required input — fail loud on a
+    // bad path (mirrors check-rls-policy-semantics.ts). Nested dirs discovered
+    // by recursion always exist, so they keep the swallowing default.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT" && swallowMissing) return [];
     throw err;
   }
   const out: string[] = [];
@@ -222,8 +226,24 @@ function resolutionDirs(): string[] {
 
 function main(): void {
   const argDirs = process.argv.slice(2);
-  const dirs = argDirs.length > 0 ? argDirs.map((d) => path.resolve(d)) : defaultDirs();
-  const files = dirs.flatMap(walk);
+  const usingDefaults = argDirs.length === 0;
+  const dirs = usingDefaults ? defaultDirs() : argDirs.map((d) => path.resolve(d));
+  // With explicit CLI dirs, each must yield ≥1 file: a nonexistent path throws
+  // in walk() (swallowMissing=false), an existing-but-empty path is caught here.
+  // Otherwise a bad/empty explicit dir is silently dropped whenever a sibling
+  // dir has files, masking a typo'd invocation (the usingDefaults gap this fixes).
+  const perDir = dirs.map((dir) => ({ dir, files: walk(dir, usingDefaults) }));
+  if (!usingDefaults) {
+    const empty = perDir.filter((p) => p.files.length === 0);
+    if (empty.length > 0) {
+      console.error(
+        "mocked-tenant-tests guard: explicit dir(s) yielded zero files — check paths:\n" +
+          empty.map((e) => `  ${e.dir}`).join("\n"),
+      );
+      process.exit(1);
+    }
+  }
+  const files = perDir.flatMap((p) => p.files);
   if (files.length === 0) {
     console.error("mocked-tenant-tests guard: no files found under scanned dirs — check paths.");
     process.exit(1);
@@ -232,7 +252,9 @@ function main(): void {
   // works; only files under the scanned test dirs are checked for findings.
   const byPath = new Map(files.map((abs) => [path.relative(ROOT, abs), fs.readFileSync(abs, "utf8")]));
   const testRels = new Set(byPath.keys());
-  for (const abs of resolutionDirs().flatMap(walk)) {
+  // Arrow (not bare `walk`): flatMap would pass the array index as walk's second
+  // arg, forcing swallowMissing=0 and throwing on an app without a src/ tree.
+  for (const abs of resolutionDirs().flatMap((d) => walk(d))) {
     const rel = path.relative(ROOT, abs);
     if (!byPath.has(rel)) byPath.set(rel, fs.readFileSync(abs, "utf8"));
   }

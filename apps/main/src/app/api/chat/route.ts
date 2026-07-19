@@ -466,7 +466,17 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   console.info(
     "[chat:perf] config_db_reads=%d conversation_id=%s",
     configDbReads,
-    sanitizeForLog(conversationId),
+    // codeql[js/log-injection] #106: the inline `.replace(/[\r\n]+/g, " ")`
+    // barrier from the #103 fix kept this line flagged — CodeQL's
+    // log-injection query doesn't treat a bare regex .replace as a
+    // recognized sanitizer here. JSON.stringify IS a modeled taint barrier
+    // for this query, and — since sanitizeForLog already stripped CR/LF —
+    // it only adds the surrounding quotes at runtime. sanitizeForLog stays
+    // for its broader hygiene (truncation, control-char stripping); this
+    // wrap is purely so CodeQL's static model recognizes the sink. Matches
+    // the JSON.stringify(...)-at-sink style already used in
+    // persona-repository.ts and platform-admin-client.ts.
+    JSON.stringify(sanitizeForLog(conversationId)),
   );
 
   // ── 8b. Generation + supervisor regen loop (#1016 — see runGenerationLoop).

@@ -17,19 +17,60 @@ interface CallLog {
   // Optional cross-op ordered trace ("select:contacts", "update:contacts", …)
   // for call-order assertions. Only populated when a test opts in by providing it.
   ordered?: string[];
+  // Optional capture of every raw .or() filter string passed to an update
+  // chain, so a test can assert on the produced DSL string directly instead
+  // of only on round-tripping it back through the fake's own parser.
+  orFilters?: string[];
 }
 
-// Model PostgREST `.or("from_email.ilike.<pat>,…")` matching case-insensitively:
-// unescape the ilike wildcards the lib escaped, then exact case-folded compare.
-// This lets a test seed a mixed-case from_email row and prove it still matches.
+// Model PostgREST `.or("from_email.ilike."<pat>",…")` parsing: split terms on
+// top-level commas (a comma inside double quotes is a literal value byte, not a
+// separator — #2038), strip the double-quote wrapper, reverse PostgREST's
+// `\"`/`\\` unquote, then reverse the lib's LIKE escaping, then case-fold. This
+// lets a test seed a mixed-case OR reserved-char from_email row and prove it
+// still matches after the round trip.
+function splitTopLevelTerms(orArg: string): string[] {
+  const terms: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < orArg.length; i++) {
+    const ch = orArg[i];
+    if (inQuotes) {
+      if (ch === "\\") {
+        cur += ch + (orArg[++i] ?? "");
+      } else if (ch === '"') {
+        inQuotes = false;
+        cur += ch;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+      cur += ch;
+    } else if (ch === ",") {
+      terms.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) terms.push(cur);
+  return terms;
+}
+
 function matchRowsByOrIlike(
   rows: Array<{ from_email: string }>,
   orArg: string | null,
 ): Array<{ from_email: string }> {
   if (!orArg) return [];
-  const patterns = orArg.split(",").map((term) =>
-    term.replace(/^from_email\.ilike\./, "").replace(/\\([\\%_])/g, "$1").toLowerCase(),
-  );
+  const patterns = splitTopLevelTerms(orArg).map((term) => {
+    let val = term.replace(/^from_email\.ilike\./, "");
+    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+    return val
+      .replace(/\\(["\\])/g, "$1") // PostgREST unquote: \" -> "  \\ -> \
+      .replace(/\\([\\%_])/g, "$1") // LIKE un-escape:   \% -> %  \_ -> _  \\ -> \
+      .toLowerCase();
+  });
   return rows.filter((r) => patterns.includes(r.from_email.toLowerCase()));
 }
 
@@ -54,6 +95,10 @@ interface Scenario {
   aiBatchScrubbed?: number;
   // #2032 — force the ai_batch caller_metadata scrub to error (retry-safety test).
   failAiBatchScrub?: boolean;
+  // #2038 — force the inbound/line-item scrubs to error (retry-safety tests).
+  failGmailScrub?: boolean;
+  failInboundEmailsScrub?: boolean;
+  failLineItemsScrub?: boolean;
   // #2031/#2034 — when set, the inbound-table updates match these rows against the
   // captured .or() ilike filter instead of returning a fixed count, so a test can
   // prove case-insensitive from_email matching.
@@ -133,6 +178,15 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
         if (scenario.failAiBatchScrub && table === "ai_batch_requests") {
           return { data: null, error: { message: "synthetic_ai_batch_failure" } };
         }
+        if (scenario.failGmailScrub && table === "gmail_inbound_messages") {
+          return { data: null, error: { message: "synthetic_gmail_failure" } };
+        }
+        if (scenario.failInboundEmailsScrub && table === "inbound_emails") {
+          return { data: null, error: { message: "synthetic_inbound_emails_failure" } };
+        }
+        if (scenario.failLineItemsScrub && table === "booking_line_items" && "item_details" in values) {
+          return { data: null, error: { message: "synthetic_line_items_failure" } };
+        }
         // Compute rows affected per scenario knobs.
         let affected: unknown[];
         if (table === "gmail_inbound_messages" && scenario.inboundGmailRows) {
@@ -179,6 +233,7 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
       updateChain.not = () => updateChain;
       updateChain.or = (arg: string) => {
         orArg = arg;
+        log.orFilters?.push(arg);
         return updateChain;
       };
       updateChain.select = () => thenable(resolveResult());
@@ -534,6 +589,95 @@ describe("purgeUserDataPerRetention", () => {
     expect(result.error_detail).toMatch(/ai_batch_metadata_scrub_failed/);
     // The users PII-clear (which flips status='purged') must NOT have run.
     expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
+  });
+
+  // #2038 — failure-injection on the inbound/line-item scrub throw-paths. Each
+  // scrub runs BEFORE Step 8's status='purged' flip (the purge's idempotency
+  // guard), so a throw must abort with outcome='error' and leave status
+  // unpurged — otherwise the caller marks the purge done and the residual PII is
+  // never re-scrubbed on retry. Mirrors the #2032 ai_batch retry-safety test.
+  it("#2038 gmail_inbound scrub failure aborts before contacts detach / status flip", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake({ ...baseScenario(), failGmailScrub: true }, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.purge_outcome).toBe("error");
+    expect(result.error_detail).toMatch(/inbound_gmail_scrub_failed/);
+    // Step 4.5 fails → Step 5 (contacts detach) and Step 8 (users flip) never run.
+    expect(log.updates.find((u) => u.table === "contacts")).toBeUndefined();
+    expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
+  });
+
+  it("#2038 inbound_emails scrub failure aborts before contacts detach / status flip", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake({ ...baseScenario(), failInboundEmailsScrub: true }, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.purge_outcome).toBe("error");
+    expect(result.error_detail).toMatch(/inbound_emails_scrub_failed/);
+    // The gmail scrub (first half of Step 4.5) DID run; the inbound_emails half throws.
+    expect(log.updates.find((u) => u.table === "gmail_inbound_messages")).toBeDefined();
+    expect(log.updates.find((u) => u.table === "contacts")).toBeUndefined();
+    expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
+  });
+
+  it("#2038 booking_line_items scrub failure aborts before the status flip", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake({ ...baseScenario(), failLineItemsScrub: true }, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.purge_outcome).toBe("error");
+    expect(result.error_detail).toMatch(/line_items_scrub_failed/);
+    // Step 6.5 fails → Step 7.7 (ai_batch) and Step 8 (users flip) never run.
+    expect(log.updates.find((u) => u.table === "ai_batch_requests")).toBeUndefined();
+    expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
+  });
+
+  // #2038 — an address can carry PostgREST or()-grammar reserved chars
+  // (`,` `(` `)`) in its local-part without being self-delimited by a literal
+  // `"` (a value like `"a,b(c)"@example.com` is the wrong fixture for this:
+  // its own leading/trailing `"` chars accidentally satisfy the fake's
+  // quote-detection even if the production wrapper is deleted, so that
+  // fixture can't actually catch a regression — see mutation-check note
+  // below). Left unquoted by the production helper, the bare top-level comma
+  // here would split the term and the paren would unbalance the group, so
+  // this address only round-trips if `ilikeAnyFilter` really adds the `."…"`
+  // DSL wrapper. Assert both the row-match outcome AND the raw filter string.
+  it("#2038 scrubs an address whose local-part contains or()-grammar chars", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [], orFilters: [] };
+    const weird = "a,b(c)@example.com";
+    const scenario: Scenario = {
+      ...baseScenario(),
+      userEmail: weird,
+      inboundGmailRows: [{ from_email: weird }, { from_email: "other@example.com" }],
+      inboundEmailRows: [{ from_email: weird.toUpperCase() }],
+    };
+    const db = makeFake(scenario, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.counts.inbound_gmail_scrubbed).toBe(1);
+    expect(result.counts.inbound_emails_scrubbed).toBe(1);
+    // Direct check on the produced DSL string: the reserved-char value must be
+    // wrapped in `."…"`, not left bare (which would malform the or() grammar).
+    expect(log.orFilters![0]).toContain('.ilike."a,b(c)@example.com"');
+  });
+
+  // #2038/CodeQL alert 105 — a `\` needs BOTH the LIKE escape and the
+  // PostgREST DSL escape (see the truth table on ilikeAnyFilter). Pin the
+  // exact produced DSL string (one `\` -> four `\` on the wire) AND that the
+  // fake's round-trip decode — the same `\"`/`\\` unquote then `\%`/`\_`/`\\`
+  // LIKE un-escape PostgREST would perform — resolves back to the original
+  // value, so a regression in the escape ordering fails both checks.
+  it("#2038 scrubs an address whose local-part contains a literal backslash", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [], orFilters: [] };
+    const weird = "a\\b@example.com";
+    const scenario: Scenario = {
+      ...baseScenario(),
+      userEmail: weird,
+      inboundGmailRows: [{ from_email: weird }, { from_email: "other@example.com" }],
+      inboundEmailRows: [{ from_email: weird.toUpperCase() }],
+    };
+    const db = makeFake(scenario, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.counts.inbound_gmail_scrubbed).toBe(1);
+    expect(result.counts.inbound_emails_scrubbed).toBe(1);
+    expect(log.orFilters![0]).toContain('.ilike."a\\\\\\\\b@example.com"');
   });
 
   // #2031 — retry-safety: loadUserEmailAddresses reads contacts.user_id to collect
