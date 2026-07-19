@@ -23,6 +23,15 @@ vi.mock("@/lib/auth/assert-platform-admin", () => ({
   assertPlatformAdminAreaPage: vi.fn().mockResolvedValue({ admin_user_id: "test", role: "superadmin", via: "session" }),
 }));
 
+// #1953 — the page's data reads now go through unstable_cache. Passthrough
+// here so these tests keep exercising the real read helpers (error
+// propagation must not be masked by a cache layer). Cache-hit auth
+// semantics are pinned separately in supervisor-page-auth-cache.test.ts.
+vi.mock("next/cache", () => ({
+  unstable_cache: <T>(fn: T) => fn,
+  revalidateTag: vi.fn(),
+}));
+
 // safe-mutation is intentionally NOT mocked — we want the real safeAwait /
 // SupabaseMutationError to throw on the injected error.
 

@@ -10,6 +10,7 @@
 // - Link to /admin/supervisor/review-queue
 
 import React from "react";
+import { unstable_cache } from "next/cache";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { assertPlatformAdminAreaPage } from "@/lib/auth/assert-platform-admin";
@@ -210,17 +211,41 @@ function groupByCheckType(
 const thCls = "text-left px-2 py-2 border-b border-border";
 const tdCls = "px-2 py-2 border-b border-muted";
 
+// #1953 — the six service-role reads are cached as ONE unit, and the auth
+// gate lives OUTSIDE it (in the page body, per-request). D-091 #15: the
+// in-handler assert is load-bearing — proxy.ts only checks cookie shape —
+// so the safe way to cache this page is data-level: the cached unit holds
+// only cross-tenant aggregates every "supervisor"-area admin is equally
+// entitled to, and never touches headers/cookies (unstable_cache forbids
+// request state inside the cached scope anyway). A cache hit therefore
+// still runs assertPlatformAdminAreaPage on every request — pinned by
+// supervisor-page-auth-cache.test.ts.
+const getCachedSupervisorDashboardData = unstable_cache(
+  async () => {
+    const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
+      await Promise.all([
+        getOpenEscalations(),
+        getRecentFlaggedMessages(),
+        getPersonaMetrics(),
+        getKillSwitchState(),
+        getRegenBudgetExhausted(),
+        getDriftTrend(),
+      ]);
+    return { escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift };
+  },
+  ["supervisor-dashboard"],
+  // 60s freshness: observability dashboard, not an enforcement surface —
+  // the kill-switch itself is enforced elsewhere; this only displays it.
+  { revalidate: 60, tags: ["supervisor-dashboard"] },
+);
+
 export default async function SupervisorDashboardPage(): Promise<React.ReactElement> {
+  // #1953 — auth first, per-request, outside the cached data read. Never
+  // move this inside getCachedSupervisorDashboardData: a cache hit would
+  // skip it (access-control bypass).
   await assertPlatformAdminAreaPage("supervisor");
-  const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
-    await Promise.all([
-      getOpenEscalations(),
-      getRecentFlaggedMessages(),
-      getPersonaMetrics(),
-      getKillSwitchState(),
-      getRegenBudgetExhausted(),
-      getDriftTrend(),
-    ]);
+  const { escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift } =
+    await getCachedSupervisorDashboardData();
 
   const checkTypeCounts = groupByCheckType(flaggedMessages);
   // #1793 — computed once instead of sorting inline in JSX on every render.
