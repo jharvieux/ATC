@@ -250,8 +250,10 @@ module.exports = [
   "/app/api/webhooks/resend-inbound/route.ts",
   // BP23: Unsubscribe endpoint — writes email_suppressions without user session. §23.3.
   "/app/api/email/unsubscribe/route.ts",
-  // BP23: Companion page — reads pre_cruise_email_content via token, no user session. §23.5.
-  "/app/companion/[token]/page.tsx",
+  // BP23/#1953: Companion page's token-only pre_cruise_email_content read (§23.5),
+  // moved from app/companion/[token]/page.tsx into a tagged unstable_cache unit so
+  // the precruise write path can revalidate it. No user session exists on this surface.
+  "/lib/precruise/companion-content.ts",
   "/inngest/rag-normalize.ts",
   // BP24: Chat backend handler — drives anonymous + authenticated chat,
   // writes anonymous_chat_counters / customer_chat_counters / messages /
