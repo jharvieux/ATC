@@ -1,6 +1,5 @@
 # extension-manifest-baseline.txt — FREEZE-EXISTING baseline for scripts/check-extension-manifest.ts.
-# Burn-down: refs #2000 — PR #2015 (open at baseline time) narrows apps/extension host
-# permissions to the connected tenant origin; once it merges these entries go stale and
-# must be trimmed. Line format: <count> <manifest>::<broad-host-pattern>::<capability>.
-1 apps/extension/manifest.json::https://*/*::cookies
-1 apps/extension/manifest.json::https://*/*::tabs
+# Burn-down: refs #2000 — PR #2015 (merged) narrowed apps/extension host permissions to the
+# connected tenant origin; the broad-host + sensitive-capability combos this guard tracked are
+# gone, so the baseline is empty and the guard is zero-tolerance for the extension going forward.
+# Line format: <count> <manifest>::<broad-host-pattern>::<capability>.

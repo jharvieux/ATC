@@ -1,11 +1,10 @@
 # job-service-role-tenant-baseline.txt — FREEZE-EXISTING baseline for
 # scripts/check-job-service-role-tenant.ts.
-# Burn-down: refs #2003 — the import-pipeline gmail_inbound_messages read is that issue's
-# finding (fix in flight in PR #2020; trim its line when that merges). The two
+# Burn-down: refs #2003 — the import-pipeline gmail_inbound_messages read was that issue's
+# finding; PR #2020 (merged) added the tenant predicate, so that line is trimmed. The two
 # stripe_webhook_events sites are cross-tenant-by-design reconcile/purge maintenance reads
 # awaiting review — burn each down with a tenant predicate or a
 # `d091-allow:service-role-tenant <reason>` annotation at the site.
 # Line format: <count> <file>::<table>.
 1 apps/main/src/inngest/data-retention-purge.ts::stripe_webhook_events
-1 apps/main/src/inngest/import-pipeline.ts::gmail_inbound_messages
 1 apps/main/src/lib/cron/stripe-webhook-incomplete-reconcile.ts::stripe_webhook_events
