@@ -1,0 +1,87 @@
+# rls-semantics-baseline.txt — FREEZE-EXISTING baseline for scripts/check-rls-policy-semantics.ts.
+# Burn-down: refs #2006 (definer-oracle class; tenant_is_active is the documented/accepted
+# instance) and the Harvey M1 audit finding classes this guard ports. Each line freezes a
+# pre-existing review-tier finding: <count> <kind>::<identity>. Remove a line once the
+# policy/function is fixed or the sparing is re-reviewed; NEW findings fail the guard.
+# Review-tier doctrine: a baselined hit is "reviewed or awaiting review", never "clean".
+1 definer-authz::public.admin_change_platform_role(p_target, p_new_role)
+1 definer-authz::public.admin_remove_platform_admin(p_target)
+1 definer-authz::public.aggregate_retrieval_log_pre_cutoff(p_cutoff)
+1 definer-authz::public.increment_anon_chat_counter(p_tenant_id, p_identifier_type, p_identifier_value, p_window_seconds)
+1 definer-authz::public.increment_customer_chat_count(p_user_id, p_tenant_id, p_window_days)
+1 definer-authz::public.increment_forum_guest_write_counter(p_invitation_id, p_tenant_id, p_window_seconds)
+1 definer-authz::public.increment_tenant_ai_cost(p_tenant_id, p_billing_period, p_amount_cents)
+1 definer-authz::public.increment_weather_usage()
+1 definer-authz::public.platform_settings_apply_updates(p_changes)
+2 definer-authz::public.process_transfer_reversal(p_transfer_id, p_this_reversal_cents, p_stripe_event_id)
+2 definer-authz::public.process_transfer_reversal(p_transfer_id, p_this_reversal_cents)
+1 definer-authz::public.promote_import(p_queue_row_id, p_tenant_id, p_claimable_statuses, p_document_type, p_import_path, p_source_ref, p_confidence, p_raw_extracted_fields, p_accepting_user_id, p_submitted_by_user_id, p_contact_first_name, p_contact_last_name, p_contact_email, p_contact_phone, p_contact_source_ref, p_contact_notes, p_is_booking, p_cruise_line, p_ship_name, p_sailing_date, p_duration_nights, p_departure_port, p_cabin_category, p_total_amount_cents, p_currency, p_provider_booking_ref, p_cruise_line_id, p_cruise_ship_id, p_commission_rate, p_commission_rate_source)
+1 definer-authz::public.reconcile_promo_status()
+1 definer-authz::public.reconcile_rag_cost_row(p_rag_log_id, p_tenant_id, p_billing_period, p_amount_cents)
+1 definer-authz::public.reserve_group_invitations(p_group_id, p_invitations, p_max)
+1 definer-authz::public.submit_commit_booking(p_booking_id, p_tenant_id, p_provider_booking_ref, p_host_adapter, p_is_sandbox, p_commissionable_fare_cents, p_commission_rate, p_platform_split_rate, p_gross_commission_cents, p_host_booking_fee_cents, p_host_booking_fee_rule_ref, p_net_commission_cents, p_platform_retained_cents, p_subhost_payable_cents, p_currency)
+1 definer-authz::public.sync_feedback_signal_count()
+1 definer-authz::public.undo_session_transfer(p_session_id, p_tenant_id, p_user_id)
+1 definer-oracle::public.admin_lookup_auth_user_by_email(p_email)
+1 definer-oracle::public.ai_batch_requests_rollup(p_batch_job_id)
+1 definer-oracle::public.ai_call_log_daily_cost_rollup(p_from, p_to)
+1 definer-oracle::public.ai_call_log_model_rollup(p_from, p_to)
+1 definer-oracle::public.resolve_customer_chat_caps(p_tenant_id, p_user_id)
+1 definer-oracle::public.tenant_is_active(target_tenant_id)
+2 policy-semantics::public.ai_batch_jobs.ai_batch_jobs_service_role_all
+2 policy-semantics::public.ai_batch_requests.ai_batch_requests_service_role_all
+2 policy-semantics::public.ai_kill_switch_state.ai_kill_switch_state_select_policy
+1 policy-semantics::public.bug_submissions.bug_submissions_customer_self
+2 policy-semantics::public.cruise_line_aliases.cruise_line_aliases_read
+2 policy-semantics::public.cruise_lines.cruise_lines_read
+2 policy-semantics::public.cruise_sailings.cruise_sailings_read
+2 policy-semantics::public.cruise_ship_aliases.cruise_ship_aliases_read
+2 policy-semantics::public.cruise_ships.cruise_ships_read
+2 policy-semantics::public.customer_chat_counters.customer_chat_counters_select_own
+1 policy-semantics::public.feature_requests.feature_requests_customer_self
+2 policy-semantics::public.general_pricing_ranges.general_pricing_ranges_select
+2 policy-semantics::public.host_adapters.host_adapters_select_policy
+2 policy-semantics::public.host_booking_fee_configs.host_booking_fee_configs_select_policy
+2 policy-semantics::public.legal_consents.legal_consents_select
+2 policy-semantics::public.legal_documents.legal_documents_select
+2 policy-semantics::public.notifications.notifications_own_select
+2 policy-semantics::public.notifications.notifications_own_update
+2 policy-semantics::public.persona_safety_config.persona_safety_config_select_policy
+2 policy-semantics::public.personas.personas_select_policy
+2 policy-semantics::public.platform_settings.platform_settings_select_policy
+2 policy-semantics::public.port_aliases.port_aliases_read
+2 policy-semantics::public.port_info_chunks.port_info_read
+2 policy-semantics::public.ports.ports_read
+1 policy-semantics::public.rag_retrieval_log_daily.rag_retrieval_log_daily_select
+2 policy-semantics::public.sailing_port_calls.sailing_port_calls_read
+1 rls-initplan::public.ai_batch_jobs.ai_batch_jobs_service_role_all
+1 rls-initplan::public.ai_batch_requests.ai_batch_requests_service_role_all
+1 rls-initplan::public.ai_kill_switch_state.ai_kill_switch_state_select_policy
+1 rls-initplan::public.audit_log.audit_log_select_in_tenant
+1 rls-initplan::public.cruise_line_aliases.cruise_line_aliases_read
+1 rls-initplan::public.cruise_lines.cruise_lines_read
+1 rls-initplan::public.cruise_sailings.cruise_sailings_read
+1 rls-initplan::public.cruise_ship_aliases.cruise_ship_aliases_read
+1 rls-initplan::public.cruise_ships.cruise_ships_read
+1 rls-initplan::public.customer_chat_counters.customer_chat_counters_select_own
+1 rls-initplan::public.email_log.email_log_select
+1 rls-initplan::public.email_suppressions.email_suppressions_select
+1 rls-initplan::public.general_pricing_ranges.general_pricing_ranges_select
+1 rls-initplan::public.host_adapters.host_adapters_select_policy
+1 rls-initplan::public.host_booking_fee_configs.host_booking_fee_configs_select_policy
+1 rls-initplan::public.legal_consents.legal_consents_select
+1 rls-initplan::public.legal_documents.legal_documents_select
+1 rls-initplan::public.notifications.notifications_own_select
+1 rls-initplan::public.notifications.notifications_own_update
+1 rls-initplan::public.persona_safety_config.persona_safety_config_select_policy
+1 rls-initplan::public.personas.personas_select_policy
+1 rls-initplan::public.platform_settings.platform_settings_select_policy
+1 rls-initplan::public.port_aliases.port_aliases_read
+1 rls-initplan::public.port_info_chunks.port_info_read
+1 rls-initplan::public.ports.ports_read
+1 rls-initplan::public.pre_cruise_email_content.pce_content_select
+1 rls-initplan::public.rag_media_assets.rag_media_assets_select
+1 rls-initplan::public.sailing_port_calls.sailing_port_calls_read
+1 rls-initplan::public.user_consent_pending.user_consent_pending_select
+1 rls-initplan::public.user_data_export_requests.user_data_export_insert
+1 rls-initplan::public.user_data_export_requests.user_data_export_select

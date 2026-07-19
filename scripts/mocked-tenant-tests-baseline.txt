@@ -1,0 +1,28 @@
+# mocked-tenant-tests-baseline.txt — FREEZE-EXISTING baseline for scripts/check-mocked-tenant-tests.ts.
+# Burn-down: refs #2028 — tenant-isolation/RLS-claiming tests that mock the Supabase client
+# and therefore cannot observe an RLS/grant regression (Harvey M8 rls-mocked-db class; Harvey's
+# engagement run counted 53 sites with a claim regex this port deliberately narrows to
+# isolation-shaped phrases — see the script header). Line format: <count> <test file>.
+# Burn a line down by migrating the tests to the real seeded-DB harness or annotating them
+# as unit-scope app-layer-filter tests per #2028's acceptance criteria.
+4 apps/main/test/error-injection/cross-tenant-rls-bypass-monitor.error.test.ts
+3 apps/main/test/integration/memory/extract-memory.test.ts
+1 apps/main/test/unit/ai/call-wrapper-branches.test.ts
+2 apps/main/test/unit/api/forum-messages-post-gate.test.ts
+1 apps/main/test/unit/api/integrations-tokens.test.ts
+2 apps/main/test/unit/auth/transfer-session.test.ts
+1 apps/main/test/unit/bookings/draft.test.ts
+2 apps/main/test/unit/db/tenant-client.test.ts
+2 apps/main/test/unit/groups/group-routes.test.ts
+1 apps/main/test/unit/groups/send-invitation-email.test.ts
+1 apps/main/test/unit/import/reject-route.test.ts
+1 apps/main/test/unit/inngest/billing-period-rollover.test.ts
+1 apps/main/test/unit/inngest/email-soft-bounce-retry.test.ts
+1 apps/main/test/unit/money/commissions-payouts.test.ts
+2 apps/main/test/unit/security/tenant-filter-cluster.test.ts
+6 apps/main/test/unit/user/consent-data-routes.test.ts
+1 apps/rag/test/unit/ingest-reference-asset-validation.test.ts
+1 apps/rag/test/unit/platform-settings-reconcile.test.ts
+4 apps/rag/test/unit/retrieve-assets.test.ts
+1 apps/rag/test/unit/retrieve-itinerary-lookup.test.ts
+3 apps/rag/test/unit/retrieve-ship-port-lookup.test.ts
