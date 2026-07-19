@@ -14,24 +14,42 @@ export type LineItemStatus = (typeof LINE_ITEM_STATUSES)[number];
 export type ValidationResult = { ok: true } | { ok: false; errors: string[] };
 
 // #2034 — per-type allowlist of permitted item_details keys, sourced verbatim
-// from the §40.3 "item_details JSONB Shape by item_type" spec. item_details is
-// accepted as free-form JSON (z.record(z.unknown())) at the API boundary, so
-// without this any key — passenger names, DOB, policy numbers on the wrong
-// type — could land in the blob and evade the CCPA data map. Keys NOT on the
-// list for the item's type are rejected. `other` is a genuine catch-all with
-// no spec shape: its item_details must stay empty (free text belongs in the
-// first-class `description` column), so its allowlist is empty.
+// from §40.3.1–§40.3.6 ("item_details JSONB Shape by item_type"). item_details
+// is accepted as free-form JSON (z.record(z.unknown())) at the API boundary, so
+// this allowlist blocks arbitrary UNDOCUMENTED keys — passenger names, DOB,
+// passport numbers smuggled onto any type — from landing in the blob and evading
+// the CCPA data map. It is NOT the PII boundary for documented fields: several
+// spec keys (seat_assignments, supplier_contact_phone, policy_number, address)
+// are themselves PII, and their erasure is handled by the purge step's item_details
+// scrub (§25.4 / purge-user-data.ts Step 6.5), not here. Each type carries its
+// full §40.3 key set verbatim; `other` is the §40.3.6 set (free_form_label / notes /
+// url), not empty.
 export const ITEM_DETAILS_ALLOWLIST: Record<ItemType, readonly string[]> = {
   flight: [
-    "flight_number", "depart_airport", "arrive_airport", "depart_datetime", "arrive_datetime",
-    "cabin_class", "is_round_trip", "return_depart_airport", "return_arrive_airport",
+    "airline_code", "flight_number", "depart_airport", "arrive_airport",
+    "depart_datetime", "arrive_datetime", "cabin_class", "passenger_count",
+    "seat_assignments", "loyalty_program_used", "is_round_trip",
+    "return_depart_airport", "return_arrive_airport",
     "return_depart_datetime", "return_arrive_datetime",
   ],
-  hotel: ["hotel_name", "room_type", "nights"],
-  transfer: ["transfer_type", "pickup_location", "dropoff_location", "pickup_datetime"],
-  excursion: ["excursion_name", "departure_time", "is_cruise_line_excursion"],
-  insurance: ["policy_provider", "policy_number", "claims_url"],
-  other: [],
+  hotel: [
+    "hotel_name", "address", "check_in_date", "check_out_date", "room_type",
+    "guest_count", "nights", "loyalty_program_used", "purpose",
+  ],
+  transfer: [
+    "transfer_type", "pickup_location", "dropoff_location", "pickup_datetime",
+    "passenger_count", "luggage_count", "supplier_contact_phone",
+  ],
+  excursion: [
+    "excursion_name", "port_name", "activity_date", "duration_hours",
+    "participant_count", "departure_time", "meeting_point", "operator_name",
+    "is_cruise_line_excursion",
+  ],
+  insurance: [
+    "policy_provider", "policy_number", "coverage_type", "coverage_amount_cents",
+    "covered_persons_count", "claims_url", "claims_phone",
+  ],
+  other: ["free_form_label", "notes", "url"],
 };
 
 export function validateLineItem(args: {
@@ -81,7 +99,8 @@ export function validateLineItem(args: {
 
   // #2034 — allowlist gate: reject any item_details key not defined for this
   // type in §40.3. Applies to every type (flight/hotel keep their required-field
-  // checks above AND get key-allowlisting here) so PII can't hide in the blob.
+  // checks above AND get key-allowlisting here) so undocumented free-form keys
+  // can't hide in the blob.
   if (item_details) {
     const allowed = ITEM_DETAILS_ALLOWLIST[item_type];
     const unpermitted = Object.keys(item_details).filter((k) => !allowed.includes(k));

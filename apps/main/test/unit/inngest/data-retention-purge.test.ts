@@ -23,7 +23,9 @@ vi.mock("@/inngest/client", () => ({
 const mockWriteAuditLog = vi.fn(async (_row: { action: string; [k: string]: unknown }) => {});
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 
-type Batch = Array<{ id: string }>;
+// Rows may carry a lifecycle timestamp so `.lt()` NULL-semantics can be modeled
+// (open rows keep a NULL closed_at/decided_at and must never be selected).
+type Batch = Array<{ id: string; closed_at?: string | null; decided_at?: string | null }>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
 let mutateErrors: Record<string, { message: string } | undefined>;
@@ -40,9 +42,13 @@ const calls = {
 function makeChain(table: string) {
   return {
     select() {
+      let ltCol: string | null = null;
+      let ltCutoff: string | null = null;
       const chain = {
         lt(column: string, cutoff: string) {
           ltCalls.push({ table, column, cutoff });
+          ltCol = column;
+          ltCutoff = cutoff;
           return chain;
         },
         not() {
@@ -51,7 +57,18 @@ function makeChain(table: string) {
         limit() {
           if (selectErrors[table]) return Promise.resolve({ data: null, error: selectErrors[table] });
           const batch = (selectQueues[table] ?? []).shift() ?? [];
-          return Promise.resolve({ data: batch, error: null });
+          // Model `.lt(col, cutoff)` three-valued logic: a NULL never matches, so
+          // open rows (NULL lifecycle ts) survive. A row that doesn't model the
+          // column at all keeps the legacy always-eligible behavior.
+          const filtered = ltCol
+            ? batch.filter((row) => {
+                const v = (row as Record<string, unknown>)[ltCol!];
+                if (v === undefined) return true;
+                if (v === null) return false;
+                return Date.parse(v as string) < Date.parse(ltCutoff!);
+              })
+            : batch;
+          return Promise.resolve({ data: filtered, error: null });
         },
       };
       return chain;
@@ -194,6 +211,34 @@ describe("data-retention-purge — #1590", () => {
       expect(dels[0]!.col).toBe("id");
       expect(result.results!.find((r) => r.table === t)!.affected).toBe(3);
     }
+  });
+
+  // #2033 — open submissions carry a NULL lifecycle timestamp (closed_at /
+  // decided_at), which `.lt(col, cutoff)` never matches, so a live submission
+  // must be preserved while a long-resolved one ages out. Without this pin, a
+  // purge that selected open rows would delete un-triaged customer submissions.
+  it("preserves open rows (NULL closed_at/decided_at) and purges only resolved ones", async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const longResolved = new Date(Date.now() - 400 * DAY).toISOString();
+    selectQueues["bug_submissions"] = [[
+      { id: "bug-open", closed_at: null },
+      { id: "bug-closed", closed_at: longResolved },
+    ]];
+    selectQueues["feature_requests"] = [[
+      { id: "fr-open", decided_at: null },
+      { id: "fr-closed", decided_at: longResolved },
+    ]];
+    const result = await runPurge();
+
+    const bugDeletes = calls.deletes.filter((d) => d.table === "bug_submissions");
+    expect(bugDeletes).toHaveLength(1);
+    expect(bugDeletes[0]!.ids).toEqual(["bug-closed"]); // open row preserved
+    expect(result.results!.find((r) => r.table === "bug_submissions")!.affected).toBe(1);
+
+    const frDeletes = calls.deletes.filter((d) => d.table === "feature_requests");
+    expect(frDeletes).toHaveLength(1);
+    expect(frDeletes[0]!.ids).toEqual(["fr-closed"]); // open row preserved
+    expect(result.results!.find((r) => r.table === "feature_requests")!.affected).toBe(1);
   });
 
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {

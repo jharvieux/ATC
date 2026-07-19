@@ -14,6 +14,23 @@ interface CallLog {
   updates: Array<{ table: string; values: Record<string, unknown> }>;
   inserts: Array<{ table: string; values: Record<string, unknown> }>;
   deletes: Array<{ table: string }>;
+  // Optional cross-op ordered trace ("select:contacts", "update:contacts", …)
+  // for call-order assertions. Only populated when a test opts in by providing it.
+  ordered?: string[];
+}
+
+// Model PostgREST `.or("from_email.ilike.<pat>,…")` matching case-insensitively:
+// unescape the ilike wildcards the lib escaped, then exact case-folded compare.
+// This lets a test seed a mixed-case from_email row and prove it still matches.
+function matchRowsByOrIlike(
+  rows: Array<{ from_email: string }>,
+  orArg: string | null,
+): Array<{ from_email: string }> {
+  if (!orArg) return [];
+  const patterns = orArg.split(",").map((term) =>
+    term.replace(/^from_email\.ilike\./, "").replace(/\\([\\%_])/g, "$1").toLowerCase(),
+  );
+  return rows.filter((r) => patterns.includes(r.from_email.toLowerCase()));
 }
 
 interface Scenario {
@@ -35,6 +52,13 @@ interface Scenario {
   inboundGmailScrubbed?: number;
   inboundEmailsScrubbed?: number;
   aiBatchScrubbed?: number;
+  // #2032 — force the ai_batch caller_metadata scrub to error (retry-safety test).
+  failAiBatchScrub?: boolean;
+  // #2031/#2034 — when set, the inbound-table updates match these rows against the
+  // captured .or() ilike filter instead of returning a fixed count, so a test can
+  // prove case-insensitive from_email matching.
+  inboundGmailRows?: Array<{ from_email: string }>;
+  inboundEmailRows?: Array<{ from_email: string }>;
 }
 
 function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
@@ -48,6 +72,7 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
 
   function selectResolver(table: string): { data: unknown; error: null } {
     log.selects.push({ table });
+    log.ordered?.push(`select:${table}`);
     switch (table) {
       case "users":
         // loadUserEmailAddresses → .select("email").eq("id").maybeSingle()
@@ -99,46 +124,65 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
 
     chain.update = (values: Record<string, unknown>) => {
       log.updates.push({ table, values });
-      // Compute rows affected per scenario knobs.
-      let affected: unknown[];
-      if (table === "messages") {
-        affected = Array.from({ length: scenario.messagesNulled }, (_, i) => ({ id: `m${i}` }));
-      } else if (table === "conversations" && "user_id" in values && values.user_id === null) {
-        // Greptile P2 #13 — conversations.user_id null pass.
-        const n = scenario.conversationsUserIdNulled ?? scenario.conversationIds.length;
-        affected = Array.from({ length: n }, (_, i) => ({ id: `cv${i}` }));
-      } else if (table === "quotes") {
-        affected = Array.from({ length: scenario.quotesNarrativesNulled }, (_, i) => ({ id: `q${i}` }));
-      } else if (table === "bookings" && "notes" in values) {
-        affected = Array.from({ length: scenario.bookingsNotesNulled }, (_, i) => ({ id: `b${i}` }));
-      } else if (table === "bookings" && "anonymized_customer_hash" in values) {
-        affected = scenario.bookings;
-      } else if (table === "commissions" && "anonymized_customer_hash" in values) {
-        affected = scenario.bookings.map((b) => ({ id: `c-${b.id}` }));
-      } else if (table === "booking_line_items" && "item_details" in values) {
-        affected = Array.from({ length: scenario.lineItemsScrubbed ?? 0 }, (_, i) => ({ id: `li${i}` }));
-      } else if (table === "gmail_inbound_messages") {
-        affected = Array.from({ length: scenario.inboundGmailScrubbed ?? 0 }, (_, i) => ({ id: `g${i}` }));
-      } else if (table === "inbound_emails") {
-        affected = Array.from({ length: scenario.inboundEmailsScrubbed ?? 0 }, (_, i) => ({ id: `ie${i}` }));
-      } else if (table === "ai_batch_requests" && "caller_metadata" in values) {
-        affected = Array.from({ length: scenario.aiBatchScrubbed ?? 0 }, (_, i) => ({ id: `bm${i}` }));
-      } else if (table === "contacts" && "anonymized_customer_hash" in values) {
-        // contacts.notes affected rows preserve tenant_id so the lib can build affected_tenant_ids.
-        affected = scenario.contactsAnonymized;
-      } else if (table === "users") {
-        affected = [{ id: "user-1" }];
-      } else {
-        affected = [];
-      }
-      const result = { data: affected, error: null };
-      // The update chain supports .eq/.in/.not before .select() in this lib.
+      log.ordered?.push(`update:${table}`);
+      // The inbound scrub applies a `.or(from_email.ilike…)` filter; capture it so
+      // a filter-aware scenario can compute matches (default fallback: fixed count).
+      let orArg: string | null = null;
+
+      const resolveResult = (): { data: unknown; error: { message: string } | null } => {
+        if (scenario.failAiBatchScrub && table === "ai_batch_requests") {
+          return { data: null, error: { message: "synthetic_ai_batch_failure" } };
+        }
+        // Compute rows affected per scenario knobs.
+        let affected: unknown[];
+        if (table === "gmail_inbound_messages" && scenario.inboundGmailRows) {
+          affected = matchRowsByOrIlike(scenario.inboundGmailRows, orArg);
+        } else if (table === "inbound_emails" && scenario.inboundEmailRows) {
+          affected = matchRowsByOrIlike(scenario.inboundEmailRows, orArg);
+        } else if (table === "messages") {
+          affected = Array.from({ length: scenario.messagesNulled }, (_, i) => ({ id: `m${i}` }));
+        } else if (table === "conversations" && "user_id" in values && values.user_id === null) {
+          // Greptile P2 #13 — conversations.user_id null pass.
+          const n = scenario.conversationsUserIdNulled ?? scenario.conversationIds.length;
+          affected = Array.from({ length: n }, (_, i) => ({ id: `cv${i}` }));
+        } else if (table === "quotes") {
+          affected = Array.from({ length: scenario.quotesNarrativesNulled }, (_, i) => ({ id: `q${i}` }));
+        } else if (table === "bookings" && "notes" in values) {
+          affected = Array.from({ length: scenario.bookingsNotesNulled }, (_, i) => ({ id: `b${i}` }));
+        } else if (table === "bookings" && "anonymized_customer_hash" in values) {
+          affected = scenario.bookings;
+        } else if (table === "commissions" && "anonymized_customer_hash" in values) {
+          affected = scenario.bookings.map((b) => ({ id: `c-${b.id}` }));
+        } else if (table === "booking_line_items" && "item_details" in values) {
+          affected = Array.from({ length: scenario.lineItemsScrubbed ?? 0 }, (_, i) => ({ id: `li${i}` }));
+        } else if (table === "gmail_inbound_messages") {
+          affected = Array.from({ length: scenario.inboundGmailScrubbed ?? 0 }, (_, i) => ({ id: `g${i}` }));
+        } else if (table === "inbound_emails") {
+          affected = Array.from({ length: scenario.inboundEmailsScrubbed ?? 0 }, (_, i) => ({ id: `ie${i}` }));
+        } else if (table === "ai_batch_requests" && "caller_metadata" in values) {
+          affected = Array.from({ length: scenario.aiBatchScrubbed ?? 0 }, (_, i) => ({ id: `bm${i}` }));
+        } else if (table === "contacts" && "anonymized_customer_hash" in values) {
+          // contacts.notes affected rows preserve tenant_id so the lib can build affected_tenant_ids.
+          affected = scenario.contactsAnonymized;
+        } else if (table === "users") {
+          affected = [{ id: "user-1" }];
+        } else {
+          affected = [];
+        }
+        return { data: affected, error: null };
+      };
+
+      // The update chain supports .eq/.in/.not/.or before .select() in this lib.
       const updateChain: Record<string, unknown> = {};
       updateChain.eq = () => updateChain;
       updateChain.in = () => updateChain;
       updateChain.not = () => updateChain;
-      updateChain.select = () => thenable(result);
-      updateChain.then = (cb: (v: unknown) => unknown) => cb(result);
+      updateChain.or = (arg: string) => {
+        orArg = arg;
+        return updateChain;
+      };
+      updateChain.select = () => thenable(resolveResult());
+      updateChain.then = (cb: (v: unknown) => unknown) => cb(resolveResult());
       return updateChain;
     };
 
@@ -457,6 +501,55 @@ describe("purgeUserDataPerRetention", () => {
     expect(bmUpdate).toBeDefined();
     expect((bmUpdate?.values as { caller_metadata: unknown }).caller_metadata).toBeNull();
     expect(result.counts.ai_batch_metadata_scrubbed).toBe(5);
+  });
+
+  // #2031 — external sender casing is arbitrary, so from_email matching must be
+  // case-insensitive. An exact .in() misses a mixed-case stored variant (the row
+  // then keeps the customer's PII past erasure). This pins that a mixed-case
+  // variant IS scrubbed and an unrelated sender is left untouched — a regression
+  // to case-sensitive .in() drops both counts to 0 and fails.
+  it("#2031 scrubs a mixed-case from_email variant of the user's address (case-insensitive)", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const scenario: Scenario = {
+      ...baseScenario(),
+      userEmail: "jane@example.com",
+      inboundGmailRows: [{ from_email: "Jane@Example.COM" }, { from_email: "someone-else@x.com" }],
+      inboundEmailRows: [{ from_email: "JANE@example.com" }],
+    };
+    const db = makeFake(scenario, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.counts.inbound_gmail_scrubbed).toBe(1);
+    expect(result.counts.inbound_emails_scrubbed).toBe(1);
+  });
+
+  // #2032 — the ai_batch caller_metadata scrub must run BEFORE the status='purged'
+  // flip (the purge's idempotency guard). If the scrub fails, status must stay
+  // unpurged so the caller's retry re-runs the whole purge (and the scrub). A
+  // failure that landed AFTER the flip would be skipped forever by the caller.
+  it("#2032 leaves status unpurged when the ai_batch scrub fails, so a retry re-runs it", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake({ ...baseScenario(), failAiBatchScrub: true }, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.purge_outcome).toBe("error");
+    expect(result.error_detail).toMatch(/ai_batch_metadata_scrub_failed/);
+    // The users PII-clear (which flips status='purged') must NOT have run.
+    expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
+  });
+
+  // #2031 — retry-safety: loadUserEmailAddresses reads contacts.user_id to collect
+  // the user's addresses, and Step 5 nulls that FK. If the read ran AFTER the
+  // detach, a retry would collect fewer addresses and the inbound scrub would miss
+  // rows keyed on a contact's address. Pin that the read precedes the detach.
+  it("loads the user's email addresses BEFORE detaching contacts (retry-safe ordering)", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [], ordered: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const ord = log.ordered!;
+    const firstContactSelect = ord.indexOf("select:contacts");
+    const firstContactDetach = ord.indexOf("update:contacts");
+    expect(firstContactSelect).toBeGreaterThanOrEqual(0);
+    expect(firstContactDetach).toBeGreaterThanOrEqual(0);
+    expect(firstContactSelect).toBeLessThan(firstContactDetach);
   });
 
   it("returns affected_tenant_ids deduped from anonymized contacts", async () => {
