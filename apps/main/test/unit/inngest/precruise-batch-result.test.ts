@@ -18,6 +18,14 @@ vi.mock("@/inngest/client", () => ({
 const mocks = vi.hoisted(() => ({
   insertError: null as { code: string; message: string } | null,
   sendEmailCalls: 0,
+  revalidateCalls: [] as Array<[string, string]>,
+}));
+
+// #1953 — the content insert/update now purges the companion page's cache tag.
+vi.mock("@/lib/precruise/companion-content", () => ({
+  revalidateCompanionContent: (booking_id: string, phase: string) => {
+    mocks.revalidateCalls.push([booking_id, phase]);
+  },
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -181,6 +189,7 @@ function makeEvent(): BatchResultEvent {
 beforeEach(() => {
   mocks.insertError = null;
   mocks.sendEmailCalls = 0;
+  mocks.revalidateCalls = [];
 });
 
 describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (batched-path twin)", () => {
@@ -188,12 +197,18 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     mocks.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
     await runHandler(makeEvent());
     expect(mocks.sendEmailCalls).toBe(0);
+    // #1953 — the race branch wrote nothing, so it must not purge the
+    // companion cache either (the winning run owns that).
+    expect(mocks.revalidateCalls).toEqual([]);
   });
 
   it("sends when the insert succeeds (no race)", async () => {
     mocks.insertError = null;
     await runHandler(makeEvent());
     expect(mocks.sendEmailCalls).toBe(1);
+    // #1953 — content landed, so the companion page's (booking_id, phase)
+    // cache entry must be purged or a placeholder-phase render stays pinned.
+    expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
   });
 
   it("throws (not swallows) on a non-23505 insert error — the batch consumer must fail loud for Inngest retry, same as the direct path", async () => {

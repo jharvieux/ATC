@@ -22,6 +22,9 @@ export interface EnqueueArgs {
     max_tokens: number;
     system?: string;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
+    // #2009 — optional structured-output constraint; stored verbatim in the
+    // JSONB column and forwarded by flush → submitAnthropicBatch.
+    output_config?: { format: { type: "json_schema"; schema: Record<string, unknown> } };
   };
   /** Producer's downstream context. Read back on completion. */
   caller_metadata?: Record<string, unknown>;

@@ -468,6 +468,25 @@ describe("POST /api/tenant/branding", () => {
     expect(res.status).toBe(422);
   });
 
+  it("returns 422 when logo_url targets an internal/loopback host (#2012)", async () => {
+    // logo_url is rendered into tenant emails; an internal-host URL is a probe
+    // beacon. safeUrl must reject it at the write boundary before the upsert.
+    const res = await brandingPOST(req("/api/tenant/branding", "POST", { logo_url: "http://127.0.0.1/logo.png" }));
+    expect(res.status).toBe(422);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("invalid_logo_url");
+  });
+
+  it("returns 422 when favicon_url uses a non-http(s) scheme (#2012)", async () => {
+    const res = await brandingPOST(req("/api/tenant/branding", "POST", { favicon_url: "javascript:alert(1)" }));
+    expect(res.status).toBe(422);
+  });
+
+  it("accepts a public https logo_url (#2012)", async () => {
+    const res = await brandingPOST(req("/api/tenant/branding", "POST", { logo_url: "https://cdn.example.com/logo.png" }));
+    expect(res.status).toBe(200);
+  });
+
   it("upserts branding and returns branding_id + show_powered_by (confirms upsert fired)", async () => {
     // branding_id only appears in the response when the upsert returns a row.
     // A mutant that strips the upsert call produces { data: null } → dbErrorResponse → not 200.

@@ -1,11 +1,18 @@
-// #1582 — duplicate-event race must send exactly once.
+// #2009 — the batched precruise path relies on provider-constrained
+// structured output (output_config.format json_schema) instead of
+// prompt-begging + fence/brace slicing. Two contracts are load-bearing:
 //
-// The bug: the content-row insert's error was discarded (`const { data:
-// inserted } = await ...insert(...)`), so a 23505 unique-constraint
-// violation from a concurrent duplicate `precruise/email.due` event was
-// silently ignored and the code proceeded to send anyway — a double send.
-// This pins that the insert error is now checked and a 23505 short-circuits
-// before sendEmail is ever reached.
+// 1. Schema validity: Anthropic rejects (400) any object schema without
+//    additionalProperties:false or with a partial `required` list. A
+//    drifted schema would fail every batched precruise email at submit.
+// 2. Schema ↔ renderer sync: buildEmail / precruiseAiContentText index
+//    these exact keys per phase. A key generated but not rendered is paid
+//    for and dropped; a key rendered but not generated silently blanks a
+//    section of the customer email. This test forces both edits together.
+//
+// Plus the wiring: the via:"batched" branch must actually attach the
+// phase schema to the enqueued request — without it the strict parser
+// downstream rejects everything.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,16 +23,8 @@ vi.mock("@/inngest/client", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  insertError: null as { code: string; message: string } | null,
+  enqueueCalls: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
-  revalidateCalls: [] as Array<[string, string]>,
-}));
-
-// #1953 — the content insert now purges the companion page's cache tag.
-vi.mock("@/lib/precruise/companion-content", () => ({
-  revalidateCompanionContent: (booking_id: string, phase: string) => {
-    mocks.revalidateCalls.push([booking_id, phase]);
-  },
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -34,6 +33,13 @@ vi.mock("@/lib/billing/exclude-non-paying", () => ({
 
 vi.mock("@/lib/ai/call-wrapper", () => ({
   instrumentedClaudeCall: async () => ({ text: "unused" }),
+}));
+
+vi.mock("@/lib/ai/batch/enqueue", () => ({
+  enqueueBatchRequest: async (args: Record<string, unknown>) => {
+    mocks.enqueueCalls.push(args);
+    return { request_id: "req-1", enqueued_at: new Date().toISOString() };
+  },
 }));
 
 vi.mock("@/lib/email/unsubscribe-token", () => ({
@@ -72,13 +78,6 @@ vi.mock("@/lib/db/service-role-client", () => ({
               maybeSingle: async () => ({ data: null, error: null }), // not yet sent
             };
             return chain;
-          },
-          insert() {
-            return {
-              select: () => ({
-                single: async () => ({ data: null, error: mocks.insertError }),
-              }),
-            };
           },
         };
       }
@@ -144,42 +143,61 @@ vi.mock("@/lib/db/service-role-client", () => ({
   }),
 }));
 
-import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
+import {
+  precruiseGenerateAndSend,
+  PRECRUISE_OUTPUT_SCHEMAS,
+} from "@/inngest/precruise-generate-and-send";
+
+// The exact key sets buildEmail (email renderer props) and
+// precruiseAiContentText ({{ai_content}} flattening) consume per phase.
+// Change those consumers → change this list → change the schema, together.
+const RENDERED_KEYS: Record<string, string[]> = {
+  t_90: ["documentation_reminder", "destination_teaser", "must_do_experiences", "did_you_know", "suggested_reads"],
+  t_30: [
+    "reservation_reminders",
+    "checkin_window",
+    "final_payment_note",
+    "personalized_recommendations",
+    "specialty_experiences",
+    "pack_inspiration",
+  ],
+  t_7: ["packing_checklist", "ship_highlights", "cruise_line_tips", "embarkation_advice", "first_day_inspiration"],
+  t_1: ["first_port_preview", "day_of_expectations"],
+};
 
 beforeEach(() => {
-  mocks.insertError = null;
+  mocks.enqueueCalls = [];
   mocks.sendEmailCalls = 0;
-  mocks.revalidateCalls = [];
 });
 
-describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
-  it("skips the send when the insert hits a 23505 unique violation", async () => {
-    mocks.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
-    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
-      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90" } },
+describe("PRECRUISE_OUTPUT_SCHEMAS — Anthropic structured-output validity", () => {
+  for (const [phase, schema] of Object.entries(PRECRUISE_OUTPUT_SCHEMAS)) {
+    it(`${phase}: object schema with additionalProperties:false and every property required`, () => {
+      const s = schema as { type: string; additionalProperties: boolean; required: string[]; properties: Record<string, unknown> };
+      expect(s.type).toBe("object");
+      // Anthropic hard requirement — a missing additionalProperties:false 400s the whole batch.
+      expect(s.additionalProperties).toBe(false);
+      expect([...s.required].sort()).toEqual(Object.keys(s.properties).sort());
     });
-    expect(mocks.sendEmailCalls).toBe(0);
-  });
 
-  it("sends when the insert succeeds (no race)", async () => {
-    mocks.insertError = null;
-    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
-      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90" } },
+    it(`${phase}: schema keys match what the email renderer consumes`, () => {
+      const s = schema as { properties: Record<string, unknown> };
+      expect(Object.keys(s.properties).sort()).toEqual([...RENDERED_KEYS[phase]!].sort());
     });
-    expect(mocks.sendEmailCalls).toBe(1);
-    // #1953 — the successful content insert must purge the companion
-    // page's (booking_id, phase) cache entry, or a pre-insert "no content"
-    // render stays pinned for the customer.
-    expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
-  });
+  }
+});
 
-  it("throws (not swallows) on a non-23505 insert error", async () => {
-    mocks.insertError = { code: "42501", message: "permission denied" };
-    await expect(
-      (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
-        event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90" } },
-      }),
-    ).rejects.toThrow();
+describe("precruiseGenerateAndSend via:'batched' — schema wiring", () => {
+  it("enqueues the batch request with the phase's json_schema output constraint and does not send", async () => {
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "batched" } },
+    });
+
     expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.enqueueCalls).toHaveLength(1);
+    const params = (mocks.enqueueCalls[0] as { request_params: Record<string, unknown> }).request_params;
+    expect(params.output_config).toEqual({
+      format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS.t_90 },
+    });
   });
 });
