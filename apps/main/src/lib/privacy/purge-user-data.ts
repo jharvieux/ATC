@@ -469,31 +469,62 @@ export async function purgeUserDataPerRetention(
 // #2031/#2038 — build a PostgREST `.or()` filter matching `column`
 // case-insensitively against ANY of the values.
 //
-// Two escaping layers, applied in order:
+// A value must satisfy TWO distinct grammars before it reaches Postgres:
 //   1. LIKE metacharacters (\ % _) → backslash-escaped so each term is an exact
 //      case-folded match, not a pattern (an address with a literal `_` must not
 //      match neighbouring chars).
-//   2. PostgREST or()-grammar reserved chars. RFC 5322 permits quoted
+//   2. PostgREST's or()-grammar reserved chars. RFC 5322 permits quoted
 //      local-parts like `"a,b(c)"@example.com` carrying `,` `(` `)` — the very
 //      delimiters that split or() terms and group logic. Left raw, such an
 //      address produces a malformed filter → PostgREST 400 → the scrub throws
 //      (fail-loud, not a silent PII miss, but still a purge failure). Wrapping
 //      the value in double quotes makes PostgREST read those bytes literally;
 //      inside the quotes a literal `"`/`\` is backslash-escaped (`\"` / `\\`).
-//      Layer 2 runs on layer 1's output, so the backslashes layer 1 inserted
-//      are themselves escaped and survive PostgREST's `\\`→`\` unquote back into
-//      the LIKE escapes layer 1 intended.
+//
+// #2038/CodeQL alert 105 (js/double-escaping): this used to be two sequential
+// `.replace()` passes — LIKE-escape, then DSL-escape the LIKE-escaped output.
+// A `\` needs BOTH escapes, so it's the char worth hand-verifying. Truth table
+// for a single literal `\` in the original value, tracing it through each
+// stage (escape at rest, wire value inside the `."…"` quotes, what PostgREST's
+// `\"`/`\\` unquote hands to the LIKE engine, what the LIKE engine — itself
+// `\`-escaped — resolves back to):
+//
+//   original  →  LIKE-escaped  →  DSL-escaped (wire)  →  PostgREST unquotes to  →  LIKE resolves to
+//     \       →      \\        →        \\\\           →          \\            →         \
+//
+// It round-trips correctly — verified against PostgREST's documented `\"`/`\\`
+// quoted-string unescape and Postgres's `\`-escaped LIKE grammar, and checked
+// by script against backslash/percent/underscore/quote combinations (single,
+// doubled, and mixed with `"`). The two-pass version was NOT actually broken
+// for backslashes. It's still the shape CodeQL's double-escaping heuristic
+// flags on sight, though — two regexes run in sequence, the second free to
+// re-match bytes the first one just inserted, is inherently hard to verify by
+// inspection even when (as here) it happens to compose correctly.
+//
+// Restructured into a single pass below: one regex scan of the ORIGINAL value
+// where each matched character maps directly to its fully-escaped output (both
+// grammars pre-composed, in the fixed order above — LIKE-escape then
+// DSL-escape). No regex ever re-scans another regex's output, so there's
+// nothing left for the double-escaping heuristic to match, and the escaping
+// for each character class is expressed exactly once.
 //
 // Values are our own user/contact emails, so this is robustness against odd-but-
 // valid addresses, not an injection defense.
 function ilikeAnyFilter(column: string, values: string[]): string {
-  return values
-    .map((v) => {
-      const likeEscaped = v.replace(/([\\%_])/g, "\\$1");
-      const dslQuoted = likeEscaped.replace(/(["\\])/g, "\\$1");
-      return `${column}.ilike."${dslQuoted}"`;
-    })
-    .join(",");
+  return values.map((v) => `${column}.ilike."${escapeForIlikeDsl(v)}"`).join(",");
+}
+
+function escapeForIlikeDsl(v: string): string {
+  return v.replace(/[\\%_"]/g, (c) => {
+    // \ needs both escapes: LIKE-escape (\ -> \\), then DSL-escape each of
+    // those two resulting backslashes (\ -> \\, applied twice) = \\\\.
+    if (c === "\\") return "\\\\\\\\";
+    // " has no LIKE meaning — DSL-escape only (" -> \").
+    if (c === '"') return `\\${c}`;
+    // % and _ are LIKE metachars — LIKE-escape (-> \c), then DSL-escape the
+    // one inserted backslash (\ -> \\) = \\c.
+    return `\\\\${c}`;
+  });
 }
 
 // #2031 — every email address that identifies the user for inbound-content

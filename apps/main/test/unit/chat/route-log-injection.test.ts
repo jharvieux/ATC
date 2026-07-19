@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { sanitizeForLog } from "@/lib/log/sanitize";
 
 process.env.ANTHROPIC_API_KEY = "test-key";
 
@@ -158,6 +159,12 @@ describe("POST /api/chat — CodeQL #100 log injection (config_db_reads log)", (
       expect(loggedConversationId).not.toContain("\n");
       expect(loggedConversationId).not.toContain("\r");
       expect(loggedConversationId).not.toBe(forged);
+
+      // #106 — CodeQL alert 106: the sink must be JSON.stringify(sanitizeForLog(x)),
+      // not just sanitizeForLog(x), because a bare regex .replace() at the sink
+      // isn't a CodeQL-recognized js/log-injection barrier but JSON.stringify is.
+      // Pin the exact shape so removing the JSON.stringify wrap fails this test.
+      expect(loggedConversationId).toBe(JSON.stringify(sanitizeForLog(forged)));
     } finally {
       infoSpy.mockRestore();
     }

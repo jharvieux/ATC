@@ -658,6 +658,28 @@ describe("purgeUserDataPerRetention", () => {
     expect(log.orFilters![0]).toContain('.ilike."a,b(c)@example.com"');
   });
 
+  // #2038/CodeQL alert 105 — a `\` needs BOTH the LIKE escape and the
+  // PostgREST DSL escape (see the truth table on ilikeAnyFilter). Pin the
+  // exact produced DSL string (one `\` -> four `\` on the wire) AND that the
+  // fake's round-trip decode — the same `\"`/`\\` unquote then `\%`/`\_`/`\\`
+  // LIKE un-escape PostgREST would perform — resolves back to the original
+  // value, so a regression in the escape ordering fails both checks.
+  it("#2038 scrubs an address whose local-part contains a literal backslash", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [], orFilters: [] };
+    const weird = "a\\b@example.com";
+    const scenario: Scenario = {
+      ...baseScenario(),
+      userEmail: weird,
+      inboundGmailRows: [{ from_email: weird }, { from_email: "other@example.com" }],
+      inboundEmailRows: [{ from_email: weird.toUpperCase() }],
+    };
+    const db = makeFake(scenario, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.counts.inbound_gmail_scrubbed).toBe(1);
+    expect(result.counts.inbound_emails_scrubbed).toBe(1);
+    expect(log.orFilters![0]).toContain('.ilike."a\\\\\\\\b@example.com"');
+  });
+
   // #2031 — retry-safety: loadUserEmailAddresses reads contacts.user_id to collect
   // the user's addresses, and Step 5 nulls that FK. If the read ran AFTER the
   // detach, a retry would collect fewer addresses and the inbound scrub would miss
