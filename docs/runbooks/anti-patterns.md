@@ -354,6 +354,38 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 
 ---
 
+## Harvey-audit patterns (external audit, 2026-07; Harvey-hardening PR)
+
+### 27. SECURITY DEFINER functions must scope to the caller — no parameter-only oracles
+
+**Symptom**: A `SECURITY DEFINER` function takes an identifier parameter and returns status/existence (or performs a privileged write) without consulting `auth.uid()`/`auth.jwt()`/caller context anywhere in its body. DEFINER runs as the owner and bypasses RLS, so every role the function is granted to can probe arbitrary IDs — a tenant-status/existence enumeration oracle, or (the write case) an escalation primitive.
+
+**Codebase instances**:
+- `tenant_is_active(target_tenant_id)` — parameter-only tenant-status oracle (Harvey M1 finding, refs #2006 — reviewed and accepted as documented; frozen in the baseline)
+- 18 further DEFINER write sites + 5 read sites frozen in `scripts/rls-semantics-baseline.txt` pending review
+
+**Why slips through**: the function works perfectly for its intended caller; the oracle is only visible by asking "who ELSE can call this, with whose IDs?" — which no happy-path test asks. RLS being enabled on the underlying table gives false comfort (DEFINER bypasses it).
+
+**Prevention**:
+- **CI gate**: `pnpm check:rls-policy-semantics` (the `definer-authz` and `definer-oracle` sub-checks) — NEW un-caller-scoped DEFINER functions fail; existing ones are frozen in `scripts/rls-semantics-baseline.txt`.
+- **Doctrine** (CLAUDE.md #27): a DEFINER function must verify the caller (own-row, role, or tenant membership via `auth.uid()`/`auth.jwt()`) before returning data or writing, or have EXECUTE revoked from client roles.
+
+### 28. Every secret registers in the env schema at integration time, with a rotation path
+
+**Symptom**: A secret is consumed via a raw `process.env.X` read that never appears in the app's canonical env schema (`apps/<app>/src/lib/env.ts`), and/or its verify site is a single static comparison with no `_CURRENT`/`_PREVIOUS` acceptance — so the secret is invisible to boot validation and the secret inventory, and cannot be rotated without an outage.
+
+**Codebase instances**:
+- `MAIN_APP_ADMIN_API_KEY` — static non-rotating seam bearer, absent from the main app's env schema (Harvey M1 finding, refs #2002; strategy-B fix pending)
+- 53 undeclared `process.env` reads (35 distinct vars) frozen in `scripts/env-schema-baseline.txt` (refs #2004)
+
+**Why slips through**: the read works in every environment where the var happens to be set; the gaps (typo'd var silently undefined, un-inventoried secret, rotation requiring simultaneous redeploys) only bite operationally.
+
+**Prevention**:
+- **CI gate** (mechanical half): `pnpm check:env-schema` — a NEW `process.env` read of an identifier not declared in that app's env schema fails; existing debt is frozen in `scripts/env-schema-baseline.txt`.
+- **Reviewer-enforced half (honest limitation)**: the rotation-pair requirement — verify sites accepting `_CURRENT` **and** `_PREVIOUS` values (the `SERVICE_JWT_*`/`FORENSICS_ENCRYPTION_KEY_*` pattern) instead of one static bearer comparison — is NOT mechanically checked; no static scan can tell a rotating verify site from a static one reliably. The audit agents and this catalog entry carry that half.
+
+---
+
 ## How this catalog gets used
 
 - **At authoring time**: the CLAUDE.md doctrine lines (added to the "Things to be wary of" section) shape what gets written. Re-read every session.

@@ -197,7 +197,7 @@ Conformance > taste inside the codebase. If you genuinely think a convention is 
 
 ## D-091 anti-patterns (authoring checklist)
 
-Scan these 26 titles before writing app code. **Full catalog — symptom, example, codebase instances, the `pnpm check:*` gate, and the why — lives in `docs/runbooks/anti-patterns.md`.** Open that runbook the moment a title is relevant to what you're writing. The `d091-reviewer` agent enforces all of these at PR time.
+Scan these 28 titles before writing app code. **Full catalog — symptom, example, codebase instances, the `pnpm check:*` gate, and the why — lives in `docs/runbooks/anti-patterns.md`.** Open that runbook the moment a title is relevant to what you're writing. The `d091-reviewer` agent enforces all of these at PR time.
 
 1. **No stub-shaped code** — every param affects output; every variant reachable; no dead branches.
 2. **Fail-closed** — when an enforcement layer can't run (Redis/DB/secret/signature absent), deny, don't permit.
@@ -225,6 +225,8 @@ Scan these 26 titles before writing app code. **Full catalog — symptom, exampl
 24. **DB uniqueness wherever app code assumes it** — SELECT-then-INSERT dedup must have `UNIQUE(a,b)` constraint + 23505 handler.
 25. **Bounded queries on user-growing tables** — `.select()` on messages/bookings/logs carries `.limit()` or `.range()` — no silent truncation.
 26. **Webhook state-application needs ordering protection** — compare `event.created_at` against last-applied or re-fetch live state before overwriting.
+27. **SECURITY DEFINER functions must scope to the caller** (refs #2006) — no parameter-only status/existence oracles; a DEFINER fn taking an ID and returning status without consulting `auth.uid()`/caller context is an enumeration oracle.
+28. **Every secret registers in the env schema at integration time and ships with a rotation path** (refs #2002, #2004) — `_CURRENT`/`_PREVIOUS` acceptance on verify sites; no single static bearer comparisons.
 
 -----
 
