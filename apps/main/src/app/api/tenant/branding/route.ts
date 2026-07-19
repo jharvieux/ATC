@@ -7,6 +7,7 @@ import { resolveShowPoweredBy } from "@/lib/branding/powered-by";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { safeUrl } from "@atc/contracts";
 
 interface BrandingBody {
   logo_url?: string;
@@ -65,6 +66,18 @@ export async function POST(req: Request): Promise<Response> {
   // Validate hex colors.
   if (!isValidHex(body.primary_color) || !isValidHex(body.secondary_color) || !isValidHex(body.accent_color)) {
     return Response.json({ error: "invalid_color_hex" }, { status: 422 });
+  }
+
+  // #2012 — logo/favicon URLs are stored and rendered into tenant emails
+  // (BrandedLayout <img src>) and the dashboard. Validate them with safeUrl
+  // (http(s) only, no internal/loopback/link-local hosts) at the write
+  // boundary, same defect class as the group hero_image_url. An empty string
+  // is allowed through — it clears the field.
+  for (const field of ["logo_url", "logo_dark_url", "favicon_url"] as const) {
+    const value = body[field];
+    if (value !== undefined && value !== "" && !safeUrl.safeParse(value).success) {
+      return Response.json({ error: `invalid_${field}` }, { status: 422 });
+    }
   }
 
   // Length caps.

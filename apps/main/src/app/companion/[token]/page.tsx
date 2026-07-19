@@ -6,8 +6,8 @@
 
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyCompanionToken } from "@/lib/email/unsubscribe-token";
+import { getCompanionContent } from "@/lib/precruise/companion-content";
 import { TenantTheme } from "@/components/branding/TenantTheme";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 
@@ -38,18 +38,14 @@ export default async function CompanionPage(props: PageProps) {
   if (!payload) notFound();
 
   const { booking_id, phase } = payload;
-  const svc = createServiceRoleClient();
 
-  const { data: content } = await svc
-    .from("pre_cruise_email_content")
-    .select("generated_content, booking_id")
-    .eq("booking_id", booking_id)
-    .eq("email_phase", phase)
-    .maybeSingle();
-
+  // #1953 — tagged data-cache read; the token verify above stays outside
+  // the cached unit and the generate-and-send write path revalidates the
+  // (booking_id, phase) tag, so a stale/partial row is never pinned.
+  const content = await getCompanionContent(booking_id, phase);
   if (!content) notFound();
 
-  const generated = (content as { generated_content: Record<string, unknown> }).generated_content;
+  const generated = content.generated_content;
   const phaseLabel = PHASE_LABELS[phase] ?? phase;
 
   return (

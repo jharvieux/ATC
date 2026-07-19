@@ -10,6 +10,15 @@
 // increment_customer_chat_count RPC bumps last_message_at on every live
 // increment, so a recompute whose snapshot predates a concurrent increment
 // must match zero rows and skip, leaving the increment's fresh count intact.
+//
+// #1994 — the row list itself is paged with keyset pagination (a PK cursor)
+// instead of a single .limit(5000) or OFFSET pagination: PostgREST's
+// db-max-rows can cap a single request below that, silently dropping every
+// row past the cap from the nightly drift correction, and OFFSET pagination
+// skips a row whenever an earlier row is deleted mid-scan (the offset for
+// every later page shifts up by one). This pins that a table spanning more
+// than one page still gets every row recomputed via the cursor, and that a
+// page-fetch error is never swallowed as a false "success".
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -30,6 +39,8 @@ let counters: Counter[];
 let messageCountFor: Record<string, number>; // key: `${user_id}:${tenant_id}`
 let messageCountError: Record<string, boolean>; // key: `${user_id}:${tenant_id}` — simulate a transient count failure
 let incrementDuringCount: Record<string, () => void>; // key → a concurrent increment that lands mid-recompute (after the count read, before the write)
+let pageErrorOnCall: number | null; // 1-indexed row-list page fetch that should error, simulating a mid-scan failure
+let pageFetchCallCount: number;
 
 vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: async (p: Promise<{ data: unknown; error: unknown }>) => {
@@ -75,12 +86,60 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
         };
         return {
-          select: () => ({
-            // Copy rows: PostgREST returns a deserialized snapshot, not the
-            // live store — so a concurrent increment can't retroactively edit
-            // the value the recompute already read.
-            limit: () => Promise.resolve({ data: counters.map((c) => ({ ...c })), error: null }),
-          }),
+          select: () => {
+            // .order().order().limit(n)[.or(cursorFilter)] — mirrors the
+            // keyset-paginated row list. Copies rows: PostgREST returns a
+            // deserialized snapshot, not the live store, so a concurrent
+            // increment can't retroactively edit the value the recompute
+            // already read.
+            let limit = Number.POSITIVE_INFINITY;
+            let cursorFilter: string | null = null;
+            const pageBuilder = {
+              order: () => pageBuilder,
+              limit: (n: number) => {
+                limit = n;
+                return pageBuilder;
+              },
+              or: (filter: string) => {
+                cursorFilter = filter;
+                return pageBuilder;
+              },
+              then(resolve: (v: unknown) => unknown) {
+                pageFetchCallCount += 1;
+                if (pageFetchCallCount === pageErrorOnCall) {
+                  resolve({ data: null, error: { message: "row list page failed" } });
+                  return;
+                }
+                const sorted = [...counters].sort((a, b) =>
+                  a.user_id === b.user_id
+                    ? a.tenant_id.localeCompare(b.tenant_id)
+                    : a.user_id.localeCompare(b.user_id),
+                );
+                let startIdx = 0;
+                if (cursorFilter) {
+                  const match = /user_id\.gt\.([^,]+),and\(user_id\.eq\.([^,]+),tenant_id\.gt\.([^)]+)\)/.exec(
+                    cursorFilter,
+                  );
+                  if (!match) throw new Error(`unparseable cursor filter: ${cursorFilter}`);
+                  const [, gtUser, eqUser, gtTenant] = match as unknown as [
+                    string,
+                    string,
+                    string,
+                    string,
+                  ];
+                  startIdx = sorted.findIndex(
+                    (c) => c.user_id > gtUser || (c.user_id === eqUser && c.tenant_id > gtTenant),
+                  );
+                  if (startIdx === -1) startIdx = sorted.length;
+                }
+                resolve({
+                  data: sorted.slice(startIdx, startIdx + limit).map((c) => ({ ...c })),
+                  error: null,
+                });
+              },
+            };
+            return pageBuilder;
+          },
           update(p: { current_count: number }) {
             payload = p;
             return builder;
@@ -137,6 +196,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   messageCountError = {};
   incrementDuringCount = {};
+  pageErrorOnCall = null;
+  pageFetchCallCount = 0;
 });
 
 describe("customerChatCounterRecompute — concurrent per-row attribution (#1789)", () => {
@@ -283,5 +344,60 @@ describe("customerChatCounterRecompute — CAS vs concurrent increment (#1975)",
     );
 
     consoleInfoSpy.mockRestore();
+  });
+});
+
+describe("customerChatCounterRecompute — row-list pagination (#1994)", () => {
+  it("recomputes every row when the table spans more than one page, not just the first 1000", async () => {
+    // One row past the page size forces a second .range() fetch. Before the
+    // fix, a single .limit(5000) call relied on PostgREST returning up to
+    // 5000 rows unordered and uncapped by db-max-rows — if the server's
+    // actual max-rows setting is at or below the table size, rows past the
+    // cap were silently never recomputed, forever.
+    const rowCount = 1001;
+    counters = Array.from({ length: rowCount }, (_, i) => ({
+      user_id: `u-${String(i).padStart(4, "0")}`,
+      tenant_id: "t-1",
+      current_count: 0,
+      last_message_at: T0,
+    }));
+    messageCountFor = Object.fromEntries(counters.map((c) => [`${c.user_id}:t-1`, 1]));
+
+    const result = (await runCron()) as { processed: number };
+
+    expect(result).toEqual({ processed: rowCount });
+    expect(counters.every((c) => c.current_count === 1)).toBe(true);
+  });
+
+  it("throws instead of returning a truncated success when a page fetch errors mid-scan", async () => {
+    // Before the fix, a page-fetch error just broke the loop and returned
+    // `{ processed }` for whatever was collected so far — reporting success
+    // on a run that silently dropped every row past the failed page. Inngest
+    // never sees a failure, so it never retries, and the drift correction is
+    // permanently short for those rows. This pins the #1740 lesson: the
+    // error must surface as a throw, not a quiet partial result.
+    const rowCount = 1001; // forces a second page fetch, which is made to fail
+    counters = Array.from({ length: rowCount }, (_, i) => ({
+      user_id: `u-${String(i).padStart(4, "0")}`,
+      tenant_id: "t-1",
+      current_count: 0,
+      last_message_at: T0,
+    }));
+    messageCountFor = Object.fromEntries(counters.map((c) => [`${c.user_id}:t-1`, 1]));
+    pageErrorOnCall = 2;
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(runCron()).rejects.toThrow("row list page failed");
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[customer-chat-counter-recompute] row list page failed",
+      expect.anything(),
+    );
+    // None of the second page's rows were ever recomputed — the run failed
+    // before mapWithConcurrency was reached at all, not after a partial scan.
+    expect(counters.every((c) => c.current_count === 0)).toBe(true);
+
+    consoleErrorSpy.mockRestore();
   });
 });
