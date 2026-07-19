@@ -32,7 +32,7 @@ let mutateErrors: Record<string, { message: string } | undefined>;
 // here would let a wrong-column purge (e.g. a non-existent one) pass silently.
 let ltCalls: Array<{ table: string; column: string; cutoff: string }>;
 const calls = {
-  deletes: [] as Array<{ table: string; ids: string[] }>,
+  deletes: [] as Array<{ table: string; col: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
   inserts: [] as Array<{ table: string }>,
 };
@@ -58,8 +58,8 @@ function makeChain(table: string) {
     },
     delete() {
       return {
-        in(_col: string, ids: string[]) {
-          calls.deletes.push({ table, ids });
+        in(col: string, ids: string[]) {
+          calls.deletes.push({ table, col, ids });
           if (mutateErrors[table]) return Promise.resolve({ count: null, error: mutateErrors[table] });
           return Promise.resolve({ count: ids.length, error: null });
         },
@@ -163,6 +163,39 @@ describe("data-retention-purge — #1590", () => {
     expect(aiResult.affected).toBe(1003);
   });
 
+  // #2031 — gmail_inbound_messages keys on message_id (Gmail's id), not a
+  // synthetic uuid. The purge must SELECT+DELETE on message_id or it would
+  // target a non-existent `id` column and silently never prune (the same class
+  // of bug the #1719 wrong-column test guards). Aliasing keeps the row-mapping
+  // uniform while the DELETE targets the real PK.
+  it("gmail_inbound_messages deletes on message_id (its PK), not id", async () => {
+    selectQueues["gmail_inbound_messages"] = [ids(2, "g")];
+    const result = await runPurge();
+
+    const gDeletes = calls.deletes.filter((d) => d.table === "gmail_inbound_messages");
+    expect(gDeletes).toHaveLength(1);
+    expect(gDeletes[0]!.col).toBe("message_id");
+    const gResult = result.results!.find((r) => r.table === "gmail_inbound_messages")!;
+    expect(gResult.affected).toBe(2);
+  });
+
+  // #2033 — inbound_emails / bug_submissions / feature_requests are all in the
+  // sweep now (the old comment claimed a lifecycle purge that didn't exist).
+  // These pin that they're actually issued a bounded DELETE when they have
+  // expired rows, on the right PK (id).
+  it("inbound_emails, bug_submissions, feature_requests are swept with bounded id DELETEs", async () => {
+    for (const t of ["inbound_emails", "bug_submissions", "feature_requests"]) {
+      selectQueues[t] = [ids(3, t)];
+    }
+    const result = await runPurge();
+    for (const t of ["inbound_emails", "bug_submissions", "feature_requests"]) {
+      const dels = calls.deletes.filter((d) => d.table === t);
+      expect(dels, `${t} should be swept`).toHaveLength(1);
+      expect(dels[0]!.col).toBe("id");
+      expect(result.results!.find((r) => r.table === t)!.affected).toBe(3);
+    }
+  });
+
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {
     selectQueues["stripe_webhook_events"] = [ids(2, "s")];
     const result = await runPurge();
@@ -207,6 +240,12 @@ describe("data-retention-purge — #1590", () => {
       attribution_touches: { column: "occurred_at", days: 365 },
       auth_attempts: { column: "occurred_at", days: 90 },
       stripe_webhook_events: { column: "created_at", days: 90 },
+      // #2031 — inbound customer email content, 365d mirroring email_log.
+      gmail_inbound_messages: { column: "received_at", days: 365 },
+      inbound_emails: { column: "received_at", days: 365 },
+      // #2033 — lifecycle timestamps: only terminal-state rows age out.
+      bug_submissions: { column: "closed_at", days: 365 },
+      feature_requests: { column: "decided_at", days: 365 },
     };
 
     const now = Date.now();
