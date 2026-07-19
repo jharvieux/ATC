@@ -224,6 +224,51 @@ jobs:
         # adding to the baseline.
         run: pnpm check:serial-await
 
+      - name: RLS policy-semantics guard (Harvey Tier-1, refs #2006)
+        # Static semantic review of committed migration SQL: USING(true)/wrong-
+        # column policies, SECURITY DEFINER writes/read-oracles with no caller
+        # check (D-091 #27), and bare auth.*/current_setting() initplan misses.
+        # Review-tier; pre-existing findings frozen in the baseline.
+        run: pnpm check:rls-policy-semantics
+
+      - name: Extension-manifest guard (Harvey Tier-1, refs #2000)
+        # Fails on a NEW broad-host + sensitive-capability combo in any
+        # apps/**/manifest.json (broad hosts + cookies reads every site's
+        # session). The pre-#2015 apps/extension combo is baselined until that
+        # PR merges.
+        run: pnpm check:extension-manifest
+
+      - name: Mocked-tenant-test guard (Harvey Tier-1, refs #2028)
+        # Fails on a NEW test that claims tenant-isolation/RLS coverage by name
+        # while its file mocks the Supabase client — the mock makes the claimed
+        # coverage structurally impossible. Existing sites frozen in the baseline.
+        run: pnpm check:mocked-tenant-tests
+
+      - name: App Router boundary guard (Harvey Tier-1, M9)
+        # AST checks: raw DB rows passed whole into 'use client' components
+        # (RSC payload leak) and secret-reading modules reachable from client
+        # code without `import "server-only"`.
+        run: pnpm check:app-router-boundaries
+
+      - name: PII-column classification guard (Harvey Tier-1, refs #2011)
+        # Static schema parse (never a live DB): a NEW column matching the
+        # PII/PHI/PCI/SECRET dictionary or the JSONB-container pattern must get
+        # an RLS/retention/erasure review before being baselined.
+        run: pnpm check:pii-columns
+
+      - name: Env-schema completeness guard (D-091 #28, refs #2002)
+        # Fails on a NEW raw process.env read of an identifier not declared in
+        # that app's env schema (apps/<app>/src/lib/env.ts) — undeclared secrets
+        # bypass boot validation and the rotation-path inventory.
+        run: pnpm check:env-schema
+
+      - name: Job service-role tenant-predicate guard (refs #2003)
+        # Fails on a NEW filtered service-role read, in a background-job dir, of
+        # a tenant_id-bearing table the d091 detector platform-exempts — the
+        # gap that let the import-pipeline gmail read ship without a tenant
+        # predicate.
+        run: pnpm check:job-service-role-tenant
+
       - name: URL-validator guard (#1393/G2)
         # Fails on a new z.string().url() for a stored/rendered URL field —
         # must use safeUrl (@atc/contracts) which denies file://, cloud-metadata,

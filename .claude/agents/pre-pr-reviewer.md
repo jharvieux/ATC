@@ -100,7 +100,28 @@ Look for:
 - `if (!x) return;` early returns that hide unexpected state (vs. returning because the state is expected)
 - Logging at `warn` level when an error path is taken (should be `error` if it's actually broken)
 
-### 7 — Match prior MEMORY.md decisions (WARNING)
+### 7 — Hand-rolled primitives (WARNING — judgment-tier, NOT a hard gate)
+
+Derived from the external Harvey audit's hand-rolled-primitive catalog (refs
+#2009, #2010). When the diff hand-implements something a library/framework/API
+already on hand provides, flag it — the hand-rolled copy is where the edge-case
+bugs live. Top shapes to watch for:
+
+- **Hand `JSON.parse` of LLM output** (regex-stripping code fences, "find the
+  first `{`") instead of the provider's structured-output/tool-call path.
+- **Hand cookie parsing** (`header.split(";")`) instead of the framework's
+  cookie API (`cookies()`, `request.cookies`).
+- **Hand email/UUID/URL regexes** instead of the shared schemas
+  (`@atc/contracts` — `safeUrl` and friends, Zod validators already in use).
+- **Hand base64url/currency/date formatting** instead of stdlib
+  (`Buffer.toString("base64url")`, `Intl.NumberFormat`, `Intl.DateTimeFormat`/
+  the repo's existing date helpers).
+
+This is reviewer guidance, not a blocker: a hand-rolled primitive can be a
+deliberate, justified choice (perf, a dependency boundary). Ask for the
+justification; flag as ⚠️ WARNING when there is none.
+
+### 8 — Match prior MEMORY.md decisions (WARNING)
 
 If the diff touches an area covered by a recent MEMORY.md decision (D-NNN), confirm the change is consistent with it. Don't re-litigate prior decisions; flag if the change accidentally regresses one.
 
