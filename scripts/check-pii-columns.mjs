@@ -18,7 +18,7 @@
 //   node scripts/check-pii-columns.mjs --selftest  # classifier self-test
 //   node scripts/check-pii-columns.mjs --schema <dir-or-file.sql>  # explicit target, report only
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -203,9 +203,15 @@ export function parseLiveColumns(sql) {
 
 // --- guard mode --------------------------------------------------------------
 
+// Reads target directly (no existsSync/statSync pre-check — that would be a
+// check-then-use race, CodeQL js/file-system-race). EISDIR means it's a
+// directory; any other error (including ENOENT) is the caller's to interpret.
 function readSchemaSql(target) {
-  const st = statSync(target);
-  if (st.isFile()) return readFileSync(target, "utf8");
+  try {
+    return readFileSync(target, "utf8");
+  } catch (err) {
+    if (err.code !== "EISDIR") throw err;
+  }
   return readdirSync(target, { recursive: true })
     .filter((f) => String(f).endsWith(".sql"))
     .sort()
@@ -216,14 +222,20 @@ function readSchemaSql(target) {
 function defaultMigrationDirs() {
   return readdirSync(join(ROOT, "apps"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => join(ROOT, "apps", e.name, "supabase/migrations"))
-    .filter((d) => existsSync(d));
+    .map((e) => join(ROOT, "apps", e.name, "supabase/migrations"));
 }
 
 export function classifyDirs(dirs) {
   const hits = [];
   for (const dir of dirs) {
-    const cols = parseLiveColumns(readSchemaSql(dir));
+    let sql;
+    try {
+      sql = readSchemaSql(dir);
+    } catch (err) {
+      if (err.code === "ENOENT") continue; // app has no supabase/migrations dir — optional
+      throw err;
+    }
+    const cols = parseLiveColumns(sql);
     const app = relative(ROOT, dir).split("/")[1] ?? dir; // apps/<app>/supabase/migrations
     for (const col of cols) {
       const hit = classifyColumn(col.column_name, col.data_type, col.table_name);
@@ -235,8 +247,14 @@ export function classifyDirs(dirs) {
 
 function loadBaseline(file = BASELINE_FILE) {
   const set = new Set();
-  if (!existsSync(file)) return set;
-  for (const raw of readFileSync(file, "utf8").split("\n")) {
+  let content;
+  try {
+    content = readFileSync(file, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return set; // baseline file is optional — empty set fallback
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     set.add(line.split(/\s+/)[0]);
@@ -275,11 +293,19 @@ function guardMode() {
 }
 
 function reportMode(target) {
-  if (!target || !existsSync(target)) {
-    console.error(`Usage: check-pii-columns.mjs --schema <migrations dir or .sql file>${target ? ` — ${target} does not exist` : ""}`);
+  if (!target) {
+    console.error(`Usage: check-pii-columns.mjs --schema <migrations dir or .sql file>`);
     process.exit(1);
   }
-  const cols = parseLiveColumns(readSchemaSql(target));
+  let sql;
+  try {
+    sql = readSchemaSql(target);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+    console.error(`Usage: check-pii-columns.mjs --schema <migrations dir or .sql file> — ${target} does not exist`);
+    process.exit(1);
+  }
+  const cols = parseLiveColumns(sql);
   for (const col of cols) {
     const hit = classifyColumn(col.column_name, col.data_type, col.table_name);
     if (hit) console.log(`${col.table_name}.${col.column_name} → ${hit.infotype} (${hit.category}/${hit.confidence})`);

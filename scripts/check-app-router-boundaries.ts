@@ -288,8 +288,14 @@ export function scanSources(files: { rel: string; text: string }[], srcPrefix: s
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
@@ -301,9 +307,15 @@ export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> 
 }
 
 function walk(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === ".next") continue;

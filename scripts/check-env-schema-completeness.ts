@@ -65,9 +65,15 @@ export function findUndeclaredReads(app: string, relPath: string, contents: stri
 }
 
 function walk(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === ".next") continue;
@@ -79,8 +85,14 @@ function walk(dir: string): string[] {
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
@@ -95,11 +107,15 @@ function main(): void {
   const findings: EnvFinding[] = [];
   for (const app of APPS) {
     const envTs = path.join(ROOT, `apps/${app}/src/lib/env.ts`);
-    if (!fs.existsSync(envTs)) {
+    let envTsText: string;
+    try {
+      envTsText = fs.readFileSync(envTs, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       console.error(`env-schema guard: apps/${app}/src/lib/env.ts not found — schema moved? Update this guard.`);
       process.exit(1);
     }
-    const declared = declaredKeys(fs.readFileSync(envTs, "utf8"));
+    const declared = declaredKeys(envTsText);
     if (declared.size === 0) {
       console.error(`env-schema guard: zero declared keys parsed from apps/${app}/src/lib/env.ts — parser regression. Failing loud.`);
       process.exit(1);

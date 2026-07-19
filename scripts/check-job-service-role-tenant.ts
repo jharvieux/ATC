@@ -118,9 +118,15 @@ export function findUnscopedJobReads(relPath: string, contents: string, tenantTa
 // --- plumbing ----------------------------------------------------------------
 
 function walk(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === ".next") continue;
@@ -136,13 +142,19 @@ function jobDirs(): string[] {
     dirs.push(path.join(ROOT, "apps", app.name, "src/inngest"));
     dirs.push(path.join(ROOT, "apps", app.name, "src/lib/cron"));
   }
-  return dirs.filter((d) => fs.existsSync(d));
+  return dirs;
 }
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
@@ -158,8 +170,16 @@ function main(): void {
     .readdirSync(path.join(ROOT, "apps"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => path.join(ROOT, "apps", e.name, "supabase/migrations"))
-    .filter((d) => fs.existsSync(d))
-    .flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".sql")).sort().map((f) => fs.readFileSync(path.join(d, f), "utf8")))
+    .flatMap((d) => {
+      let files: string[];
+      try {
+        files = fs.readdirSync(d);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return []; // app has no migrations dir — optional
+        throw err;
+      }
+      return files.filter((f) => f.endsWith(".sql")).sort().map((f) => fs.readFileSync(path.join(d, f), "utf8"));
+    })
     .join("\n\n");
   const tenantBearing = tenantBearingTables(migrationSql);
   if (tenantBearing.size === 0) {

@@ -86,9 +86,15 @@ export function findOverbroadCombos(relPath: string, json: string): ManifestFind
 }
 
 function findManifests(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     if (["node_modules", ".next", ".git", "dist"].includes(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...findManifests(p));
@@ -99,8 +105,14 @@ function findManifests(dir: string): string[] {
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");

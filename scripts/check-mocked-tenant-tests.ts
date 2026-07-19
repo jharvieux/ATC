@@ -167,8 +167,14 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
@@ -180,9 +186,15 @@ export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> 
 }
 
 function walk(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === ".next") continue;
@@ -196,8 +208,7 @@ function defaultDirs(): string[] {
   return fs
     .readdirSync(path.join(ROOT, "apps"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => path.join(ROOT, "apps", e.name, "test"))
-    .filter((d) => fs.existsSync(d));
+    .map((e) => path.join(ROOT, "apps", e.name, "test"));
 }
 
 // The apps' src trees are loaded (never scanned for tests) so a mocked local
@@ -206,8 +217,7 @@ function resolutionDirs(): string[] {
   return fs
     .readdirSync(path.join(ROOT, "apps"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => path.join(ROOT, "apps", e.name, "src"))
-    .filter((d) => fs.existsSync(d));
+    .map((e) => path.join(ROOT, "apps", e.name, "src"));
 }
 
 function main(): void {

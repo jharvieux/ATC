@@ -396,8 +396,14 @@ export function scanMigrationSet(files: { file: string; sql: string }[]): RlsFin
 
 export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> {
   const map = new Map<string, number>();
-  if (!fs.existsSync(file)) return map;
-  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return map;
+    throw err;
+  }
+  for (const raw of content.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const sp = line.indexOf(" ");
@@ -412,20 +418,28 @@ function defaultDirs(): string[] {
   return fs
     .readdirSync(path.join(ROOT, "apps"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => path.join(ROOT, "apps", e.name, "supabase/migrations"))
-    .filter((d) => fs.existsSync(d));
+    .map((e) => path.join(ROOT, "apps", e.name, "supabase/migrations"));
 }
 
 function main(): void {
   const argDirs = process.argv.slice(2);
-  const dirs = argDirs.length > 0 ? argDirs.map((d) => path.resolve(d)) : defaultDirs();
-  const files = dirs.flatMap((dir) =>
-    fs
-      .readdirSync(dir)
+  const usingDefaults = argDirs.length === 0;
+  const dirs = usingDefaults ? defaultDirs() : argDirs.map((d) => path.resolve(d));
+  const files = dirs.flatMap((dir) => {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (err) {
+      // defaultDirs() dirs are optional (not every app has migrations); an
+      // explicit dir argument is required input — fail loud on a bad path.
+      if (usingDefaults && (err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    return names
       .filter((f) => f.endsWith(".sql"))
       .sort()
-      .map((f) => ({ file: path.relative(ROOT, path.join(dir, f)), sql: fs.readFileSync(path.join(dir, f), "utf8") })),
-  );
+      .map((f) => ({ file: path.relative(ROOT, path.join(dir, f)), sql: fs.readFileSync(path.join(dir, f), "utf8") }));
+  });
   if (files.length === 0) {
     console.error("rls-policy-semantics guard: no migration .sql files found — check paths.");
     process.exit(1);
