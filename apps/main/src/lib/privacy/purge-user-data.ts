@@ -46,6 +46,13 @@ export interface PurgeResult {
     bookings_anonymized: number;
     commissions_anonymized: number;
     passenger_contacts_anonymized: number;
+    // #2034 — booking_line_items.item_details nulled (free-form JSON, no user_id).
+    line_items_scrubbed: number;
+    // #2031 — inbound customer email content scrubbed on the two inbound tables.
+    inbound_gmail_scrubbed: number;
+    inbound_emails_scrubbed: number;
+    // #2032 — ai_batch_requests.caller_metadata rows whose user_id was cleared.
+    ai_batch_metadata_scrubbed: number;
   };
   // Tenants whose CRM notes (contacts.notes with non-null body) were
   // anonymized. The cron caller fans out notifications to admins of these
@@ -64,6 +71,10 @@ const empty = {
   bookings_anonymized: 0,
   commissions_anonymized: 0,
   passenger_contacts_anonymized: 0,
+  line_items_scrubbed: 0,
+  inbound_gmail_scrubbed: 0,
+  inbound_emails_scrubbed: 0,
+  ai_batch_metadata_scrubbed: 0,
 };
 
 export async function purgeUserDataPerRetention(
@@ -87,6 +98,12 @@ export async function purgeUserDataPerRetention(
     .select("id")
     .eq("user_id", user_id);
   const bookingIds = ((bookingIdsForUser ?? []) as Array<{ id: string }>).map((b) => b.id);
+
+  // #2031 — collect the user's email addresses BEFORE Step 5/8 clear them
+  // (users.email is nulled in Step 8; contacts.user_id is detached in Step 5,
+  // after which the user's contact emails can't be found). Used to reach the
+  // inbound-email content that keys on the raw address, not a user_id.
+  const emailAddresses = await loadUserEmailAddresses(db, user_id);
 
   let openDisputeCommissions: Array<{ id: string; dispute_status: string }> = [];
   if (bookingIds.length > 0) {
@@ -218,6 +235,50 @@ export async function purgeUserDataPerRetention(
       counts.category_2_memories_deleted = Array.isArray(mem) ? mem.length : 0;
     }
 
+    // Step 4.5 — inbound customer email content (#2031). MUST run BEFORE Step 5
+    //   detaches contacts: emailAddresses is derived from contacts.user_id (via
+    //   loadUserEmailAddresses above), so a retry that re-enters after Step 5
+    //   already nulled contacts.user_id would collect FEWER addresses and miss
+    //   inbound rows keyed on a contact's address. Scrubbing here, while the
+    //   contacts are still attached, means the rows are erased before any retry
+    //   can lose the addresses (and the scrub is idempotent, so a later retry
+    //   with a reduced address set finds nothing left to do).
+    //
+    //   gmail_inbound_messages and inbound_emails hold full inbound email
+    //   (raw_payload + from/subject/body) keyed on the sender's raw address, not
+    //   a user_id, so booking/contact anonymization never reaches them. The
+    //   customer is the SENDER on inbound-to-persona mail, so we match their
+    //   addresses against from_email CASE-INSENSITIVELY (external sender casing
+    //   is arbitrary — an exact .in() would miss a mixed-case variant) and strip
+    //   the PII columns, keeping the dedup/replay anchor row (message_id /
+    //   provider_message_id) so a late webhook replay is still recognised.
+    //   Idempotent: once from_email is redacted the row no longer matches.
+    if (emailAddresses.length > 0) {
+      const fromEmailFilter = ilikeAnyFilter("from_email", emailAddresses);
+
+      // gmail_inbound_messages — all PII columns are nullable.
+      const { data: gScrubbed, error: gErr } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA erasure of inbound content; cross-tenant by spec, service-role required (no user session).
+        .from("gmail_inbound_messages")
+        .update({ from_email: null, subject: null, body_text: null, body_html: null, raw_payload: null })
+        .or(fromEmailFilter)
+        .select("message_id");
+      if (gErr) throw new Error(`inbound_gmail_scrub_failed: ${gErr.message}`);
+      counts.inbound_gmail_scrubbed = Array.isArray(gScrubbed) ? gScrubbed.length : 0;
+
+      // inbound_emails — from_email/raw_payload are NOT NULL, so redact rather
+      // than null (empty-object payload, sentinel address); to_email is the
+      // tenant persona (not the customer's PII) and stays.
+      const { data: ieScrubbed, error: ieErr } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA erasure of inbound content; cross-tenant by spec, service-role required (no user session).
+        .from("inbound_emails")
+        .update({ from_email: "[erased]", subject: null, text_body: null, raw_payload: {} })
+        .or(fromEmailFilter)
+        .select("id");
+      if (ieErr) throw new Error(`inbound_emails_scrub_failed: ${ieErr.message}`);
+      counts.inbound_emails_scrubbed = Array.isArray(ieScrubbed) ? ieScrubbed.length : 0;
+    }
+
     // Step 5 — Category 3: tenant CRM notes anonymization.
     //   Surface added by this migration: contacts.notes + contacts.anonymized_customer_hash.
     //   Per §25.4a, text is RETAINED; only the user FK is removed.
@@ -270,6 +331,22 @@ export async function purgeUserDataPerRetention(
         .select("id");
       if (cerr) throw new Error(`commission_anonymize_failed: ${cerr.message}`);
       counts.commissions_anonymized = Array.isArray(can) ? can.length : 0;
+
+      // Step 6.5 — booking_line_items.item_details (#2034). This table has no
+      // user_id and is reached only through the booking. item_details is
+      // free-form JSON (per-type; transfer/excursion/insurance/other were
+      // unvalidated) that can carry passenger names/DOB/policy numbers, so
+      // null it for every line item on a purged booking. Booking-level
+      // anonymization (Step 6) alone breaks the FK join but leaves the blob.
+      const { data: liScrubbed, error: liErr } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
+        .from("booking_line_items")
+        .update({ item_details: null })
+        .in("booking_id", bookingIds)
+        .not("item_details", "is", null)
+        .select("id");
+      if (liErr) throw new Error(`line_items_scrub_failed: ${liErr.message}`);
+      counts.line_items_scrubbed = Array.isArray(liScrubbed) ? liScrubbed.length : 0;
     }
 
     // Step 7 — booking_passengers contact-FK anonymization.
@@ -297,7 +374,29 @@ export async function purgeUserDataPerRetention(
       }
     }
 
-    // Step 8 — users row PII clear + status='purged'.
+    // Step 7.7 — ai_batch_requests.caller_metadata (#2032). MUST run BEFORE the
+    //   Step 8 status='purged' flip: that flip is the purge's idempotency guard
+    //   (the caller skips re-running the purge once status='purged'), so a scrub
+    //   that failed AFTER the flip would never be retried (mirrors the #1958
+    //   ordering fix in the same file). A service-role-only table whose
+    //   caller_metadata threads the user_id for some purposes (extract-memory
+    //   etc.), so a purged user's UUID otherwise persists indefinitely. Null the
+    //   whole payload for this user's rows — transient producer→consumer context,
+    //   not durable record.
+    {
+      const { data: bmScrubbed, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
+        .from("ai_batch_requests")
+        .update({ caller_metadata: null })
+        .eq("caller_metadata->>user_id", user_id)
+        .select("id");
+      if (error) throw new Error(`ai_batch_metadata_scrub_failed: ${error.message}`);
+      counts.ai_batch_metadata_scrubbed = Array.isArray(bmScrubbed) ? bmScrubbed.length : 0;
+    }
+
+    // Step 8 — users row PII clear + status='purged'. Runs LAST of the PII steps
+    //   because status='purged' is the idempotency guard — every PII scrub above
+    //   must complete before we mark the purge done.
     {
       const { error } = await db
         // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
@@ -308,6 +407,10 @@ export async function purgeUserDataPerRetention(
           first_name: null,
           last_name: null,
           display_name: null,
+          // #2032 — notif_preferences is exported by the data-export builder
+          // and is PII-shaped; null it here so the purge is defensively
+          // correct before a writer for it lands.
+          notif_preferences: null,
           deleted_purged_at: new Date().toISOString(),
           status: "purged",
         })
@@ -361,6 +464,52 @@ export async function purgeUserDataPerRetention(
     return finishError(db, user_id, customer_hash, graceEndedAt, counts,
       forensics_snapshot_id, forensics_snapshot_reason, detail);
   }
+}
+
+// #2031 — build a PostgREST `.or()` filter matching `column` case-insensitively
+// against ANY of the values, via ilike with the LIKE wildcards (%, _, \) escaped
+// so each term is an exact case-folded match rather than a pattern. Values are
+// our own user/contact emails (no injection surface); the escape only stops an
+// address that legitimately contains `_` from matching neighbouring characters.
+function ilikeAnyFilter(column: string, values: string[]): string {
+  return values
+    .map((v) => `${column}.ilike.${v.replace(/([\\%_])/g, "\\$1")}`)
+    .join(",");
+}
+
+// #2031 — every email address that identifies the user for inbound-content
+// matching: the account email plus any contact emails they own, deduped
+// case-insensitively. Matching against from_email happens case-insensitively via
+// ilike at the call site (ilikeAnyFilter), so the stored casing is irrelevant to
+// correctness — we keep the first-seen form purely for readable audit/logging.
+async function loadUserEmailAddresses(
+  db: SupabaseClient,
+  user_id: string,
+): Promise<string[]> {
+  const byLower = new Map<string, string>();
+  const add = (email: string | null | undefined) => {
+    if (!email) return;
+    const key = email.toLowerCase();
+    if (!byLower.has(key)) byLower.set(key, email);
+  };
+
+  const { data: userRow } = await db
+    // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
+    .from("users")
+    .select("email")
+    .eq("id", user_id)
+    .maybeSingle();
+  add((userRow as { email?: string | null } | null)?.email);
+
+  const { data: contactRows } = await db
+    // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
+    .from("contacts")
+    .select("email")
+    .eq("user_id", user_id)
+    .not("email", "is", null);
+  for (const c of (contactRows ?? []) as Array<{ email: string | null }>) add(c.email);
+
+  return Array.from(byLower.values());
 }
 
 async function loadConversationIds(

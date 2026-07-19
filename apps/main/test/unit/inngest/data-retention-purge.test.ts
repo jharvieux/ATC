@@ -23,7 +23,9 @@ vi.mock("@/inngest/client", () => ({
 const mockWriteAuditLog = vi.fn(async (_row: { action: string; [k: string]: unknown }) => {});
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 
-type Batch = Array<{ id: string }>;
+// Rows may carry a lifecycle timestamp so `.lt()` NULL-semantics can be modeled
+// (open rows keep a NULL closed_at/decided_at and must never be selected).
+type Batch = Array<{ id: string; closed_at?: string | null; decided_at?: string | null }>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
 let mutateErrors: Record<string, { message: string } | undefined>;
@@ -32,7 +34,7 @@ let mutateErrors: Record<string, { message: string } | undefined>;
 // here would let a wrong-column purge (e.g. a non-existent one) pass silently.
 let ltCalls: Array<{ table: string; column: string; cutoff: string }>;
 const calls = {
-  deletes: [] as Array<{ table: string; ids: string[] }>,
+  deletes: [] as Array<{ table: string; col: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
   inserts: [] as Array<{ table: string }>,
 };
@@ -40,9 +42,13 @@ const calls = {
 function makeChain(table: string) {
   return {
     select() {
+      let ltCol: string | null = null;
+      let ltCutoff: string | null = null;
       const chain = {
         lt(column: string, cutoff: string) {
           ltCalls.push({ table, column, cutoff });
+          ltCol = column;
+          ltCutoff = cutoff;
           return chain;
         },
         not() {
@@ -51,15 +57,26 @@ function makeChain(table: string) {
         limit() {
           if (selectErrors[table]) return Promise.resolve({ data: null, error: selectErrors[table] });
           const batch = (selectQueues[table] ?? []).shift() ?? [];
-          return Promise.resolve({ data: batch, error: null });
+          // Model `.lt(col, cutoff)` three-valued logic: a NULL never matches, so
+          // open rows (NULL lifecycle ts) survive. A row that doesn't model the
+          // column at all keeps the legacy always-eligible behavior.
+          const filtered = ltCol
+            ? batch.filter((row) => {
+                const v = (row as Record<string, unknown>)[ltCol!];
+                if (v === undefined) return true;
+                if (v === null) return false;
+                return Date.parse(v as string) < Date.parse(ltCutoff!);
+              })
+            : batch;
+          return Promise.resolve({ data: filtered, error: null });
         },
       };
       return chain;
     },
     delete() {
       return {
-        in(_col: string, ids: string[]) {
-          calls.deletes.push({ table, ids });
+        in(col: string, ids: string[]) {
+          calls.deletes.push({ table, col, ids });
           if (mutateErrors[table]) return Promise.resolve({ count: null, error: mutateErrors[table] });
           return Promise.resolve({ count: ids.length, error: null });
         },
@@ -163,6 +180,67 @@ describe("data-retention-purge — #1590", () => {
     expect(aiResult.affected).toBe(1003);
   });
 
+  // #2031 — gmail_inbound_messages keys on message_id (Gmail's id), not a
+  // synthetic uuid. The purge must SELECT+DELETE on message_id or it would
+  // target a non-existent `id` column and silently never prune (the same class
+  // of bug the #1719 wrong-column test guards). Aliasing keeps the row-mapping
+  // uniform while the DELETE targets the real PK.
+  it("gmail_inbound_messages deletes on message_id (its PK), not id", async () => {
+    selectQueues["gmail_inbound_messages"] = [ids(2, "g")];
+    const result = await runPurge();
+
+    const gDeletes = calls.deletes.filter((d) => d.table === "gmail_inbound_messages");
+    expect(gDeletes).toHaveLength(1);
+    expect(gDeletes[0]!.col).toBe("message_id");
+    const gResult = result.results!.find((r) => r.table === "gmail_inbound_messages")!;
+    expect(gResult.affected).toBe(2);
+  });
+
+  // #2033 — inbound_emails / bug_submissions / feature_requests are all in the
+  // sweep now (the old comment claimed a lifecycle purge that didn't exist).
+  // These pin that they're actually issued a bounded DELETE when they have
+  // expired rows, on the right PK (id).
+  it("inbound_emails, bug_submissions, feature_requests are swept with bounded id DELETEs", async () => {
+    for (const t of ["inbound_emails", "bug_submissions", "feature_requests"]) {
+      selectQueues[t] = [ids(3, t)];
+    }
+    const result = await runPurge();
+    for (const t of ["inbound_emails", "bug_submissions", "feature_requests"]) {
+      const dels = calls.deletes.filter((d) => d.table === t);
+      expect(dels, `${t} should be swept`).toHaveLength(1);
+      expect(dels[0]!.col).toBe("id");
+      expect(result.results!.find((r) => r.table === t)!.affected).toBe(3);
+    }
+  });
+
+  // #2033 — open submissions carry a NULL lifecycle timestamp (closed_at /
+  // decided_at), which `.lt(col, cutoff)` never matches, so a live submission
+  // must be preserved while a long-resolved one ages out. Without this pin, a
+  // purge that selected open rows would delete un-triaged customer submissions.
+  it("preserves open rows (NULL closed_at/decided_at) and purges only resolved ones", async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const longResolved = new Date(Date.now() - 400 * DAY).toISOString();
+    selectQueues["bug_submissions"] = [[
+      { id: "bug-open", closed_at: null },
+      { id: "bug-closed", closed_at: longResolved },
+    ]];
+    selectQueues["feature_requests"] = [[
+      { id: "fr-open", decided_at: null },
+      { id: "fr-closed", decided_at: longResolved },
+    ]];
+    const result = await runPurge();
+
+    const bugDeletes = calls.deletes.filter((d) => d.table === "bug_submissions");
+    expect(bugDeletes).toHaveLength(1);
+    expect(bugDeletes[0]!.ids).toEqual(["bug-closed"]); // open row preserved
+    expect(result.results!.find((r) => r.table === "bug_submissions")!.affected).toBe(1);
+
+    const frDeletes = calls.deletes.filter((d) => d.table === "feature_requests");
+    expect(frDeletes).toHaveLength(1);
+    expect(frDeletes[0]!.ids).toEqual(["fr-closed"]); // open row preserved
+    expect(result.results!.find((r) => r.table === "feature_requests")!.affected).toBe(1);
+  });
+
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {
     selectQueues["stripe_webhook_events"] = [ids(2, "s")];
     const result = await runPurge();
@@ -207,6 +285,12 @@ describe("data-retention-purge — #1590", () => {
       attribution_touches: { column: "occurred_at", days: 365 },
       auth_attempts: { column: "occurred_at", days: 90 },
       stripe_webhook_events: { column: "created_at", days: 90 },
+      // #2031 — inbound customer email content, 365d mirroring email_log.
+      gmail_inbound_messages: { column: "received_at", days: 365 },
+      inbound_emails: { column: "received_at", days: 365 },
+      // #2033 — lifecycle timestamps: only terminal-state rows age out.
+      bug_submissions: { column: "closed_at", days: 365 },
+      feature_requests: { column: "decided_at", days: 365 },
     };
 
     const now = Date.now();
