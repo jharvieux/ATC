@@ -42,8 +42,12 @@ type ClaimsOverride = {
   exp?: number;
   iat?: number;
   jti?: string | null;
-  iss?: string;
-  aud?: string;
+  // undefined = default to the correct value (most fixtures want a valid
+  // token so they can exercise later steps); null = explicitly OMIT the
+  // claim, for tests pinning the #1843 strict-rejection behavior; any other
+  // string = an explicit (possibly wrong) value.
+  iss?: string | null;
+  aud?: string | null;
   service_identifier?: string;
 };
 
@@ -63,10 +67,10 @@ async function makeToken(overrides: ClaimsOverride = {}) {
     .setIssuedAt(overrides.iat ?? now)
     .setExpirationTime(overrides.exp ?? now + 300);
 
-  // iss/aud default to ABSENT so existing tests exercise the tolerant rollout
-  // path; individual tests opt in to set/mismatch them (#1773).
-  if (overrides.iss !== undefined) builder = builder.setIssuer(overrides.iss);
-  if (overrides.aud !== undefined) builder = builder.setAudience(overrides.aud);
+  const iss = overrides.iss === undefined ? SERVICE_JWT_ISSUER : overrides.iss;
+  const aud = overrides.aud === undefined ? SERVICE_JWT_AUDIENCE : overrides.aud;
+  if (iss !== null) builder = builder.setIssuer(iss);
+  if (aud !== null) builder = builder.setAudience(aud);
 
   return builder.sign(privateKey);
 }
@@ -132,9 +136,10 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     expect(await res.json()).toMatchObject({ error: "signature_invalid" });
   });
 
-  // ── 2.5 iss/aud defense-in-depth (#1773) ─────────────────────────────────
-  // A PRESENT claim must match; these throw at step 2.5 (after signature,
-  // before redis/tenant) so they need no redis/supabase mocks.
+  // ── 2.5 iss/aud defense-in-depth (#1773, strict flip #1843) ──────────────
+  // Both claims are REQUIRED — mismatch and absence both throw at step 2.5
+  // (after signature, before redis/tenant) so they need no redis/supabase
+  // mocks.
   it("returns 401 signature_invalid when iss is present but wrong", async () => {
     const token = await makeToken({ iss: "evil-issuer", aud: SERVICE_JWT_AUDIENCE });
     const res = await callHandler(makeReq(token));
@@ -144,6 +149,20 @@ describe("verifyServiceJwt — fail-closed contract", () => {
 
   it("returns 401 signature_invalid when aud is present but wrong", async () => {
     const token = await makeToken({ iss: SERVICE_JWT_ISSUER, aud: "some-other-service" });
+    const res = await callHandler(makeReq(token));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
+  });
+
+  it("returns 401 signature_invalid when iss is absent (aud present)", async () => {
+    const token = await makeToken({ iss: null, aud: SERVICE_JWT_AUDIENCE });
+    const res = await callHandler(makeReq(token));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
+  });
+
+  it("returns 401 signature_invalid when aud is absent (iss present)", async () => {
+    const token = await makeToken({ iss: SERVICE_JWT_ISSUER, aud: null });
     const res = await callHandler(makeReq(token));
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: "signature_invalid" });
@@ -313,6 +332,8 @@ describe("verifyServiceJwt — fail-closed contract", () => {
       jti: randomUUID(),
     })
       .setProtectedHeader({ alg: "RS256", kid: PREV_KID })
+      .setIssuer(SERVICE_JWT_ISSUER)
+      .setAudience(SERVICE_JWT_AUDIENCE)
       .setIssuedAt(now)
       .setExpirationTime(now + 300)
       .sign(prevPair.privateKey);
@@ -389,126 +410,15 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     expect(res.status).toBe(200);
   });
 
-  // ── #1773: ROLLOUT INTENT — absent iss/aud is tolerated (not rejected) ────
-  // Deliberate transitional behaviour: atc-main (signer) and atc-rag (verifier)
-  // are separate Vercel apps that deploy at different times, so short-TTL
-  // tokens minted before the signer upgrade can still arrive here. Until the
-  // #1773 strict flip, an absent claim is warn-logged and allowed. This test
-  // is the executable record of that intent — when the flip lands it MUST be
-  // changed to assert 401.
-  it("tolerates a token with NO iss/aud during the rollout window", async () => {
-    vi.resetModules();
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { tenant_id: "active-tenant", status: "active" },
-                error: null,
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
-    vi.doMock("@/lib/redis/client", () => ({
-      getRedis: () => ({ set: async () => "OK" }),
-    }));
-
-    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
-
-    // makeToken with no iss/aud overrides → both claims absent.
-    const token = await makeToken({ tenant_id: "active-tenant" });
-    const handler = freshWrapper(async () => Response.json({ ok: true }));
-    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
-    expect(res.status).toBe(200);
-  });
-
-  // ── #1843: the warn is the ROLLOUT SIGNAL, so it is load-bearing ──────────
-  // Operators decide the strict flip is safe by watching absent-claim warns
-  // fall to zero in prod. If the warn silently stopped firing on absent claims,
-  // that signal would read "zero" while claimless tokens were still in flight —
-  // and the flip would 401 live traffic. These two tests are what stop a future
-  // refactor from breaking the instrument the rollout decision depends on.
-  it("warn-logs absent iss/aud with kid + tenant + service attribution", async () => {
-    vi.resetModules();
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { tenant_id: "active-tenant", status: "active" },
-                error: null,
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
-    vi.doMock("@/lib/redis/client", () => ({
-      getRedis: () => ({ set: async () => "OK" }),
-    }));
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
-
-    const token = await makeToken({
-      tenant_id: "active-tenant",
-      service_identifier: "platform-admin",
-    });
-    const handler = freshWrapper(async () => Response.json({ ok: true }));
-    await handler(makeReq(token), { params: Promise.resolve({}) });
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("missing iss/aud claims"),
-      expect.objectContaining({
-        kid: KEY_ID,
-        tenant_id: "active-tenant",
-        service_identifier: "platform-admin",
-        missing: "iss+aud",
-      }),
-    );
-    warnSpy.mockRestore();
-  });
-
-  it("does NOT warn when iss and aud are both present and correct", async () => {
-    vi.resetModules();
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: { tenant_id: "active-tenant", status: "active" },
-                error: null,
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
-    vi.doMock("@/lib/redis/client", () => ({
-      getRedis: () => ({ set: async () => "OK" }),
-    }));
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { withServiceAuth: freshWrapper } = await import("@/lib/auth/with-service-auth");
-
-    const token = await makeToken({
-      tenant_id: "active-tenant",
-      iss: SERVICE_JWT_ISSUER,
-      aud: SERVICE_JWT_AUDIENCE,
-    });
-    const handler = freshWrapper(async () => Response.json({ ok: true }));
-    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
-
-    expect(res.status).toBe(200);
-    expect(warnSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("missing iss/aud claims"),
-      expect.anything(),
-    );
-    warnSpy.mockRestore();
+  // ── #1843: STRICT FLIP — absent iss/aud is hard-rejected ──────────────────
+  // The tolerant rollout window (warn-log + allow) closed with #1843: #1842's
+  // signer has been live long enough that no valid in-flight token can lack
+  // these claims, so absence is now treated the same as mismatch. This test
+  // replaces the pre-flip "tolerates absent iss/aud" fixture.
+  it("returns 401 signature_invalid for a token with NO iss/aud", async () => {
+    const token = await makeToken({ tenant_id: "active-tenant", iss: null, aud: null });
+    const res = await callHandler(makeReq(token));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
   });
 });

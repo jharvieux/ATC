@@ -253,6 +253,77 @@ Unlike the other three OAuth flags, this one has a code-level guard worth noting
 
 ---
 
+## Authentication & Session Management
+
+### `AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED` (default: false)
+
+**Wired 2026-07-16 (PR #1987, MEMORY D-361).** This kill switch disables local JWT verification in the auth middleware (`apps/main/src/proxy.ts`).
+
+**Normal behavior (false):**
+The middleware performs a two-stage session check on every non-auth request:
+1. **Local verification first (fast):** `verifyIdentity()` validates the JWT signature against a cached JWKS (no network call).
+2. **Fallback to GoTrue (if local fails):** `supabase.auth.getUser()` performs the authoritative round-trip to the Supabase auth server.
+
+This approach minimizes auth-server load and reduces latency for the common case (valid, cached JWKS).
+
+**With flag = true:**
+Skips local verification entirely and calls `supabase.auth.getUser()` unconditionally on every request. This restores the pre-#1987 behavior without a code revert — useful for instant rollback if the local path misbehaves.
+
+**Blast radius:**
+- **Auth server load:** Every request now hits the auth server instead of most being satisfied locally. Under high traffic, this can spike auth-server CPU and risk rate-limit hits.
+- **Latency:** Network round-trip to Supabase on every request increases response time (typical impact: 50–150ms per request).
+- **Cost:** Network egress and auth-server query volume increase proportionally.
+- **Brownout risk:** If the auth server is degraded or rate-limiting, ALL requests will fail (no local fallback).
+
+**When to use:**
+- An anomaly or audit finding suggests local verification is incorrectly validating bad tokens or rejecting good ones.
+- Testing/debugging the behavior difference between local and server verification.
+- Instant fallback during a hybrid-verify incident if code analysis isn't fast enough.
+
+**How to flip it:**
+
+1. Add `AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED=true` to Vercel environment variables:
+   ```
+   vercel env add AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED true production
+   ```
+
+2. Redeploy the atc-main application to production:
+   ```
+   cd apps/main && vercel deploy --prod
+   ```
+
+3. Monitor auth server load, error rates, and request latency immediately after deploy.
+
+**How to verify it took effect:**
+
+- **Check logs:** Look for request logs in Vercel or Supabase showing `getUser()` being called on every request (instead of only on cache misses). Grep application logs for `verifyIdentity` — it should not appear.
+- **Monitor auth server:** Check Supabase dashboard for spike in auth queries and error rates.
+- **Test manually:** Make an authenticated request and inspect logs/headers to confirm `getUser()` was called.
+
+**How to re-enable (restore local verification):**
+
+1. Set the flag to false or remove it:
+   ```
+   vercel env rm AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED
+   ```
+   (Or add it with value `false` if you prefer explicit state.)
+
+2. Redeploy:
+   ```
+   cd apps/main && vercel deploy --prod
+   ```
+
+3. Monitor to confirm latency and auth-server load drop back to baseline.
+
+**⚠️ Caution:** Do not leave this on longer than necessary. The performance and cost impact compounds over time. Set a re-enable deadline in your incident log.
+
+**Related code:**
+- `apps/main/src/proxy.ts` — middleware where the check lives (line ~313).
+- `apps/main/src/lib/auth/verify-identity.ts` — the local verification function (`getClaims`).
+- `apps/main/test/unit/auth/proxy-session-refresh.test.ts` — test proving both paths work.
+
+---
+
 ## Feature Toggles (Not Operational Kill Switches, but ops-relevant)
 
 ### `PHASE_2_CUSTOMER_BUG_FLOW_ENABLED` (default: false)

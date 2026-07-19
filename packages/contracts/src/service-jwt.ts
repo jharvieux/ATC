@@ -13,13 +13,14 @@
 
 import { z } from "zod";
 
-// iss/aud registered-claim values for the main→rag service JWT (#1773).
+// iss/aud registered-claim values for the main→rag service JWT (#1773,
+// required as of the #1843 strict flip).
 // Defense-in-depth: even if SERVICE_JWT_PRIVATE_KEY were reused to mint tokens
 // for another purpose, those tokens would carry a different (or absent) aud and
 // be rejected by the rag verifier. Signer sets both unconditionally; verifier
-// enforces a present claim matches, tolerating absence during the rollout
-// window (see verify-service-jwt.ts). These are fixed protocol constants, not
-// env-tunable — both services must agree on the exact strings.
+// hard-rejects absence or mismatch (see verify-service-jwt.ts). These are
+// fixed protocol constants, not env-tunable — both services must agree on the
+// exact strings.
 export const SERVICE_JWT_ISSUER = "atc-main" as const;
 export const SERVICE_JWT_AUDIENCE = "atc-rag" as const;
 
@@ -31,14 +32,11 @@ export const ServiceJwtClaimsSchema = z.object({
   service_identifier: z.string().optional(),
   user_id: z.string().nullable().optional(),
   persona_id: z.string().nullable().optional(),
-  // Registered iss/aud claims (#1773). The signer always emits them, so a
-  // freshly-minted token always satisfies these. They are optional in the
-  // schema because the verifier still accepts in-flight pre-rollout tokens
-  // that lack them; the strict flip (making these required + hard-rejecting
-  // absence) is tracked by #1843, once both services are deployed with the
-  // claims and absent-claim traffic has gone to zero.
-  iss: z.literal(SERVICE_JWT_ISSUER).optional(),
-  aud: z.literal(SERVICE_JWT_AUDIENCE).optional(),
+  // Registered iss/aud claims (#1773). Required as of the #1843 strict flip:
+  // the signer has emitted both unconditionally since #1842, and that release
+  // has been live long enough that no in-flight token can predate it.
+  iss: z.literal(SERVICE_JWT_ISSUER),
+  aud: z.literal(SERVICE_JWT_AUDIENCE),
 });
 
 export type ServiceJwtClaims = z.infer<typeof ServiceJwtClaimsSchema>;
