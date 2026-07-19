@@ -17,6 +17,10 @@ interface CallLog {
   // Optional cross-op ordered trace ("select:contacts", "update:contacts", …)
   // for call-order assertions. Only populated when a test opts in by providing it.
   ordered?: string[];
+  // Optional capture of every raw .or() filter string passed to an update
+  // chain, so a test can assert on the produced DSL string directly instead
+  // of only on round-tripping it back through the fake's own parser.
+  orFilters?: string[];
 }
 
 // Model PostgREST `.or("from_email.ilike."<pat>",…")` parsing: split terms on
@@ -229,6 +233,7 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
       updateChain.not = () => updateChain;
       updateChain.or = (arg: string) => {
         orArg = arg;
+        log.orFilters?.push(arg);
         return updateChain;
       };
       updateChain.select = () => thenable(resolveResult());
@@ -625,14 +630,19 @@ describe("purgeUserDataPerRetention", () => {
     expect(log.updates.find((u) => u.table === "users")).toBeUndefined();
   });
 
-  // #2038 — an RFC 5322 quoted local-part can carry PostgREST or()-grammar
-  // reserved chars (`,` `(` `)`). Left unquoted they split/group the filter and
-  // the scrub 400s; the helper must double-quote the value so it's matched
-  // literally. Pin that such an address IS scrubbed and a bare comma-less
-  // sibling is unaffected — a regression that drops the quoting fails to match.
+  // #2038 — an address can carry PostgREST or()-grammar reserved chars
+  // (`,` `(` `)`) in its local-part without being self-delimited by a literal
+  // `"` (a value like `"a,b(c)"@example.com` is the wrong fixture for this:
+  // its own leading/trailing `"` chars accidentally satisfy the fake's
+  // quote-detection even if the production wrapper is deleted, so that
+  // fixture can't actually catch a regression — see mutation-check note
+  // below). Left unquoted by the production helper, the bare top-level comma
+  // here would split the term and the paren would unbalance the group, so
+  // this address only round-trips if `ilikeAnyFilter` really adds the `."…"`
+  // DSL wrapper. Assert both the row-match outcome AND the raw filter string.
   it("#2038 scrubs an address whose local-part contains or()-grammar chars", async () => {
-    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
-    const weird = '"a,b(c)"@example.com';
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [], orFilters: [] };
+    const weird = "a,b(c)@example.com";
     const scenario: Scenario = {
       ...baseScenario(),
       userEmail: weird,
@@ -643,6 +653,9 @@ describe("purgeUserDataPerRetention", () => {
     const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
     expect(result.counts.inbound_gmail_scrubbed).toBe(1);
     expect(result.counts.inbound_emails_scrubbed).toBe(1);
+    // Direct check on the produced DSL string: the reserved-char value must be
+    // wrapped in `."…"`, not left bare (which would malform the or() grammar).
+    expect(log.orFilters![0]).toContain('.ilike."a,b(c)@example.com"');
   });
 
   // #2031 — retry-safety: loadUserEmailAddresses reads contacts.user_id to collect

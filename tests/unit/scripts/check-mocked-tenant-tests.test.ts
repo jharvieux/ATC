@@ -4,7 +4,16 @@
 // combination and ONLY that combination (mock without claim, claim without
 // mock, and partial mocks must all stay silent).
 import { describe, it, expect } from "vitest";
-import { findMockedTenantTests, loadBaseline } from "../../../scripts/check-mocked-tenant-tests";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { findMockedTenantTests, loadBaseline, walk } from "../../../scripts/check-mocked-tenant-tests";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const SCRIPT = path.join(ROOT, "scripts/check-mocked-tenant-tests.ts");
+const TSX = path.join(ROOT, "node_modules/.bin/tsx");
 
 const F = "apps/main/test/unit/notes.test.ts";
 const EMPTY = new Map<string, string>();
@@ -82,5 +91,81 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
 describe("loadBaseline", () => {
   it("returns an empty map for a missing file (fail-closed)", () => {
     expect(loadBaseline("/nonexistent/mocked-baseline-2028.txt")).toEqual(new Map());
+  });
+});
+
+// walk()'s swallowMissing flag: an explicit CLI dir argument is required
+// input (fail loud on a typo'd path), but a nested/default dir discovered by
+// recursion or defaultDirs() is optional and should skip silently.
+describe("walk", () => {
+  const missing = path.join(tmpdir(), "mocked-tenant-tests-walk-missing-2038");
+
+  it("throws on a nonexistent dir when swallowMissing=false (explicit CLI arg)", () => {
+    expect(() => walk(missing, false)).toThrow(/ENOENT/);
+  });
+
+  it("returns [] for a nonexistent dir when swallowMissing=true (default dirs)", () => {
+    expect(walk(missing, true)).toEqual([]);
+  });
+
+  // main()'s resolutionDirs().flatMap((d) => walk(d)) must wrap walk in an
+  // arrow, not pass it bare: Array.flatMap invokes its callback with
+  // (element, index, array), so a bare `dirs.flatMap(walk)` silently feeds
+  // the array INDEX in as walk's second positional arg (swallowMissing). For
+  // a missing dir at index 0, that arg is falsy `0` — walk throws instead of
+  // skipping — while the very same missing dir at index 1+ would get a
+  // truthy index and skip. Position-dependent behavior on a single missing
+  // dir is exactly the arity bug; pin that the actual (arrow-wrapped) call
+  // form is immune to it regardless of position.
+  it("flatMap(walk) bare (the bug form) breaks on a missing dir at index 0", () => {
+    const existing = mkdtempSync(path.join(tmpdir(), "mocked-tenant-tests-walk-ok-"));
+    try {
+      writeFileSync(path.join(existing, "x.test.ts"), "");
+      expect(() => [missing, existing].flatMap(walk)).toThrow(/ENOENT/);
+    } finally {
+      rmSync(existing, { recursive: true, force: true });
+    }
+  });
+
+  it("flatMap((d) => walk(d)) (the actual main() call form) skips a missing dir at any position", () => {
+    const existing = mkdtempSync(path.join(tmpdir(), "mocked-tenant-tests-walk-ok-"));
+    try {
+      writeFileSync(path.join(existing, "x.test.ts"), "");
+      const filesFirst = [missing, existing].flatMap((d) => walk(d));
+      const filesSecond = [existing, missing].flatMap((d) => walk(d));
+      expect(filesFirst).toEqual([path.join(existing, "x.test.ts")]);
+      expect(filesSecond).toEqual([path.join(existing, "x.test.ts")]);
+    } finally {
+      rmSync(existing, { recursive: true, force: true });
+    }
+  });
+});
+
+// CLI-level fail-loud behavior of main() — exercised via a real subprocess
+// since main() reads process.argv / calls process.exit directly.
+describe("main() CLI", () => {
+  it("exits 1 when an explicit dir arg yields zero matching files", () => {
+    const emptyDir = mkdtempSync(path.join(tmpdir(), "mocked-tenant-tests-empty-"));
+    try {
+      execFileSync(TSX, [SCRIPT, emptyDir], { stdio: "pipe" });
+      expect.fail("expected the CLI to exit non-zero");
+    } catch (err) {
+      const e = err as { status: number | null; stderr: Buffer };
+      expect(e.status).toBe(1);
+      expect(e.stderr.toString()).toMatch(/zero files/);
+    } finally {
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it("exits 1 with ENOENT when an explicit dir arg doesn't exist", () => {
+    const missingDir = path.join(tmpdir(), "mocked-tenant-tests-cli-missing-2038");
+    try {
+      execFileSync(TSX, [SCRIPT, missingDir], { stdio: "pipe" });
+      expect.fail("expected the CLI to exit non-zero");
+    } catch (err) {
+      const e = err as { status: number | null };
+      expect(e.status).not.toBe(0);
+    }
   });
 });

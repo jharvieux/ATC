@@ -185,7 +185,7 @@ export function loadBaseline(file: string = BASELINE_FILE): Map<string, number> 
   return map;
 }
 
-function walk(dir: string, swallowMissing = true): string[] {
+export function walk(dir: string, swallowMissing = true): string[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });

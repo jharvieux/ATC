@@ -45,12 +45,25 @@ describe("sanitizeForLog", () => {
   });
 
   // #103 — the chat [chat:perf] sink logs sanitizeForLog(conversationId) with a
-  // local \r\n barrier (apps/main/src/app/api/chat/route.ts:469). Pin that a
+  // local \r\n barrier (apps/main/src/app/api/chat/route.ts:474). Pin that a
   // crafted conversation_id can't smuggle a line terminator into the log and
-  // forge a second [chat:perf] entry. Fails if either barrier stops stripping.
+  // forge a second [chat:perf] entry. Asserts on sanitizeForLog's own output
+  // directly (no extra .replace in the assertion) so a CONTROL_CHARS
+  // regression here actually fails the test instead of being masked by a
+  // redundant strip performed by the test itself.
   it("#103 chat log sink single-lines a CRLF-laden conversation id", () => {
     const forged = "abc\r\n[chat:perf] config_db_reads=0 conversation_id=admin";
-    const logged = sanitizeForLog(forged).replace(/[\r\n]+/g, " ");
-    expect(logged).not.toMatch(/[\r\n]/);
+    expect(sanitizeForLog(forged)).not.toMatch(/[\r\n]/);
+  });
+
+  // #103 — the route-local barrier at chat/route.ts:474 re-applies
+  // `.replace(/[\r\n]+/g, " ")` purely so CodeQL's taint tracker recognizes a
+  // barrier at the sink (its cross-module helper model misses sanitizeForLog).
+  // Pin that it's a true runtime no-op on already-sanitized text, not a
+  // silent behavior change at the sink.
+  it("#103 route-local barrier is a no-op on already-sanitized text", () => {
+    const forged = "abc\r\n[chat:perf] config_db_reads=0 conversation_id=admin";
+    const sanitized = sanitizeForLog(forged);
+    expect(sanitized.replace(/[\r\n]+/g, " ")).toBe(sanitized);
   });
 });

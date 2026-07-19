@@ -31,8 +31,11 @@ export async function runAttributionRollupRefresh() {
   const startedAt = Date.now();
   const { error } = await svc.rpc("refresh_attribution_rollup");
   if (error) {
+    // #1740 lesson: a swallowed RPC error must not report success — it hid
+    // the broken #2018 refresh since June. Throw so Inngest retries and a
+    // failed run surfaces instead of a silent `{ error }` return.
     console.error("[attribution-rollup-refresh] failed:", error.message);
-    return { error: error.message };
+    throw new Error(`refresh_attribution_rollup failed: ${error.message}`);
   }
   return { ok: true, duration_ms: Date.now() - startedAt };
 }

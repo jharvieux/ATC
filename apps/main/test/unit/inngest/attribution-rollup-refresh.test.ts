@@ -48,10 +48,11 @@ describe("runAttributionRollupRefresh", () => {
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("surfaces the DB error (not a silent skip) when the refresh RPC fails", async () => {
+  it("throws on RPC failure (not a silent { error } return) so Inngest retries and the run reports failed", async () => {
     rpc.mockResolvedValue({ error: { message: "cannot refresh materialized view concurrently" } });
-    const result = await runAttributionRollupRefresh();
-    expect(result).toEqual({ error: "cannot refresh materialized view concurrently" });
+    await expect(runAttributionRollupRefresh()).rejects.toThrow(
+      "refresh_attribution_rollup failed: cannot refresh materialized view concurrently",
+    );
   });
 
   it("short-circuits on the BP36_ROLLUP_REFRESH_DISABLED kill switch without touching the DB", async () => {
