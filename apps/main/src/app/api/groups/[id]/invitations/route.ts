@@ -15,6 +15,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 import { checkInviteFrequency } from "@/lib/groups/invite-rate-limit";
+import { isValidEmail, isGroupVisibilityChoice } from "@/lib/validation/schemas";
 
 type RouteProps = { params: Promise<{ id: string }> };
 
@@ -97,12 +98,11 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
 
     if (body.action === "invite" && body.invitee_email) {
       const email = (body.invitee_email as string).trim().toLowerCase();
-      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (!isValidEmail(email)) {
         return Response.json({ error: "Invalid invitee_email" }, { status: 400 });
       }
       const vis = (body.visibility_choice as string | undefined) ?? "no_opinion";
-      const VALID_VIS = new Set(["no_opinion", "be_anonymous", "show_me_anyway"]);
-      if (!VALID_VIS.has(vis)) {
+      if (!isGroupVisibilityChoice(vis)) {
         return Response.json({ error: "Invalid visibility_choice" }, { status: 400 });
       }
 
