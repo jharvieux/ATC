@@ -466,14 +466,33 @@ export async function purgeUserDataPerRetention(
   }
 }
 
-// #2031 — build a PostgREST `.or()` filter matching `column` case-insensitively
-// against ANY of the values, via ilike with the LIKE wildcards (%, _, \) escaped
-// so each term is an exact case-folded match rather than a pattern. Values are
-// our own user/contact emails (no injection surface); the escape only stops an
-// address that legitimately contains `_` from matching neighbouring characters.
+// #2031/#2038 — build a PostgREST `.or()` filter matching `column`
+// case-insensitively against ANY of the values.
+//
+// Two escaping layers, applied in order:
+//   1. LIKE metacharacters (\ % _) → backslash-escaped so each term is an exact
+//      case-folded match, not a pattern (an address with a literal `_` must not
+//      match neighbouring chars).
+//   2. PostgREST or()-grammar reserved chars. RFC 5322 permits quoted
+//      local-parts like `"a,b(c)"@example.com` carrying `,` `(` `)` — the very
+//      delimiters that split or() terms and group logic. Left raw, such an
+//      address produces a malformed filter → PostgREST 400 → the scrub throws
+//      (fail-loud, not a silent PII miss, but still a purge failure). Wrapping
+//      the value in double quotes makes PostgREST read those bytes literally;
+//      inside the quotes a literal `"`/`\` is backslash-escaped (`\"` / `\\`).
+//      Layer 2 runs on layer 1's output, so the backslashes layer 1 inserted
+//      are themselves escaped and survive PostgREST's `\\`→`\` unquote back into
+//      the LIKE escapes layer 1 intended.
+//
+// Values are our own user/contact emails, so this is robustness against odd-but-
+// valid addresses, not an injection defense.
 function ilikeAnyFilter(column: string, values: string[]): string {
   return values
-    .map((v) => `${column}.ilike.${v.replace(/([\\%_])/g, "\\$1")}`)
+    .map((v) => {
+      const likeEscaped = v.replace(/([\\%_])/g, "\\$1");
+      const dslQuoted = likeEscaped.replace(/(["\\])/g, "\\$1");
+      return `${column}.ilike."${dslQuoted}"`;
+    })
     .join(",");
 }
 
