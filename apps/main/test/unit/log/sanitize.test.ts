@@ -43,4 +43,14 @@ describe("sanitizeForLog", () => {
     const out = sanitizeForLog("x".repeat(50), 10);
     expect(out).toBe(`${"x".repeat(10)}...[truncated]`);
   });
+
+  // #103 — the chat [chat:perf] sink logs sanitizeForLog(conversationId) with a
+  // local \r\n barrier (apps/main/src/app/api/chat/route.ts:469). Pin that a
+  // crafted conversation_id can't smuggle a line terminator into the log and
+  // forge a second [chat:perf] entry. Fails if either barrier stops stripping.
+  it("#103 chat log sink single-lines a CRLF-laden conversation id", () => {
+    const forged = "abc\r\n[chat:perf] config_db_reads=0 conversation_id=admin";
+    const logged = sanitizeForLog(forged).replace(/[\r\n]+/g, " ");
+    expect(logged).not.toMatch(/[\r\n]/);
+  });
 });

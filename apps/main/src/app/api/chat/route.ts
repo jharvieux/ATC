@@ -466,7 +466,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   console.info(
     "[chat:perf] config_db_reads=%d conversation_id=%s",
     configDbReads,
-    sanitizeForLog(conversationId),
+    // codeql[js/log-injection] #103: sanitizeForLog already strips CR/LF + all
+    // control chars, but CodeQL's taint tracking doesn't model the cross-module
+    // helper as a barrier (the reason #103 stayed open after the #100 fix). The
+    // trailing inline .replace is that barrier expressed LOCALLY at the sink,
+    // where CodeQL recognizes it — a runtime no-op on already-sanitized text.
+    sanitizeForLog(conversationId).replace(/[\r\n]+/g, " "),
   );
 
   // ── 8b. Generation + supervisor regen loop (#1016 — see runGenerationLoop).
