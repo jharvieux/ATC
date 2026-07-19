@@ -58,6 +58,7 @@ import { deliverChatResponse } from "@/lib/chat/deliver-chat-response";
 import { loadRequestScopedConfig } from "@/lib/chat/load-request-scoped-config";
 import { maybeSendBugOffer } from "@/lib/chat/maybe-send-bug-offer";
 import { prepareGeneration } from "@/lib/chat/prepare-generation";
+import { isUuid } from "@/lib/validation/schemas";
 
 const SSE_HEADERS: HeadersInit = {
   "Content-Type": "text/event-stream",
@@ -276,13 +277,12 @@ type HandleChatArgs = {
 };
 
 const VALID_CONTEXT_TYPES = new Set(["booking", "trip_itinerary", "quote"]);
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseCustomerContextRef(raw: unknown): CustomerContextRef | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as { type?: unknown; id?: unknown };
   if (typeof r.type !== "string" || typeof r.id !== "string") return null;
-  if (!VALID_CONTEXT_TYPES.has(r.type) || !UUID_RE.test(r.id)) return null;
+  if (!VALID_CONTEXT_TYPES.has(r.type) || !isUuid(r.id)) return null;
   return { type: r.type as CustomerContextRef["type"], id: r.id };
 }
 
