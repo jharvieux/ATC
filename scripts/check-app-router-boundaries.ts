@@ -28,7 +28,8 @@
 //
 // FREEZE-EXISTING / BLOCK-NEW: pre-existing hits frozen in
 // scripts/app-router-boundaries-baseline.txt (count-keyed by <kind>::<file>).
-// Fails loud when zero source files are found.
+// Currently empty — zero-tolerance for new findings. Fails loud when zero
+// source files are found.
 //
 // Usage: tsx scripts/check-app-router-boundaries.ts [srcDir]
 

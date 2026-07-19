@@ -1,0 +1,7 @@
+# app-router-boundaries-baseline.txt — FREEZE-EXISTING baseline for scripts/check-app-router-boundaries.ts.
+# Harvey Tier-1 port (M9 finding classes: server-client-leak, missing-server-only).
+# Currently EMPTY — no pre-existing server→client boundary findings in apps/main/src at
+# port time. The guard is zero-tolerance going forward; any new finding fails the gate.
+# Line format: <count> <kind>::<file>  (count-keyed, line-independent — findings can shift
+# lines as files change). Fix the finding rather than adding an entry here; if a finding is
+# a deliberate, reviewed exception, add a line with a reason comment above it.

@@ -48,6 +48,15 @@ describe("findOverbroadCombos", () => {
   it("ignores non-WebExtension manifest.json files (no manifest_version)", () => {
     expect(findOverbroadCombos("pwa/manifest.json", JSON.stringify({ name: "pwa", icons: [] }))).toEqual([]);
   });
+
+  // Fail-loud, not fail-open (D-091 #2): a manifest.json the guard can't parse
+  // must not be treated as a clean pass — it must surface as unreadable so the
+  // gate can't be silently bypassed by corrupting the file.
+  it("throws on a malformed manifest.json instead of silently passing it", () => {
+    expect(() => findOverbroadCombos("apps/extension/manifest.json", "{ this is not valid json")).toThrow(
+      /apps\/extension\/manifest\.json: manifest unreadable — cannot verify permissions/,
+    );
+  });
 });
 
 describe("loadBaseline", () => {

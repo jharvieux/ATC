@@ -10,10 +10,11 @@
 // just the origin it needs — the exact shape Harvey flagged on apps/extension
 // (host_permissions ["https://*/*"] + "cookies", refs #2000 / PR #2015).
 //
-// FREEZE-EXISTING / BLOCK-NEW: the pre-#2015 broad manifest is frozen in
-// scripts/extension-manifest-baseline.txt until that PR merges; a NEW broad
-// combo (new manifest, or new broad pattern / sensitive capability beyond the
-// baselined count) fails. Fails loud when zero manifests are found.
+// FREEZE-EXISTING / BLOCK-NEW: PR #2015 (merged) narrowed apps/extension's
+// host permissions, so scripts/extension-manifest-baseline.txt is empty and
+// the guard is zero-tolerance going forward — any broad host pattern +
+// sensitive capability combo fails. Fails loud when zero manifests are found,
+// and fails loud (distinct exit) when a found manifest can't be parsed.
 //
 // Usage: tsx scripts/check-extension-manifest.ts [manifest.json ...]
 
@@ -59,8 +60,10 @@ export function findOverbroadCombos(relPath: string, json: string): ManifestFind
   let m: WebExtManifest;
   try {
     m = JSON.parse(json) as WebExtManifest;
-  } catch {
-    return []; // not JSON we can read — not a WebExtension manifest
+  } catch (err) {
+    // A manifest.json that exists but can't be parsed means the guard cannot
+    // verify its permissions — that's the fail-open case, not a clean pass.
+    throw new Error(`${relPath}: manifest unreadable — cannot verify permissions (${(err as Error).message})`);
   }
   if (typeof m.manifest_version !== "number") return []; // not a WebExtension manifest
 
@@ -116,7 +119,14 @@ function main(): void {
     process.exit(1);
   }
 
-  const findings = manifests.flatMap((abs) => findOverbroadCombos(path.relative(ROOT, abs), fs.readFileSync(abs, "utf8")));
+  let findings: ManifestFinding[];
+  try {
+    findings = manifests.flatMap((abs) => findOverbroadCombos(path.relative(ROOT, abs), fs.readFileSync(abs, "utf8")));
+  } catch (err) {
+    console.error(`extension-manifest guard: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
   const baseline = loadBaseline();
   const liveCounts = new Map<string, number>();
   for (const f of findings) liveCounts.set(f.key, (liveCounts.get(f.key) ?? 0) + 1);
