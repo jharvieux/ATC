@@ -18,6 +18,14 @@ vi.mock("@/inngest/client", () => ({
 const mocks = vi.hoisted(() => ({
   insertError: null as { code: string; message: string } | null,
   sendEmailCalls: 0,
+  revalidateCalls: [] as Array<[string, string]>,
+}));
+
+// #1953 — the content insert now purges the companion page's cache tag.
+vi.mock("@/lib/precruise/companion-content", () => ({
+  revalidateCompanionContent: (booking_id: string, phase: string) => {
+    mocks.revalidateCalls.push([booking_id, phase]);
+  },
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -141,6 +149,7 @@ import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send"
 beforeEach(() => {
   mocks.insertError = null;
   mocks.sendEmailCalls = 0;
+  mocks.revalidateCalls = [];
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
@@ -158,6 +167,10 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90" } },
     });
     expect(mocks.sendEmailCalls).toBe(1);
+    // #1953 — the successful content insert must purge the companion
+    // page's (booking_id, phase) cache entry, or a pre-insert "no content"
+    // render stays pinned for the customer.
+    expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
   });
 
   it("throws (not swallows) on a non-23505 insert error", async () => {

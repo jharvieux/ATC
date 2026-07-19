@@ -33,6 +33,7 @@ import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
+import { revalidateCompanionContent } from "@/lib/precruise/companion-content";
 import { getSailingItinerary } from "@/lib/sailings/sailing-itinerary";
 import { resolveDestinationRegion } from "@/lib/cruise-regions/classify";
 import { getDestinationImage, type DestinationImage } from "@/lib/cruise-regions/destination-images";
@@ -187,6 +188,9 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       }
       if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
       contentId = (inserted as { id: string } | null)?.id;
+      // #1953 — the companion page caches this row by (booking_id, phase);
+      // purge so a previously-cached "no content yet" render can't persist.
+      revalidateCompanionContent(booking_id, phase);
     }
 
     await buildAndSend({
@@ -278,6 +282,10 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
         "pre_cruise_email_content.update.generated",
       );
     }
+    // #1953 — both branches above wrote generated_content; purge the
+    // companion page's (booking_id, phase) cache entry so a
+    // placeholder-phase render is never served after content lands.
+    revalidateCompanionContent(booking_id, phase);
 
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
     if (!emailCtx) return;
