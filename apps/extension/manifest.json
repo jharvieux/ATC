@@ -7,9 +7,9 @@
     "contextMenus",
     "storage",
     "cookies",
-    "tabs"
+    "activeTab"
   ],
-  "host_permissions": [
+  "optional_host_permissions": [
     "https://*/*"
   ],
   "background": {
