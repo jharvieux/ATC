@@ -611,6 +611,24 @@ describe("proxy()", () => {
       expect(mocks.getTenantById).not.toHaveBeenCalled();
     });
 
+    it("passes /api/cron/* through with the platform sentinel on a production *.vercel.app host (#2045)", async () => {
+      // Vercel invokes crons on the deployment's *.vercel.app host. The
+      // production gate above must NOT swallow them — before this exemption,
+      // every production cron 404'd at the proxy and the monitors/reconciles
+      // silently never ran. Auth is the route's own assertCronAuth, not the
+      // proxy.
+      process.env.VERCEL_ENV = "production";
+      const res = await proxy(
+        makeReq({ host: PREVIEW_HOST, pathname: "/api/cron/task-reminders-fire" }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("platform");
+      // Tenant resolution must not run at all for cron paths.
+      expect(mocks.getTenantByCustomDomain).not.toHaveBeenCalled();
+      expect(mocks.getTenantById).not.toHaveBeenCalled();
+    });
+
     it("404s when PLATFORM_DEFAULT_TENANT_ID is unset (no default configured)", async () => {
       process.env.VERCEL_ENV = "preview";
       delete process.env.PLATFORM_DEFAULT_TENANT_ID;
