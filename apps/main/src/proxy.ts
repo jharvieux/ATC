@@ -230,6 +230,20 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     return adminForbidden();
   }
 
+  // 0b. Vercel cron invocations (#2045) — Vercel calls cron paths on the
+  //     deployment's *.vercel.app host, which resolves to no tenant, so host
+  //     resolution 404'd every production cron (step 5's preview fallback is
+  //     deliberately non-production-only). Cron routes are tenantless and each
+  //     authenticates itself fail-closed via assertCronAuth (Bearer
+  //     CRON_SECRET, unset secret rejects), so bypass session verification and
+  //     tenant resolution entirely and forward the platform sentinel.
+  if (pathname.startsWith("/api/cron/")) {
+    const headers = cloneAndScrubHeaders(req);
+    headers.set(RESOLVED_TENANT_ID_HEADER, "platform");
+    headers.set(RESOLVED_TENANT_TYPE_HEADER, "platform");
+    return NextResponse.next({ request: { headers } });
+  }
+
   // 1. Tier-2 E2E auth bypass — short-circuits tenant resolution when a
   //    request carries the bypass Bearer. Gated behind NODE_ENV !== production
   //    AND VERCEL_ENV !== "production" AND the bypass env vars being set.
