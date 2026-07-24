@@ -40,11 +40,23 @@ Batch `state` walks `queued → executing → pr-open → ci-wait → audited �
 
 ## Phase 1 — Triage (Haiku fan-out)
 
-1. Fetch: `gh issue list --state open --json number,title,body,labels,createdAt --limit 200`
-2. Set aside (surfaced in the plan's "excluded" section, never executed):
+1. **Drop the never-triage labels at fetch time** — these issues do not reach a triage
+   subagent, get no model label, and get no plan row. The operator has already ruled on
+   them; re-classifying them every sweep burns tokens and re-litigates a settled call.
+
+   ```bash
+   NEVER='["deferred","needs-human-fix","blocked","wontfix","duplicate","invalid"]'
+   gh issue list --state open --json number,title,body,labels,createdAt --limit 200 \
+     --jq "[.[] | select(([.labels[].name] - $NEVER) == [.labels[].name])]"
+   ```
+
+   Report only the count of dropped issues in the plan header (e.g. "14 open issues
+   skipped: deferred/needs-human-fix"). Do not enumerate them — the label IS the record.
+   Adding a label here is how the operator retires an issue from sweeps permanently.
+2. Set aside from the *remaining* issues (surfaced in the plan's "excluded" section with
+   reasons, never executed — these still get triaged, they just don't get worked):
    - `customer-reported` / `tenant-admin-reported` — the operator routes these.
    - Unlabeled issues that need routing (per `docs/runbooks/triage.md`).
-   - `needs-human-fix`, `blocked`.
 3. Fan out triage subagents via the Agent tool with `model: "haiku"`, ~5 issues per agent, all in parallel. Each agent gets the issue numbers/titles/bodies plus safeguard #1, and returns strict JSON — one object per issue:
 
    ```json
@@ -175,6 +187,7 @@ Failures don't block the sweep: a batch that can't complete is reported in the f
   - **Dup-check first, always.** Dedupe the collected list against itself (parallel executors report the same find), then search existing issues open AND closed — `gh issue list --state all --search "<key terms>"` plus a search on the file path — before any `gh issue create`. Open match → comment there instead of filing. Closed-but-unfixed match → reopen it with the evidence rather than opening a twin.
   - Item already has an open issue (a swept issue that got skipped/parked) → comment on that issue with the skip/park reason and a link to the sweep PR or plan, so the trail lives on the issue, not in the sweep transcript.
   - Genuine deferral with a named blocker → `gh issue create` with what the problem is, where it lives (file paths), acceptance criteria, and why it was deferred — specific enough that someone returning cold could pick it up (CLAUDE.md's "issue or it didn't happen" rule).
+  - **Close the loop: if an item is parked pending an operator decision, or blocked on a human-only action, apply `deferred` (or `needs-human-fix`) to its issue.** That label is what makes the next sweep skip it at fetch time (Phase 1 #1) instead of re-triaging and re-planning a settled call. Say in the wrap-up which issues you labeled — the operator removes the label to put one back in scope.
   - Speculative, cosmetic-only, or would-not-survive-review → **drop it, with a one-line rationale in the wrap-up table** — a tracker full of nits is how real bugs drown. The operator can veto any drop.
   The sweep is not done until every such item is dispositioned.
 - Table of outcomes: issue → PR → merged/skipped/failed, with reasons — and for every skipped/parked/follow-up row, the issue number that now tracks it (or the drop rationale).
