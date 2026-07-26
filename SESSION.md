@@ -1,26 +1,23 @@
-# Session state — last updated 2026-07-19 21:40 HST
+# Session state — last updated 2026-07-20 19:05 UTC
 
 ## Just completed
-- Issue sweep #7 (D-365): 13 PRs merged into dev (#2013 rag-pii-gate, #2015 extension perms, #2016 groups/safeUrl, #2017 format-date TZ, #2020 service-JWT strict flip, #2021 keyset recompute, #2023 precruise structured output + caching, #2024 RAG DB hardening, #2026 kill-switch runbook, #2027 PII datamap, #2029 merge diagnostics, #2036 PII/retention cluster, #2041 final batch). 24 issues closed / 15 filed, net −9.
-- Harvey prevention adoption (D-364): PR #2030 — 6 standing guards with baselines, D-091 #27/#28, service-role lint on Inngest paths. Tier 2 = operator-run periodic Harvey engagements. 5 gap issues filed in the Harvey repo.
-- Prod-drift P1 cluster resolved by read-only investigation: #1623 + #1927 closed with evidence; #1740 diagnosed to a single 2-statement DDL repair (operator).
-- RAG DB: migrations 20260719181701/181740 applied live (operator-approved, ledger recorded) — policy tightening + FK indexes are active server-side.
-- Merge-train mechanics documented (D-363) in docs/runbooks/pr-workflow.md.
+- Stripe "failing webhook" email diagnosed + resolved: deliveries were 400ing on signature verification — per operator, an OLD Stripe account had a webhook endpoint pointing at the same URL (its secret can never match). Updated prod `STRIPE_WEBHOOK_SECRET` from the current account's dashboard value (clipboard, never echoed); operator deployed release/0.9.3; verified end-to-end with `stripe trigger invoice.payment_succeeded` → `POST /api/webhooks/stripe/platform 200` in prod logs (18:34 UTC). Note: `payment_intent.succeeded` is NOT in the endpoint's subscribed events — use invoice/subscription/checkout events for future tests.
+- **#2045 FIXED and merged (PR #2046, commit bba75c0e)**: all 9 Vercel crons were 404ing in production (Vercel invokes crons on the `*.vercel.app` host; proxy host-resolution 404'd non-tenant hosts in prod; dead since ≤Jun 27). Fix = proxy step 0b exempting `/api/cron/` (routes self-auth fail-closed via assertCronAuth; CRON_SECRET confirmed present in prod env). Both audit agents (Opus) clean; regression test added.
+- Filed **#2047**: assertCronAuth hardening (constant-time compare + CRON_SECRET rotation pair, D-091 #28) — advisory d091 finding, deferred to keep #2046 surgical.
+- Confirmed prod DB ledger (supabase-main MCP) current through 20260722000030 — release pipeline applied the previously blocked migrations.
+- Memory saved: `SUPABASE_DB_URL` in .env.local is the TEST DB (atc_main_test), not prod.
 
 ## In flight
-- Nothing in flight — clean checkpoint. All auto-triaged PRs merged; sweep worktrees/branches from THIS session cleaned. (Pre-existing stale worktrees/branches from earlier sessions remain — see Open questions.)
+- SESSION.md update uncommitted on dev working tree (rides the next PR — docs checkpoint or next feature PR).
 
 ## Next step
-- Operator actions below, then normal work resumes. The #2002 strategy-B implementation (service-JWT replaces MAIN_APP_ADMIN_API_KEY) unblocks once the atc-rag prod deploy lands.
+- After the next prod release (which picks up bba75c0e): confirm in Vercel runtime logs that `/api/cron/*` returns 200 (or 401) instead of 404 within 15 min. Then #2047 is the natural next code item.
 
 ## Blocked on user
-1. **#1740 prod DDL repair** (2 statements on atc-main, exact SQL on the issue) — the last prod-drift item; errors recur daily at 04:30 UTC until run.
-2. **atc-rag manual prod deploy** (`cd apps/rag && vercel deploy --prod --yes`) — activates the strict JWT verifier (#1843), the PII-gate fix (#2001), and pairs with the already-applied RAG DB migrations.
-3. **Prod apply of the three new main-DB migrations** (20260722000028 deny policies, ...29 attribution index, ...30 purge indexes) via the operator-gated pipeline step; note ...30's index build briefly blocks inbound-email ingestion — prefer a low-traffic window.
-4. **Extension smoke test**: load unpacked, click Connect, confirm the single-origin permission prompt + cookie read (post-#2015).
-5. **#2025 time-boxed check** within ~48h of the next prod deploy: transitional precruise rows with null sent_at outside the re-scan window.
+1. **Old Stripe account webhook endpoint**: disable/delete the endpoint pointing at https://ai-travelconcierge.com/api/webhooks/stripe/platform in the OLD Stripe account, or its failing deliveries keep generating warning emails.
+2. **Prod release including bba75c0e** — crons stay dead in prod until the cron fix ships (operator-gated release).
+3. Carried: #1740 prod DDL repair (2 statements on atc-main); atc-rag manual prod deploy (`cd apps/rag && vercel deploy --prod --yes`); extension smoke test (post-#2015); #2025 time-boxed check (~Jul 22, 48h after today's prod deploy).
 
 ## Open questions
-- Alert #103 (js/log-injection) should flip to fixed when dev's next CodeQL analysis runs on the merged tree; verify next session (gh api code-scanning/alerts/103).
-- ~18 stale worktrees + ~95 stale remote sweep branches from sessions ≤ #6 linger; a housekeeping pass needs operator sign-off (branch deletion rule).
-- Open follow-up issues carrying the sweep's remaining work: #1740, #2014, #2019, #2022, #2025, #2028, #2035 (operator-parked), #2037, #2039, #2040.
+- Once #2045's fix is live in prod: if crons return 401 instead of 200, CRON_SECRET value in Vercel doesn't match what Vercel sends — check project settings.
+- Carried: alert #103 CodeQL verification; ~18 stale worktrees + ~95 stale remote sweep branches await operator sign-off for deletion.
