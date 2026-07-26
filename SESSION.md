@@ -1,26 +1,22 @@
-# Session state — last updated 2026-07-19 21:40 HST
+# Session state — last updated 2026-07-25 21:15 CT
 
 ## Just completed
-- Issue sweep #7 (D-365): 13 PRs merged into dev (#2013 rag-pii-gate, #2015 extension perms, #2016 groups/safeUrl, #2017 format-date TZ, #2020 service-JWT strict flip, #2021 keyset recompute, #2023 precruise structured output + caching, #2024 RAG DB hardening, #2026 kill-switch runbook, #2027 PII datamap, #2029 merge diagnostics, #2036 PII/retention cluster, #2041 final batch). 24 issues closed / 15 filed, net −9.
-- Harvey prevention adoption (D-364): PR #2030 — 6 standing guards with baselines, D-091 #27/#28, service-role lint on Inngest paths. Tier 2 = operator-run periodic Harvey engagements. 5 gap issues filed in the Harvey repo.
-- Prod-drift P1 cluster resolved by read-only investigation: #1623 + #1927 closed with evidence; #1740 diagnosed to a single 2-statement DDL repair (operator).
-- RAG DB: migrations 20260719181701/181740 applied live (operator-approved, ledger recorded) — policy tightening + FK indexes are active server-side.
-- Merge-train mechanics documented (D-363) in docs/runbooks/pr-workflow.md.
+- /doctor health check of the Claude Code setup (local config, not repo): disabled unused MCP servers (headroom, memtrace) + plugins (claude-code-setup, frontend-design); rewired the RTK PreToolUse rewrite hook user-scope (~/.claude/hooks/rtk-rewrite.mjs) so read/report Bash commands route through rtk in every project; operator declined the bypassPermissions→auto default-mode switch.
+- PR #2049 opened (in flight below): MEMORY-INDEX split — lean 75-line index (standing rules + D-311+) stays the session-start read; 268 one-liners moved to new MEMORY-INDEX-ARCHIVE.md; check:memory-decision-collision now validates MEMORY.md vs the UNION of both files + fails on overlap (findIndexOverlap, 4 new tests); CLAUDE.md trimmed ~550 tokens (MEMORY prepend mechanics → /memory-entry, which also gained the missing index-prepend step; audit model-selection → pr-workflow.md pointer). D-366 logged. Saves ~10.5k est. tokens per session start.
 
 ## In flight
-- Nothing in flight — clean checkpoint. All auto-triaged PRs merged; sweep worktrees/branches from THIS session cleaned. (Pre-existing stale worktrees/branches from earlier sessions remain — see Open questions.)
+- PR #2049 (branch docs/memory-index-split-claude-md-trim): pushed through 96c38390, pnpm verify green locally, both audit agents launched (Sonnet) concurrent with CI. Remaining: audit markers post → rerun pr-audit-section-check gate → squash-merge, delete branch.
 
 ## Next step
-- Operator actions below, then normal work resumes. The #2002 strategy-B implementation (service-JWT replaces MAIN_APP_ADMIN_API_KEY) unblocks once the atc-rag prod deploy lands.
+- Finish PR #2049 merge (see In flight). Then: after the next prod release (which picks up bba75c0e), confirm in Vercel runtime logs that /api/cron/* returns 200/401 instead of 404; #2047 (assertCronAuth hardening) is the natural next code item.
 
 ## Blocked on user
-1. **#1740 prod DDL repair** (2 statements on atc-main, exact SQL on the issue) — the last prod-drift item; errors recur daily at 04:30 UTC until run.
-2. **atc-rag manual prod deploy** (`cd apps/rag && vercel deploy --prod --yes`) — activates the strict JWT verifier (#1843), the PII-gate fix (#2001), and pairs with the already-applied RAG DB migrations.
-3. **Prod apply of the three new main-DB migrations** (20260722000028 deny policies, ...29 attribution index, ...30 purge indexes) via the operator-gated pipeline step; note ...30's index build briefly blocks inbound-email ingestion — prefer a low-traffic window.
-4. **Extension smoke test**: load unpacked, click Connect, confirm the single-origin permission prompt + cookie read (post-#2015).
-5. **#2025 time-boxed check** within ~48h of the next prod deploy: transitional precruise rows with null sent_at outside the re-scan window.
+1. **Old Stripe account webhook endpoint**: disable/delete the endpoint pointing at https://ai-travelconcierge.com/api/webhooks/stripe/platform in the OLD Stripe account, or its failing deliveries keep generating warning emails.
+2. **Prod release including bba75c0e** — crons stay dead in prod until the cron fix ships (operator-gated release).
+3. Carried: #1740 prod DDL repair (2 statements on atc-main); atc-rag manual prod deploy (`cd apps/rag && vercel deploy --prod --yes`); extension smoke test (post-#2015); #2025 time-boxed check (~Jul 22, 48h after the last prod deploy).
 
 ## Open questions
-- Alert #103 (js/log-injection) should flip to fixed when dev's next CodeQL analysis runs on the merged tree; verify next session (gh api code-scanning/alerts/103).
-- ~18 stale worktrees + ~95 stale remote sweep branches from sessions ≤ #6 linger; a housekeeping pass needs operator sign-off (branch deletion rule).
-- Open follow-up issues carrying the sweep's remaining work: #1740, #2014, #2019, #2022, #2025, #2028, #2035 (operator-parked), #2037, #2039, #2040.
+- MEMORY-INDEX curation: standing pre-D-311 keeps are D-131/133/137/151/176/181/182/233/247/261/265/272/278–281/288/291/292/295. Moving a line between index and archive is a two-line edit; the guard enforces exactly-one-file placement.
+- Once #2045's fix is live in prod: if crons return 401 instead of 200, CRON_SECRET in Vercel doesn't match what Vercel sends — check project settings.
+- Carried: alert #103 CodeQL verification; ~18 stale worktrees + ~95 stale remote sweep branches await operator sign-off for deletion.
+- /doctor flagged the vercel plugin as the biggest context consumer (~5.3k est. tokens/session); no action — heavily used.

@@ -10,7 +10,7 @@ Working instructions for Claude Code sessions in this repo. Read this first, eve
 
 Every session, in this order:
 
-1. Read `/MEMORY-INDEX.md` (one line per decision, newest first). Do NOT read `/MEMORY.md` in full — it's the append-only archive; `grep` the full entry out of it when a task touches that area.
+1. Read `/MEMORY-INDEX.md` (standing rules + recent decisions, newest first). Older one-liners live in `/MEMORY-INDEX-ARCHIVE.md` — `grep` it, or `/MEMORY.md` for the full entry, when a task touches an older area. Do NOT read `/MEMORY.md` (or the archive) in full.
 2. Read `/SESSION.md` in full.
 3. If a build prompt is being executed, read it.
 4. State in one short paragraph: what you understand the current state to be and what you're about to do.
@@ -36,20 +36,12 @@ A Stop hook runs a code-health review on every turn and reports back as `Stop ho
 - Each entry: date, decision, why, what was rejected, related artifacts.
 - After any significant decision this session, **add an entry**. Significant means anything a future engineer or the user re-reading the log would want to know — model choices, threshold values, file-structure decisions, sequencing, scope cuts, deferrals.
 - **You can add entries. You cannot edit prior entries** without explicit permission — they are the historical record.
-- **`MEMORY.md` is the archive; `MEMORY-INDEX.md` is the session-start read.** Never read `MEMORY.md` in full (it's ~120K tokens). When you prepend an entry here, also prepend its one-liner under `## Entries` in `MEMORY-INDEX.md`, or rerun the rebuild snippet in that file's header.
+- **`MEMORY.md` is the archive; `MEMORY-INDEX.md` is the session-start read** (older one-liners: `MEMORY-INDEX-ARCHIVE.md`). Never read `MEMORY.md` in full (it's ~120K tokens). When you prepend an entry here, also prepend its one-liner under `## Entries` in `MEMORY-INDEX.md` — `check:memory-decision-collision` (CI) enforces the mirror across the two index files.
 - If a user request conflicts with a logged decision, stop and surface the conflict before proceeding.
 
 ### How to write to it (a hook enforces append-only)
 
-A PreToolUse hook (`.claude/hooks/block-spec-memory-edits.mjs`) rejects any MEMORY.md change that isn't a pure prepend, and **fails closed** — a malformed edit is blocked, not silently allowed. This is what trips up naive edits. Two ways to satisfy it:
-
-- **Edit (preferred — surgical):** the hook's rule is literally `new_string` must *end with* `old_string`. So anchor on the **current newest entry's header line** (it's unique) and repeat that line verbatim at the *end* of `new_string`:
-  - `old_string` → `## D-113 — 2026-05-29 — <title>` (whatever the top entry happens to be right now)
-  - `new_string` → `## D-114 — <today> — <title>\n\n<body>\n\n---\n\n## D-113 — 2026-05-29 — <title>`
-  - The new entry lands above the anchor; the anchor survives as the suffix, so the `endsWith` check passes. Pick the anchor line so it's unique in the file (the full header is) — the Edit tool also requires `old_string` to be unique.
-- **Write (whole-file fallback):** the new content must *end with* the entire current file verbatim (trailing whitespace aside). Read the file first, then write `<new entry>\n\n---\n\n<entire current content>`. Bigger payload, more truncation risk — prefer Edit.
-
-Do not reword or replace a prior entry — the hook blocks it and the rule above forbids it. If you truly must, ask the user for explicit permission first.
+Use `/memory-entry` — it owns the entry format and the prepend mechanics. A PreToolUse hook (`.claude/hooks/block-spec-memory-edits.mjs`) rejects any MEMORY.md change that isn't a pure prepend, and **fails closed** — if an edit gets blocked, read the skill rather than fighting the hook. Do not reword or replace a prior entry; if you truly must, ask the user for explicit permission first.
 
 -----
 
@@ -306,7 +298,7 @@ Every PR needs **hash-bound audit marker comments** posted by the audit agents (
 5. If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — any diff-changing commit stales both markers.
 6. After both agents post, **re-run the audit gate once** (comments don't trigger it — `gh run rerun`; command in `pr-workflow.md`). Once required CI is green and the gate passes, squash-merge and delete the branch.
 
-**Model selection for the FIRST audit run (D-317):** default Sonnet. Risk triggers (SQL migration, net-new API route / Inngest fn / cron, webhook signatures / idempotency / state-machine transitions, new service-role path) → Opus for **both** agents. Size alone (≥20 files / ≥1000 net-added lines, no risk trigger) → Opus for **d091-reviewer only**. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
+**Model selection for audit runs (D-317):** default Sonnet; risk triggers and large diffs escalate to Opus — full criteria in `pr-workflow.md`.
 
 **Exemptions** (no audit agents): Dependabot PRs, and doc-only PRs (every changed file matches `*.md`/`docs/**`/`specs/**` — a single non-doc file disqualifies it).
 

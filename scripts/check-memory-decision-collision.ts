@@ -20,10 +20,13 @@
 //      exact number first.
 //
 //   2. INDEX/BODY MISMATCH — the set of `## D-NNN` headers in MEMORY.md (on
-//      HEAD) must exactly match the set of `- D-NNN` entries in
-//      MEMORY-INDEX.md (on HEAD). A mismatch means a prepend to one file
-//      wasn't mirrored to the other — usually a half-done renumber, which is
-//      also how a duplicate slips through undetected.
+//      HEAD) must exactly match the UNION of `- D-NNN` entries across
+//      MEMORY-INDEX.md and MEMORY-INDEX-ARCHIVE.md (on HEAD), with no
+//      D-number appearing in both index files. A mismatch means a prepend to
+//      one file wasn't mirrored to the other — usually a half-done renumber,
+//      which is also how a duplicate slips through undetected. (The archive
+//      split is D-366: the lean index is the session-start read; older
+//      one-liners live in the archive.)
 //
 // Usage:
 //   tsx scripts/check-memory-decision-collision.ts
@@ -86,6 +89,14 @@ export function findIndexMismatch(memoryHeaders: string[], indexEntries: string[
     onlyInMemory: [...memSet].filter((h) => !idxSet.has(h)),
     onlyInIndex: [...idxSet].filter((h) => !memSet.has(h)),
   };
+}
+
+// Pure core #3: a D-number listed in BOTH the lean index and the archive is a
+// half-done archive move — the line was copied down but not removed (or vice
+// versa). Each number must live in exactly one of the two files.
+export function findIndexOverlap(indexEntries: string[], archiveEntries: string[]): string[] {
+  const archSet = new Set(archiveEntries);
+  return [...new Set(indexEntries)].filter((h) => archSet.has(h));
 }
 
 function readFileAt(ref: string, relPath: string): string | null {
@@ -156,29 +167,44 @@ function main(): void {
     }
   }
 
-  // Check 2: MEMORY.md / MEMORY-INDEX.md header-set consistency on HEAD.
+  // Check 2: MEMORY.md vs (MEMORY-INDEX.md ∪ MEMORY-INDEX-ARCHIVE.md) header-set
+  // consistency on HEAD, plus no-overlap between the two index files.
   const memoryPath = path.join(REPO_ROOT, "MEMORY.md");
   const indexPath = path.join(REPO_ROOT, "MEMORY-INDEX.md");
+  const archivePath = path.join(REPO_ROOT, "MEMORY-INDEX-ARCHIVE.md");
   if (!fs.existsSync(memoryPath) || !fs.existsSync(indexPath)) {
     console.warn("memory-decision-collision guard: MEMORY.md or MEMORY-INDEX.md missing — skipping index-consistency check.");
   } else {
     const memoryHeaders = extractMemoryHeaders(fs.readFileSync(memoryPath, "utf8"));
     const indexEntries = extractIndexEntries(fs.readFileSync(indexPath, "utf8"));
-    const mismatch = findIndexMismatch(memoryHeaders, indexEntries);
+    const archiveEntries = fs.existsSync(archivePath)
+      ? extractIndexEntries(fs.readFileSync(archivePath, "utf8"))
+      : [];
+    const overlap = findIndexOverlap(indexEntries, archiveEntries);
+    if (overlap.length > 0) {
+      anyFailure = true;
+      console.error(
+        "memory-decision-collision guard: D-number(s) present in BOTH MEMORY-INDEX.md and " +
+          `MEMORY-INDEX-ARCHIVE.md (half-done archive move): ${overlap.join(", ")}\n` +
+          "  Fix: each number belongs in exactly one of the two files — remove it from one.\n",
+      );
+    }
+    const mismatch = findIndexMismatch(memoryHeaders, [...indexEntries, ...archiveEntries]);
     if (mismatch.onlyInMemory.length > 0 || mismatch.onlyInIndex.length > 0) {
       anyFailure = true;
-      console.error("memory-decision-collision guard: MEMORY.md and MEMORY-INDEX.md header sets disagree.\n");
+      console.error("memory-decision-collision guard: MEMORY.md and the index files' header sets disagree.\n");
       if (mismatch.onlyInMemory.length > 0) {
-        console.error(`  In MEMORY.md but missing from MEMORY-INDEX.md: ${mismatch.onlyInMemory.join(", ")}`);
+        console.error(`  In MEMORY.md but missing from both index files: ${mismatch.onlyInMemory.join(", ")}`);
       }
       if (mismatch.onlyInIndex.length > 0) {
-        console.error(`  In MEMORY-INDEX.md but missing from MEMORY.md: ${mismatch.onlyInIndex.join(", ")}`);
+        console.error(`  In an index file but missing from MEMORY.md: ${mismatch.onlyInIndex.join(", ")}`);
       }
       console.error(
-        "\n  Fix: rerun the rebuild snippet in MEMORY-INDEX.md's header, or manually reconcile the two files.\n",
+        "\n  Fix: prepend the missing one-liner to MEMORY-INDEX.md (new entries), or rerun the archive " +
+          "rebuild snippet in MEMORY-INDEX-ARCHIVE.md's header.\n",
       );
-    } else {
-      console.log("memory-decision-collision guard: ok — MEMORY.md and MEMORY-INDEX.md header sets match.");
+    } else if (overlap.length === 0) {
+      console.log("memory-decision-collision guard: ok — MEMORY.md and the index files' header sets match.");
     }
   }
 

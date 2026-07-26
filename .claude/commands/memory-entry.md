@@ -53,15 +53,26 @@ The trailing `---` and blank line are part of the entry — they separate it fro
 
 ## Prepending safely
 
-The CLAUDE.md rule is: *additions only, no edits to prior entries.* The mechanical contract for the Write tool, enforced by the PreToolUse hook, is:
+The CLAUDE.md rule is: *additions only, no edits to prior entries.* The hook enforces it mechanically; two ways to satisfy it:
 
-> The new MEMORY.md content must end with the existing file content verbatim.
+**Edit (preferred — surgical).** The hook's rule for Edit is literally: `new_string` must *end with* `old_string`. So anchor on the **current newest entry's header line** (it's unique) and repeat that line verbatim at the *end* of `new_string`:
+
+- `old_string` → `## D-365 — 2026-07-19 — <title>` (whatever the top entry happens to be right now)
+- `new_string` → `## D-366 — <today> — <title>\n\n<body>\n\n---\n\n## D-365 — 2026-07-19 — <title>`
+
+The new entry lands above the anchor; the anchor survives as the suffix, so the `endsWith` check passes. Pick the anchor so it's unique in the file (the full header line is) — the Edit tool also requires `old_string` to be unique. No need to read MEMORY.md in full: grep the top header line out of it.
+
+**Write (whole-file fallback).** The hook's rule for Write is:
+
+> The new MEMORY.md content must end with the existing file content verbatim (trailing whitespace aside).
 
 Concretely:
 
 1. Read the current `MEMORY.md` in full.
 2. Construct the new file content as: `<header line(s)> + <new entry block> + <everything from the first ## D-... line through end of file>`.
 3. Write the new content. If the hook blocks you, the content didn't preserve the existing entries — re-read MEMORY.md and try again.
+
+Bigger payload, more truncation risk — prefer Edit.
 
 The file header today is:
 
@@ -78,6 +89,7 @@ Preserve the header verbatim. The new entry goes between the header and the prev
 
 ## After writing
 
+- **Prepend the one-liner to `MEMORY-INDEX.md`** as the first line under `## Entries`: `- D-NNN — YYYY-MM-DD — <compressed one-line summary>`. This is mandatory — `check:memory-decision-collision` (CI) fails any PR where MEMORY.md and the index files disagree. New entries always go in `MEMORY-INDEX.md`, never directly into `MEMORY-INDEX-ARCHIVE.md` (that file only receives lines moved down from the lean index during sweeps).
 - Confirm to the user: *"Added D-NNN — <title>. MEMORY.md now has N entries."* (Count by grepping `^## D-`.)
 - Do **not** also update `SESSION.md`. Memory entries and session state are distinct artifacts per CLAUDE.md.
 

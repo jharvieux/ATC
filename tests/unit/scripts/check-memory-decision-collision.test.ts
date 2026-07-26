@@ -17,6 +17,7 @@ import {
   extractIndexEntries,
   findDuplicateAdds,
   findIndexMismatch,
+  findIndexOverlap,
 } from "../../../scripts/check-memory-decision-collision";
 
 describe("extractMemoryHeaders", () => {
@@ -77,5 +78,27 @@ describe("findIndexMismatch", () => {
     const headers = ["D-318"];
     const entries = ["D-319", "D-318"];
     expect(findIndexMismatch(headers, entries)).toEqual({ onlyInMemory: [], onlyInIndex: ["D-319"] });
+  });
+
+  // The D-366 split: the caller passes the UNION of lean-index + archive
+  // entries; a number carried by either file satisfies the mirror.
+  it("accepts headers split across index and archive when the caller unions them", () => {
+    const headers = ["D-319", "D-100"];
+    const union = [...["D-319"], ...["D-100"]]; // index + archive
+    expect(findIndexMismatch(headers, union)).toEqual({ onlyInMemory: [], onlyInIndex: [] });
+  });
+});
+
+describe("findIndexOverlap", () => {
+  it("returns empty when index and archive are disjoint", () => {
+    expect(findIndexOverlap(["D-319", "D-318"], ["D-100", "D-099"])).toEqual([]);
+  });
+
+  it("flags a D-number present in both files (half-done archive move)", () => {
+    expect(findIndexOverlap(["D-319", "D-100"], ["D-100", "D-099"])).toEqual(["D-100"]);
+  });
+
+  it("de-duplicates repeated index entries in the overlap result", () => {
+    expect(findIndexOverlap(["D-100", "D-100"], ["D-100"])).toEqual(["D-100"]);
   });
 });

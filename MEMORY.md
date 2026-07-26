@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-366 — 2026-07-25 — MEMORY-INDEX split: lean session-start index + MEMORY-INDEX-ARCHIVE.md
+
+**Decision.** MEMORY-INDEX.md now holds only standing rules/live gotchas + recent decisions (at split time: D-311+ plus 20 curated older lines — 75 total); the other 268 one-liners moved to MEMORY-INDEX-ARCHIVE.md, which is never loaded at session start but stays greppable. `check:memory-decision-collision` validates MEMORY.md against the UNION of the two index files and fails on overlap (new `findIndexOverlap`). New MEMORY entries always index into MEMORY-INDEX.md; lines migrate down to the archive during sweeps. Also: CLAUDE.md's MEMORY prepend mechanics moved into `/memory-entry` (which gains the previously-missing index-prepend step), and the audit model-selection detail collapsed to its `pr-workflow.md` pointer.
+
+**Why.**
+- MEMORY-INDEX had grown to ~61KB (~15k est. tokens) read at EVERY session start — more than double CLAUDE.md itself; most lines were shipped-and-done implementation history that no session needs proactively.
+- Saves ~10k est. tokens per session start (~22KB index) plus ~550 resident from CLAUDE.md, with zero history loss.
+
+**Rejected.**
+- *Deleting stale index lines outright.* Archived instead — the archive costs nothing at session start and keeps one-liners greppable without opening the ~120K MEMORY.md.
+- *Pure time-window cutoff.* Standing gotchas (PostgREST embed shapes, prod-Stripe-is-test-mode, SECURITY DEFINER grants are load-bearing, etc.) predate any window but earn their slot; kept by curation, not date.
+- *Mechanical rebuild snippet for the lean index.* A curated index can't be regenerated from MEMORY.md; the archive keeps a rebuild snippet (everything the lean index doesn't carry) instead.
+
+**Related artifacts.** PR #2049, MEMORY-INDEX-ARCHIVE.md, scripts/check-memory-decision-collision.ts, tests/unit/scripts/check-memory-decision-collision.test.ts, .claude/commands/memory-entry.md, [[D-309]] (prior CLAUDE.md slimming), [[D-277]] (index-as-session-start-read).
+
+---
+
 ## D-365 — 2026-07-19 — Issue sweep #7 + Harvey hardening: 13 PRs merged, 24 issues closed / 15 filed (net −9)
 
 **Decision:** Full sweep of the Harvey-audit backlog plus operator-ordered follow-ons, all landed 2026-07-19: 11 planned batches (13 sweep PRs #2013–#2027), the Harvey Tier-1/Tier-3 hardening PR #2030, the PII/retention cluster PR #2036, and the final batch PR #2041. Closed 24 issues (incl. both P1 prod-drift items #1623/#1927 via read-only investigation); filed 15 with full trails; net −9. Sub-decisions logged: #2002 → strategy B (service-JWT replaces MAIN_APP_ADMIN_API_KEY, queued behind the atc-rag deploy); #2006 closed accepted-risk; #2035 keep-dormant (deferred label; pre-approval queue stays unwired by choice); #1782 operator-deferred. Tier 2 of the Harvey adoption = periodic Harvey engagements run by the operator, not CI.
