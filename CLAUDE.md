@@ -84,6 +84,14 @@ At session start, read SESSION.md and resume from "Next step" unless the user re
 
 -----
 
+## Subagents never write the shared files
+
+Only the orchestrator writes `MEMORY.md`, `MEMORY-INDEX.md`, `SESSION.md`, `CLAUDE.md`, or `docs/runbooks/**`. Subagents run in worktrees and in parallel: two of them independently computing "highest D-number + 1" collide (#1661), and instruction changes scattered across feature PRs never get reviewed as a set.
+
+A subagent returns proposals in its summary instead — a `memory_entry` for a decision worth logging, plus one entry per doc its work **changed or invalidated** (a renamed path the doc names, a command whose flags moved, a rule the fix makes wrong). The orchestrator applies them serially, and any instruction-file edit waits for the user's approval. Reporting is mandatory even when the change looks obvious: silently leaving a doc wrong is how the next session gets misled.
+
+-----
+
 ## End-of-session protocol
 
 Triggered by any of:
@@ -165,6 +173,14 @@ Applies to:
 - "We should also..." items raised but not built this round
 
 The acceptance bar is *not* "issue exists" — it's "issue is specific enough that someone returning cold could pick it up." Include: what the problem is, where it lives (file paths), what the acceptance criteria are, and why it was deferred.
+
+— Closing an issue means its acceptance criteria are verified
+Never close an issue on "the PR looks right." Check every acceptance criterion in the issue against the merged diff, and cite a file:line or a test name — an impression is not evidence. If the issue lists no criteria, the criterion is "the defect as described is gone."
+- **All met** → close, recording that evidence in the PR body or a closing comment.
+- **Partially met** → close and split, never leave it half-open: file the remainder issue (what shipped and in which PR, what remains with file paths, acceptance criteria; inherit the original's labels and priority), cross-link both ways, and do it BEFORE the PR merges.
+- **Not met** → don't close it. If a `Closes` link already fired, reopen it with a comment naming the criterion that failed and what you checked.
+
+Why: a wrongly-closed issue is worse than an open one — nothing looks at it again, and the next agent to touch the area re-diagnoses work that was already half-done under a stale description.
 
  — Goal-Driven Execution
 Define success criteria. Loop until verified. Strong success criteria let you loop independently.
@@ -373,6 +389,7 @@ The v6 spec and the CI/CD pipeline spec together are the source of truth.
 - Open PRs into `dev`
 - Merge PRs into `dev` when CI passes
 - Delete your own feature branches after merge
+- Prune your own agent worktrees under `.claude/worktrees/` (leave any holding unpushed work — that's the user's call)
 - Switch models with `/model`
 - Run triage on demand (`docs/runbooks/triage.md`) when the user asks
 - Ask the user a clarifying question — always preferred over guessing
