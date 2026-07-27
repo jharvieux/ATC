@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-367 — 2026-07-27 — /issue-sweep (both variants): SESSION milestones, executor-reported instruction edits, worktree hygiene, table-first plan gate, independent acceptance verification before merge, fold-in rounds for remainders; three rules promoted to CLAUDE.md (PRs #2051, #2052)
 - D-366 — 2026-07-25 — MEMORY-INDEX split: lean index (standing + recent) + MEMORY-INDEX-ARCHIVE.md; guard checks union + overlap; MEMORY write mechanics → /memory-entry (PR #2049)
 - D-365 — 2026-07-19 — Issue sweep #7 + Harvey hardening: 13 PRs merged, 24 issues closed / 15 filed (net −9)
 - D-364 — 2026-07-19 — Harvey detectors become standing CI gates; D-091 grows to 28

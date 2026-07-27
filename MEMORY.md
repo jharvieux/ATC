@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-367 — 2026-07-27 — Sweeps verify what they close and work their own leftovers
+
+**Decision.** Both `/issue-sweep` variants (project + portable) gained six changes: SESSION.md checkpoints at five milestones instead of only at wrap-up; executors report instruction-file changes via `claude_md_updates` instead of writing docs themselves, consolidated into one operator-approved table at wrap-up; worktree/branch hygiene before triage and after the last merge; a table-first plan gate (profile / plan / decisions-needed / excluded); independent acceptance-criteria verification by a non-executor subagent before every merge; and Phase 4 fold-in rounds that re-work the sweep's own remainders and follow-ups under the original approval, capped at 3 rounds. Three of these were then promoted into CLAUDE.md as repo-wide rules: subagents never write the shared files, closing an issue requires per-criterion evidence, and pruning your own agent worktrees is allowed.
+
+**Why.**
+- A sweep that files five remainder issues and stops has rearranged the tracker, not cleaned it — the net-ledger line rewarded closing while the mechanics quietly grew the backlog. Fold-in makes the sweep absorb its own output, and the ledger now counts only issues left open at the end.
+- "Completed" was the executor's own claim. Nothing re-checked it, so a partial could close under a stale description — the exact condition that sent the 2026-07-16 sweep re-diagnosing finished work. Verification by a different agent, with file:line evidence, is the cheapest place to catch it.
+- CLAUDE.md's MEMORY rules address "you", so a subagent following them literally writes MEMORY.md — the #1661 collision was patched inside the sweep skill but not in the rule everything else reads.
+- The sweep's new worktree cleanup collided with CLAUDE.md's "no deleting files without permission"; the carve-out removes the ambiguity rather than leaving each session to guess.
+
+**Rejected.**
+- *A second approval gate for each fold-in round.* Defeats the point — the operator asked for follow-ups folded in, and a gate per round turns one sweep into N supervised ones. Mitigated instead with a 3-round cap, a `fold_depth > 1` disqualifier, and a posted (non-blocking) round table the operator can stop.
+- *Letting the executor self-verify its acceptance criteria.* Cheaper, but it is the same agent grading its own homework — the failure mode being fixed. A separate read-only verifier at the batch's model costs one extra subagent per PR.
+- *Applying instruction-file edits mid-sweep as executors find them.* Scatters CLAUDE.md changes across unrelated feature PRs where they never get reviewed as a set, and races concurrent executors on the same file.
+- *Leaving all six changes inside the skill.* Three of them are not sweep-specific; a rule that only exists in one slash command is invisible to every other session.
+
+**Related artifacts.** PR #2051 (`.claude/commands/issue-sweep.md`), PR #2052 (`CLAUDE.md`), `~/.claude/commands/issue-sweep.md` (portable variant, outside the repo), [[D-358]], [[D-357]], [[D-317]].
+
+---
+
 ## D-366 — 2026-07-25 — MEMORY-INDEX split: lean session-start index + MEMORY-INDEX-ARCHIVE.md
 
 **Decision.** MEMORY-INDEX.md now holds only standing rules/live gotchas + recent decisions (at split time: D-311+ plus 20 curated older lines — 75 total); the other 268 one-liners moved to MEMORY-INDEX-ARCHIVE.md, which is never loaded at session start but stays greppable. `check:memory-decision-collision` validates MEMORY.md against the UNION of the two index files and fails on overlap (new `findIndexOverlap`). New MEMORY entries always index into MEMORY-INDEX.md; lines migrate down to the archive during sweeps. Also: CLAUDE.md's MEMORY prepend mechanics moved into `/memory-entry` (which gains the previously-missing index-prepend step), and the audit model-selection detail collapsed to its `pr-workflow.md` pointer.
