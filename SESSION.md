@@ -1,31 +1,32 @@
-# Session state — last updated 2026-07-27 12:00 CT
+# Session state — last updated 2026-07-29 12:10 CT
 
 ## Just completed
-- PR #2049 merged (MEMORY-INDEX split, D-366) — carried over from the prior session.
-- `/issue-sweep` hardening applied to BOTH variants — the project one (`.claude/commands/issue-sweep.md`, PR #2051, merged) and the portable user-level one (`~/.claude/commands/issue-sweep.md`, outside the repo, edited directly):
-  - SESSION.md checkpointed at five milestones (plan posted, approval recorded, every batch terminal transition, fold-in round start, wrap-up) — supervisor only, since executors sit in worktrees.
-  - Executors no longer write instruction/state files; they return `claude_md_updates` (`instruction_updates` in the portable variant) with an `invalidated` flag, consolidated into one operator-approved table at wrap-up.
-  - Workspace hygiene: prune agent worktrees + delete merged `feature/sweep-*` branches before triage, per batch at finalization, and after the last merge.
-  - Plan gate leads with four tables: sweep profile, execution plan, decisions-needed (answerable by number), not-being-worked.
-  - Independent acceptance-criteria verification before every merge by a non-executor subagent — all met closes, partial closes-and-splits, unmet reopens and re-queues; applies to `closed_stale` too, plus a whole-close-set re-check at wrap-up.
-  - Phase 4 fold-in rounds: remainders, verifier reopens, and unblocked follow-ups re-enter the same sweep under the original approval, capped at 3 rounds with a `fold_depth > 1` disqualifier. Net-ledger line now counts only issues left open at the end.
-- Three of those rules promoted into CLAUDE.md (PR #2052, merged): subagents never write `MEMORY.md`/`MEMORY-INDEX.md`/`SESSION.md`/`CLAUDE.md`/runbooks; closing an issue requires per-criterion evidence; pruning your own agent worktrees is allowed.
-- D-367 logged for the above.
+- **PR #2057 merged** (squash, `6a982a70`) — SEO/AEO foundation. D-368 logged.
+  - `/robots.txt`, `/sitemap.xml`, `/llms.txt` as host-aware route handlers. Production served **no** robots.txt or sitemap.xml before this (both 404).
+  - Only `PLATFORM_PRIMARY_DOMAIN` is indexable. Tenant subdomains and Agency custom domains get `X-Robots-Tag: noindex, nofollow` (set in a `proxy()` wrapper, not at its ~12 return points), `Disallow: /`, and a 404 sitemap.
+  - All AI crawlers explicitly allowed, each group carrying the same `DISALLOWED_PATHS` as the wildcard.
+  - Root layout metadata overhaul + generated OG image; per-page metadata on agents/quiz/legal; `noindex, follow` on `/signup` and `/chat`.
+  - Organization + WebSite + SoftwareApplication (3 Offers) + FAQPage JSON-LD. `Offer` prices share `PUBLIC_TIERS` with the rendered pricing table so they cannot drift.
+  - FAQ grown 7 → 15 agent-facing questions.
+  - **`/` is now the agency landing page**; `/for-agencies` 308s to it; traveller surface moved to `/travelers`.
+  - Fixed inline: `/for-agencies` and both legal pages had zero inbound internal links anywhere on the site.
+- Issue **#2058** filed — per-tenant search-indexing opt-in for Agency-tier custom domains (deferred by operator choice).
+- Four audit rounds run (2 agents × 2 full + 1 confirmation round); final verdict clean from both.
 
 ## In flight
-- Branch `docs/d367-sweep-hardening` — MEMORY.md + MEMORY-INDEX.md + SESSION.md, PR open into `dev`, awaiting required CI. Nothing else uncommitted.
+- Nothing in flight — clean checkpoint. On `dev`, synced with origin. `.codex/` and `AGENTS.md` remain untracked working-tree files (unchanged, not committed).
 
 ## Next step
-- Merge the D-367 PR once required CI is green, then delete the branch.
+- Nothing queued. Natural follow-ons if resumed: #2058 (custom-domain indexing opt-in), or verifying `https://ai-travelconcierge.com/sitemap.xml` serves 200 after the next prod release.
 
 ## Blocked on user
-1. **Old Stripe account webhook endpoint**: disable/delete the endpoint pointing at https://ai-travelconcierge.com/api/webhooks/stripe/platform in the OLD Stripe account, or its failing deliveries keep generating warning emails.
-2. **Prod release including bba75c0e** — crons stay dead in prod until the cron fix ships (operator-gated release).
-3. Carried: #1740 prod DDL repair (2 statements on atc-main); atc-rag manual prod deploy (`cd apps/rag && vercel deploy --prod --yes`); extension smoke test (post-#2015); #2025 time-boxed check (~Jul 22, 48h after the last prod deploy).
-4. ~18 stale worktrees + ~95 stale remote sweep branches still await sign-off for deletion. The new CLAUDE.md carve-out covers pruning agent worktrees under `.claude/worktrees/`, but the remote-branch bulk delete is still the operator's call.
+1. **ROTATE `MTC-COM-9V5ZKDJC5TI0`** (memtrace license key, `.codex/config.toml`). A `git add -A` swept the untracked `.codex/` dir and `AGENTS.md` into commit `c10e53ce` and pushed it before the D-091 audit caught it. The branch was rebuilt so no merged commit contains it, but the key reached GitHub and that SHA may remain fetchable. Treat as exposed. Also consider whether `.codex/` should be gitignored.
+2. **`// FAQ order per spec §9` comment** in `apps/main/src/components/marketing/AgencyLanding.tsx` — §9 is "AI Personas", so the citation looks wrong. Pre-existing (traced to PR #685), deliberately not rewritten. Needs an operator ruling on the correct section.
+3. **Submit the sitemap** to Google Search Console and Bing Webmaster Tools once `6a982a70` reaches production. Without submission, discovery is slow.
+4. Carried from prior session: old Stripe account webhook endpoint still needs disabling; prod release including `bba75c0e` (crons dead in prod until then); #1740 prod DDL repair; atc-rag manual prod deploy; extension smoke test; #2025 time-boxed check.
+5. Carried: ~18 stale worktrees + ~95 stale remote sweep branches await deletion sign-off.
 
 ## Open questions
-- The portable `/issue-sweep` lives outside version control, so the two variants can drift silently. Worth deciding whether one should be generated from the other rather than hand-synced — not filed as an issue, since it isn't a repo defect.
-- After the next prod release (which picks up bba75c0e), confirm in Vercel runtime logs that `/api/cron/*` returns 200/401 instead of 404; #2047 (assertCronAuth hardening) is the natural next code item. If crons return 401 instead of 200, CRON_SECRET in Vercel doesn't match what Vercel sends.
-- MEMORY-INDEX curation: standing pre-D-311 keeps are D-131/133/137/151/176/181/182/233/247/261/265/272/278–281/288/291/292/295. Moving a line between index and archive is a two-line edit; the guard enforces exactly-one-file placement.
-- Carried: alert #103 CodeQL verification.
+- Agency-tier **custom domains** are currently `noindex` alongside subdomains. An agency on its own domain may reasonably want it indexed — that's #2058, and the operator declined building the switch this round.
+- The homepage change is a real product shift: anonymous visitors to the root domain now see the agency sales page rather than the consumer hero. Worth confirming that matches intent once it's visible in production.
+- Carried: portable `/issue-sweep` drift (lives outside version control); post-release cron verification in Vercel logs; alert #103 CodeQL verification.
