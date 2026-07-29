@@ -111,20 +111,21 @@ const supervisorChecks = [
 ];
 
 // The first seven entries run setup → cost → host/commissions → trial →
-// white-label → solo → safety. Two different origins, worth keeping
-// straight:
+// white-label → solo → safety. Setup and cost lead deliberately: they're
+// the objections agents raise BEFORE they'll consider the product at all.
 //
-//   - Setup and cost lead, and were written for the #685 redesign. They
-//     have no counterpart in any spec — they're the objections agents
-//     raise BEFORE they'll consider the product at all, so they go first.
-//   - The remaining five come from the FAQ section of
-//     docs/marketing/byo-agency-landing.html ("Things agents ask us
-//     first"), in that document's order, with its two separate
+// Where each came from, against docs/marketing/byo-agency-landing.html:
+//   - setup — compresses that document's "Live in an afternoon" section,
+//     not its FAQ.
+//   - cost — appears nowhere in that document; written for #685.
+//   - the other five — from its FAQ section ("Things agents ask us
+//     first"), in that section's order, with its two separate
 //     host-agency and commissions questions merged into one.
 //
 // The §N markers elsewhere in this file are this component's own section
-// numbering, also from #685. They are not positions in that document and
-// not TechSpec sections — a bare "spec §9" here was read as
+// numbering, from #685. They are not positions in that document (its
+// layout runs how-it-works → features → personas; §5/§6 invert the last
+// two) and not TechSpec sections — a bare "spec §9" here was read as
 // specs/TechSpec/section-09 ("AI Personas") twice.
 const faqs = [
   {
