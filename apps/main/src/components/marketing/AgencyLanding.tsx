@@ -110,15 +110,17 @@ const supervisorChecks = [
   "Escalates when needed",
 ];
 
-// FAQ order per the FAQ section of docs/marketing/byo-agency-landing.html:
+// FAQ content and ordering come from the FAQ section of
+// docs/marketing/byo-agency-landing.html ("Things agents ask us first"):
 // setup → cost → host/commissions → trial → white-label → solo → safety.
 // Setup/cost lead because they're the most common objections agents raise
 // BEFORE they consider the product.
 //
-// The §N in this file's section comments below indexes THAT document's
-// layout (§0 nav, §1 hero, … §9 FAQ, §10 final CTA) — not a TechSpec
-// section. A bare "spec §9" here was read as specs/TechSpec/section-09
-// ("AI Personas") twice, once by a PR auditor and once by the operator.
+// The §N markers in this file are this component's OWN section numbering,
+// introduced by the #685 redesign, which reordered and consolidated the
+// source document's sections. They are not positions in that document, and
+// they are not TechSpec sections — a bare "spec §9" here got read as
+// specs/TechSpec/section-09 ("AI Personas") twice.
 const faqs = [
   {
     q: "How long does setup take?",
