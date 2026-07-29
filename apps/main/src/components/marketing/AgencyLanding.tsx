@@ -110,9 +110,15 @@ const supervisorChecks = [
   "Escalates when needed",
 ];
 
-// FAQ order per spec §9: setup → cost → host/commissions → trial →
-// white-label → solo → safety. Setup/cost lead because they're the most
-// common objections agents raise BEFORE they consider the product.
+// FAQ order per the FAQ section of docs/marketing/byo-agency-landing.html:
+// setup → cost → host/commissions → trial → white-label → solo → safety.
+// Setup/cost lead because they're the most common objections agents raise
+// BEFORE they consider the product.
+//
+// The §N in this file's section comments below indexes THAT document's
+// layout (§0 nav, §1 hero, … §9 FAQ, §10 final CTA) — not a TechSpec
+// section. A bare "spec §9" here was read as specs/TechSpec/section-09
+// ("AI Personas") twice, once by a PR auditor and once by the operator.
 const faqs = [
   {
     q: "How long does setup take?",
