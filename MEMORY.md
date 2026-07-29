@@ -4,6 +4,37 @@ Newest entries on top.
 
 ---
 
+## D-368 — 2026-07-29 — One indexable host, AI crawlers welcomed, homepage sells to agents
+
+**Decision.** The platform had no `robots.txt` and no `sitemap.xml` in production (both 404) and a stub sitewide description. Four operator calls now govern search/answer-engine behaviour:
+
+1. **Only `PLATFORM_PRIMARY_DOMAIN` is indexable.** Tenant subdomains *and* Agency-tier custom domains get `X-Robots-Tag: noindex, nofollow`, a blanket `Disallow: /`, and a 404 sitemap.
+2. **All AI crawlers are allowed** — GPTBot, ClaudeBot, PerplexityBot, Google-Extended et al. get explicit `User-agent` groups — but each group carries the **same** `DISALLOWED_PATHS` as the wildcard. The grant is "crawl the public marketing pages," never the token routes.
+3. **New content targets prong 2 only** (selling the platform to travel agents), not consumer cruise-destination pages.
+4. **`/` is the agency landing page.** `/for-agencies` 308s to it; the traveller surface moved to `/travelers`.
+
+**Why.**
+- Nothing was discoverable and nothing described itself. `/for-agencies` — the page that sells the product — had zero inbound internal links from anywhere on the site, so it received no internal link equity and could not have ranked regardless of metadata quality. Both legal pages were orphans too.
+- Tenant hosts serve the same app under agency branding. Indexing them would compete with the platform domain for identical queries and split link equity across hundreds of near-duplicate hosts. `noindex` is also the safe direction to default: un-indexing later is slow, un-`noindex`ing is immediate.
+- The `noindex` lives in an `X-Robots-Tag` set by a wrapper around `proxy()`, not at its ~12 individual return points, so a future early-return cannot silently become indexable. `robots.txt` alone is insufficient — a disallowed URL that someone links to still gets indexed URL-only.
+- Conversely `/signup` and `/chat` use `noindex, follow` rather than `Disallow`: both are linked from the site header on every page, and blocking a *discoverable* URL produces the "no information is available for this page" listing instead of de-indexing it, because the crawler is forbidden from fetching the page to read its `noindex`.
+- Answer engines lean on structured data far more than classic ranking does. `SoftwareApplication` + `Offer` + `FAQPage` is the difference between "there is a page about cruise software" and a citable "costs $19–$99/mo, works with your existing host agency, 30-day trial."
+- The root domain is the strongest URL on any site, and travel agents are who the product is sold to, so the agency page belongs there.
+
+**Rejected.**
+- *Per-tenant indexing opt-in.* Deferred to #2058 rather than built. Agency-tier custom domains are arguably the tenant's own storefront and a reasonable thing to want indexed, but the switch needs a DB column, console UI, and per-host sitemap generation.
+- *Consumer destination landing pages* (`/cruises/caribbean` etc.). Real search demand, but prong 1, and the operator scoped content to prong 2.
+- *Flipping the root `robots` metadata default to `noindex` with explicit opt-ins* (raised by the D-091 audit). Next metadata is host-agnostic — the same `page.tsx` serves platform and tenant hosts — so an explicit `index: true` on `/agents/[slug]` would assert indexability on tenant hosts anyway. Making it host-aware needs `headers()` in the root layout, which forces every page dynamic and kills static generation. Settled instead on asserting *no* `index` directive at all, leaving `X-Robots-Tag` as the single source of truth.
+- *`lastmod` in the sitemap.* These pages are code, so the only available value is the deploy timestamp, which would claim every page changed on every deploy. Google discounts a sitemap whose `lastmod` it learns not to trust.
+- *`aggregateRating` / review markup.* We have collected no ratings; inventing them is dishonest and a manual-action risk.
+- *`Person` schema on the six agent profiles.* They are AI personas. `Person` markup would tell search engines they are real staff, and the profile titles say "AI cruise specialist" for the same reason.
+- *Deleting the traveller landing page* when `/` was repurposed. Moved to `/travelers` instead — it is the crawl path to the six `/agents/[slug]` profiles, which would otherwise have been orphaned exactly as `/for-agencies` was.
+- *Keeping both `/` and `/for-agencies`* with a canonical tag. Search engines sometimes ignore canonicals on exact duplicates; a 308 is unambiguous.
+
+**Related artifacts.** PR #2057, issue #2058 (custom-domain opt-in), `apps/main/src/lib/seo/site.ts`, `apps/main/src/lib/seo/structured-data.ts`, `apps/main/src/lib/pricing/public-tiers.ts` (shared so `Offer` prices cannot drift from the rendered table), `apps/main/src/proxy.ts`, `apps/main/test/unit/seo/`. Operator action outstanding: submit the sitemap in Google Search Console and Bing Webmaster Tools.
+
+---
+
 ## D-367 — 2026-07-27 — Sweeps verify what they close and work their own leftovers
 
 **Decision.** Both `/issue-sweep` variants (project + portable) gained six changes: SESSION.md checkpoints at five milestones instead of only at wrap-up; executors report instruction-file changes via `claude_md_updates` instead of writing docs themselves, consolidated into one operator-approved table at wrap-up; worktree/branch hygiene before triage and after the last merge; a table-first plan gate (profile / plan / decisions-needed / excluded); independent acceptance-criteria verification by a non-executor subagent before every merge; and Phase 4 fold-in rounds that re-work the sweep's own remainders and follow-ups under the original approval, capped at 3 rounds. Three of these were then promoted into CLAUDE.md as repo-wide rules: subagents never write the shared files, closing an issue requires per-criterion evidence, and pruning your own agent worktrees is allowed.

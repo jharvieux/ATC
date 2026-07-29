@@ -9,7 +9,11 @@ import { GET as robotsGet } from "@/app/robots.txt/route";
 import { GET as sitemapGet } from "@/app/sitemap.xml/route";
 import { GET as llmsGet } from "@/app/llms.txt/route";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
-import { DISALLOWED_PATHS, SITEMAP_ENTRIES } from "@/lib/seo/site";
+import {
+  AI_CRAWLER_USER_AGENTS,
+  DISALLOWED_PATHS,
+  SITEMAP_ENTRIES,
+} from "@/lib/seo/site";
 
 const PLATFORM = "ai-travelconcierge.com";
 const original = process.env.PLATFORM_PRIMARY_DOMAIN;
@@ -41,11 +45,28 @@ describe("robots.txt", () => {
   it("grants AI answer engines their own explicit user-agent groups", async () => {
     const body = await (await robotsGet(req(PLATFORM))).text();
 
-    // The operator decision was to allow AI crawlers. Naming them is what
-    // makes it durable — several treat an absent group as "use the wildcard",
-    // and the wildcard group here carries a long Disallow list.
-    for (const ua of ["GPTBot", "ClaudeBot", "PerplexityBot", "Google-Extended"]) {
+    for (const ua of AI_CRAWLER_USER_AGENTS) {
       expect(body).toContain(`User-agent: ${ua}`);
+    }
+  });
+
+  it("holds AI crawlers to the same path restrictions as everyone else", async () => {
+    const body = await (await robotsGet(req(PLATFORM))).text();
+
+    // Allowing AI crawlers means the public marketing pages, NOT /admin/,
+    // /crm/, or the single-use token routes. The failure this catches is a
+    // well-meaning "make the grant unambiguous" edit that replaces these
+    // groups' Disallow lists with an empty one — which would hand every
+    // capability URL on the site to a dozen bots at once.
+    const groups = body.split(/\n(?=User-agent: )/).filter((g) =>
+      AI_CRAWLER_USER_AGENTS.some((ua) => g.startsWith(`User-agent: ${ua}\n`)),
+    );
+
+    expect(groups).toHaveLength(AI_CRAWLER_USER_AGENTS.length);
+    for (const group of groups) {
+      for (const path of DISALLOWED_PATHS) {
+        expect(group).toContain(`Disallow: ${path}`);
+      }
     }
   });
 

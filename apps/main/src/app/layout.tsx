@@ -43,12 +43,16 @@ export const metadata: Metadata = {
     description:
       "Your AI cruise crew quotes, researches, and follows up for you — so a single agent runs like a full agency. Bring your own host. Free 30-day trial.",
   },
+  // Snippet-size directives only — deliberately no `index: true`.
+  //
+  // This is the site-wide default, inherited by pages served on tenant hosts
+  // too, and a page asserting "index me" there contradicts the
+  // X-Robots-Tag: noindex those responses carry. Omitting the assertion
+  // leaves the header as the single source of truth; absent a directive,
+  // crawlers already default to indexing, so the platform domain loses
+  // nothing.
   robots: {
-    index: true,
-    follow: true,
     googleBot: {
-      index: true,
-      follow: true,
       "max-image-preview": "large",
       "max-snippet": -1,
       "max-video-preview": -1,

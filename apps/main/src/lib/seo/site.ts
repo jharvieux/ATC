@@ -68,11 +68,20 @@ export const NOINDEX_FOLLOW = {
 } as const;
 
 /**
- * AI crawlers allowed explicitly rather than by omission. Naming them is
- * what makes the allowance durable: several of these operators treat an
- * absent user-agent group as "follow the wildcard", and the wildcard group
- * here carries a long Disallow list. An explicit empty Disallow for each
- * bot is an unambiguous grant.
+ * AI crawlers named explicitly rather than left to the wildcard group.
+ *
+ * Each of these gets its own group carrying the SAME DISALLOWED_PATHS as the
+ * wildcard — not an empty Disallow. The grant is "you may crawl the public
+ * marketing pages", not "you may crawl anything": an AI crawler has no more
+ * business fetching /admin/, /crm/, or a single-use /i/<token> invite URL
+ * than a search crawler does.
+ *
+ * So why name them at all, if the wildcard already permits the same thing?
+ * Because an absent group is an ambiguous signal. Google-Extended and
+ * Applebot-Extended in particular are opt-OUT mechanisms where silence means
+ * consent, and reading consent off silence is not something the operator
+ * should have to infer from this file later. Listing them makes the decision
+ * explicit and auditable.
  */
 export const AI_CRAWLER_USER_AGENTS = [
   "GPTBot",

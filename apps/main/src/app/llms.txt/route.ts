@@ -46,9 +46,9 @@ that host exactly as before. The platform is the software layer on top.
 ## Who it is for
 
 Independent cruise agents, from one-person shops to multi-agent agencies.
-The typical buyer already sells cruises through a host agency such as Travel
-Leaders, Avoya, or Cruise Planners and wants to spend less time on research,
-quoting, and follow-up.
+The typical buyer already sells cruises through a host agency and wants to
+spend less time on research, quoting, and follow-up. No specific host is
+required and none is endorsed — the agent supplies their own credentials.
 
 ## Pricing
 
