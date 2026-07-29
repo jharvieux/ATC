@@ -2,10 +2,18 @@
 // collects the user's selections, scores them against the catalog (in
 // pure quiz.ts), and redirects to /agents/[winner-slug].
 
+import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
 import { TenantTheme } from "@/components/branding/TenantTheme";
 import { AgentQuizClient } from "./AgentQuizClient";
+
+export const metadata: Metadata = {
+  title: "Find your AI cruise specialist — 4-question quiz",
+  description:
+    "Answer four questions about the trip you want and get matched with the AI cruise specialist who fits it — Caribbean, Mediterranean, Alaska, luxury, family, or accessible travel.",
+  alternates: { canonical: "/agents/quiz" },
+};
 
 export default async function AgentQuizPage() {
   const headerProps = await getSiteHeaderProps();

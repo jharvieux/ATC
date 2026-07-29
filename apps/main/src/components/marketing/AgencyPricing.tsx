@@ -2,6 +2,16 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import {
+  annualSavingsUsd,
+  tierByName,
+} from "@/lib/pricing/public-tiers";
+
+// Prices render from PUBLIC_TIERS so this table and the schema.org Offer
+// markup on the agency landing page can never disagree.
+const research = tierByName("Research");
+const professional = tierByName("Professional");
+const agency = tierByName("Agency");
 
 type Tier = {
   name: string;
@@ -20,12 +30,12 @@ const tiers: Tier[] = [
   {
     name: "Research",
     blurb: "For the solo agent exploring AI — chat, quotes, and CRM to test the waters.",
-    monthly: "$19",
-    annual: "$190",
+    monthly: `$${research.monthlyUsd}`,
+    annual: `$${research.annualUsd}`,
     perMonthly: "/mo",
     perAnnual: "/yr",
     subMonthly: "1 seat · billed monthly",
-    subAnnual: "1 seat · billed yearly (save $38)",
+    subAnnual: `1 seat · billed yearly (save $${annualSavingsUsd(research)})`,
     featured: false,
     features: [
       { text: "AI chat with all 6 cruise specialists", on: true },
@@ -39,12 +49,12 @@ const tiers: Tier[] = [
   {
     name: "Professional",
     blurb: "The full single-agent toolkit — everything you need to run your book of business.",
-    monthly: "$59",
-    annual: "$590",
+    monthly: `$${professional.monthlyUsd}`,
+    annual: `$${professional.annualUsd}`,
     perMonthly: "/mo",
     perAnnual: "/yr",
     subMonthly: "1 seat · billed monthly",
-    subAnnual: "1 seat · billed yearly (save $118)",
+    subAnnual: `1 seat · billed yearly (save $${annualSavingsUsd(professional)})`,
     featured: true,
     features: [
       { text: "Everything in Research, plus:", on: true },
@@ -58,12 +68,12 @@ const tiers: Tier[] = [
   {
     name: "Agency",
     blurb: "For multi-agent shops that want a fully branded, white-label experience.",
-    monthly: "$99",
-    annual: "$990",
+    monthly: `$${agency.monthlyUsd}`,
+    annual: `$${agency.annualUsd}`,
     perMonthly: "/mo base",
     perAnnual: "/yr base",
     subMonthly: "1 seat included · add seats below",
-    subAnnual: "1 seat included · billed yearly (save $198)",
+    subAnnual: `1 seat included · billed yearly (save $${annualSavingsUsd(agency)})`,
     featured: false,
     features: [
       { text: "Everything in Professional, plus:", on: true },

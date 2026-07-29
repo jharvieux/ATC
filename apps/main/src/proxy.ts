@@ -23,6 +23,7 @@ import {
 import { verifyIdentity } from "@/lib/auth/verify-identity";
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { isIndexableHost } from "@/lib/seo/site";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import {
   matchesAnyPrefix,
@@ -221,7 +222,26 @@ function adminForbidden(): NextResponse {
   );
 }
 
+/**
+ * Indexing gate (D-368). Only the platform primary domain is indexable —
+ * tenant subdomains and Agency-tier custom domains serve the same app with
+ * agency branding, so indexing them splits link equity across near-duplicate
+ * hosts. robots.txt alone can't enforce this: a disallowed URL that someone
+ * links to still gets indexed URL-only, and a crawler that never fetches
+ * robots.txt never sees the rule. X-Robots-Tag travels with the response.
+ *
+ * Applied at the wrapper rather than at each of proxy()'s ~12 return points
+ * so a future early-return can't silently become indexable.
+ */
 export async function proxy(req: NextRequest): Promise<NextResponse> {
+  const res = await resolveRequest(req);
+  if (!isIndexableHost(req.headers.get("host"))) {
+    res.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+  return res;
+}
+
+async function resolveRequest(req: NextRequest): Promise<NextResponse> {
   const pathname = req.nextUrl.pathname;
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path

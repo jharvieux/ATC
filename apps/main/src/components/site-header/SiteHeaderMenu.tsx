@@ -75,6 +75,12 @@ export function SiteHeaderMenu({
             <DropdownMenuItem asChild>
               <Link href="/group">Group cruises</Link>
             </DropdownMenuItem>
+            {/* "/" sells to agents now, so the traveller surface needs its
+                own entry point here — it is otherwise reachable only from
+                the homepage footer. */}
+            <DropdownMenuItem asChild>
+              <Link href="/travelers">Plan a cruise</Link>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
         )}

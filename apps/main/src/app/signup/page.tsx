@@ -3,10 +3,16 @@
 // ("I'm setting up my agency"). Each triggers the appropriate Supabase OAuth
 // flow with the correct redirect_to for post-OAuth routing.
 
+import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Logo } from "@/components/branding/Logo";
 import { env } from "@/lib/env";
+import { NOINDEX_FOLLOW } from "@/lib/seo/site";
+
+// Crawlable but not indexable: the header links here from every page, so
+// blocking it in robots.txt would strand it as a URL-only search result.
+export const metadata: Metadata = { robots: NOINDEX_FOLLOW };
 
 // Reading env() at render time makes this page eligible for static
 // prerendering at build time, which fails in CI (build doesn't populate the

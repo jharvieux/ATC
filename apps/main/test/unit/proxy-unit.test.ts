@@ -904,4 +904,43 @@ describe("proxy()", () => {
       }
     });
   });
+
+  // D-368 — only the platform domain is indexable. Asserted on the response
+  // rather than on any single branch because proxy() has a dozen return
+  // points; the header is applied by the wrapper so a future early-return
+  // can't quietly become indexable.
+  describe("indexing gate", () => {
+    it("marks tenant subdomains noindex", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+
+      const res = await proxy(makeReq({ host: "atc-tenant1.ai-travelconcierge.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    });
+
+    it("marks custom domains noindex", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(payingTenant());
+
+      const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    });
+
+    it("marks unresolved hosts noindex even on the 404 fallthrough", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(null);
+
+      const res = await proxy(makeReq({ host: "nothing-here.example.com" }));
+
+      expect(res.status).toBe(404);
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    });
+
+    it("leaves the platform domain indexable", async () => {
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBeNull();
+    });
+  });
 });
