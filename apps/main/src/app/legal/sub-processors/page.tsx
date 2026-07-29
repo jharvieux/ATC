@@ -4,6 +4,15 @@
 // customer data on the platform's behalf, with the data category.
 // Reviewed annually by the subprocessors-annual-review Inngest cron.
 
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Sub-processors",
+  description:
+    "Every vendor that processes customer data on behalf of AI Travel Concierge, the category of data each one handles, and the region it is processed in.",
+  alternates: { canonical: "/legal/sub-processors" },
+};
+
 const SUBPROCESSORS = [
   {
     vendor: "Anthropic",

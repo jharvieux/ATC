@@ -7,12 +7,18 @@
 // backend already accepts persona_slug — see /api/chat/route.ts
 // (`personaSlugInput: body.persona_slug ?? null`).
 
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { redirectPlatformChatToBooking } from "@/lib/chat/platform-redirect";
+import { NOINDEX_FOLLOW } from "@/lib/seo/site";
+
+// /agents/[slug] is the indexable page for each specialist; this is the
+// live chat surface behind it and redirects away on the platform domain.
+export const metadata: Metadata = { robots: NOINDEX_FOLLOW };
 
 interface PageParams {
   params: Promise<{ slug: string }>;

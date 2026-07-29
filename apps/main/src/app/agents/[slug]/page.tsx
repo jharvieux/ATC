@@ -7,6 +7,7 @@
 // the "admins edit without a code deploy" point of #652.
 export const revalidate = 60;
 
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -84,4 +85,35 @@ export default async function AgentProfilePage({ params }: PageParams) {
 
 export function generateStaticParams() {
   return AGENT_CATALOG.map((agent) => ({ slug: agent.slug }));
+}
+
+export async function generateMetadata({ params }: PageParams): Promise<Metadata> {
+  const { slug } = await params;
+  const agent = AGENT_CATALOG.find((a) => a.slug === slug);
+  if (!agent) return {};
+
+  // "AI cruise specialist" in the title, not just the name: these are AI
+  // personas, and a title that reads like a real staff bio would set up a
+  // search result that misrepresents what the visitor is clicking into.
+  const title = `${agent.name} — AI cruise specialist, ${agent.specialty}`;
+  const description = `${agent.tagline} ${agent.name} is an AI cruise specialist covering ${agent.specialty.toLowerCase()}, available 24/7 on AI Travel Concierge.`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical: `/agents/${agent.slug}` },
+    openGraph: {
+      type: "profile",
+      url: `/agents/${agent.slug}`,
+      title,
+      description,
+      images: [{ url: agent.image, alt: agent.name }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [agent.image],
+    },
+  };
 }

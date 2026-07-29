@@ -9,8 +9,16 @@
 // apps/main/src/app/agents/[slug]/page.tsx.
 export const revalidate = 300;
 
+import type { Metadata } from "next";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { formatDate } from "@/lib/format-date";
+
+export const metadata: Metadata = {
+  title: "AI liability disclaimer",
+  description:
+    "How AI Travel Concierge discloses AI-assisted conversations, what the AI personas are and are not, and the limits of AI-generated travel guidance.",
+  alternates: { canonical: "/legal/ai-disclaimer" },
+};
 
 async function getCurrentAiDisclaimer() {
   const db = createServiceRoleClient();

@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-368 — 2026-07-29 — SEO/AEO foundation (PR #2057): only PLATFORM_PRIMARY_DOMAIN indexable (X-Robots-Tag noindex on tenant subdomains + custom domains, set in a proxy() wrapper so no return point leaks); AI crawlers allowed but held to the same DISALLOWED_PATHS; /signup + /chat use noindex-follow not Disallow (blocking a header-linked URL yields URL-only listings); "/" becomes the agency landing page with /for-agencies 308ing to it and travellers moving to /travelers; Offer prices share PUBLIC_TIERS with the rendered table; no lastmod, no aggregateRating, no Person schema for AI personas; custom-domain opt-in deferred to #2058
 - D-367 — 2026-07-27 — /issue-sweep (both variants): SESSION milestones, executor-reported instruction edits, worktree hygiene, table-first plan gate, independent acceptance verification before merge, fold-in rounds for remainders; three rules promoted to CLAUDE.md (PRs #2051, #2052)
 - D-366 — 2026-07-25 — MEMORY-INDEX split: lean index (standing + recent) + MEMORY-INDEX-ARCHIVE.md; guard checks union + overlap; MEMORY write mechanics → /memory-entry (PR #2049)
 - D-365 — 2026-07-19 — Issue sweep #7 + Harvey hardening: 13 PRs merged, 24 issues closed / 15 filed (net −9)
