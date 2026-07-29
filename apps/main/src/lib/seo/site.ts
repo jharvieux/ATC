@@ -8,6 +8,16 @@
 // domain for the same queries and split link equity across hundreds of
 // near-duplicate hosts.
 
+// Both helpers below read process.env directly rather than through env().
+// Not an oversight, and not worth "cleaning up": env() memoizes the parsed
+// schema into a module-level singleton on first call, so once any test in a
+// file has touched it, later mutations of process.env.PLATFORM_PRIMARY_DOMAIN
+// are ignored. The host-awareness tests work by swapping that value between
+// cases — under env() they would keep passing while silently asserting
+// against one frozen domain, which is the failure mode these tests exist to
+// catch. The value is a plain hostname with no parsing or defaulting to gain
+// from the schema.
+
 /** Canonical origin for every indexable URL. */
 export function siteOrigin(): string {
   const domain = process.env.PLATFORM_PRIMARY_DOMAIN;
