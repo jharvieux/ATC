@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-369 — 2026-07-30 — Sweep agents own executor rules; sync-token guards the two /issue-sweep copies
+
+**Decision.** The `/issue-sweep` executor standing rules (safeguard block, batch mechanics, JSON return format) move out of the skill into `.claude/agents/sweep-executor.md`, and the acceptance verifier's spec into `.claude/agents/acceptance-verifier.md`; the skill dispatches via `subagent_type` and forbids restating standing rules in dispatch prompts. The repo and portable copies now carry a shared `sync-token` comment as a drift detector, compared at sweep start; a lone bump in the portable copy (edited from any project) is the backport signal for ATC. Also landed: `blocked_on`/`next_action` ledger fields plus the "every open PR must be attributable to something that is NOT you" turn-exit condition (backported from portable), a Phase 1 fetch completeness check (`--limit` truncates silently), and `claude_md_updates` renamed to `instruction_updates` to match the portable copy.
+
+**Why.**
+- Retyping the canonical block per dispatch is where rules got garbled twice (a reworded DB rule made an executor skip its issue as "impossible"; a tenth retype mistranscribed a merge instruction). One reviewed file kills the failure mode.
+- The portable copy drifted twice since D-367 and lives outside version control; the operator wants to keep updating it from other projects, so the fix had to detect drift, not prevent edits.
+- Two sweeps stalled with supervisor-owned PRs invisible among CI-blocked ones; the ledger fields and turn-exit walk make the debt mechanical.
+
+**Rejected.**
+- *Repo copy as generated artifact of the portable one.* Blocks legitimate ATC-only divergence (repo specifics, memory_entry field) and can't run in CI anyway (CI can't see `~/.claude`).
+- *A verify-wired sync-check script.* Would make the check code, not doc; skipped-in-CI checks rot, and the sweep itself is the only consumer.
+- *Keeping the canonical block in the skill AND the agent file.* Two in-repo copies recreate the drift problem the agents exist to solve.
+
+**Related artifacts.** PR #2063, PR #2065, `.claude/agents/sweep-executor.md`, `.claude/agents/acceptance-verifier.md`, `.claude/commands/issue-sweep.md`, `~/.claude/commands/issue-sweep.md`, [[D-367]], [[D-357]], [[D-328]].
+
+---
+
 ## D-368 — 2026-07-29 — One indexable host, AI crawlers welcomed, homepage sells to agents
 
 **Decision.** The platform had no `robots.txt` and no `sitemap.xml` in production (both 404) and a stub sitewide description. Four operator calls now govern search/answer-engine behaviour:
