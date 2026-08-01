@@ -375,8 +375,8 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 **Symptom**: A secret is consumed via a raw `process.env.X` read that never appears in the app's canonical env schema (`apps/<app>/src/lib/env.ts`), and/or its verify site is a single static comparison with no `_CURRENT`/`_PREVIOUS` acceptance — so the secret is invisible to boot validation and the secret inventory, and cannot be rotated without an outage.
 
 **Codebase instances**:
-- `MAIN_APP_ADMIN_API_KEY` — static non-rotating seam bearer, absent from the main app's env schema (Harvey M1 finding, refs #2002; strategy-B fix pending)
-- 53 undeclared `process.env` reads (35 distinct vars) frozen in `scripts/env-schema-baseline.txt` (refs #2004)
+- `MAIN_APP_ADMIN_API_KEY` — formerly a static non-rotating seam bearer absent from main's env schema (Harvey M1, refs #2002); fixed: `_CURRENT`/`_PREVIOUS` rotation set + constant-time verify (PR #2070) and boot-required superRefine on main (PR #2071, refs #2069)
+- 49 undeclared `process.env` reads (34 distinct vars) frozen in `scripts/env-schema-baseline.txt` (refs #2004)
 
 **Why slips through**: the read works in every environment where the var happens to be set; the gaps (typo'd var silently undefined, un-inventoried secret, rotation requiring simultaneous redeploys) only bite operationally.
 

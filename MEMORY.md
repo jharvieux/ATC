@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-370 — 2026-07-31 — Seam-secret rotation sets final for #2002; CRON_SECRET is a Vercel contract
+
+**Decision.** Sweep #8 (Fable executors) resolved the three seam secrets per D-091 #28 with `_CURRENT`/`_PREVIOUS` rotation sets, env-schema registration, and constant-time comparison via the shared `apps/main/src/lib/auth/rotating-secret.ts` — and the operator ruled this strategy FINAL for #2002, superseding the earlier logged plan to replace `MAIN_APP_ADMIN_API_KEY` with a service-JWT. `CRON_SECRET` stays boot-required (`z.string().min(1)`) forever: Vercel builds the cron Bearer from that exact variable, so a `_CURRENT`-only config boots green while all nine cron routes 401 silently — the Opus d091 audit caught this pre-merge after the first pass made it optional. `MAIN_APP_ADMIN_API_KEY` is now boot-required on main (at-least-one superRefine); atc-main's Preview env carries a random placeholder value for it (replace with the real bearer if preview seam auth is ever needed).
+
+**Why.**
+- Rotation without downtime plus fail-loud boot closes Harvey findings #2002/#2004/#2047 with one shared primitive instead of three bespoke fixes.
+- The rotation runbook step an operator most plausibly skips (moving the new value into `CRON_SECRET` itself) must be a boot failure, not a silent cron death.
+- The seam bearer's blast radius also shrank: proxy front door now caps it to the paths mirroring `ADMIN_AREA_GRANTS`' rag-area service grant.
+
+**Rejected.**
+- *RS256 short-TTL service-JWT for the admin seam* (the plan a prior entry queued). Larger cross-service change than the exposure warrants; operator accepted rotation-pair as final this sweep.
+- *Sharing the prod bearer value into Preview.* Not extractable (`vercel env pull` blank per [[D-292]]) and not needed — nothing legitimate authenticates against previews.
+
+**Related artifacts.** PRs #2068, #2070, #2071; issues closed #2002 #2004 #2047 #2050 #2069; filed #2072 (help-docs bucket SELECT policy); `apps/main/src/lib/auth/rotating-secret.ts`, `apps/rag/src/lib/webhook-secret.ts`, `apps/main/src/lib/cron/assert-cron-auth.ts`; [[D-317]] (audit model criteria — the Opus risk-trigger run earned its cost here).
+
+---
+
 ## D-369 — 2026-07-30 — Sweep agents own executor rules; sync-token guards the two /issue-sweep copies
 
 **Decision.** The `/issue-sweep` executor standing rules (safeguard block, batch mechanics, JSON return format) move out of the skill into `.claude/agents/sweep-executor.md`, and the acceptance verifier's spec into `.claude/agents/acceptance-verifier.md`; the skill dispatches via `subagent_type` and forbids restating standing rules in dispatch prompts. The repo and portable copies now carry a shared `sync-token` comment as a drift detector, compared at sweep start; a lone bump in the portable copy (edited from any project) is the backport signal for ATC. Also landed: `blocked_on`/`next_action` ledger fields plus the "every open PR must be attributable to something that is NOT you" turn-exit condition (backported from portable), a Phase 1 fetch completeness check (`--limit` truncates silently), and `claude_md_updates` renamed to `instruction_updates` to match the portable copy.
