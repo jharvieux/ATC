@@ -22,6 +22,7 @@ Per the Vercel UI, "Edit Variable" → paste value → Save (or `vercel env rm K
 | `RESEND_API_KEY` | Real `re_...` key | resend.com → API Keys |
 | `AGENCY_EMAIL` | Operator notification address | Decide — used by `sendOperatorAlert` |
 | `CRON_SECRET` | Long random string for Vercel cron auth | `openssl rand -hex 32` |
+| `MAIN_APP_ADMIN_API_KEY` | Admin-seam bearer the RAG service presents; **boot fails without it (or `_CURRENT`) since #2069** | `openssl rand -hex 32` (⚠️ secret; must match the value the RAG project sends). `_CURRENT`/`_PREVIOUS` optional rotation pair — see D-091 #28 |
 
 Set each in **both Preview and Production** environments.
 
