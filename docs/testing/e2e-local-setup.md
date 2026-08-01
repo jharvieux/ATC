@@ -88,6 +88,7 @@ SERVICE_JWT_PRIVATE_KEY=service-jwt-private-placeholder
 SERVICE_JWT_KEY_ID=v1
 RAG_SERVICE_URL=http://localhost:3001
 RAG_WEBHOOK_SECRET=rag-webhook-placeholder
+MAIN_APP_ADMIN_API_KEY=admin-api-key-placeholder
 APP_ENCRYPTION_KEY_CURRENT=<openssl rand -base64 32>
 APP_ENCRYPTION_KEY_ID_CURRENT=app-v1
 INVITATION_TOKEN_HMAC_KEY=invitation-hmac-placeholder

@@ -29,6 +29,7 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     SERVICE_JWT_KEY_ID_CURRENT: "kid1",
     RAG_SERVICE_URL: "https://rag.test.example.com",
     RAG_WEBHOOK_SECRET: "rag-secret",
+    MAIN_APP_ADMIN_API_KEY: "admin-api-key",
     APP_ENCRYPTION_KEY_CURRENT: APP_KEY_B64,
     APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
     INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
@@ -92,6 +93,23 @@ describe("verifyEnvAtBoot — secret rotation pairs (D-091 #28)", () => {
     delete process.env.RAG_WEBHOOK_SECRET;
     const { verifyEnvAtBoot } = await import("@/lib/env");
     expect(() => verifyEnvAtBoot()).toThrow(/RAG_WEBHOOK_SECRET_CURRENT/);
+  });
+
+  // #2069 — same either/or shape for the rag→main admin-seam bearer: a main
+  // deployment with it entirely unset boots green while every rag-cron admin
+  // call 401s. Boot must fail loud instead.
+  it("accepts MAIN_APP_ADMIN_API_KEY_CURRENT with the legacy var unset", async () => {
+    process.env = baseEnv({ MAIN_APP_ADMIN_API_KEY_CURRENT: "rotated" });
+    delete process.env.MAIN_APP_ADMIN_API_KEY;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).not.toThrow();
+  });
+
+  it("rejects when neither MAIN_APP_ADMIN_API_KEY nor _CURRENT is set (fail-loud boot)", async () => {
+    process.env = baseEnv();
+    delete process.env.MAIN_APP_ADMIN_API_KEY;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/MAIN_APP_ADMIN_API_KEY_CURRENT/);
   });
 
   // #2047 — CRON_SECRET is NOT part of an either/or pair: Vercel reads
