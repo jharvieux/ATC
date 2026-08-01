@@ -33,6 +33,7 @@ beforeEach(() => {
     SERVICE_JWT_KEY_ID_CURRENT: "kid1",
     RAG_SERVICE_URL: "https://rag.test.example.com",
     RAG_WEBHOOK_SECRET: "rag-secret",
+    MAIN_APP_ADMIN_API_KEY: "admin-api-key",
     APP_ENCRYPTION_KEY_CURRENT: Buffer.from("a".repeat(32)).toString("base64"),
     APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
     INVITATION_TOKEN_HMAC_KEY: Buffer.from("c".repeat(32)).toString("base64"),

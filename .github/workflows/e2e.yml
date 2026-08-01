@@ -60,6 +60,9 @@ jobs:
       SERVICE_JWT_KEY_ID_CURRENT: v1
       RAG_SERVICE_URL: http://localhost:3001
       RAG_WEBHOOK_SECRET: ci-placeholder-rag-webhook-secret
+      # rag→main admin-seam bearer — boot-required since #2069; no e2e path
+      # exercises the admin seam, so a placeholder suffices (mirrors ci.yml).
+      MAIN_APP_ADMIN_API_KEY: ci-placeholder-admin-api-key
       APP_ENCRYPTION_KEY_CURRENT: YoOSb0MA3sHr9bR5Li7pLTkMNLfF01LbENEGOrYN99Y=
       APP_ENCRYPTION_KEY_ID_CURRENT: app-v1
       INVITATION_TOKEN_HMAC_KEY: ci-placeholder-invitation-hmac

@@ -85,9 +85,8 @@ const envSchema = z.object({
   // §8.3 / #2002 — service-to-service bearer the rag crons present to
   // /api/admin/tenants + /api/admin/platform-settings. D-091 #28 rotation set:
   // _CURRENT/_PREVIOUS are the rotation pair; the unsuffixed legacy var stays
-  // accepted until the operator moves the deployments onto the pair. All three
-  // are optional at boot pending a CI e2e-env placeholder (see the #2002
-  // remainder issue); the verify sites fail closed when none is set.
+  // accepted until the operator moves the deployments onto the pair. #2069:
+  // the superRefine below requires at least one of _CURRENT/legacy at boot.
   MAIN_APP_ADMIN_API_KEY: z.string().optional(),
   MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
   MAIN_APP_ADMIN_API_KEY_PREVIOUS: z.string().optional(),
@@ -431,6 +430,17 @@ const envSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["RAG_WEBHOOK_SECRET_CURRENT"],
         message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
+      });
+    }
+    // #2069 / D-091 #28 — the admin-seam bearer must be configured under at
+    // least one name; both absent means the rag crons' calls to
+    // /api/admin/tenants + /api/admin/platform-settings all 401 while the
+    // deployment boots green.
+    if (!data.MAIN_APP_ADMIN_API_KEY_CURRENT && !data.MAIN_APP_ADMIN_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["MAIN_APP_ADMIN_API_KEY_CURRENT"],
+        message: "Set MAIN_APP_ADMIN_API_KEY_CURRENT (or legacy MAIN_APP_ADMIN_API_KEY).",
       });
     }
     if (data.OAUTH_MICROSOFT_ENABLED) {
