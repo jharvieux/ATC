@@ -54,7 +54,7 @@ export const tenantRegistryReconcile = inngest.createFunction(
   },
   async () => {
     const mainAppUrl = process.env.MAIN_APP_URL;
-    // #2002 rotation set: present _CURRENT when set, legacy var otherwise.
+    // #2002
     const adminKey =
       process.env.MAIN_APP_ADMIN_API_KEY_CURRENT ?? process.env.MAIN_APP_ADMIN_API_KEY;
     if (!mainAppUrl || !adminKey) {

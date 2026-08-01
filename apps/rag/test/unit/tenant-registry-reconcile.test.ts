@@ -1,5 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { isCrossOriginRedirect } from "@/lib/http/redirect-guard";
+
+vi.mock("@/inngest/client", () => ({
+  inngest: {
+    createFunction: (config: unknown, handler: unknown) => ({ config, handler }),
+  },
+}));
+vi.mock("@/lib/db/supabase", () => ({
+  getRagDb: () => ({
+    from: () => ({
+      select: () => Promise.resolve({ data: [], error: null }),
+    }),
+  }),
+}));
 
 // WHY: the reconcile fetches main's admin API with a Bearer token. If
 // MAIN_APP_URL points at a host that redirects (apex→www, or the Vercel
@@ -29,6 +42,36 @@ describe("isCrossOriginRedirect", () => {
     // redirect error — keeping the two failure modes diagnosable apart.
     for (const status of [400, 401, 403, 404, 500, 502]) {
       expect(isCrossOriginRedirect({ type: "default", status })).toBe(false);
+    }
+  });
+});
+
+describe("#2002 rotation — tenant-registry-reconcile signer", () => {
+  it("presents MAIN_APP_ADMIN_API_KEY_CURRENT in the Bearer header when both it and the legacy var are set", async () => {
+    process.env.MAIN_APP_URL = "https://main.example.com";
+    process.env.MAIN_APP_ADMIN_API_KEY = "legacy-admin-key";
+    process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-admin-key";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      type: "default",
+      json: async () => ({ tenants: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { tenantRegistryReconcile } = await import("@/inngest/tenant-registry-reconcile");
+      const fn = tenantRegistryReconcile as unknown as { handler: () => Promise<unknown> };
+      await fn.handler();
+
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        "Bearer rotated-admin-key",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.MAIN_APP_URL;
+      delete process.env.MAIN_APP_ADMIN_API_KEY;
+      delete process.env.MAIN_APP_ADMIN_API_KEY_CURRENT;
     }
   });
 });

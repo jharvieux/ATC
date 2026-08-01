@@ -30,7 +30,7 @@ const DELIVERY_RETRIES = 10;
 
 async function deliver(path: string, event: TenantEvent | PlatformEvent): Promise<void> {
   const ragUrl = process.env.RAG_SERVICE_URL;
-  // #2004 rotation set: sign with _CURRENT when set, legacy var otherwise.
+  // #2004
   const secret = process.env.RAG_WEBHOOK_SECRET_CURRENT ?? process.env.RAG_WEBHOOK_SECRET;
   if (!ragUrl || !secret) {
     // Missing config must not silently drop the event: throw so Inngest keeps

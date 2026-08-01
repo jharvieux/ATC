@@ -64,12 +64,12 @@ const envSchema = z.object({
   // Spec §28.7 — platform's own Stripe account ID (treated optional pending
   // operator provisioning; call sites that need it fail with a clearer error).
   STRIPE_PLATFORM_ACCOUNT_ID: z.string().optional(),
-  // Vercel cron authentication (§7.9a — secret Vercel sends in Authorization:
-  // Bearer). #2047 / D-091 #28 rotation set: assertCronAuth accepts
-  // _CURRENT/_PREVIOUS plus CRON_SECRET itself (which Vercel reads to build
-  // the cron request); the superRefine below requires at least one of
-  // CRON_SECRET/_CURRENT.
-  CRON_SECRET: z.string().optional(),
+  // Vercel cron authentication (§7.9a). CRON_SECRET stays REQUIRED: it is the
+  // variable Vercel itself reads to build the cron request's Bearer header —
+  // a _CURRENT-only config boots green but every cron arrives with no
+  // Authorization and silently 401s. #2047 / D-091 #28 rotation set:
+  // assertCronAuth additionally accepts _CURRENT/_PREVIOUS on the verify side.
+  CRON_SECRET: z.string().min(1),
   CRON_SECRET_CURRENT: z.string().optional(),
   CRON_SECRET_PREVIOUS: z.string().optional(),
   // Inngest
@@ -431,15 +431,6 @@ const envSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["RAG_WEBHOOK_SECRET_CURRENT"],
         message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
-      });
-    }
-    // #2047 / D-091 #28 — the cron bearer must be configured under at least
-    // one name; both absent means every production cron 401s.
-    if (!data.CRON_SECRET_CURRENT && !data.CRON_SECRET) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["CRON_SECRET_CURRENT"],
-        message: "Set CRON_SECRET (the var Vercel sends) or CRON_SECRET_CURRENT.",
       });
     }
     if (data.OAUTH_MICROSOFT_ENABLED) {
