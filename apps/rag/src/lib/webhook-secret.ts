@@ -14,6 +14,11 @@ export function ragWebhookSecrets(): string[] {
 // Verifies against every configured secret (no early exit) so which slot
 // matched doesn't leak via timing. Fail-closed: returns false when no secret
 // is configured — routes 500 on that case before calling this.
+//
+// webhook-replay-allow: this module only verifies the HMAC; replay protection
+// lives in each consumer route — monotonic source_revision guards in
+// tenant-events/platform-settings-events, Redis dedup fingerprint in feedback
+// (#1385/F-rag-wh-02).
 export async function verifyRagWebhookSignature(
   rawBody: string,
   providedSignature: string | null | undefined,

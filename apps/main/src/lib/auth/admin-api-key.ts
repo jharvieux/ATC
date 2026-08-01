@@ -1,3 +1,5 @@
+import "server-only";
+
 import { matchesRotatingSecret } from "@/lib/auth/rotating-secret";
 
 // #2002 / D-091 #28 — the MAIN_APP_ADMIN_API_KEY rotation set. The rag crons
