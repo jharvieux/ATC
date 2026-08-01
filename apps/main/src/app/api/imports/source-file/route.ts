@@ -1,11 +1,13 @@
 // BP34 §34.6 — Signed URL for the uploaded source document.
 //
 // Returns a 302 redirect to a short-lived (5 min) signed URL into the
-// private imported-documents bucket. Path must belong to the calling
-// tenant or we 403.
+// private imported-documents bucket. Takes the import_queue row id — never
+// a storage path — so the signed path always comes from a tenant-scoped DB
+// row, not the request (#2050: a caller-supplied path guarded by a prefix
+// check is not a containment check).
 
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -16,27 +18,33 @@ export async function GET(req: Request): Promise<Response> {
     const { ctx } = await assertPermission(req, { resource: "imports.review", action: "read" });
 
     const url = new URL(req.url);
-    const path = url.searchParams.get("path");
-    if (!path) return Response.json({ error: "path required" }, { status: 400 });
+    const id = url.searchParams.get("id");
+    if (!id) return Response.json({ error: "id required" }, { status: 400 });
 
-    // Tenant scope: path must start with <tenant_id>/.
-    if (!path.startsWith(`${ctx.tenant_id}/`)) {
-      return Response.json({ error: "forbidden" }, { status: 403 });
+    const db = tenantClient(ctx);
+    const { data, error } = await db
+      .from("import_queue")
+      .select("uploaded_file_path")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) return dbErrorResponse(error);
+    const row = data as { uploaded_file_path: string | null } | null;
+    if (!row?.uploaded_file_path) {
+      return Response.json({ error: "not_found" }, { status: 404 });
     }
 
-    const svc = createServiceRoleClient();
-    const { data, error } = await svc.storage
+    const { data: signed, error: signErr } = await db.storage
       .from("imported-documents")
-      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(row.uploaded_file_path, SIGNED_URL_TTL_SECONDS);
 
-    if (error || !data?.signedUrl) {
-      if (error) return dbErrorResponse(error);
+    if (signErr || !signed?.signedUrl) {
+      if (signErr) return dbErrorResponse(signErr);
       const ref = crypto.randomUUID();
       console.error("[imports/source-file] ref=%s signing_failed no signedUrl returned", ref);
       return Response.json({ error: "signing_failed", ref }, { status: 500 });
     }
 
-    return Response.redirect(data.signedUrl, 302);
+    return Response.redirect(signed.signedUrl, 302);
   } catch (err) {
     return respondToAuthError(err);
   }
