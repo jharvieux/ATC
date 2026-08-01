@@ -28,7 +28,7 @@ import "server-only";
 import { cache as reactCache } from "react";
 import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { matchesAdminApiKey } from "@/lib/auth/admin-api-key";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 import { type PlatformAdminRole, type AdminArea, ADMIN_AREA_GRANTS } from "@/lib/auth/platform-admin-roles";
 
@@ -66,12 +66,12 @@ export class PlatformAdminError extends Error {
 export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminContext> {
   // Path 1 — service-to-service Bearer (RAG cron, etc.). Constant-time
   // compare prevents the recovery-via-timing primitive flagged in audit
-  // pass 2, Finding 2.
+  // pass 2, Finding 2; the rotation set (#2002, D-091 #28) accepts
+  // _CURRENT/_PREVIOUS plus the legacy single var during transition.
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice("Bearer ".length).trim();
-    const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-    if (token && serviceKey && constantTimeEqual(token, serviceKey)) {
+    if (matchesAdminApiKey(token)) {
       return { admin_user_id: "service:bearer", role: "service", via: "bearer" };
     }
     // Bearer present but not the service key — fall through to the cookie

@@ -11,17 +11,17 @@
 export const dynamic = "force-dynamic";
 
 import { getRagDb } from "@/lib/db/supabase";
-import { PlatformEventSchema, verifyWebhookSignature, type PlatformEvent } from "@atc/contracts";
+import { PlatformEventSchema, type PlatformEvent } from "@atc/contracts";
+import { ragWebhookSecrets, verifyRagWebhookSignature } from "@/lib/webhook-secret";
 
 export async function POST(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
-  const secret = process.env.RAG_WEBHOOK_SECRET;
-  if (!secret) {
+  // #2004 — _CURRENT/_PREVIOUS rotation set (D-091 #28); legacy var accepted.
+  if (ragWebhookSecrets().length === 0) {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
-  const validSignature = await verifyWebhookSignature(
-    secret,
+  const validSignature = await verifyRagWebhookSignature(
     rawBody,
     req.headers.get("x-webhook-signature"),
   );

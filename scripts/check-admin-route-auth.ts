@@ -39,6 +39,7 @@ export const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
       "assertPlatformRole",
       "assertSuperadmin",
       "MAIN_APP_ADMIN_API_KEY",
+      "matchesAdminApiKey",
     ],
   },
   {

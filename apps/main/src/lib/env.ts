@@ -64,8 +64,14 @@ const envSchema = z.object({
   // Spec §28.7 — platform's own Stripe account ID (treated optional pending
   // operator provisioning; call sites that need it fail with a clearer error).
   STRIPE_PLATFORM_ACCOUNT_ID: z.string().optional(),
-  // Vercel cron authentication (§7.9a — secret Vercel sends in Authorization: Bearer)
+  // Vercel cron authentication (§7.9a). CRON_SECRET stays REQUIRED: it is the
+  // variable Vercel itself reads to build the cron request's Bearer header —
+  // a _CURRENT-only config boots green but every cron arrives with no
+  // Authorization and silently 401s. #2047 / D-091 #28 rotation set:
+  // assertCronAuth additionally accepts _CURRENT/_PREVIOUS on the verify side.
   CRON_SECRET: z.string().min(1),
+  CRON_SECRET_CURRENT: z.string().optional(),
+  CRON_SECRET_PREVIOUS: z.string().optional(),
   // Inngest
   INNGEST_SIGNING_KEY: z.string().min(1),
   INNGEST_EVENT_KEY: z.string().min(1),
@@ -76,9 +82,21 @@ const envSchema = z.object({
   SERVICE_JWT_PRIVATE_KEY: z.string().min(1),
   SERVICE_JWT_KEY_ID_CURRENT: z.string().min(1),
   SERVICE_JWT_TTL_SECONDS: z.coerce.number().int().positive().optional().default(300),
-  // RAG service sync (§8.7)
+  // §8.3 / #2002 — service-to-service bearer the rag crons present to
+  // /api/admin/tenants + /api/admin/platform-settings. D-091 #28 rotation set:
+  // _CURRENT/_PREVIOUS are the rotation pair; the unsuffixed legacy var stays
+  // accepted until the operator moves the deployments onto the pair. All three
+  // are optional at boot pending a CI e2e-env placeholder (see the #2002
+  // remainder issue); the verify sites fail closed when none is set.
+  MAIN_APP_ADMIN_API_KEY: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_PREVIOUS: z.string().optional(),
+  // RAG service sync (§8.7). #2004 / D-091 #28 rotation set: main is the
+  // SIGNER — it signs with _CURRENT when set, falling back to the legacy
+  // unsuffixed var; the superRefine below requires at least one.
   RAG_SERVICE_URL: z.string().url(),
-  RAG_WEBHOOK_SECRET: z.string().min(1),
+  RAG_WEBHOOK_SECRET: z.string().optional(),
+  RAG_WEBHOOK_SECRET_CURRENT: z.string().optional(),
   // Supervisor regen budget (§10.1a) — EITHER threshold trips exhaustion
   // Absolute regen-attempt cap per conversation (default 6)
   SUPERVISOR_REGEN_MAX_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(6),
@@ -406,6 +424,15 @@ const envSchema = z.object({
 })
   // §28.9 conditional: MS Graph creds required when Microsoft OAuth is on.
   .superRefine((data, ctx) => {
+    // #2004 / D-091 #28 — the webhook-signing secret must be configured under
+    // at least one name; both absent means every rag-sync delivery throws.
+    if (!data.RAG_WEBHOOK_SECRET_CURRENT && !data.RAG_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RAG_WEBHOOK_SECRET_CURRENT"],
+        message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
+      });
+    }
     if (data.OAUTH_MICROSOFT_ENABLED) {
       if (!data.MICROSOFT_GRAPH_CLIENT_ID) {
         ctx.addIssue({

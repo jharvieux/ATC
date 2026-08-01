@@ -22,11 +22,12 @@ import {
 } from "@/lib/auth/ssr-client";
 import { verifyIdentity } from "@/lib/auth/verify-identity";
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
-import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { matchesAdminApiKey } from "@/lib/auth/admin-api-key";
 import { isIndexableHost } from "@/lib/seo/site";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import {
   matchesAnyPrefix,
+  pathMatchesPrefix,
   ADMIN_API_PREFIXES,
   AUTH_API_PREFIXES,
   AUTH_FLOW_PAGE_PREFIXES,
@@ -140,7 +141,9 @@ function applyPaymentGate(
 // §26 — Platform-admin API gate.
 //
 // Front-door check on /api/admin/*. The request must present one of:
-//   (a) Authorization: Bearer ${MAIN_APP_ADMIN_API_KEY} — service-to-service.
+//   (a) Authorization: Bearer ${MAIN_APP_ADMIN_API_KEY} — service-to-service,
+//       accepted only on the service-bearer paths (#2002 — see
+//       isServiceBearerAdminPath), not all of /api/admin/*.
 //   (b) A Supabase auth cookie (sb-<ref>-auth-token[.N]) — a human admin's
 //       session, fully verified downstream by assertPlatformAdmin() (signature
 //       + platform_admins lookup). Pre-§17.x this was a Bearer JWT in
@@ -199,12 +202,31 @@ function hasSupabaseAuthCookie(req: NextRequest): boolean {
   return false;
 }
 
-function isAcceptableAdminCredential(req: NextRequest): boolean {
+// #2002 — the service bearer's authority is capped to the rag admin area at
+// the handler layer (ADMIN_AREA_GRANTS caps role "service" to area "rag").
+// This front-door check mirrors that grant: the bearer admits the two
+// bearer-only reconcile endpoints (exact paths — their /api/admin/tenants/*
+// siblings are superadmin-area) plus the /api/admin/rag prefix, narrowing the
+// front door to match the handler layer instead of all of /api/admin/*.
+const SERVICE_BEARER_EXACT_PATHS: readonly string[] = [
+  "/api/admin/tenants",
+  "/api/admin/platform-settings",
+];
+
+function isServiceBearerAdminPath(pathname: string): boolean {
+  // Strip one trailing slash so /api/admin/tenants/ doesn't 403 opaquely.
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return (
+    SERVICE_BEARER_EXACT_PATHS.includes(normalized) ||
+    pathMatchesPrefix(pathname, "/api/admin/rag")
+  );
+}
+
+function isAcceptableAdminCredential(req: NextRequest, pathname: string): boolean {
   const auth = req.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) {
+  if (auth?.startsWith("Bearer ") && isServiceBearerAdminPath(pathname)) {
     const token = auth.slice("Bearer ".length).trim();
-    const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-    if (token && serviceKey && constantTimeEqual(token, serviceKey)) return true;
+    if (matchesAdminApiKey(token)) return true;
   }
   return hasSupabaseAuthCookie(req);
 }
@@ -246,7 +268,7 @@ async function resolveRequest(req: NextRequest): Promise<NextResponse> {
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path
   //    can leak a tenant header or attribution side-effect into an admin call.
-  if (isAdminApiPath(pathname) && !isAcceptableAdminCredential(req)) {
+  if (isAdminApiPath(pathname) && !isAcceptableAdminCredential(req, pathname)) {
     return adminForbidden();
   }
 

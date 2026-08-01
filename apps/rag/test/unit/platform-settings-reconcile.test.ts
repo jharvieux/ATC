@@ -116,6 +116,7 @@ async function runReconcile(): Promise<unknown> {
 beforeEach(() => {
   process.env.MAIN_APP_URL = mainAppUrl;
   process.env.MAIN_APP_ADMIN_API_KEY = "test-admin-key";
+  delete process.env.MAIN_APP_ADMIN_API_KEY_CURRENT;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -197,6 +198,22 @@ describe("#1885 — platform-settings-reconcile outcome tallies", () => {
     expect(second).toEqual({ inserted: 0, updated: 0, skipped_not_eligible: 0 });
     // No duplicate rows created by re-running against unchanged state.
     expect(state.rows).toHaveLength(2);
+  });
+});
+
+describe("#2002 rotation — platform-settings-reconcile signer", () => {
+  it("presents MAIN_APP_ADMIN_API_KEY_CURRENT in the Bearer header when both it and the legacy var are set", async () => {
+    process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-admin-key";
+    mockMainSettings([]);
+    currentDb = makeDb({ rows: [] });
+
+    await runReconcile();
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer rotated-admin-key",
+    );
   });
 });
 

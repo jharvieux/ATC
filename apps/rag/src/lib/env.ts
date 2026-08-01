@@ -44,11 +44,18 @@ const envSchema = z.object({
   // §28.4 — jti replay cache for inter-service auth (§8.3 fail-closed contract).
   // Spec name: INTER_SERVICE_JTI_CACHE_URL; code reuses REDIS_URL.
   REDIS_URL: z.string().url(),
-  // Nightly reconcile callback to main app (§8.3)
+  // Nightly reconcile callback to main app (§8.3). #2002 / D-091 #28: rag is
+  // the SENDER of this bearer — it presents _CURRENT when set, falling back to
+  // the legacy unsuffixed var; the superRefine below requires at least one.
   MAIN_APP_URL: z.string().url(),
-  MAIN_APP_ADMIN_API_KEY: z.string().min(1),
-  // Inbound tenant-events webhook secret (§8.7)
-  RAG_WEBHOOK_SECRET: z.string().min(1),
+  MAIN_APP_ADMIN_API_KEY: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
+  // Inbound tenant-events webhook secret (§8.7). #2004 / D-091 #28 rotation
+  // set: verify sites accept _CURRENT/_PREVIOUS plus the legacy unsuffixed
+  // var; the superRefine below requires at least one of _CURRENT/legacy.
+  RAG_WEBHOOK_SECRET: z.string().optional(),
+  RAG_WEBHOOK_SECRET_CURRENT: z.string().optional(),
+  RAG_WEBHOOK_SECRET_PREVIOUS: z.string().optional(),
   // §28.14 — Sentry (optional pending operator provisioning).
   SENTRY_DSN: z.string().optional(),
   SENTRY_ENVIRONMENT: z.string().optional(),
@@ -56,6 +63,24 @@ const envSchema = z.object({
   // §28.1 — Vercel-set deployment env (auto on Vercel; passthrough otherwise).
   VERCEL_ENV: z.string().optional(),
 }).superRefine((env, ctx) => {
+  // #2002 / D-091 #28 — the admin-seam bearer must be configured under at
+  // least one name; both absent means the nightly reconciles silently 401.
+  if (!env.MAIN_APP_ADMIN_API_KEY_CURRENT && !env.MAIN_APP_ADMIN_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["MAIN_APP_ADMIN_API_KEY_CURRENT"],
+      message: "Set MAIN_APP_ADMIN_API_KEY_CURRENT (or legacy MAIN_APP_ADMIN_API_KEY).",
+    });
+  }
+  // #2004 / D-091 #28 — the inbound webhook HMAC secret must be configured
+  // under at least one name; both absent means every inbound event 500s.
+  if (!env.RAG_WEBHOOK_SECRET_CURRENT && !env.RAG_WEBHOOK_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["RAG_WEBHOOK_SECRET_CURRENT"],
+      message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
+    });
+  }
   // If a PREVIOUS public key is set (rotation overlap), the corresponding kid
   // is required so the verifier can route incoming tokens to the right PEM.
   // Without this pair, a rotation overlap would silently accept tokens but

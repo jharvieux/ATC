@@ -81,5 +81,30 @@ for (const [name, call] of [
       const res = await call({ Authorization: "Bearer service-secret-key" });
       expect(res.status).toBe(500);
     });
+
+    // #2002 / D-091 #28 — the rotation set. A rotation must be possible with
+    // zero seam downtime: while _PREVIOUS is configured, callers still holding
+    // the old key keep working.
+    it("returns 200 for MAIN_APP_ADMIN_API_KEY_CURRENT (legacy var unset)", async () => {
+      delete process.env.MAIN_APP_ADMIN_API_KEY;
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current-key";
+      const res = await call({ Authorization: "Bearer rotated-current-key" });
+      expect(res.status).toBe(200);
+    });
+
+    it("returns 200 for MAIN_APP_ADMIN_API_KEY_PREVIOUS during rotation overlap", async () => {
+      delete process.env.MAIN_APP_ADMIN_API_KEY;
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current-key";
+      process.env.MAIN_APP_ADMIN_API_KEY_PREVIOUS = "old-previous-key";
+      const res = await call({ Authorization: "Bearer old-previous-key" });
+      expect(res.status).toBe(200);
+    });
+
+    it("returns 401 for a wrong key when the full rotation set is configured", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current-key";
+      process.env.MAIN_APP_ADMIN_API_KEY_PREVIOUS = "old-previous-key";
+      const res = await call({ Authorization: "Bearer neither-of-those" });
+      expect(res.status).toBe(401);
+    });
   });
 }

@@ -78,6 +78,34 @@ describe("verifyEnvAtBoot — encryption key validation (§13.5.3)", () => {
   });
 });
 
+describe("verifyEnvAtBoot — secret rotation pairs (D-091 #28)", () => {
+  // #2004 — either the legacy var or _CURRENT satisfies boot; neither fails.
+  it("accepts RAG_WEBHOOK_SECRET_CURRENT with the legacy var unset", async () => {
+    process.env = baseEnv({ RAG_WEBHOOK_SECRET_CURRENT: "rotated" });
+    delete process.env.RAG_WEBHOOK_SECRET;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).not.toThrow();
+  });
+
+  it("rejects when neither RAG_WEBHOOK_SECRET nor _CURRENT is set (fail-loud boot)", async () => {
+    process.env = baseEnv();
+    delete process.env.RAG_WEBHOOK_SECRET;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/RAG_WEBHOOK_SECRET_CURRENT/);
+  });
+
+  // #2047 — CRON_SECRET is NOT part of an either/or pair: Vercel reads
+  // CRON_SECRET itself to build the cron request's Bearer header, so a
+  // _CURRENT-only config would boot green while every cron arrives with no
+  // Authorization and 401s. Boot must reject it.
+  it("rejects CRON_SECRET_CURRENT-only config — Vercel sends the Bearer from CRON_SECRET, not _CURRENT", async () => {
+    process.env = baseEnv({ CRON_SECRET_CURRENT: "rotated" });
+    delete process.env.CRON_SECRET;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/CRON_SECRET/);
+  });
+});
+
 describe("verifyEnvAtBoot — forensics key separation (§26.5a)", () => {
   it("rejects when FORENSICS_ENCRYPTION_KEY_CURRENT equals APP_ENCRYPTION_KEY_CURRENT", async () => {
     process.env = baseEnv({

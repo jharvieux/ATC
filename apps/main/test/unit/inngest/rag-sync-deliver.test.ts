@@ -76,6 +76,21 @@ describe("ragSyncDeliver — routing + signing", () => {
     expect(JSON.parse(body)).toEqual(TENANT_EVENT);
   });
 
+  it("signs with RAG_WEBHOOK_SECRET_CURRENT when set (#2004 rotation set)", async () => {
+    // During a rotation the signer must move to the new secret immediately —
+    // the rag verifier accepts both, so signing with the old one would mask a
+    // half-finished rotation.
+    process.env.RAG_WEBHOOK_SECRET_CURRENT = "rotated-current-secret";
+    try {
+      await handler({ event: { name: "rag-sync/tenant.event", data: { event: TENANT_EVENT } }, attempt: 0 });
+      const [, opts] = fetchMock.mock.calls[0]!;
+      const sig = (opts.headers as Record<string, string>)["x-webhook-signature"];
+      expect(sig).toBe(await hmacHexSign("rotated-current-secret", opts.body as string));
+    } finally {
+      delete process.env.RAG_WEBHOOK_SECRET_CURRENT;
+    }
+  });
+
   it("POSTs a platform event to /api/platform-settings-events", async () => {
     await handler({ event: { name: "rag-sync/platform.event", data: { event: PLATFORM_EVENT } }, attempt: 0 });
     const [url] = fetchMock.mock.calls[0]!;

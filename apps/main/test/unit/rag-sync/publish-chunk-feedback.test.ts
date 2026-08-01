@@ -1,6 +1,7 @@
 // §6.10 — publish-chunk-feedback helper tests.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hmacHexSign } from "@atc/contracts";
 import { publishChunkFeedback } from "../../../src/lib/rag-sync/publish-chunk-feedback";
 
 const ORIG_ENV = {
@@ -11,11 +12,13 @@ const ORIG_ENV = {
 beforeEach(() => {
   process.env.RAG_SERVICE_URL = "https://rag.test/";
   process.env.RAG_WEBHOOK_SECRET = "test-secret";
+  delete process.env.RAG_WEBHOOK_SECRET_CURRENT;
 });
 
 afterEach(() => {
   process.env.RAG_SERVICE_URL = ORIG_ENV.RAG_SERVICE_URL;
   process.env.RAG_WEBHOOK_SECRET = ORIG_ENV.RAG_WEBHOOK_SECRET;
+  delete process.env.RAG_WEBHOOK_SECRET_CURRENT;
   vi.restoreAllMocks();
 });
 
@@ -69,6 +72,23 @@ describe("publishChunkFeedback", () => {
       raw_weight: 1.5,
       chunk_ids: ["chunk-1", "chunk-2"],
     });
+  });
+
+  it("signs with RAG_WEBHOOK_SECRET_CURRENT, not the legacy var, when both are set (#2004 rotation)", async () => {
+    process.env.RAG_WEBHOOK_SECRET_CURRENT = "rotated-secret";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    await publishChunkFeedback({
+      message_id: "msg-1",
+      signal_direction: "up",
+      chunk_ids: ["chunk-1"],
+    });
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    const body = init.body as string;
+    expect(headers["x-webhook-signature"]).toBe(await hmacHexSign("rotated-secret", body));
+    expect(headers["x-webhook-signature"]).not.toBe(await hmacHexSign("test-secret", body));
   });
 
   it("defaults raw_weight to 1.0 when omitted", async () => {

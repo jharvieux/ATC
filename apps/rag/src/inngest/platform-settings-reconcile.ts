@@ -76,7 +76,9 @@ export const platformSettingsReconcile = inngest.createFunction(
   },
   async () => {
     const mainAppUrl = process.env.MAIN_APP_URL;
-    const adminKey = process.env.MAIN_APP_ADMIN_API_KEY;
+    // #2002
+    const adminKey =
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT ?? process.env.MAIN_APP_ADMIN_API_KEY;
     if (!mainAppUrl || !adminKey) {
       throw new Error("MAIN_APP_URL or MAIN_APP_ADMIN_API_KEY not set");
     }

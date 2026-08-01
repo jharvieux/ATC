@@ -70,6 +70,8 @@ describe("proxy()", () => {
     delete process.env.TEST_AUTH_BYPASS_TOKEN;
     delete process.env.TEST_AUTH_BYPASS_TENANT_ID;
     delete process.env.MAIN_APP_ADMIN_API_KEY;
+    delete process.env.MAIN_APP_ADMIN_API_KEY_CURRENT;
+    delete process.env.MAIN_APP_ADMIN_API_KEY_PREVIOUS;
   });
 
   afterEach(() => {
@@ -175,6 +177,82 @@ describe("proxy()", () => {
         }),
       );
       expect(res.status).toBe(403);
+    });
+
+    // #2002 / D-091 #28 — rotation set acceptance at the front door.
+    it("accepts the bearer via MAIN_APP_ADMIN_API_KEY_CURRENT (legacy var unset)", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer rotated-current" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    it("accepts the bearer via MAIN_APP_ADMIN_API_KEY_PREVIOUS during rotation overlap", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current";
+      process.env.MAIN_APP_ADMIN_API_KEY_PREVIOUS = "old-previous";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer old-previous" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    // #2002 — the service bearer's front-door reach is capped to the paths the
+    // RAG service calls (mirroring ADMIN_AREA_GRANTS capping role "service" to
+    // the rag area). A leaked key must not even reach non-rag admin handlers.
+    it("rejects a VALID service bearer on a non-rag admin path (front door capped)", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/abuse/summary",
+          headers: { authorization: "Bearer service-key-xyz" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects a VALID service bearer on /api/admin/tenants subpaths (superadmin area)", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants/review-queue",
+          headers: { authorization: "Bearer service-key-xyz" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("accepts the service bearer on rag-area admin paths", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/rag/authority/list",
+          headers: { authorization: "Bearer service-key-xyz" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    it("still accepts a Supabase cookie on non-rag admin paths (human-admin path unchanged)", async () => {
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/abuse/summary",
+          headers: { cookie: "sb-abcdef-auth-token=opaque-session-blob" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
     });
 
     it("#736: rejects tokens equal in char-length but different in byte-length (multibyte chars)", async () => {
