@@ -22,11 +22,12 @@ import {
 } from "@/lib/auth/ssr-client";
 import { verifyIdentity } from "@/lib/auth/verify-identity";
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
-import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { matchesAdminApiKey } from "@/lib/auth/admin-api-key";
 import { isIndexableHost } from "@/lib/seo/site";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import {
   matchesAnyPrefix,
+  pathMatchesPrefix,
   ADMIN_API_PREFIXES,
   AUTH_API_PREFIXES,
   AUTH_FLOW_PAGE_PREFIXES,
@@ -199,12 +200,30 @@ function hasSupabaseAuthCookie(req: NextRequest): boolean {
   return false;
 }
 
-function isAcceptableAdminCredential(req: NextRequest): boolean {
+// #2002 — the service bearer's authority is capped to the rag admin area at
+// the handler layer (ADMIN_AREA_GRANTS caps role "service" to area "rag").
+// Mirror that cap at the front door: the bearer only admits the endpoints the
+// RAG service actually calls, so a leaked key can't even reach handlers for
+// the rest of /api/admin/*. Exact paths for the two bearer-only reconcile
+// endpoints (their /api/admin/tenants/* siblings are superadmin-area), prefix
+// for the rag-area routes.
+const SERVICE_BEARER_EXACT_PATHS: readonly string[] = [
+  "/api/admin/tenants",
+  "/api/admin/platform-settings",
+];
+
+function isServiceBearerAdminPath(pathname: string): boolean {
+  return (
+    SERVICE_BEARER_EXACT_PATHS.includes(pathname) ||
+    pathMatchesPrefix(pathname, "/api/admin/rag")
+  );
+}
+
+function isAcceptableAdminCredential(req: NextRequest, pathname: string): boolean {
   const auth = req.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) {
+  if (auth?.startsWith("Bearer ") && isServiceBearerAdminPath(pathname)) {
     const token = auth.slice("Bearer ".length).trim();
-    const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-    if (token && serviceKey && constantTimeEqual(token, serviceKey)) return true;
+    if (matchesAdminApiKey(token)) return true;
   }
   return hasSupabaseAuthCookie(req);
 }
@@ -246,7 +265,7 @@ async function resolveRequest(req: NextRequest): Promise<NextResponse> {
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path
   //    can leak a tenant header or attribution side-effect into an admin call.
-  if (isAdminApiPath(pathname) && !isAcceptableAdminCredential(req)) {
+  if (isAdminApiPath(pathname) && !isAcceptableAdminCredential(req, pathname)) {
     return adminForbidden();
   }
 

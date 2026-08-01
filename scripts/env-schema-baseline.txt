@@ -1,7 +1,7 @@
 # env-schema-baseline.txt — FREEZE-EXISTING baseline for scripts/check-env-schema-completeness.ts.
-# Burn-down: refs #2002 (MAIN_APP_ADMIN_API_KEY stays undeclared on main until that issue's
-# strategy-B registers it in the env schema with a rotation pair) and #2004 (secret-inventory
-# completeness). Each line freezes pre-existing raw process.env reads of an identifier NOT
+# Burn-down: refs #2004 (secret-inventory completeness). MAIN_APP_ADMIN_API_KEY burned down by
+# #2002's strategy-B (registered in both env schemas with a _CURRENT/_PREVIOUS rotation set).
+# Each line freezes pre-existing raw process.env reads of an identifier NOT
 # declared in that app's apps/<app>/src/lib/env.ts. Line format: <count> <app>::<VAR>.
 # Burn a line down by declaring the var in the schema and reading it via the env object.
 1 main::AUTH_MIDDLEWARE_LOCAL_VERIFY_DISABLED
@@ -19,7 +19,6 @@
 1 main::IMPORT_CLASSIFY_HAIKU_MODEL
 1 main::IMPORT_EXTRACT_SONNET_MODEL
 3 main::INTEGRATION_DB
-4 main::MAIN_APP_ADMIN_API_KEY
 1 main::MAIN_APP_URL
 3 main::PLATFORM_APP_URL
 4 main::PLATFORM_DEFAULT_TENANT_ID

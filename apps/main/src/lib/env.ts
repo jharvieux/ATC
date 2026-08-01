@@ -76,6 +76,15 @@ const envSchema = z.object({
   SERVICE_JWT_PRIVATE_KEY: z.string().min(1),
   SERVICE_JWT_KEY_ID_CURRENT: z.string().min(1),
   SERVICE_JWT_TTL_SECONDS: z.coerce.number().int().positive().optional().default(300),
+  // §8.3 / #2002 — service-to-service bearer the rag crons present to
+  // /api/admin/tenants + /api/admin/platform-settings. D-091 #28 rotation set:
+  // _CURRENT/_PREVIOUS are the rotation pair; the unsuffixed legacy var stays
+  // accepted until the operator moves the deployments onto the pair. All three
+  // are optional at boot pending a CI e2e-env placeholder (see the #2002
+  // remainder issue); the verify sites fail closed when none is set.
+  MAIN_APP_ADMIN_API_KEY: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_PREVIOUS: z.string().optional(),
   // RAG service sync (§8.7)
   RAG_SERVICE_URL: z.string().url(),
   RAG_WEBHOOK_SECRET: z.string().min(1),

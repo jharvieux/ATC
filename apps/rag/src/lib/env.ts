@@ -44,9 +44,12 @@ const envSchema = z.object({
   // §28.4 — jti replay cache for inter-service auth (§8.3 fail-closed contract).
   // Spec name: INTER_SERVICE_JTI_CACHE_URL; code reuses REDIS_URL.
   REDIS_URL: z.string().url(),
-  // Nightly reconcile callback to main app (§8.3)
+  // Nightly reconcile callback to main app (§8.3). #2002 / D-091 #28: rag is
+  // the SENDER of this bearer — it presents _CURRENT when set, falling back to
+  // the legacy unsuffixed var; the superRefine below requires at least one.
   MAIN_APP_URL: z.string().url(),
-  MAIN_APP_ADMIN_API_KEY: z.string().min(1),
+  MAIN_APP_ADMIN_API_KEY: z.string().optional(),
+  MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
   // Inbound tenant-events webhook secret (§8.7)
   RAG_WEBHOOK_SECRET: z.string().min(1),
   // §28.14 — Sentry (optional pending operator provisioning).
@@ -56,6 +59,15 @@ const envSchema = z.object({
   // §28.1 — Vercel-set deployment env (auto on Vercel; passthrough otherwise).
   VERCEL_ENV: z.string().optional(),
 }).superRefine((env, ctx) => {
+  // #2002 / D-091 #28 — the admin-seam bearer must be configured under at
+  // least one name; both absent means the nightly reconciles silently 401.
+  if (!env.MAIN_APP_ADMIN_API_KEY_CURRENT && !env.MAIN_APP_ADMIN_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["MAIN_APP_ADMIN_API_KEY_CURRENT"],
+      message: "Set MAIN_APP_ADMIN_API_KEY_CURRENT (or legacy MAIN_APP_ADMIN_API_KEY).",
+    });
+  }
   // If a PREVIOUS public key is set (rotation overlap), the corresponding kid
   // is required so the verifier can route incoming tokens to the right PEM.
   // Without this pair, a rotation overlap would silently accept tokens but

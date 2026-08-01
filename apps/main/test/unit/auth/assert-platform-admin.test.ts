@@ -50,6 +50,17 @@ describe("assertPlatformAdmin", () => {
     expect(mockFromMaybeSingle).not.toHaveBeenCalled();
   });
 
+  // #2002 / D-091 #28 — rotation-set acceptance on the seam's authoritative gate.
+  it("accepts MAIN_APP_ADMIN_API_KEY_CURRENT and _PREVIOUS during rotation overlap", async () => {
+    delete process.env.MAIN_APP_ADMIN_API_KEY;
+    process.env.MAIN_APP_ADMIN_API_KEY_CURRENT = "rotated-current";
+    process.env.MAIN_APP_ADMIN_API_KEY_PREVIOUS = "old-previous";
+    const current = await assertPlatformAdmin(req({ Authorization: "Bearer rotated-current" }));
+    expect(current.role).toBe("service");
+    const previous = await assertPlatformAdmin(req({ Authorization: "Bearer old-previous" }));
+    expect(previous.role).toBe("service");
+  });
+
   it("falls through to the cookie session when no Authorization header is present (§17.x posture)", async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-1" } }, error: null });
     mockFromMaybeSingle.mockResolvedValue({
