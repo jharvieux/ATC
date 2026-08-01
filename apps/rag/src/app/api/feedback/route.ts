@@ -18,14 +18,15 @@ export const dynamic = "force-dynamic";
 
 import { createHash } from "node:crypto";
 import { getRagDb } from "@/lib/db/supabase";
-import { ChunkFeedbackEventSchema, verifyWebhookSignature } from "@atc/contracts";
+import { ChunkFeedbackEventSchema } from "@atc/contracts";
+import { ragWebhookSecrets, verifyRagWebhookSignature } from "@/lib/webhook-secret";
 import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
 import { getRedis } from "@/lib/redis/client";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
-  const secret = process.env.RAG_WEBHOOK_SECRET;
-  if (!secret) {
+  // #2004 — _CURRENT/_PREVIOUS rotation set (D-091 #28); legacy var accepted.
+  if (ragWebhookSecrets().length === 0) {
     return Response.json({ error: "rag_webhook_secret_not_configured" }, { status: 500 });
   }
 
@@ -36,8 +37,7 @@ export async function POST(req: Request): Promise<Response> {
   // share + exhaust the legitimate caller's bucket — 429'ing real feedback
   // before its signature was ever checked.
   const rawBody = await req.text();
-  const validSignature = await verifyWebhookSignature(
-    secret,
+  const validSignature = await verifyRagWebhookSignature(
     rawBody,
     req.headers.get("x-webhook-signature"),
   );

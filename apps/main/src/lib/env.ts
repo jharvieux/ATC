@@ -85,9 +85,12 @@ const envSchema = z.object({
   MAIN_APP_ADMIN_API_KEY: z.string().optional(),
   MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
   MAIN_APP_ADMIN_API_KEY_PREVIOUS: z.string().optional(),
-  // RAG service sync (§8.7)
+  // RAG service sync (§8.7). #2004 / D-091 #28 rotation set: main is the
+  // SIGNER — it signs with _CURRENT when set, falling back to the legacy
+  // unsuffixed var; the superRefine below requires at least one.
   RAG_SERVICE_URL: z.string().url(),
-  RAG_WEBHOOK_SECRET: z.string().min(1),
+  RAG_WEBHOOK_SECRET: z.string().optional(),
+  RAG_WEBHOOK_SECRET_CURRENT: z.string().optional(),
   // Supervisor regen budget (§10.1a) — EITHER threshold trips exhaustion
   // Absolute regen-attempt cap per conversation (default 6)
   SUPERVISOR_REGEN_MAX_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(6),
@@ -415,6 +418,15 @@ const envSchema = z.object({
 })
   // §28.9 conditional: MS Graph creds required when Microsoft OAuth is on.
   .superRefine((data, ctx) => {
+    // #2004 / D-091 #28 — the webhook-signing secret must be configured under
+    // at least one name; both absent means every rag-sync delivery throws.
+    if (!data.RAG_WEBHOOK_SECRET_CURRENT && !data.RAG_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RAG_WEBHOOK_SECRET_CURRENT"],
+        message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
+      });
+    }
     if (data.OAUTH_MICROSOFT_ENABLED) {
       if (!data.MICROSOFT_GRAPH_CLIENT_ID) {
         ctx.addIssue({

@@ -50,8 +50,12 @@ const envSchema = z.object({
   MAIN_APP_URL: z.string().url(),
   MAIN_APP_ADMIN_API_KEY: z.string().optional(),
   MAIN_APP_ADMIN_API_KEY_CURRENT: z.string().optional(),
-  // Inbound tenant-events webhook secret (§8.7)
-  RAG_WEBHOOK_SECRET: z.string().min(1),
+  // Inbound tenant-events webhook secret (§8.7). #2004 / D-091 #28 rotation
+  // set: verify sites accept _CURRENT/_PREVIOUS plus the legacy unsuffixed
+  // var; the superRefine below requires at least one of _CURRENT/legacy.
+  RAG_WEBHOOK_SECRET: z.string().optional(),
+  RAG_WEBHOOK_SECRET_CURRENT: z.string().optional(),
+  RAG_WEBHOOK_SECRET_PREVIOUS: z.string().optional(),
   // §28.14 — Sentry (optional pending operator provisioning).
   SENTRY_DSN: z.string().optional(),
   SENTRY_ENVIRONMENT: z.string().optional(),
@@ -66,6 +70,15 @@ const envSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["MAIN_APP_ADMIN_API_KEY_CURRENT"],
       message: "Set MAIN_APP_ADMIN_API_KEY_CURRENT (or legacy MAIN_APP_ADMIN_API_KEY).",
+    });
+  }
+  // #2004 / D-091 #28 — the inbound webhook HMAC secret must be configured
+  // under at least one name; both absent means every inbound event 500s.
+  if (!env.RAG_WEBHOOK_SECRET_CURRENT && !env.RAG_WEBHOOK_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["RAG_WEBHOOK_SECRET_CURRENT"],
+      message: "Set RAG_WEBHOOK_SECRET_CURRENT (or legacy RAG_WEBHOOK_SECRET).",
     });
   }
   // If a PREVIOUS public key is set (rotation overlap), the corresponding kid

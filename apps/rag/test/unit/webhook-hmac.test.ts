@@ -4,7 +4,7 @@
 // recorded-fixture test (valid HMAC → 200) also guards against re-encoding
 // the signature incorrectly (e.g., switching from hex to base64).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 
 const SECRET = "test-webhook-secret";
@@ -59,6 +59,10 @@ beforeEach(() => {
   vi.stubEnv("SUPABASE_RAG_SERVICE_ROLE_KEY", "test-key");
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("tenant-events webhook — HMAC signature (timingSafeEqual, f017)", () => {
   it("returns 401 when x-webhook-signature header is absent", async () => {
     const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY));
@@ -82,6 +86,42 @@ describe("tenant-events webhook — HMAC signature (timingSafeEqual, f017)", () 
     const sig = hmacHex(SECRET, TENANT_BODY);
     const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY, sig));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("tenant-events webhook — secret rotation set (#2004, D-091 #28)", () => {
+  it("accepts a signature under RAG_WEBHOOK_SECRET_CURRENT when the legacy var is unset", async () => {
+    vi.stubEnv("RAG_WEBHOOK_SECRET", "");
+    vi.stubEnv("RAG_WEBHOOK_SECRET_CURRENT", "rotated-current");
+    const sig = hmacHex("rotated-current", TENANT_BODY);
+    const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY, sig));
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a signature under RAG_WEBHOOK_SECRET_PREVIOUS during rotation overlap", async () => {
+    // Zero-downtime rotation: main may still be signing with the old secret
+    // while the operator finishes the flip — _PREVIOUS keeps those verifiable.
+    vi.stubEnv("RAG_WEBHOOK_SECRET", "");
+    vi.stubEnv("RAG_WEBHOOK_SECRET_CURRENT", "rotated-current");
+    vi.stubEnv("RAG_WEBHOOK_SECRET_PREVIOUS", "old-previous");
+    const sig = hmacHex("old-previous", TENANT_BODY);
+    const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY, sig));
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a signature under a secret no longer in the rotation set", async () => {
+    vi.stubEnv("RAG_WEBHOOK_SECRET", "");
+    vi.stubEnv("RAG_WEBHOOK_SECRET_CURRENT", "rotated-current");
+    const sig = hmacHex(SECRET, TENANT_BODY); // retired secret
+    const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY, sig));
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 500 fail-closed when no member of the rotation set is configured", async () => {
+    vi.stubEnv("RAG_WEBHOOK_SECRET", "");
+    const sig = hmacHex(SECRET, TENANT_BODY);
+    const res = await tenantEventsPost(makeReq("http://rag.test/api/tenant-events", TENANT_BODY, sig));
+    expect(res.status).toBe(500);
   });
 });
 

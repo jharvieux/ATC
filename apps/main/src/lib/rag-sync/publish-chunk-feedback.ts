@@ -41,7 +41,8 @@ export async function publishChunkFeedback(
   }
 
   const ragUrl = process.env.RAG_SERVICE_URL;
-  const secret = process.env.RAG_WEBHOOK_SECRET;
+  // #2004 rotation set: sign with _CURRENT when set, legacy var otherwise.
+  const secret = process.env.RAG_WEBHOOK_SECRET_CURRENT ?? process.env.RAG_WEBHOOK_SECRET;
   if (!ragUrl || !secret) {
     console.warn("[publish-chunk-feedback] RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set — skipping");
     return { ok: false, error: "rag_env_not_set" };
