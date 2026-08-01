@@ -258,7 +258,7 @@ export default function ImportReviewItemPage() {
           {item.uploaded_file_path ? (
             <p className="text-sm">
               <a
-                href={`/api/imports/source-file?path=${encodeURIComponent(item.uploaded_file_path)}`}
+                href={`/api/imports/source-file?id=${item.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:underline"
