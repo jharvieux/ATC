@@ -63,4 +63,51 @@ describe("assertCronAuth — auth gate", () => {
     expect(res).not.toBeNull();
     expect(res!.status).toBe(401);
   });
+
+  // #2047 / D-091 #28 — rotation set. Rotation must be possible with zero cron
+  // downtime: _PREVIOUS keeps the old value valid during the overlap window.
+  describe("rotation set (#2047)", () => {
+    beforeEach(() => {
+      delete process.env.CRON_SECRET;
+      delete process.env.CRON_SECRET_CURRENT;
+      delete process.env.CRON_SECRET_PREVIOUS;
+    });
+
+    it("passes with a valid CRON_SECRET_CURRENT (legacy var unset)", async () => {
+      process.env.CRON_SECRET_CURRENT = "rotated-current";
+      const { assertCronAuth } = await import("@/lib/cron/assert-cron-auth");
+      expect(assertCronAuth(makeReq("Bearer rotated-current"))).toBeNull();
+    });
+
+    it("passes with a valid CRON_SECRET_PREVIOUS during rotation overlap", async () => {
+      process.env.CRON_SECRET_CURRENT = "rotated-current";
+      process.env.CRON_SECRET_PREVIOUS = "old-previous";
+      const { assertCronAuth } = await import("@/lib/cron/assert-cron-auth");
+      expect(assertCronAuth(makeReq("Bearer old-previous"))).toBeNull();
+    });
+
+    it("still passes with the legacy CRON_SECRET while the pair also exists", async () => {
+      process.env.CRON_SECRET = "vercel-sends-this";
+      process.env.CRON_SECRET_CURRENT = "rotated-current";
+      const { assertCronAuth } = await import("@/lib/cron/assert-cron-auth");
+      expect(assertCronAuth(makeReq("Bearer vercel-sends-this"))).toBeNull();
+    });
+
+    it("returns 401 for a token matching no member of the configured set", async () => {
+      process.env.CRON_SECRET = "secret-abc";
+      process.env.CRON_SECRET_CURRENT = "rotated-current";
+      process.env.CRON_SECRET_PREVIOUS = "old-previous";
+      const { assertCronAuth } = await import("@/lib/cron/assert-cron-auth");
+      const res = assertCronAuth(makeReq("Bearer none-of-those"));
+      expect(res).not.toBeNull();
+      expect(res!.status).toBe(401);
+    });
+
+    it("returns 401 when the entire rotation set is unset (fail-closed)", async () => {
+      const { assertCronAuth } = await import("@/lib/cron/assert-cron-auth");
+      const res = assertCronAuth(makeReq("Bearer anything"));
+      expect(res).not.toBeNull();
+      expect(res!.status).toBe(401);
+    });
+  });
 });

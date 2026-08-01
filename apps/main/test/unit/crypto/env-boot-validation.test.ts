@@ -94,6 +94,20 @@ describe("verifyEnvAtBoot — secret rotation pairs (D-091 #28)", () => {
     expect(() => verifyEnvAtBoot()).toThrow(/RAG_WEBHOOK_SECRET_CURRENT/);
   });
 
+  // #2047 — same pattern for the Vercel cron bearer.
+  it("accepts CRON_SECRET_CURRENT with the legacy var unset", async () => {
+    process.env = baseEnv({ CRON_SECRET_CURRENT: "rotated" });
+    delete process.env.CRON_SECRET;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).not.toThrow();
+  });
+
+  it("rejects when neither CRON_SECRET nor _CURRENT is set (fail-loud boot)", async () => {
+    process.env = baseEnv();
+    delete process.env.CRON_SECRET;
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/CRON_SECRET_CURRENT/);
+  });
 });
 
 describe("verifyEnvAtBoot — forensics key separation (§26.5a)", () => {
