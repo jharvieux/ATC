@@ -101,20 +101,20 @@ Both agents support a **local (pre-PR) review**: they produce and return the ful
 
 ## Model selection
 
-Default is Sonnet for both agents. Opus overrides apply to the FIRST audit run only (pass `model: "opus"` on the Agent tool call), **split by trigger type** (D-317):
+Default is the stable `sonnet` tier for both agents. The `opus` tier overrides it on the FIRST audit run, **split by trigger type** (D-317). Codex resolves both tiers through the compatibility mapping in `AGENTS.md`; other runtimes preserve the same GitHub-facing tier names:
 
-**Risk triggers → Opus for BOTH agents.** On these diffs both reviewers' judgment-heavy checks (d091's blast radius, pre-pr's tests-for-intent and honesty-about-uncertainty) earn the stronger model — the agents are the only review bench, so don't thin it where the risk lives:
+**Risk triggers → `opus` for BOTH agents.** On these diffs both reviewers' judgment-heavy checks (d091's blast radius, pre-pr's tests-for-intent and honesty-about-uncertainty) earn the stronger profile — the agents are the only review bench, so don't thin it where the risk lives:
 
 - Diff includes a SQL migration (new tables, RLS policies, grants, column add/drop).
 - Diff adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
 - Diff includes webhook signature verification, idempotency rows, or state-machine transitions (`progressTo`, `transitionTo`, etc.).
 - Diff adds a new service-role code path (page or route using the service-role client).
 
-**Size-only trigger → Opus for d091-reviewer only** (pre-pr stays Sonnet — its checks don't scale with diff size the way blast-radius tracking does):
+**Size-only trigger → `opus` for d091-reviewer only** (pre-pr stays `sonnet` — its checks don't scale with diff size the way blast-radius tracking does):
 
 - Diff ≥ 20 files OR ≥ 1000 net-added lines, with no risk trigger hit. (Raised from D-147's 10/500 for Sonnet 5.)
 
-Re-runs after fix-commits use Sonnet for both, even if the original first-run used Opus — re-runs check known patterns, not new surface area. Exception: if the fix-commit itself introduced a risk trigger (rare), apply the rules above again.
+Re-runs after fix-commits use the `sonnet` tier for both, even if the original first-run used `opus` — re-runs check known patterns, not new surface area. Exception: if the fix-commit itself introduced a risk trigger (rare), apply the rules above again. Use `fable` only when the operator explicitly requests deepest review or when capable reviewers disagree on a security-critical or architectural finding.
 
 ## Exemptions
 

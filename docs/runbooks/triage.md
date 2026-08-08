@@ -19,7 +19,7 @@ For each issue:
 - **Customer/tenant-reported bug labels** (`customer-reported`, `tenant-admin-reported`) — DON'T auto-fix. Surface in the state summary; the user routes these.
 - **Any issue without a label** — DON'T auto-fix. Surface and ask.
 
-**Assign a model label (`haiku`, `sonnet`, or `opus`) to every agent-doable engineering issue.** Any issue that an agent can implement without human judgement — i.e. NOT `customer-reported` / `tenant-admin-reported`, and NOT an unlabeled issue that needs routing — gets exactly one model label added with `gh issue edit <n> --add-label <tier>`. The label marks which model should pick the work up; it does not mean "fix it now." Escalate on **risk category, not diff size** (D-314 — Sonnet 5 handles large mechanical diffs; the old ≥10-files/≥500-lines size trigger no longer escalates execution). Apply `opus` when ANY of these hold:
+**Assign exactly one workload-tier label (`haiku`, `sonnet`, `opus`, or `fable`) to every agent-doable engineering issue.** These are durable GitHub workflow names shared across agent runtimes; preserve them exactly. Codex resolves them through the compatibility mapping in `AGENTS.md`. Any issue that an agent can implement without human judgement — i.e. NOT `customer-reported` / `tenant-admin-reported`, and NOT an unlabeled issue that needs routing — gets exactly one tier label added with `gh issue edit <n> --add-label <tier>`. The label routes the work; it does not mean "fix it now." Escalate on **risk category, not diff size**. Apply `fable` when the issue requires security-critical architecture, cross-system threat reasoning, or final adjudication after capable reviewers disagree. Otherwise apply `opus` when ANY of these hold:
 
 - It involves a SQL migration (new tables, RLS policies, grants, column add/drop).
 - It adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
@@ -29,7 +29,7 @@ For each issue:
 
 Apply `haiku` when ALL of these hold: single file, no control-flow change — docs, typos, copy, config values, label/metadata chores.
 
-Otherwise apply `sonnet` — the default, including large multi-file mechanical work. When scope can't be estimated from the issue text, default to `opus` and say so in the state summary. Do NOT add a model label to issues that need a human (customer/tenant-reported, or unlabeled-and-needs-routing) — those are surfaced, not labeled. If an issue already carries a model label, leave it unless its scope has clearly changed. Note: the PR-**audit** model selection in `pr-workflow.md` is a separate heuristic and still uses diff size — this section only governs which model executes the fix.
+Otherwise apply `sonnet` — the default, including large multi-file mechanical work. When scope can't be estimated from the issue text, default to `opus` and say so in the state summary. Do NOT add a tier label to issues that need a human (customer/tenant-reported, or unlabeled-and-needs-routing) — those are surfaced, not labeled. If an issue already carries a tier label, leave it unless its scope has clearly changed. Note: the PR-**audit** tier selection in `pr-workflow.md` is a separate heuristic and still uses diff size — this section only governs which profile executes the fix.
 
 Fix-PRs opened during triage carry the `auto-triaged` label and a comment referencing the source issue.
 
