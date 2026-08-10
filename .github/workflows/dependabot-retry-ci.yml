@@ -33,7 +33,9 @@ on:
 
 permissions:
   actions: write
+  checks: read
   pull-requests: read
+  statuses: read
 
 jobs:
   retry:
@@ -42,12 +44,9 @@ jobs:
       - name: Re-run failed required checks on open Dependabot PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Names of required checks worth re-running. Skipping non-blocking
-          # checks (CodeQL, Vercel) avoids re-burning compute for free.
-          REQUIRED_CHECKS='Lint Typecheck Build Test "Lint, Typecheck, Build"'
-
           # All open PRs authored by dependabot in this repo.
           PRS=$(gh pr list \
             --author "app/dependabot" \
@@ -66,19 +65,38 @@ jobs:
             HEAD_REF=$(echo "$line" | awk '{print $2}')
             echo "── PR #$PR_NUMBER ($HEAD_REF) ──"
 
-            # Latest workflow run on this PR's head. -L 1 = most recent.
-            RUN_ID=$(gh run list \
-              --branch "$HEAD_REF" \
-              --status failure \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty')
+            # A PR can have failed required checks from more than one workflow.
+            # Pull their run IDs from the check links and rerun each once.
+            set +e
+            FAILED_LINKS=$(gh pr checks "$PR_NUMBER" \
+              --required \
+              --json state,link \
+              --jq '.[] | select(.state == "FAILURE") | .link')
+            CHECKS_STATUS=$?
+            set -e
+            if [ "$CHECKS_STATUS" -ne 0 ] && [ "$CHECKS_STATUS" -ne 8 ]; then
+              echo "  failed to inspect required checks (exit $CHECKS_STATUS)" >&2
+              exit "$CHECKS_STATUS"
+            fi
+            RUN_IDS=$(printf '%s\n' "$FAILED_LINKS" \
+              | sed -nE 's#^.*/actions/runs/([0-9]+)(/.*)?$#\1#p' \
+              | sort -u)
 
-            if [ -z "$RUN_ID" ]; then
-              echo "  no failed run on $HEAD_REF — skipping"
+            if [ -z "$RUN_IDS" ]; then
+              echo "  no failed required checks — skipping"
               continue
             fi
 
-            echo "  rerunning failed jobs on run $RUN_ID"
-            gh run rerun "$RUN_ID" --failed || echo "  rerun failed; PR may need attention"
+            while read -r RUN_ID; do
+              [ -z "$RUN_ID" ] && continue
+              echo "  rerunning failed jobs on run $RUN_ID"
+              if ! gh run rerun "$RUN_ID" --failed; then
+                echo "  rerun failed; PR may need attention" >&2
+                RERUN_FAILED=1
+              fi
+            done <<< "$RUN_IDS"
           done <<< "$PRS"
+
+          if [ "${RERUN_FAILED:-0}" -ne 0 ]; then
+            exit 1
+          fi

@@ -61,11 +61,22 @@ jobs:
           exit "${PIPESTATUS[0]}"
         continue-on-error: true
 
-      - name: Open / update tracked issue on findings
+      - name: Open / update tracked issue on scan failure
         if: steps.scan.outcome == 'failure'
         run: |
-          title="Supabase Security Advisor: WARN+ finding(s) need review"
-          body=$(cat <<'BODY'
+          if grep -q "SUPABASE_ACCESS_TOKEN not set" /tmp/advisor-out.txt; then
+            title="Supabase Security Advisor: CI secret missing"
+            body=$(cat <<'BODY'
+          The weekly Supabase advisor scan could not run because the repository Actions secret
+          `SUPABASE_ACCESS_TOKEN` is missing. Add a Supabase PAT with `database:read` and
+          `advisors_read` scopes. See docs/runbooks/supabase-advisor-check.md.
+
+          Scan output:
+          BODY
+            )
+          elif grep -q "new WARN+ security finding(s)" /tmp/advisor-out.txt; then
+            title="Supabase Security Advisor: WARN+ finding(s) need review"
+            body=$(cat <<'BODY'
           The weekly Supabase advisor scan reported WARN+ security finding(s) not in the accepted-risk baseline.
 
           Fix the finding (preferred) or, if it is accepted risk, add its `baseline key` line to
@@ -73,18 +84,31 @@ jobs:
 
           Scan output:
           BODY
-          )
+            )
+          else
+            title="Supabase Security Advisor: scan could not complete"
+            body=$(cat <<'BODY'
+          The weekly Supabase advisor scan failed before it could determine whether any new
+          security findings exist. Check the scan output for an expired or mis-scoped PAT,
+          an upstream API failure, or invalid advisor configuration. See
+          docs/runbooks/supabase-advisor-check.md.
+
+          Scan output:
+          BODY
+            )
+          fi
           body="${body}"$'\n\n```\n'"$(cat /tmp/advisor-out.txt)"$'\n```'
-          gh label create supabase-advisor --color FBCA04 --description "Supabase Security Advisor findings" --force || true
+          gh label create supabase-advisor --color FBCA04 --description "Supabase Security Advisor scan failures" --force || true
           existing=$(gh issue list --state open --label supabase-advisor --json number --jq '.[0].number')
           if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title"
             gh issue comment "$existing" --body "$body"
           else
             gh issue create --title "$title" --label "supabase-advisor" --body "$body"
           fi
 
-      - name: Fail the job if findings were reported
+      - name: Fail the job if the scan failed
         if: steps.scan.outcome == 'failure'
         run: |
-          echo "Supabase advisor scan reported findings — see the tracked issue."
+          echo "Supabase advisor scan failed — see the tracked issue."
           exit 1

@@ -1,26 +1,24 @@
-# Session state — last updated 2026-08-01 (session ended after sweep #8 + dependabot triage)
+# Session state — last updated 2026-08-10 13:34 CDT
 
 ## Just completed
-- **Issue sweep #8** (Fable executors, operator-trimmed to 2 batches + 1 fold-in): 3 PRs merged, 5 issues closed, 2 filed — tracker 47 → 44 open, **down 3 on the day**.
-  - PR #2068 — #2050 cross-tenant storage read fixed (opaque id + tenant-scoped lookup).
-  - PR #2070 — #2002 (partial→#2069)/#2004/#2047 seam-secret rotation sets; Opus audit caught a CRON_SECRET boot blocker pre-merge (would have silently killed all 9 crons on first rotation).
-  - PR #2071 — #2069 boot-required flip + e2e placeholder; MAIN_APP_ADMIN_API_KEY added to Vercel **Preview** with a random placeholder value.
-- D-370 logged (rotation-set strategy FINAL for #2002, supersedes queued service-JWT). anti-patterns.md #28 + vercel-env-checklist.md updated (both were invalidated by the merges). #2072 filed (help-docs bucket SELECT policy, needs supervised migration).
+- Investigated current failed GitHub jobs and isolated four root causes: Dependabot retry lacked repository/check context and ignored required-check selection; 27 Dependabot alerts / 39 audit findings were present in the lockfile; Supabase advisor CI lacks its PAT; contracts canary uses a Stripe test platform not enrolled in Connect.
+- Implemented the retry workflow repair, accurate Supabase failure reporting, Next 16.2.11 / officeparser 7.5.1 updates, and major-preserving security overrides.
+- Reduced `pnpm audit` from 39 findings to one moderate upstream-only OpenTelemetry advisory; `pnpm peers check` is clean.
+- Filed #2079 (Stripe Connect canary enrollment) and #2080 (OpenTelemetry upstream remainder); corrected #2044 and the stale Stripe row in #430.
+- Opened PR #2081 and resolved its first audit round: added check/status token permissions, handled `gh pr checks` exit 8, made rerun-request failures fail the job after all runs are attempted, added a focused workflow harness, and classified non-finding Supabase failures as operational.
+- Verified actionlint, the focused retry tests, both production builds, frozen-lockfile install, and full `pnpm verify` (6,428 executed tests; existing skips and unset-DB schema checks surfaced).
 
 ## In flight
-- Wrap-up docs PR #2074 — MERGED (sweep #8 fully closed out; ledger deleted).
-- **Dependabot triage 2026-07-31/08-01**: 16 alerts, all real (no phantom lockfile). PRs #2054/#2073/#2056/#2062 cover 15; all blocked by the pnpm minimumReleaseAge guard on two transitives published 2026-07-31 (baseline-browser-mapping@2.11.9, fast-uri@3.1.5 — age out by ~11:06 CT Aug 1). **One-time cloud routine `trig_01Ck4RNiBqF4ZHGjxeugVdLi` fires 11:30 CT Aug 1** to rebase+merge the train serially and open the bounded `sharp: ^0.35.0` override PR for alert 47 (next 16.2.11 still pins ^0.34.5). Routine will NOT weaken policies; real failures (watch #2056 Dependency Review, #2062 Typecheck) get left open + reported. Routines UI: https://claude.ai/code/routines
-- Hygiene deletions executed on operator order: 172 worktree-agent-* branches, 2 stale worktrees, 2 held sweep branches. `sweep-ops-1159-fix` (no PR) left — not on the approved list.
+- PR #2081 from `feature/repair-failed-jobs` into `dev`; audit-round fixes are verified locally but not yet committed or pushed.
+- Files owned by this task: `.github/workflows/dependabot-retry-ci.yml`, `.github/workflows/supabase-advisor-check.yml`, `apps/main/package.json`, `apps/rag/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tests/unit/workflows/dependabot-retry-ci.test.ts`, `SESSION.md`.
+- User-owned `AGENTS.md` and `.codex/` changes remain untouched and must not be committed with this branch.
 
 ## Next step
-- **Check the dependabot routine's report** (fires 11:30 CT Aug 1, routine `trig_01Ck4RNiBqF4ZHGjxeugVdLi`): expect 4 merged PRs + a sharp-override PR; its report says which of the 16 alerts cleared. If the sharp-override PR is left open on the audit gate, run the audit agents on it or merge per its report.
-- Sweep batches 3–7 trimmed at the gate remain open: tests-2028 (#2028/#2040), extension-2039, retention-2037, chat-zod-2014, scripts-2019; plus proposed read-only prod checks (#1838/#2043/#2044). Re-run /issue-sweep or say "run the rest".
+- Commit and push the audit fixes, rerun both required audit agents against the new diff hash, rerun the audit gate, and merge only when all required checks pass.
 
 ## Blocked on user
-1. **Preview seam value is a placeholder** — replace atc-main Preview `MAIN_APP_ADMIN_API_KEY` with the real bearer if preview RAG↔main auth is ever needed.
-2. Unanswered gate rows from this sweep: hygiene deletions (dirty worktree `agent-a1ca5e7b04dead54c`, scratchpad worktree `atc-m8-check`, branches `sweep-cron-1581-audit-tmp` +7 / `sweep-security-1598` +1).
-3. Carried: ROTATE MTC-COM-9V5ZKDJC5TI0 (memtrace key, .codex/config.toml); sitemap submission; old Stripe webhook disable; prod release incl. bba75c0e; #1740 prod DDL repair; atc-rag manual deploy; extension smoke test; #2025 time-boxed check (needs that prod release first).
+- #2044: create a Supabase PAT with `database:read` + `advisors_read`, add it as repository Actions secret `SUPABASE_ACCESS_TOKEN`, and rerun `supabase-advisor-check`.
+- #2079: enable Stripe Connect for the test platform behind `STRIPE_TEST_SECRET_KEY` (or rotate to a Connect-enabled test key), then rerun `contracts-canary`.
 
 ## Open questions
-- Residual accepted nit on PR #2070: proxy comment slightly conflates the two bearer-admitted path groups' auth mechanisms (wording only, test-covered) — accepted rather than staling markers for a comment edit.
-- Carried: homepage-as-agency-landing confirmation in prod; post-release cron verification; alert #103 CodeQL verification.
+- #2080 tracks the one residual moderate `@opentelemetry/core` audit advisory; no compatible patched 1.x line exists, and a forced 2.x override creates an invalid peer graph.
