@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/block-spec-memory-edits.mjs\""
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/block-spec-memory-edits.mjs\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/lint-changed-file.mjs\""
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/lint-changed-file.mjs\""
           }
         ]
       }
@@ -27,15 +27,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/typecheck-changed-workspaces.mjs\""
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/typecheck-changed-workspaces.mjs\""
           },
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/run-affected-tests.mjs\""
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/run-affected-tests.mjs\""
           },
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/migration-runbook-reminder.mjs\""
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/migration-runbook-reminder.mjs\""
           }
         ]
       }

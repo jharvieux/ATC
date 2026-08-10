@@ -28,6 +28,7 @@ describe("Codex project configuration", () => {
 
     expect(commands).toHaveLength(5);
     expect(commands.every((command) => command.includes("$(git rev-parse --show-toplevel)"))).toBe(true);
+    expect(commands.every((command) => command.includes('CLAUDE_PROJECT_DIR="$repo_root"'))).toBe(true);
     expect(commands.every((command) => !command.includes("/Users/"))).toBe(true);
     for (const command of commands) {
       const target = command.match(/\/(\.claude\/hooks\/[^\"]+)/)?.[1];

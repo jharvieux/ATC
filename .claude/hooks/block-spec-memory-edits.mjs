@@ -29,8 +29,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import { execFileSync } from "node:child_process";
-
-const REPO_ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+import { parseApplyPatch } from "./edit-targets.mjs";
 
 function block(reason) {
   process.stderr.write(reason + "\n");
@@ -45,25 +44,15 @@ try {
 }
 
 const { tool_name, tool_input } = input || {};
+const REPO_ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
-if (!["Edit", "Write", "NotebookEdit"].includes(tool_name)) {
+if (!["Edit", "Write", "NotebookEdit", "apply_patch"].includes(tool_name)) {
   process.exit(0);
 }
 
-const filePath = tool_input?.file_path || tool_input?.notebook_path;
-if (!filePath || typeof filePath !== "string") {
-  process.exit(0);
-}
-
-const abs = resolve(filePath);
-const rel = relative(REPO_ROOT, abs);
-
-if (rel === "specs" || rel.startsWith("specs/")) {
-  block(
-    `BLOCKED: ${tool_name} on ${rel}\n` +
-      `specs/ is the read-only source of truth per CLAUDE.md. If the spec is wrong, ` +
-      `surface the conflict to the user and ask for explicit permission before editing.`
-  );
+function repoPath(filePath) {
+  const abs = resolve(REPO_ROOT, filePath);
+  return { abs, rel: relative(REPO_ROOT, abs) };
 }
 
 // Returns true only for an Edit that (a) changes exactly one D-number,
@@ -110,7 +99,8 @@ function isAllowedBranchLocalRenumber(oldString, newString) {
 }
 
 const MEMORY_PATH = resolve(REPO_ROOT, "MEMORY.md");
-if (abs === MEMORY_PATH) {
+function protectMemoryEdit(abs, editToolName, editInput) {
+  if (abs !== MEMORY_PATH) return;
   if (!existsSync(MEMORY_PATH)) process.exit(0);
 
   let currentContent;
@@ -120,9 +110,9 @@ if (abs === MEMORY_PATH) {
     block(`BLOCKED: could not read MEMORY.md (${e.message}). Fail-closed.`);
   }
 
-  if (tool_name === "Edit") {
-    const oldString = tool_input?.old_string || "";
-    const newString = tool_input?.new_string || "";
+  if (editToolName === "Edit") {
+    const oldString = editInput?.old_string || "";
+    const newString = editInput?.new_string || "";
     if (!newString.endsWith(oldString) && !isAllowedBranchLocalRenumber(oldString, newString)) {
       block(
         `BLOCKED: Edit on MEMORY.md modifies a prior entry.\n` +
@@ -130,8 +120,8 @@ if (abs === MEMORY_PATH) {
           `If you genuinely need to edit a prior entry, ask the user for explicit permission first.`
       );
     }
-  } else if (tool_name === "Write") {
-    const newContent = tool_input?.content || "";
+  } else if (editToolName === "Write") {
+    const newContent = editInput?.content || "";
     const newTrim = newContent.replace(/\s+$/, "");
     const curTrim = currentContent.replace(/\s+$/, "");
     if (!newTrim.endsWith(curTrim)) {
@@ -143,5 +133,82 @@ if (abs === MEMORY_PATH) {
     }
   }
 }
+
+function isAllowedMemoryPatch(section) {
+  if (section.operation !== "Update" || section.moveTo) return false;
+  const hunks = [];
+  let current;
+  for (const line of section.lines) {
+    if (line.startsWith("@@")) {
+      current = [];
+      hunks.push(current);
+    } else if (line !== "*** End of File") {
+      if (!current) return false;
+      current.push(line);
+    }
+  }
+  if (hunks.length !== 1) return false;
+
+  const hunk = hunks[0];
+  if (hunk.some((line) => !line || !["+", "-", " "].includes(line[0]))) return false;
+  const deleted = hunk.filter((line) => line.startsWith("-")).map((line) => line.slice(1));
+  const added = hunk.filter((line) => line.startsWith("+")).map((line) => line.slice(1));
+  if (deleted.length > 0) {
+    return added.length > 0 && isAllowedBranchLocalRenumber(deleted.join("\n"), added.join("\n"));
+  }
+  if (added.length === 0) return false;
+
+  const firstContext = hunk.findIndex((line) => line.startsWith(" "));
+  if (firstContext < 0 || hunk.slice(firstContext).some((line) => !line.startsWith(" "))) return false;
+  const context = hunk
+    .slice(firstContext)
+    .map((line) => line.slice(1))
+    .join("\n");
+  let currentContent;
+  try {
+    currentContent = readFileSync(MEMORY_PATH, "utf8");
+  } catch (error) {
+    block(`BLOCKED: could not read MEMORY.md (${error.message}). Fail-closed.`);
+  }
+  return currentContent.startsWith(context);
+}
+
+if (tool_name === "apply_patch") {
+  let sections;
+  try {
+    sections = parseApplyPatch(tool_input?.command);
+  } catch (error) {
+    block(`BLOCKED: malformed apply_patch input (${error.message}). Fail-closed per AGENTS.md.`);
+  }
+  for (const section of sections) {
+    const targets = section.moveTo ? [section.path, section.moveTo] : [section.path];
+    for (const target of targets) {
+      const { rel } = repoPath(target);
+      if (rel === "specs" || rel.startsWith("specs/")) {
+        block(`BLOCKED: apply_patch on ${rel}\nspecs/ is the read-only source of truth per AGENTS.md.`);
+      }
+    }
+    const touchesMemory = targets.some((target) => repoPath(target).abs === MEMORY_PATH);
+    if (touchesMemory && !isAllowedMemoryPatch(section)) {
+      block(
+        `BLOCKED: apply_patch on MEMORY.md modifies prior history.\n` +
+          `Per AGENTS.md, prior MEMORY.md entries are read-only — only prepends or branch-local renumbers are allowed.`,
+      );
+    }
+  }
+  process.exit(0);
+}
+
+const filePath = tool_input?.file_path || tool_input?.notebook_path;
+if (!filePath || typeof filePath !== "string") process.exit(0);
+const { abs, rel } = repoPath(filePath);
+if (rel === "specs" || rel.startsWith("specs/")) {
+  block(
+    `BLOCKED: ${tool_name} on ${rel}\n` +
+      `specs/ is the read-only source of truth per CLAUDE.md. If the spec is wrong, ` +
+      `surface the conflict to the user and ask for explicit permission before editing.`,
+  );
+}
+protectMemoryEdit(abs, tool_name, tool_input);
 
 process.exit(0);
