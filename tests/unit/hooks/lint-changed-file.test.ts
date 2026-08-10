@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -49,6 +49,40 @@ describe("lint-changed-file.mjs — Codex apply_patch protocol", () => {
     expect(calls).toContain("--filter @atc/rag exec eslint");
     expect(calls).toContain(path.join(REPO_ROOT, "apps/rag/src/app/api/ingest/route.ts"));
     expect(calls).not.toContain("docs/runbooks/pr-workflow.md");
+  });
+
+  it("lints case-variant application paths on case-insensitive workspaces", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "codex-lint-hook-"));
+    tempDirs.push(dir);
+    const appFile = path.join(dir, "Apps/main/src/proxy.ts");
+    mkdirSync(path.dirname(appFile), { recursive: true });
+    writeFileSync(appFile, "export {};\n");
+    const log = path.join(dir, "pnpm.log");
+    const pnpm = path.join(dir, "pnpm");
+    writeFileSync(pnpm, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$MOCK_PNPM_LOG"\n`);
+    chmodSync(pnpm, 0o755);
+    const patch = `*** Begin Patch
+*** Update File: Apps/main/src/proxy.ts
+@@
+-old
++new
+*** End Patch`;
+    const result = spawnSync(process.execPath, [HOOK_PATH], {
+      input: JSON.stringify({ cwd: dir, tool_name: "apply_patch", tool_input: { command: patch } }),
+      encoding: "utf8",
+      cwd: dir,
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        CLAUDE_PROJECT_DIR: dir,
+        MOCK_PNPM_LOG: log,
+      },
+    });
+    const calls = readFileSync(log, "utf8");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls).toContain("--filter @atc/main exec eslint");
+    expect(calls).toContain(appFile);
   });
 
   it("fails loud when the Codex patch payload is malformed", () => {

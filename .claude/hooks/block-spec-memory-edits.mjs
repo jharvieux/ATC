@@ -52,7 +52,8 @@ if (!["Edit", "Write", "NotebookEdit", "apply_patch"].includes(tool_name)) {
 
 function repoPath(filePath) {
   const abs = resolve(REPO_ROOT, filePath);
-  return { abs, rel: relative(REPO_ROOT, abs) };
+  const rel = relative(REPO_ROOT, abs);
+  return { rel, relKey: rel.toLowerCase() };
 }
 
 // Returns true only for an Edit that (a) changes exactly one D-number,
@@ -99,8 +100,8 @@ function isAllowedBranchLocalRenumber(oldString, newString) {
 }
 
 const MEMORY_PATH = resolve(REPO_ROOT, "MEMORY.md");
-function protectMemoryEdit(abs, editToolName, editInput) {
-  if (abs !== MEMORY_PATH) return;
+function protectMemoryEdit(relKey, editToolName, editInput) {
+  if (relKey !== "memory.md") return;
   if (!existsSync(MEMORY_PATH)) process.exit(0);
 
   let currentContent;
@@ -137,9 +138,11 @@ function protectMemoryEdit(abs, editToolName, editInput) {
 function isAllowedMemoryPatch(section) {
   if (section.operation !== "Update" || section.moveTo) return false;
   const hunks = [];
+  let hasSelector = false;
   let current;
   for (const line of section.lines) {
     if (line.startsWith("@@")) {
+      if (line !== "@@") hasSelector = true;
       current = [];
       hunks.push(current);
     } else if (line !== "*** End of File") {
@@ -156,6 +159,7 @@ function isAllowedMemoryPatch(section) {
   if (deleted.length > 0) {
     return added.length > 0 && isAllowedBranchLocalRenumber(deleted.join("\n"), added.join("\n"));
   }
+  if (hasSelector) return false;
   if (added.length === 0) return false;
 
   const firstContext = hunk.findIndex((line) => line.startsWith(" "));
@@ -170,7 +174,7 @@ function isAllowedMemoryPatch(section) {
   } catch (error) {
     block(`BLOCKED: could not read MEMORY.md (${error.message}). Fail-closed.`);
   }
-  return currentContent.startsWith(context);
+  return context.length > 0 && currentContent.startsWith(context);
 }
 
 if (tool_name === "apply_patch") {
@@ -183,12 +187,12 @@ if (tool_name === "apply_patch") {
   for (const section of sections) {
     const targets = section.moveTo ? [section.path, section.moveTo] : [section.path];
     for (const target of targets) {
-      const { rel } = repoPath(target);
-      if (rel === "specs" || rel.startsWith("specs/")) {
+      const { rel, relKey } = repoPath(target);
+      if (relKey === "specs" || relKey.startsWith("specs/")) {
         block(`BLOCKED: apply_patch on ${rel}\nspecs/ is the read-only source of truth per AGENTS.md.`);
       }
     }
-    const touchesMemory = targets.some((target) => repoPath(target).abs === MEMORY_PATH);
+    const touchesMemory = targets.some((target) => repoPath(target).relKey === "memory.md");
     if (touchesMemory && !isAllowedMemoryPatch(section)) {
       block(
         `BLOCKED: apply_patch on MEMORY.md modifies prior history.\n` +
@@ -201,14 +205,14 @@ if (tool_name === "apply_patch") {
 
 const filePath = tool_input?.file_path || tool_input?.notebook_path;
 if (!filePath || typeof filePath !== "string") process.exit(0);
-const { abs, rel } = repoPath(filePath);
-if (rel === "specs" || rel.startsWith("specs/")) {
+const { rel, relKey } = repoPath(filePath);
+if (relKey === "specs" || relKey.startsWith("specs/")) {
   block(
     `BLOCKED: ${tool_name} on ${rel}\n` +
       `specs/ is the read-only source of truth per CLAUDE.md. If the spec is wrong, ` +
       `surface the conflict to the user and ask for explicit permission before editing.`,
   );
 }
-protectMemoryEdit(abs, tool_name, tool_input);
+protectMemoryEdit(relKey, tool_name, tool_input);
 
 process.exit(0);

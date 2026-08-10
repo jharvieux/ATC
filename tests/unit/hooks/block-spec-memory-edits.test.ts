@@ -144,10 +144,35 @@ describe("block-spec-memory-edits.mjs — Codex apply_patch protocol", () => {
     expect(stderr).toContain("specs/");
   });
 
+  it("blocks case-variant paths targeting the read-only specs directory", () => {
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: Specs/example.html
+@@
+-old
++new
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("specs/");
+  });
+
   it("blocks patches that rewrite existing MEMORY history", () => {
     const firstLine = readFileSync(path.join(REPO_ROOT, "MEMORY.md"), "utf8").split("\n")[0];
     const { code, stderr } = runCodexPatch(`*** Begin Patch
 *** Update File: MEMORY.md
+@@
+-${firstLine}
++# Rewritten history
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("MEMORY.md");
+  });
+
+  it.each(["memory.md", "Memory.md"])("blocks the case-variant %s path", (filePath) => {
+    const firstLine = readFileSync(path.join(REPO_ROOT, "MEMORY.md"), "utf8").split("\n")[0];
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: ${filePath}
 @@
 -${firstLine}
 +# Rewritten history
@@ -169,6 +194,19 @@ ${context}
 *** End Patch`);
 
     expect(code).toBe(0);
+  });
+
+  it("blocks an anchored MEMORY insertion with empty context", () => {
+    const blankContext = " ";
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: MEMORY.md
+@@ historical entry
++Injected history
+${blankContext}
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("MEMORY.md");
   });
 
   it("allows an ordinary patch outside protected files", () => {

@@ -44,22 +44,23 @@ for (const filePath of new Set(filePaths)) {
   const abs = resolve(REPO_ROOT, filePath);
   if (!existsSync(abs)) continue;
   const rel = relative(REPO_ROOT, abs);
+  const relKey = rel.toLowerCase();
 
   if (
-    rel.includes("node_modules") ||
-    rel.includes(".next/") ||
-    rel.includes("/dist/") ||
-    rel.includes(".turbo/") ||
-    rel.includes("coverage/")
+    relKey.includes("node_modules") ||
+    relKey.includes(".next/") ||
+    relKey.includes("/dist/") ||
+    relKey.includes(".turbo/") ||
+    relKey.includes("coverage/")
   ) {
     continue;
   }
 
-  if (rel.startsWith("apps/main/test/") || rel.startsWith("apps/rag/test/")) continue;
+  if (relKey.startsWith("apps/main/test/") || relKey.startsWith("apps/rag/test/")) continue;
 
   let workspace;
-  if (rel.startsWith("apps/main/")) workspace = "@atc/main";
-  else if (rel.startsWith("apps/rag/")) workspace = "@atc/rag";
+  if (relKey.startsWith("apps/main/")) workspace = "@atc/main";
+  else if (relKey.startsWith("apps/rag/")) workspace = "@atc/rag";
   else continue;
   const files = workspaceFiles.get(workspace) ?? [];
   files.push({ abs, rel });
