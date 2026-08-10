@@ -74,7 +74,7 @@ jobs:
           Scan output:
           BODY
             )
-          else
+          elif grep -q "new WARN+ security finding(s)" /tmp/advisor-out.txt; then
             title="Supabase Security Advisor: WARN+ finding(s) need review"
             body=$(cat <<'BODY'
           The weekly Supabase advisor scan reported WARN+ security finding(s) not in the accepted-risk baseline.
@@ -85,9 +85,20 @@ jobs:
           Scan output:
           BODY
             )
+          else
+            title="Supabase Security Advisor: scan could not complete"
+            body=$(cat <<'BODY'
+          The weekly Supabase advisor scan failed before it could determine whether any new
+          security findings exist. Check the scan output for an expired or mis-scoped PAT,
+          an upstream API failure, or invalid advisor configuration. See
+          docs/runbooks/supabase-advisor-check.md.
+
+          Scan output:
+          BODY
+            )
           fi
           body="${body}"$'\n\n```\n'"$(cat /tmp/advisor-out.txt)"$'\n```'
-          gh label create supabase-advisor --color FBCA04 --description "Supabase Security Advisor findings" --force || true
+          gh label create supabase-advisor --color FBCA04 --description "Supabase Security Advisor scan failures" --force || true
           existing=$(gh issue list --state open --label supabase-advisor --json number --jq '.[0].number')
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --title "$title"

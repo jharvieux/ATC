@@ -33,7 +33,9 @@ on:
 
 permissions:
   actions: write
+  checks: read
   pull-requests: read
+  statuses: read
 
 jobs:
   retry:
@@ -65,10 +67,18 @@ jobs:
 
             # A PR can have failed required checks from more than one workflow.
             # Pull their run IDs from the check links and rerun each once.
-            RUN_IDS=$(gh pr checks "$PR_NUMBER" \
+            set +e
+            FAILED_LINKS=$(gh pr checks "$PR_NUMBER" \
               --required \
               --json state,link \
-              --jq '.[] | select(.state == "FAILURE") | .link' \
+              --jq '.[] | select(.state == "FAILURE") | .link')
+            CHECKS_STATUS=$?
+            set -e
+            if [ "$CHECKS_STATUS" -ne 0 ] && [ "$CHECKS_STATUS" -ne 8 ]; then
+              echo "  failed to inspect required checks (exit $CHECKS_STATUS)" >&2
+              exit "$CHECKS_STATUS"
+            fi
+            RUN_IDS=$(printf '%s\n' "$FAILED_LINKS" \
               | sed -nE 's#^.*/actions/runs/([0-9]+)(/.*)?$#\1#p' \
               | sort -u)
 
@@ -80,6 +90,13 @@ jobs:
             while read -r RUN_ID; do
               [ -z "$RUN_ID" ] && continue
               echo "  rerunning failed jobs on run $RUN_ID"
-              gh run rerun "$RUN_ID" --failed || echo "  rerun failed; PR may need attention"
+              if ! gh run rerun "$RUN_ID" --failed; then
+                echo "  rerun failed; PR may need attention" >&2
+                RERUN_FAILED=1
+              fi
             done <<< "$RUN_IDS"
           done <<< "$PRS"
+
+          if [ "${RERUN_FAILED:-0}" -ne 0 ]; then
+            exit 1
+          fi
