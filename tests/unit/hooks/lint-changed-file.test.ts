@@ -54,7 +54,7 @@ describe("lint-changed-file.mjs — Codex apply_patch protocol", () => {
   it("lints case-variant application paths on case-insensitive workspaces", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "codex-lint-hook-"));
     tempDirs.push(dir);
-    const appFile = path.join(dir, "Apps/main/src/proxy.ts");
+    const appFile = path.join(dir, "Apps/main/src/proxy.TS");
     mkdirSync(path.dirname(appFile), { recursive: true });
     writeFileSync(appFile, "export {};\n");
     const log = path.join(dir, "pnpm.log");
@@ -62,7 +62,7 @@ describe("lint-changed-file.mjs — Codex apply_patch protocol", () => {
     writeFileSync(pnpm, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$MOCK_PNPM_LOG"\n`);
     chmodSync(pnpm, 0o755);
     const patch = `*** Begin Patch
-*** Update File: Apps/main/src/proxy.ts
+*** Update File: Apps/main/src/proxy.TS
 @@
 -old
 +new

@@ -40,11 +40,11 @@ try {
 
 const workspaceFiles = new Map();
 for (const filePath of new Set(filePaths)) {
-  if (!/\.tsx?$/.test(filePath)) continue;
   const abs = resolve(REPO_ROOT, filePath);
   if (!existsSync(abs)) continue;
   const rel = relative(REPO_ROOT, abs);
   const relKey = rel.toLowerCase();
+  if (!/\.tsx?$/.test(relKey)) continue;
 
   if (
     relKey.includes("node_modules") ||
