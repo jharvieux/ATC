@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +26,19 @@ const HOOK_PATH = path.join(REPO_ROOT, ".claude/hooks/block-spec-memory-edits.mj
 function runHook(toolInput: Record<string, unknown>): { code: number | null; stderr: string } {
   const result = spawnSync("node", [HOOK_PATH], {
     input: JSON.stringify({ tool_name: "Edit", tool_input: toolInput }),
+    encoding: "utf-8",
+    cwd: REPO_ROOT,
+  });
+  return { code: result.status, stderr: result.stderr };
+}
+
+function runCodexPatch(command?: string): { code: number | null; stderr: string } {
+  const result = spawnSync("node", [HOOK_PATH], {
+    input: JSON.stringify({
+      cwd: REPO_ROOT,
+      tool_name: "apply_patch",
+      tool_input: command === undefined ? {} : { command },
+    }),
     encoding: "utf-8",
     cwd: REPO_ROOT,
   });
@@ -114,5 +128,104 @@ describe("block-spec-memory-edits.mjs — branch-local renumber carve-out (#1661
     });
     expect(code).toBe(2);
     expect(stderr).toContain("specs/");
+  });
+});
+
+describe("block-spec-memory-edits.mjs — Codex apply_patch protocol", () => {
+  it("blocks patches targeting the read-only specs directory", () => {
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: specs/example.html
+@@
+-old
++new
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("specs/");
+  });
+
+  it("blocks case-variant paths targeting the read-only specs directory", () => {
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: Specs/example.html
+@@
+-old
++new
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("specs/");
+  });
+
+  it("blocks patches that rewrite existing MEMORY history", () => {
+    const firstLine = readFileSync(path.join(REPO_ROOT, "MEMORY.md"), "utf8").split("\n")[0];
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: MEMORY.md
+@@
+-${firstLine}
++# Rewritten history
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("MEMORY.md");
+  });
+
+  it.each(["memory.md", "Memory.md"])("blocks the case-variant %s path", (filePath) => {
+    const firstLine = readFileSync(path.join(REPO_ROOT, "MEMORY.md"), "utf8").split("\n")[0];
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: ${filePath}
+@@
+-${firstLine}
++# Rewritten history
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("MEMORY.md");
+  });
+
+  it("allows a prepend that preserves the current MEMORY content", () => {
+    const prefix = readFileSync(path.join(REPO_ROOT, "MEMORY.md"), "utf8").split("\n").slice(0, 2);
+    const context = prefix.map((line) => ` ${line}`).join("\n");
+    const { code } = runCodexPatch(`*** Begin Patch
+*** Update File: MEMORY.md
+@@
++## D-999999 — Test-only prepend
++
+${context}
+*** End Patch`);
+
+    expect(code).toBe(0);
+  });
+
+  it("blocks an anchored MEMORY insertion with empty context", () => {
+    const blankContext = " ";
+    const { code, stderr } = runCodexPatch(`*** Begin Patch
+*** Update File: MEMORY.md
+@@ historical entry
++Injected history
+${blankContext}
+*** End Patch`);
+
+    expect(code).toBe(2);
+    expect(stderr).toContain("MEMORY.md");
+  });
+
+  it("allows an ordinary patch outside protected files", () => {
+    const { code } = runCodexPatch(`*** Begin Patch
+*** Update File: README.md
+@@
+-old
++new
+*** End Patch`);
+
+    expect(code).toBe(0);
+  });
+
+  it("fails closed when the Codex patch payload is malformed", () => {
+    const missingCommand = runCodexPatch();
+    const missingEndMarker = runCodexPatch("*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new");
+
+    expect(missingCommand.code).toBe(2);
+    expect(missingEndMarker.code).toBe(2);
+    expect(missingCommand.stderr).toContain("malformed apply_patch");
   });
 });

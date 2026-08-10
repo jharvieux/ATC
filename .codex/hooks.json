@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/block-spec-memory-edits.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/lint-changed-file.mjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/typecheck-changed-workspaces.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/run-affected-tests.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && CLAUDE_PROJECT_DIR=\"$repo_root\" node \"$repo_root/.claude/hooks/migration-runbook-reminder.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}
