@@ -547,6 +547,12 @@ jobs:
         # job still exits 0 — same no-secrets posture as rls-snapshot-diff.
         run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
 
+      - name: Run ledger routine-identity PostgreSQL fixtures
+        # Uses the same SUPABASE_DB_URL test target already migrated and
+        # serialized by this job. The fixture rolls back every DDL change;
+        # absent secrets make its describeIf guard skip for Dependabot.
+        run: pnpm vitest run tests/integration/scripts/check-ledger-objects-db.test.ts
+
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest

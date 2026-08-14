@@ -89,6 +89,30 @@ describe("parseRoutineEvents", () => {
 });
 
 describe("parseMigrations", () => {
+  it("ignores create and drop text inside function and DO bodies", () => {
+    const ledger = parseMigrations([{ version: "1", sql: `
+      CREATE TABLE public.kept (id uuid);
+      CREATE FUNCTION public.mutate_ledger() RETURNS void LANGUAGE plpgsql AS $function$
+      BEGIN
+        CREATE TABLE public.from_function (id uuid);
+        DROP TABLE public.kept;
+      END
+      $function$;
+      DO $block$
+      BEGIN
+        CREATE TABLE public.from_do (id uuid);
+        DROP TABLE public.kept;
+        EXECUTE 'CREATE TABLE public.from_execute (id uuid)';
+        EXECUTE 'DROP TABLE public.kept';
+      END
+      $block$;
+    ` }]);
+
+    expect(ledger.expected).toEqual([
+      { kind: "table", schema: "public", name: "kept", migration: "1" },
+    ]);
+  });
+
   it("uses migration order and removes every dependent object when a table is dropped", () => {
     const ledger = parseMigrations([
       {

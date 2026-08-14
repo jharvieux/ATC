@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { resolveRoutineArgumentOid, type RoutineArgument } from "../../../scripts/check-ledger-objects";
+import {
+  readCatalogFunctions,
+  resolveRoutineArgumentOid,
+  type RoutineArgument,
+} from "../../../scripts/check-ledger-objects";
 
-const dbUrl = process.env.SUPABASE_TEST_DB_URL;
+const dbUrl = process.env.SUPABASE_DB_URL;
 const describeIf = dbUrl ? describe : describe.skip;
 
 function argument(type: string): RoutineArgument {
@@ -103,6 +107,39 @@ describeIf("ledger routine identity PostgreSQL resolution", () => {
       } catch (error) {
         if (!(error instanceof Rollback)) throw error;
       }
+    });
+  }, 30000);
+
+  it("does not let procedures or aggregates satisfy function identities", async () => {
+    await withDatabase(async (sql) => {
+      const schema = `ledger_kind_${randomUUID().replaceAll("-", "")}`;
+      const routine = "identity_collision";
+      class Rollback extends Error {}
+      try {
+        await sql.begin(async (tx) => {
+          await tx`CREATE SCHEMA ${tx(schema)}`;
+          await tx`CREATE FUNCTION ${tx(schema)}.${tx(routine)}(text) RETURNS text LANGUAGE sql AS $$ SELECT $1 $$`;
+          await tx`CREATE PROCEDURE ${tx(schema)}.${tx(routine)}(integer) LANGUAGE sql AS $$ SELECT 1 $$`;
+          await tx`CREATE AGGREGATE ${tx(schema)}.${tx(routine)}(bigint) (SFUNC = int8pl, STYPE = bigint, INITCOND = '0')`;
+
+          const rows = (await readCatalogFunctions(tx)).filter((row) => row.schema === schema && row.name === routine);
+          expect(rows).toEqual([
+            expect.objectContaining({
+              kind: "function",
+              identityArgOids: [25],
+            }),
+          ]);
+
+          throw new Rollback();
+        });
+      } catch (error) {
+        if (!(error instanceof Rollback)) throw error;
+      }
+
+      const [remaining] = await sql<Array<{ schema: string | null }>>`
+        SELECT to_regnamespace(${schema})::text AS schema
+      `;
+      expect(remaining?.schema).toBeNull();
     });
   }, 30000);
 });

@@ -44,18 +44,22 @@ interface LedgerState {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ALL_TARGETS: readonly Target[] = ["main", "rag"];
-const IDENT = '(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_$]*)';
-const QUALIFIED = `(?:${IDENT}\\.)?${IDENT}`;
+const IDENT = '(?:"(?:""|[^"])+"|[a-zA-Z_][a-zA-Z0-9_$]*)';
+const QUALIFIED = `(?:${IDENT}\\s*\\.\\s*)?${IDENT}`;
 
 function unquote(value: string): string {
   return value.replace(/^"|"$/g, "").replace(/""/g, '"');
 }
 
 function qualifiedName(value: string): { schema: string; name: string } {
-  const parts = value.split(".");
-  return parts.length === 1
-    ? { schema: "public", name: unquote(parts[0]) }
-    : { schema: unquote(parts[0]), name: unquote(parts[1]) };
+  const tokens = lexSql(value);
+  if (isIdentifierToken(tokens[0]) && tokens.length === 1) {
+    return { schema: "public", name: tokens[0].value };
+  }
+  if (isIdentifierToken(tokens[0]) && tokens[1]?.value === "." && isIdentifierToken(tokens[2]) && tokens.length === 3) {
+    return { schema: tokens[0].value, name: tokens[2].value };
+  }
+  throw new Error(`invalid qualified object name "${value}"`);
 }
 
 function key(object: Pick<CatalogObject, "kind" | "schema" | "name" | "parent" | "identityArgOids">): string {
@@ -174,6 +178,31 @@ function lexSql(source: string): SqlToken[] {
     tokens.push({ kind: "symbol", raw: char, value: char, start, end: index });
   }
   return tokens;
+}
+
+function topLevelStatements(source: string): SqlToken[][] {
+  const statements: SqlToken[][] = [];
+  let statement: SqlToken[] = [];
+  let parentheses = 0;
+  let brackets = 0;
+  for (const token of lexSql(source)) {
+    if (token.value === ";" && parentheses === 0 && brackets === 0) {
+      if (statement.length > 0) statements.push(statement);
+      statement = [];
+      continue;
+    }
+    statement.push(token);
+    if (token.value === "(") parentheses += 1;
+    else if (token.value === ")") parentheses -= 1;
+    else if (token.value === "[") brackets += 1;
+    else if (token.value === "]") brackets -= 1;
+  }
+  if (statement.length > 0) statements.push(statement);
+  return statements;
+}
+
+function statementSource(tokens: SqlToken[], retainLiterals = false): string {
+  return tokens.map((token) => token.kind === "literal" && !retainLiterals ? "NULL" : token.raw).join(" ");
 }
 
 function isKeyword(token: SqlToken | undefined, keyword: string): boolean {
@@ -319,10 +348,6 @@ export async function materializeRoutineIdentities(
   };
 }
 
-function stripComments(sql: string): string {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
-}
-
 export function parseMigrations(
   migrations: Array<{ version: string; sql: string }>,
 ): LedgerState {
@@ -345,89 +370,97 @@ export function parseMigrations(
 
   for (const migration of migrations) {
     routineEvents.push(...parseRoutineEvents(migration.sql, migration.version));
-    const sql = stripComments(migration.sql);
-    const events: Array<{ at: number; run: () => void }> = [];
-    const matches = (
-      expression: RegExp,
-      action: (match: RegExpExecArray) => void,
-    ): void => {
-      for (const match of sql.matchAll(expression)) {
-        events.push({ at: match.index, run: () => action(match) });
-      }
-    };
-
-    matches(new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?(TABLE|MATERIALIZED\\s+VIEW|VIEW|TYPE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
-      const { schema, name } = qualifiedName(match[2]);
-      const kind = match[1].toUpperCase().replace(/\s+/g, "_").toLowerCase() as ObjectKind;
-      put({ kind, schema, name, migration: migration.version });
-      if (kind === "table" && schema === "public") mentionedPublicTables.add(name);
-    });
-    matches(new RegExp(`\\bDROP\\s+(TABLE|MATERIALIZED\\s+VIEW|VIEW|TYPE)\\s+(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
-      const { schema, name } = qualifiedName(match[2]);
-      const kind = match[1].toUpperCase().replace(/\s+/g, "_").toLowerCase() as ObjectKind;
-      remove({ kind, schema, name });
-      if (kind === "table") {
-        removeTableDependents(schema, name);
-        if (schema === "public") mentionedPublicTables.add(name);
-      } else if (kind === "type") {
-        for (const [objectKey, object] of objects) {
-          if (object.kind === "enum_value" && object.schema === schema && object.parent === name) objects.delete(objectKey);
-        }
-      }
-    });
-    matches(new RegExp(`\\bCREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?(${QUALIFIED})\\s+ON\\s+(?:ONLY\\s+)?(${QUALIFIED})`, "gi"), (match) => {
-      const index = qualifiedName(match[1]);
-      const table = qualifiedName(match[2]);
-      const schema = match[1].includes(".") ? index.schema : table.schema;
-      put({ kind: "index", schema, name: index.name, parent: table.name, migration: migration.version });
-      indexParents.set(`${schema}.${index.name}`, table.name);
-    });
-    matches(new RegExp(`\\bDROP\\s+INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
-      const index = qualifiedName(match[1]);
-      const parent = indexParents.get(`${index.schema}.${index.name}`);
-      remove({ kind: "index", schema: index.schema, name: index.name, parent });
-    });
-    matches(new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?TRIGGER\\s+(${IDENT})[\\s\\S]*?\\bON\\s+(${QUALIFIED})`, "gi"), (match) => {
-      const table = qualifiedName(match[2]);
-      put({ kind: "trigger", schema: table.schema, name: unquote(match[1]), parent: table.name, migration: migration.version });
-    });
-    matches(new RegExp(`\\bDROP\\s+TRIGGER\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})\\s+ON\\s+(${QUALIFIED})`, "gi"), (match) => {
-      const table = qualifiedName(match[2]);
-      remove({ kind: "trigger", schema: table.schema, name: unquote(match[1]), parent: table.name });
-    });
-    matches(new RegExp(`\\bALTER\\s+TABLE\\s+(?:ONLY\\s+)?(${QUALIFIED})([\\s\\S]*?);`, "gi"), (match) => {
-      const table = qualifiedName(match[1]);
-      const operations: Array<{ at: number; run: () => void }> = [];
-      const clauses = (
+    for (const statement of topLevelStatements(migration.sql)) {
+      const sql = statementSource(statement);
+      const sqlWithLiterals = statementSource(statement, true);
+      const events: Array<{ at: number; run: () => void }> = [];
+      const matches = (
         expression: RegExp,
-        action: (clause: RegExpExecArray) => void,
+        action: (match: RegExpExecArray) => void,
       ): void => {
-        for (const clause of match[2].matchAll(expression)) {
-          operations.push({ at: clause.index, run: () => action(clause) });
+        for (const match of sql.matchAll(expression)) {
+          events.push({ at: match.index, run: () => action(match) });
         }
       };
-      clauses(new RegExp(`\\bADD\\s+(?:COLUMN\\s+)?(?!CONSTRAINT\\b)(?:IF\\s+NOT\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
-        put({ kind: "column", schema: table.schema, name: unquote(clause[1]), parent: table.name, migration: migration.version });
-      });
-      clauses(new RegExp(`\\bDROP\\s+COLUMN\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
-        remove({ kind: "column", schema: table.schema, name: unquote(clause[1]), parent: table.name });
-      });
-      clauses(new RegExp(`\\bADD\\s+CONSTRAINT\\s+(${IDENT})`, "gi"), (clause) => {
-        put({ kind: "constraint", schema: table.schema, name: unquote(clause[1]), parent: table.name, migration: migration.version });
-      });
-      clauses(new RegExp(`\\bDROP\\s+CONSTRAINT\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
-        remove({ kind: "constraint", schema: table.schema, name: unquote(clause[1]), parent: table.name });
-      });
-      operations.sort((a, b) => a.at - b.at);
-      for (const operation of operations) operation.run();
-    });
-    matches(new RegExp(`\\bALTER\\s+TYPE\\s+(${QUALIFIED})\\s+ADD\\s+VALUE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?'((?:''|[^'])*)'`, "gi"), (match) => {
-      const type = qualifiedName(match[1]);
-      put({ kind: "enum_value", schema: type.schema, name: match[2].replace(/''/g, "'"), parent: type.name, migration: migration.version });
-    });
 
-    events.sort((a, b) => a.at - b.at);
-    for (const event of events) event.run();
+      matches(new RegExp(`^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(TABLE|MATERIALIZED\\s+VIEW|VIEW|TYPE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
+        const { schema, name } = qualifiedName(match[2]);
+        const kind = match[1].toUpperCase().replace(/\s+/g, "_").toLowerCase() as ObjectKind;
+        put({ kind, schema, name, migration: migration.version });
+        if (kind === "table" && schema === "public") mentionedPublicTables.add(name);
+      });
+      matches(new RegExp(`^DROP\\s+(TABLE|MATERIALIZED\\s+VIEW|VIEW|TYPE)\\s+(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
+        const { schema, name } = qualifiedName(match[2]);
+        const kind = match[1].toUpperCase().replace(/\s+/g, "_").toLowerCase() as ObjectKind;
+        remove({ kind, schema, name });
+        if (kind === "table") {
+          removeTableDependents(schema, name);
+          if (schema === "public") mentionedPublicTables.add(name);
+        } else if (kind === "type") {
+          for (const [objectKey, object] of objects) {
+            if (object.kind === "enum_value" && object.schema === schema && object.parent === name) objects.delete(objectKey);
+          }
+        }
+      });
+      matches(new RegExp(`^CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?(${QUALIFIED})\\s+ON\\s+(?:ONLY\\s+)?(${QUALIFIED})`, "gi"), (match) => {
+        const index = qualifiedName(match[1]);
+        const table = qualifiedName(match[2]);
+        const schema = match[1].includes(".") ? index.schema : table.schema;
+        put({ kind: "index", schema, name: index.name, parent: table.name, migration: migration.version });
+        indexParents.set(`${schema}.${index.name}`, table.name);
+      });
+      matches(new RegExp(`^DROP\\s+INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
+        const index = qualifiedName(match[1]);
+        const parent = indexParents.get(`${index.schema}.${index.name}`);
+        remove({ kind: "index", schema: index.schema, name: index.name, parent });
+      });
+      matches(new RegExp(`^CREATE\\s+(?:OR\\s+REPLACE\\s+)?TRIGGER\\s+(${IDENT})[\\s\\S]*?\\bON\\s+(${QUALIFIED})`, "gi"), (match) => {
+        const table = qualifiedName(match[2]);
+        put({ kind: "trigger", schema: table.schema, name: unquote(match[1]), parent: table.name, migration: migration.version });
+      });
+      matches(new RegExp(`^DROP\\s+TRIGGER\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})\\s+ON\\s+(${QUALIFIED})`, "gi"), (match) => {
+        const table = qualifiedName(match[2]);
+        remove({ kind: "trigger", schema: table.schema, name: unquote(match[1]), parent: table.name });
+      });
+      matches(new RegExp(`^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(${QUALIFIED})([\\s\\S]*)$`, "gi"), (match) => {
+        const table = qualifiedName(match[1]);
+        const operations: Array<{ at: number; run: () => void }> = [];
+        const clauses = (
+          expression: RegExp,
+          action: (clause: RegExpExecArray) => void,
+        ): void => {
+          for (const clause of match[2].matchAll(expression)) {
+            operations.push({ at: clause.index, run: () => action(clause) });
+          }
+        };
+        clauses(new RegExp(`\\bADD\\s+(?:COLUMN\\s+)?(?!CONSTRAINT\\b)(?:IF\\s+NOT\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
+          put({ kind: "column", schema: table.schema, name: unquote(clause[1]), parent: table.name, migration: migration.version });
+        });
+        clauses(new RegExp(`\\bDROP\\s+COLUMN\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
+          remove({ kind: "column", schema: table.schema, name: unquote(clause[1]), parent: table.name });
+        });
+        clauses(new RegExp(`\\bADD\\s+CONSTRAINT\\s+(${IDENT})`, "gi"), (clause) => {
+          put({ kind: "constraint", schema: table.schema, name: unquote(clause[1]), parent: table.name, migration: migration.version });
+        });
+        clauses(new RegExp(`\\bDROP\\s+CONSTRAINT\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})`, "gi"), (clause) => {
+          remove({ kind: "constraint", schema: table.schema, name: unquote(clause[1]), parent: table.name });
+        });
+        operations.sort((a, b) => a.at - b.at);
+        for (const operation of operations) operation.run();
+      });
+      for (const match of sqlWithLiterals.matchAll(new RegExp(`^ALTER\\s+TYPE\\s+(${QUALIFIED})\\s+ADD\\s+VALUE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?'((?:''|[^'])*)'`, "gi"))) {
+        events.push({
+          at: match.index,
+          run: () => {
+            const type = qualifiedName(match[1]);
+            put({ kind: "enum_value", schema: type.schema, name: match[2].replace(/''/g, "'"), parent: type.name, migration: migration.version });
+          },
+        });
+      }
+
+      events.sort((a, b) => a.at - b.at);
+      for (const event of events) event.run();
+    }
   }
 
   return {
@@ -474,6 +507,27 @@ export function readMigrations(dir: string): Array<{ version: string; sql: strin
 }
 
 type QuerySql = postgres.Sql | postgres.TransactionSql;
+
+export async function readCatalogFunctions(sql: QuerySql): Promise<Array<{
+  kind: ObjectKind;
+  schema: string;
+  name: string;
+  identityArgs: string;
+  identityArgOids: number[];
+}>> {
+  return sql`
+    SELECT 'function' AS kind, n.nspname AS schema, p.proname AS name,
+           pg_catalog.pg_get_function_identity_arguments(p.oid) AS "identityArgs",
+           ARRAY(
+             SELECT arg_oid::int
+             FROM unnest(p.proargtypes) WITH ORDINALITY AS input(arg_oid, position)
+             ORDER BY position
+           ) AS "identityArgOids"
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE p.prokind IN ('f', 'w')
+  `;
+}
 
 function percentTypeReference(candidate: string): { schema: string; table: string; column: string; array: boolean } | undefined {
   const tokens = lexSql(candidate);
@@ -580,16 +634,7 @@ async function catalogObjects(
     const indexes = await sql<Array<{ kind: ObjectKind; schema: string; name: string; parent: string }>>`
       SELECT 'index' AS kind, schemaname AS schema, indexname AS name, tablename AS parent FROM pg_catalog.pg_indexes
     `;
-    const functions = await sql<Array<{ kind: ObjectKind; schema: string; name: string; identityArgs: string; identityArgOids: number[] }>>`
-      SELECT 'function' AS kind, n.nspname AS schema, p.proname AS name,
-             pg_catalog.pg_get_function_identity_arguments(p.oid) AS "identityArgs",
-             ARRAY(
-               SELECT arg_oid::int
-               FROM unnest(p.proargtypes) WITH ORDINALITY AS input(arg_oid, position)
-               ORDER BY position
-             ) AS "identityArgOids"
-      FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    `;
+    const functions = await readCatalogFunctions(sql);
     const types = await sql<Array<{ kind: ObjectKind; schema: string; name: string }>>`
       SELECT 'type' AS kind, n.nspname AS schema, t.typname AS name
       FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
@@ -660,7 +705,7 @@ async function main(): Promise<void> {
       console[result.status === "drift" ? "error" : "log"](result.message);
       drift ||= result.status === "drift";
     } catch (error) {
-      console.error(`[${target}] ERROR connecting to DB: ${redactSecrets(error)}`);
+      console.error(`[${target}] LEDGER CHECK FAILED: ${redactSecrets(error)}`);
       drift = true;
     }
   }
@@ -669,7 +714,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    console.error("check-ledger-objects: unexpected error:", redactSecrets(error));
+    console.error("check-ledger-objects failed:", redactSecrets(error));
     process.exit(1);
   });
 }
