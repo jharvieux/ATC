@@ -661,6 +661,31 @@ describe("RLS integration", () => {
     expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
   });
 
+  it.each([
+    ["sibling block", "    { var [assertIsolationQuery] = [async () => {}]; }\n"],
+    ["sibling if", "    if (false) { var assertIsolationQuery = async () => {}; }\n"],
+    ["sibling loop", "    while (false) { var assertIsolationQuery = async () => {}; }\n"],
+    ["sibling switch", "    switch (0) { case 1: var assertIsolationQuery = async () => {}; }\n"],
+    ["sibling try", "    try { var assertIsolationQuery = async () => {}; } catch {}\n"],
+  ])("rejects a function-scoped witness var hoisted from a %s", (_shape, declaration) => {
+    const shadowed = REAL_DB_COVERAGE.replace(
+      '    const db = createClient("https://db.example.test", "anon-key");',
+      `${declaration}    const db = createClient("https://db.example.test", "anon-key");`,
+    );
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
+  it.each([
+    ["nested function", "    function unrelated() { var assertIsolationQuery = async () => {}; }\n"],
+    ["nested class", "    class Unrelated { method() { var assertIsolationQuery = async () => {}; } }\n"],
+  ])("does not treat a var inside a %s as shadowing the imported witness", (_shape, declaration) => {
+    const legitimate = REAL_DB_COVERAGE.replace(
+      '    const db = createClient("https://db.example.test", "anon-key");',
+      `${declaration}    const db = createClient("https://db.example.test", "anon-key");`,
+    );
+    expect(annotationErrorFor(legitimate)).toBeUndefined();
+  });
+
   it("rejects a DB operation without the canonical isolation assertion", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',

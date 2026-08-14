@@ -822,10 +822,39 @@ function isolationWitnessError(
       statement.declarationList.declarations.some((declaration) => bindingNameContains(declaration.name))
     );
   };
+  const functionHasHoistedVar = (fn: ts.FunctionLikeDeclaration): boolean => {
+    if (!fn.body) return false;
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found) return;
+      if (
+        node !== fn.body &&
+        (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))
+      ) {
+        return;
+      }
+      if (
+        ts.isVariableDeclarationList(node) &&
+        !(node.flags & ts.NodeFlags.BlockScoped) &&
+        node.declarations.some((declaration) => bindingNameContains(declaration.name))
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(fn.body);
+    return found;
+  };
   let scope: ts.Node | undefined = witness.parent;
   while (scope && !ts.isSourceFile(scope)) {
-    if (ts.isFunctionLike(scope) && scope.parameters.some((parameter) => bindingNameContains(parameter.name))) {
-      return "coverage test shadows the imported canonical isolation witness";
+    if (ts.isFunctionLike(scope)) {
+      if (
+        scope.parameters.some((parameter) => bindingNameContains(parameter.name)) ||
+        functionHasHoistedVar(scope)
+      ) {
+        return "coverage test shadows the imported canonical isolation witness";
+      }
     }
     if (
       ((ts.isFunctionExpression(scope) && scope.name?.text === binding) ||
