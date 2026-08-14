@@ -65,7 +65,10 @@ interface MockCall {
 }
 
 function factoryReplacesExport(factory: ts.Expression | undefined, exportName: string, sf: ts.SourceFile): boolean {
-  if (!factory) return false;
+  if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
+  const originalLoader = factory.parameters[0]?.name;
+  if (!originalLoader || !ts.isIdentifier(originalLoader)) return false;
+
   const declarations = new Map<string, ts.Expression[]>();
   const collectDeclarations = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
@@ -91,39 +94,76 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
     return undefined;
   };
 
-  const containsReplacement = (node: ts.Node, checking = new Set<string>()): boolean => {
-    if (ts.isIdentifier(node)) {
-      if (checking.has(node.text)) return false;
-      const values = declarations.get(node.text);
-      if (!values) return false;
-      checking.add(node.text);
-      const found = values.some((value) => containsReplacement(value, checking));
-      checking.delete(node.text);
-      return found;
-    }
-    if (ts.isObjectLiteralExpression(node)) {
-      for (const property of node.properties) {
-        if (ts.isSpreadAssignment(property)) {
-          if (containsReplacement(property.expression, checking)) return true;
-          continue;
-        }
-        let propertyName: string | undefined;
-        if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
-          propertyName = property.name.text;
-        } else if (ts.isComputedPropertyName(property.name)) {
-          propertyName = staticPropertyName(property.name.expression);
-          if (propertyName === undefined) return true;
-        }
-        if (propertyName === exportName) return true;
-      }
-    }
-    let found = false;
-    ts.forEachChild(node, (child) => {
-      if (!found && containsReplacement(child, checking)) found = true;
-    });
-    return found;
+  const unwrapSpread = (input: ts.Expression): ts.Expression => {
+    let expression = unwrapExpression(input);
+    while (ts.isAwaitExpression(expression)) expression = unwrapExpression(expression.expression);
+    return expression;
   };
-  return containsReplacement(factory);
+  const applyObject = (
+    object: ts.ObjectLiteralExpression,
+    incoming: boolean[],
+    checking: ReadonlySet<string>,
+  ): boolean[] => {
+    let states = incoming;
+    for (const property of object.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        states = states.flatMap((state) => applySpread(property.expression, state, checking));
+        continue;
+      }
+      let propertyName: string | undefined;
+      if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
+        propertyName = property.name.text;
+      } else if (ts.isComputedPropertyName(property.name)) {
+        propertyName = staticPropertyName(property.name.expression);
+      }
+      if (propertyName === undefined || propertyName === exportName) states = [false];
+    }
+    return states;
+  };
+  const applySpread = (input: ts.Expression, incoming: boolean, checking: ReadonlySet<string>): boolean[] => {
+    const expression = unwrapSpread(input);
+    if (
+      ts.isCallExpression(expression) &&
+      ts.isIdentifier(expression.expression) &&
+      expression.expression.text === originalLoader.text
+    ) {
+      return [true];
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return [
+        ...applySpread(expression.whenTrue, incoming, checking),
+        ...applySpread(expression.whenFalse, incoming, checking),
+      ];
+    }
+    if (ts.isObjectLiteralExpression(expression)) return applyObject(expression, [incoming], checking);
+    if (ts.isIdentifier(expression)) {
+      if (checking.has(expression.text)) return [false];
+      const values = declarations.get(expression.text);
+      if (!values?.length) return [false];
+      const nextChecking = new Set(checking).add(expression.text);
+      return values.flatMap((value) => applySpread(value, incoming, nextChecking));
+    }
+    return [false];
+  };
+  const returnedStates = (returned: ts.Expression): boolean[] => {
+    const expression = unwrapExpression(returned);
+    if (ts.isConditionalExpression(expression)) {
+      return [...returnedStates(expression.whenTrue), ...returnedStates(expression.whenFalse)];
+    }
+    return ts.isObjectLiteralExpression(expression) ? applyObject(expression, [false], new Set()) : [false];
+  };
+
+  const returns: ts.Expression[] = [];
+  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) returns.push(factory.body);
+  else if (factory.body) {
+    const collectReturns = (node: ts.Node) => {
+      if (node !== factory.body && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
+      ts.forEachChild(node, collectReturns);
+    };
+    collectReturns(factory.body);
+  }
+  return returns.some((returned) => returnedStates(returned).some((preserved) => !preserved));
 }
 
 function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {

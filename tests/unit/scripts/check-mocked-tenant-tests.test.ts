@@ -168,6 +168,38 @@ describe("findMockedTenantTests", () => {
     },
   );
 
+  it.each([
+    ["Supabase", "@supabase/supabase-js", "createClient"],
+    ["Postgres", "postgres", "default"],
+  ])("rejects ordered trailing %s spread overrides", (_kind, specifier, protectedExport) => {
+    const factories = [
+      `async (importOriginal) => ({ ...(await importOriginal()), ...runtimeOverrides })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...getRuntimeOverrides() })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...{ ...runtimeOverrides } })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...(process.env.USE_OVERRIDE ? {} : { ${protectedExport}: vi.fn() }) })`,
+      `async (importOriginal) => { const replacements = { ${protectedExport}: vi.fn() }; return { ...(await importOriginal()), ...replacements }; }`,
+    ];
+    for (const factory of factories) {
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js", "createClient"],
+    ["Postgres", "postgres", "default"],
+  ])("accepts ordered %s spreads when the protected export finishes original", (_kind, specifier, protectedExport) => {
+    const factories = [
+      `async (importOriginal) => ({ ...runtimeOverrides, ...(await importOriginal()) })`,
+      `async (importOriginal) => ({ ${protectedExport}: vi.fn(), ...(await importOriginal()) })`,
+      `async (importOriginal) => { const helpers = { helper: vi.fn() }; return { ...(await importOriginal()), ...helpers }; }`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...(process.env.FIRST_SHAPE ? { helper: true } : { other: true }) })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), metadata: { ${protectedExport}: vi.fn() } })`,
+    ];
+    for (const factory of factories) {
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toEqual([]);
+    }
+  });
+
   it("stays silent on a DB mock when no test claims isolation coverage", () => {
     const src = `
 import { vi, it } from "vitest";
@@ -641,6 +673,34 @@ describe("RLS integration", () => {
   it("accepts a partial witness mock with a statically unrelated computed key", () => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => ({ ...(await importOriginal()), ["helper" + "Fn"]: vi.fn() }));`;
     expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+  });
+
+  it("rejects ordered trailing witness spread overrides", () => {
+    const factories = [
+      `async (importOriginal) => ({ ...(await importOriginal()), ...runtimeOverrides })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...getRuntimeOverrides() })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...{ ...runtimeOverrides } })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...(process.env.USE_OVERRIDE ? {} : { assertIsolationQuery: vi.fn() }) })`,
+      `async (importOriginal) => { const replacements = { assertIsolationQuery: vi.fn() }; return { ...(await importOriginal()), ...replacements }; }`,
+    ];
+    for (const factory of factories) {
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
+    }
+  });
+
+  it("accepts ordered witness spreads when the protected export finishes original", () => {
+    const factories = [
+      `async (importOriginal) => ({ ...runtimeOverrides, ...(await importOriginal()) })`,
+      `async (importOriginal) => ({ assertIsolationQuery: vi.fn(), ...(await importOriginal()) })`,
+      `async (importOriginal) => { const helpers = { helper: vi.fn() }; return { ...(await importOriginal()), ...helpers }; }`,
+      `async (importOriginal) => ({ ...(await importOriginal()), ...(process.env.FIRST_SHAPE ? { helper: true } : { other: true }) })`,
+      `async (importOriginal) => ({ ...(await importOriginal()), metadata: { assertIsolationQuery: vi.fn() } })`,
+    ];
+    for (const factory of factories) {
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+    }
   });
 
   it.each([
