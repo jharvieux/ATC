@@ -24,11 +24,9 @@
 // silent-retention bug the old "governed by the submission lifecycle" comment
 // papered over.
 //
-// help_sessions itself stays EXEMPT: bug_submissions and feature_requests carry
-// a NOT NULL FK to help_sessions(id), so deleting a session out from under a
-// still-retained submission would violate that FK. Sessions age out indirectly
-// once their submissions are purged (a future sweep could reclaim orphaned
-// sessions; out of scope here).
+// help_sessions are reclaimed only after both child tables have been swept and
+// an anti-join proves no submission survives. The NOT NULL foreign keys remain
+// the final guard if a child is inserted between candidate selection and delete.
 //
 // Windows are conservative defaults, each overridable via env; the operator
 // should confirm them against CCPA / §25 retention requirements (see PR body).
@@ -80,6 +78,8 @@ const DELETE_TARGETS: DeleteTarget[] = [
 // stripe_webhook_events raw_event PII scrub window.
 const STRIPE_RAW_EVENT_ENV = "STRIPE_WEBHOOK_RAW_EVENT_RETENTION_DAYS";
 const STRIPE_RAW_EVENT_DEFAULT_DAYS = 90;
+const HELP_SESSIONS_ENV = "HELP_SESSIONS_RETENTION_DAYS";
+const HELP_SESSIONS_DEFAULT_DAYS = 365;
 
 export function resolveWindowDays(envVar: string, defaultDays: number): number {
   const raw = Number(process.env[envVar] ?? defaultDays);
@@ -137,6 +137,30 @@ async function purgeTable(
   }
 
   return { table: target.table, affected: deleted, window_days: windowDays };
+}
+
+async function purgeOrphanedHelpSessions(
+  svc: ReturnType<typeof createServiceRoleClient>,
+): Promise<TableResult> {
+  const windowDays = resolveWindowDays(HELP_SESSIONS_ENV, HELP_SESSIONS_DEFAULT_DAYS);
+  const cutoff = cutoffIso(windowDays);
+  let deleted = 0;
+
+  // serial-await-ok: each batch must finish before the next bounded RPC call.
+  for (let batch = 0; batch < MAX_BATCHES; batch++) {
+    const { data, error } = await svc.rpc("purge_orphaned_help_sessions", {
+      p_cutoff: cutoff,
+      p_limit: DELETE_BATCH,
+    });
+    if (error) {
+      throw new Error(`data-retention-purge: help_sessions purge failed: ${error.message}`);
+    }
+    const affected = data ?? 0;
+    deleted += affected;
+    if (affected < DELETE_BATCH) break;
+  }
+
+  return { table: "help_sessions", affected: deleted, window_days: windowDays };
 }
 
 async function scrubStripeRawEvents(
@@ -219,6 +243,16 @@ export const dataRetentionPurge = inngest.createFunction(
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    try {
+      results.push(await step.run("purge-help_sessions", () => purgeOrphanedHelpSessions(svc)));
+    } catch (err) {
+      results.push({
+        table: "help_sessions",
+        affected: 0,
+        window_days: resolveWindowDays(HELP_SESSIONS_ENV, HELP_SESSIONS_DEFAULT_DAYS),
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     try {
       results.push(await step.run("purge-stripe_webhook_events", () => scrubStripeRawEvents(svc)));

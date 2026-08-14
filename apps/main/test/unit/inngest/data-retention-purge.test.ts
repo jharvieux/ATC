@@ -23,9 +23,12 @@ vi.mock("@/inngest/client", () => ({
 const mockWriteAuditLog = vi.fn(async (_row: { action: string; [k: string]: unknown }) => {});
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 
-// Rows may carry a lifecycle timestamp so `.lt()` NULL-semantics can be modeled
-// (open rows keep a NULL closed_at/decided_at and must never be selected).
-type Batch = Array<{ id: string; closed_at?: string | null; decided_at?: string | null }>;
+// Rows can carry the optional lifecycle timestamps used by submission purges.
+type Batch = Array<{
+  id: string;
+  closed_at?: string | null;
+  decided_at?: string | null;
+}>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
 let mutateErrors: Record<string, { message: string } | undefined>;
@@ -37,7 +40,9 @@ const calls = {
   deletes: [] as Array<{ table: string; col: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
   inserts: [] as Array<{ table: string }>,
+  rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 };
+let rpcResults: Array<{ data: number | null; error: { message: string } | null }>;
 
 function makeChain(table: string) {
   return {
@@ -60,14 +65,14 @@ function makeChain(table: string) {
           // Model `.lt(col, cutoff)` three-valued logic: a NULL never matches, so
           // open rows (NULL lifecycle ts) survive. A row that doesn't model the
           // column at all keeps the legacy always-eligible behavior.
-          const filtered = ltCol
-            ? batch.filter((row) => {
-                const v = (row as Record<string, unknown>)[ltCol!];
-                if (v === undefined) return true;
-                if (v === null) return false;
-                return Date.parse(v as string) < Date.parse(ltCutoff!);
-              })
-            : batch;
+          const filtered = batch.filter((row) => {
+            if (ltCol) {
+              const v = (row as Record<string, unknown>)[ltCol!];
+              if (v === null) return false;
+              if (v !== undefined && Date.parse(v as string) >= Date.parse(ltCutoff!)) return false;
+            }
+            return true;
+          });
           return Promise.resolve({ data: filtered, error: null });
         },
       };
@@ -99,7 +104,13 @@ function makeChain(table: string) {
 }
 
 vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({ from: (t: string) => makeChain(t) }),
+  createServiceRoleClient: () => ({
+    from: (t: string) => makeChain(t),
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.rpc.push({ fn, args });
+      return Promise.resolve(rpcResults.shift() ?? { data: 0, error: null });
+    },
+  }),
 }));
 
 function ids(n: number, prefix = "x"): Batch {
@@ -141,6 +152,8 @@ beforeEach(() => {
   calls.deletes = [];
   calls.updates = [];
   calls.inserts = [];
+  calls.rpc = [];
+  rpcResults = [];
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.stubEnv("STAGING_MODE", "");
@@ -239,6 +252,45 @@ describe("data-retention-purge — #1590", () => {
     expect(frDeletes).toHaveLength(1);
     expect(frDeletes[0]!.ids).toEqual(["fr-closed"]); // open row preserved
     expect(result.results!.find((r) => r.table === "feature_requests")!.affected).toBe(1);
+  });
+
+  it("purges help_sessions through the bounded orphan-only RPC", async () => {
+    rpcResults = [{ data: 1, error: null }];
+    const now = Date.now();
+
+    const result = await runPurge();
+
+    expect(calls.rpc).toHaveLength(1);
+    expect(calls.rpc[0]).toMatchObject({
+      fn: "purge_orphaned_help_sessions",
+      args: { p_limit: 1000 },
+    });
+    expect(Math.abs(Date.parse(calls.rpc[0]!.args.p_cutoff as string) - (now - 365 * 24 * 60 * 60 * 1000))).toBeLessThan(60_000);
+    expect(calls.deletes.some((call) => call.table === "help_sessions")).toBe(false);
+    expect(result.results!.find((r) => r.table === "help_sessions")!.affected).toBe(1);
+  });
+
+  it("names help_sessions RPC failures, continues later work, and fails loud", async () => {
+    rpcResults = [{ data: null, error: { message: "connection reset" } }];
+    selectQueues["stripe_webhook_events"] = [ids(1, "s")];
+
+    await expect(runPurge()).rejects.toThrow(
+      "help_sessions (data-retention-purge: help_sessions purge failed: connection reset)",
+    );
+
+    expect(calls.updates.some((call) => call.table === "stripe_webhook_events")).toBe(true);
+    expect(mockWriteAuditLog).toHaveBeenCalledOnce();
+    const audit = mockWriteAuditLog.mock.calls[0]![0] as {
+      action: string;
+      changes: { results: Array<{ table: string; error: string | null }> };
+    };
+    expect(audit.action).toBe("data_retention_purge_partial_failure");
+    expect(audit.changes.results).toContainEqual(
+      expect.objectContaining({
+        table: "help_sessions",
+        error: "data-retention-purge: help_sessions purge failed: connection reset",
+      }),
+    );
   });
 
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {
