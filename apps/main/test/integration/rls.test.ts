@@ -289,6 +289,21 @@ describeIf("RLS integration", () => {
         VALUES (${oldFeatureId}, ${fx.tenantA.id}, ${fx.userA.rowId}, 'tenant_admin')
       `;
 
+      await expect(
+        fx.sql.begin(async (tx) => {
+          await tx`SET LOCAL ROLE service_role`;
+          await tx`SELECT set_config('request.jwt.claims', '{"role":"authenticated"}', true)`;
+          await tx`
+            SELECT public.purge_orphaned_help_sessions(${new Date().toISOString()}, 1000)
+          `;
+        }),
+      ).rejects.toSatisfy((error: unknown) => (error as { code?: string }).code === "42501");
+
+      const afterRejectedCall = await fx.sql<{ id: string }[]>`
+        SELECT id FROM public.help_sessions WHERE id = ${oldOrphanId}
+      `;
+      expect(afterRejectedCall).toEqual([{ id: oldOrphanId }]);
+
       const purged = await fx.admin.rpc("purge_orphaned_help_sessions", {
         p_cutoff: new Date().toISOString(),
         p_limit: 1000,

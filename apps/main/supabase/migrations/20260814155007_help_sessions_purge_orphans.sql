@@ -10,8 +10,10 @@
 -- RPC keeps the predicates and the 1,000-row bound at the privilege boundary.
 --
 -- SECURITY DEFINER uses an empty search_path and every user object is qualified,
--- preventing caller-controlled object shadowing. Only service_role can execute;
--- its direct DELETE privilege on public.help_sessions remains revoked. Function
+-- preventing caller-controlled object shadowing. The body also requires the
+-- signed PostgREST JWT role claim to be service_role, so an accidental future
+-- EXECUTE grant cannot turn this into a privileged write primitive. Direct
+-- DELETE on public.help_sessions remains revoked from service_role. Function
 -- EXECUTE grants are not included in the table/sequence grants snapshot, so no
 -- snapshot regeneration is required.
 
@@ -26,6 +28,12 @@ as $$
 declare
   v_deleted integer;
 begin
+  if coalesce(auth.jwt()->>'role', '') <> 'service_role' then
+    raise exception using
+      errcode = '42501',
+      message = 'purge_orphaned_help_sessions requires service_role';
+  end if;
+
   if p_cutoff is null then
     raise exception 'p_cutoff is required';
   end if;
@@ -78,4 +86,4 @@ revoke execute on function public.purge_orphaned_help_sessions(timestamptz, inte
 grant execute on function public.purge_orphaned_help_sessions(timestamptz, integer) to service_role;
 
 comment on function public.purge_orphaned_help_sessions(timestamptz, integer) is
-  '#2037: bounded aged-orphan help-session purge. SECURITY DEFINER enforces no bug or feature submission children; service_role-only.';
+  '#2037: bounded aged-orphan help-session purge. SECURITY DEFINER requires the service_role JWT claim and enforces no bug or feature submission children.';
