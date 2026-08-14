@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { snapshotSchemas } from "../../../scripts/rls-snapshot";
+import { snapshotRelations } from "../../../scripts/rls-snapshot";
 
-describe("snapshotSchemas", () => {
+describe("snapshotRelations", () => {
   it("includes storage.objects only for the main database target", () => {
-    expect(snapshotSchemas("main")).toEqual(["public", "storage.objects"]);
-    expect(snapshotSchemas("rag")).toEqual(["public"]);
+    expect(snapshotRelations("main")).toEqual(["public.*", "storage.objects"]);
+    expect(snapshotRelations("rag")).toEqual(["public.*"]);
   });
 });

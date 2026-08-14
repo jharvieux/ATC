@@ -1,7 +1,7 @@
 -- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY
 -- Target: main
 -- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql
--- Generated against schemas: public, storage.objects
+-- Generated against relations: public.*, storage.objects
 
 -- Tables with RLS enabled:
 -- public.abuse_recompute_drift_log (rls_enabled)
@@ -1767,4 +1767,3 @@ CREATE POLICY "imported_documents_tenant_select" ON storage.objects
 CREATE POLICY "quote_pdfs_tenant_select" ON storage.objects
   FOR SELECT TO authenticated
   USING (bucket_id = 'quote-pdfs'::text AND auth_user_in_tenant((regexp_match(name, '^tenant_([0-9a-f-]+)/'::text))[1]::uuid));
-

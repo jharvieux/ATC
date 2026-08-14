@@ -15,8 +15,8 @@ import postgres from "postgres";
 
 export type Target = "main" | "rag";
 
-export function snapshotSchemas(target: Target): readonly string[] {
-  return target === "main" ? ["public", "storage.objects"] : ["public"];
+export function snapshotRelations(target: Target): readonly string[] {
+  return target === "main" ? ["public.*", "storage.objects"] : ["public.*"];
 }
 
 function parseTarget(argv: string[]): Target {
@@ -60,8 +60,8 @@ interface PolicyRow {
 export async function generateSnapshot(target: Target = "main"): Promise<string> {
   const sql = postgres(resolveDbUrl(target), { max: 1, idle_timeout: 10 });
   try {
-    const schemas = snapshotSchemas(target);
-    const includeStorageObjects = schemas.includes("storage.objects");
+    const relations = snapshotRelations(target);
+    const includeStorageObjects = relations.includes("storage.objects");
     const tables = await sql<TableRow[]>`
       SELECT n.nspname AS schemaname, c.relname AS tablename, c.relrowsecurity AS rowsecurity
       FROM pg_class c
@@ -99,7 +99,9 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       "-- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY",
       `-- Target: ${target}`,
       `-- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=${target} > db/rls-snapshot-${target}.sql`,
-      `-- Generated against ${schemas.length === 1 ? "schema" : "schemas"}: ${schemas.join(", ")}`,
+      target === "main"
+        ? `-- Generated against relations: ${relations.join(", ")}`
+        : "-- Generated against schema: public",
       "",
     ];
 
