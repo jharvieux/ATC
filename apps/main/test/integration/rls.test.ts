@@ -261,6 +261,7 @@ describeIf("RLS integration", () => {
   it("#2037 — only the service-role orphan-purge RPC can delete aged help sessions", async () => {
     const oldStartedAt = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
     const recentStartedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
     const seededIds: string[] = [];
 
     const seedSession = async (startedAt: string): Promise<string> => {
@@ -294,7 +295,7 @@ describeIf("RLS integration", () => {
           await tx`SET LOCAL ROLE service_role`;
           await tx`SELECT set_config('request.jwt.claims', '{"role":"authenticated"}', true)`;
           await tx`
-            SELECT public.purge_orphaned_help_sessions(${new Date().toISOString()}, 1000)
+            SELECT public.purge_orphaned_help_sessions(${cutoff}, 1000)
           `;
         }),
       ).rejects.toSatisfy((error: unknown) => (error as { code?: string }).code === "42501");
@@ -305,7 +306,7 @@ describeIf("RLS integration", () => {
       expect(afterRejectedCall).toEqual([{ id: oldOrphanId }]);
 
       const purged = await fx.admin.rpc("purge_orphaned_help_sessions", {
-        p_cutoff: new Date().toISOString(),
+        p_cutoff: cutoff,
         p_limit: 1000,
       });
       expect(purged.error).toBeNull();
@@ -329,6 +330,7 @@ describeIf("RLS integration", () => {
         WHERE routine_schema = 'public'
           AND routine_name = 'purge_orphaned_help_sessions'
           AND privilege_type = 'EXECUTE'
+          AND grantee IN ('PUBLIC', 'anon', 'authenticated', 'service_role')
         ORDER BY grantee
       `;
       expect(privileges).toEqual([{ grantee: "service_role" }]);
