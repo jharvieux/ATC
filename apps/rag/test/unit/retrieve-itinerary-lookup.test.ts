@@ -56,6 +56,7 @@ describe("fetchItineraryLookupChunks (#826)", () => {
     expect(out[0]).toMatchObject({ authority_score: 0.9 });
   });
 
+  // @rls-covered-by apps/rag/test/integration/retrieval-scope-isolation.test.ts#itinerary lookup scope returns global and tenant A chunks, not tenant B
   it("drops a chunk resolving to another tenant's scope (second isolation layer)", async () => {
     const db = makeDb({
       itineraries: { data: [{ related_chunk_id: "g1" }, { related_chunk_id: "t-other" }], error: null },
