@@ -6,7 +6,8 @@
 --         fixups, in db-copy, which runs BEFORE deploy-staging's
 --         `supabase db push` (db-copy is a `needs:` of deploy-staging). That
 --         ordering is safe: these policies' owning migrations (bp34,
---         quote_pdfs) are already recorded in the migration ledger, so the
+--         quote_pdfs, and help_docs) are already recorded in the migration
+--         ledger, so the
 --         later `db push` treats them as already-applied and is a no-op for
 --         them either way — it neither recreates nor disturbs what this file
 --         just restored.
@@ -15,7 +16,8 @@
 --         DEPENDS ON a public object. Storage RLS policies on storage.objects
 --         reference public functions (auth_user_in_tenant / tenant_is_active),
 --         so CASCADE drops them. The migrations that originally created them
---         (bp34, quote_pdfs) are already in the migration ledger, so the
+--         (bp34, quote_pdfs, and help_docs) are already in the migration
+--         ledger, so the
 --         later `supabase db push` treats them as applied and does NOT recreate
 --         them — staging is left without storage RLS until this file re-applies
 --         it. See issue #1316.
