@@ -59,7 +59,7 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([["tenant_id", "tenant-abc"]]);
   });
 
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#bookings: userB cannot SELECT tenantA rows
+  // @rls-covered-by resources=table:public.bookings target=apps/main/test/integration/rls.test.ts#RLS integration BP05 domain tables RLS bookings: userB cannot SELECT tenantA rows
   it("scopes .from('bookings').update(...) with the tenant filter", () => {
     const qb = makeQueryBuilder();
     mockFrom.mockReturnValue(qb);
@@ -71,7 +71,7 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([["tenant_id", "tenant-abc"]]);
   });
 
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#bookings: userB cannot SELECT tenantA rows
+  // @rls-covered-by resources=table:public.bookings target=apps/main/test/integration/rls.test.ts#RLS integration BP05 domain tables RLS bookings: userB cannot SELECT tenantA rows
   it("scopes .from('bookings').delete() with the tenant filter", () => {
     const qb = makeQueryBuilder();
     mockFrom.mockReturnValue(qb);

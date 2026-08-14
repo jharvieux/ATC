@@ -59,7 +59,7 @@ describe("fetchShipLookupChunks", () => {
     expect(out[1]).toMatchObject({ authority_score: 0.8 }); // prefers manual override
   });
 
-  // @rls-covered-by apps/rag/test/integration/retrieval-scope-isolation.test.ts#ship lookup scope returns global and tenant A chunks, not tenant B
+  // @rls-covered-by resources=table:public.knowledge_chunks target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope ship lookup scope returns global and tenant A chunks, not tenant B
   it("drops chunks from a different tenant (second isolation layer)", async () => {
     const db = makeDb({
       knowledge_chunks: {
@@ -147,7 +147,7 @@ describe("fetchPortLookupChunks", () => {
     expect(out).toHaveLength(1);
   });
 
-  // @rls-covered-by apps/rag/test/integration/retrieval-scope-isolation.test.ts#port lookup scope returns global and tenant A chunks, not tenant B
+  // @rls-covered-by resources=table:public.itineraries,table:public.knowledge_chunks target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope port lookup scope returns global and tenant A chunks, not tenant B
   it("drops chunks from a different tenant (second isolation layer)", async () => {
     const db = makeDb({
       itineraries: { data: [{ related_chunk_id: "g1" }, { related_chunk_id: "other" }], error: null },
@@ -234,7 +234,7 @@ describe("fetchRegionLookupChunks", () => {
     expect(out[0]).toMatchObject({ match_score: 1, recency_score: 1, composite_confidence: 1 });
   });
 
-  // @rls-covered-by apps/rag/test/integration/retrieval-scope-isolation.test.ts#region lookup scope returns global and tenant A chunks, not tenant B
+  // @rls-covered-by resources=rpc:public.match_region_itinerary_chunks,table:public.knowledge_chunks target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope region lookup scope returns global and tenant A chunks, not tenant B
   it("drops chunks from a different tenant (second isolation layer)", async () => {
     const db = makeDb(
       {

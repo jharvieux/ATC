@@ -4,13 +4,15 @@
 // filters. These tests prove those predicates against real RAG tables with
 // global, same-tenant, and other-tenant rows.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
 
 const ragDbUrl = process.env.SUPABASE_RAG_DB_URL;
-const describeIf = ragDbUrl ? describe : describe.skip;
-
+if (process.env.RAG_SCOPE_DB_REQUIRED === "true" && !ragDbUrl) {
+  throw new Error("SUPABASE_RAG_DB_URL is required for critical RAG isolation coverage");
+}
 const tenantA = randomUUID();
 const tenantB = randomUUID();
 const chunkGlobal = randomUUID();
@@ -28,11 +30,7 @@ const zeroEmbedding = `[${Array(1536).fill(0).join(",")}]`;
 
 let sql: ReturnType<typeof postgres>;
 
-function ids(rows: Array<{ id: string }>): string[] {
-  return rows.map((row) => row.id).sort();
-}
-
-describeIf("seeded RAG retrieval scope", () => {
+describe.skipIf(!ragDbUrl)("seeded RAG retrieval scope", () => {
   beforeAll(async () => {
     sql = postgres(ragDbUrl!, { max: 1 });
 
@@ -85,74 +83,92 @@ describeIf("seeded RAG retrieval scope", () => {
   });
 
   it("asset hydration scope returns global and tenant A assets, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT asset_id AS id
-      FROM public.rag_media_assets
-      WHERE asset_id IN (${assetGlobal}, ${assetA}, ${assetB})
-        AND (scope = 'global' OR tenant_id = ${tenantA})
-    `;
-    expect(ids(rows)).toEqual([assetGlobal, assetA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT asset_id AS id
+        FROM public.rag_media_assets
+        WHERE asset_id IN (${assetGlobal}, ${assetA}, ${assetB})
+          AND (scope = 'global' OR tenant_id = ${tenantA})
+      `,
+      allowedIds: [assetGlobal, assetA],
+      deniedIds: [assetB],
+    });
   });
 
   it("chunk hydration scope returns global and tenant A chunks, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT id
-      FROM public.knowledge_chunks
-      WHERE id IN (${chunkGlobal}, ${chunkA}, ${chunkB})
-        AND (scope = 'global' OR tenant_id = ${tenantA})
-    `;
-    expect(ids(rows)).toEqual([chunkGlobal, chunkA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT id
+        FROM public.knowledge_chunks
+        WHERE id IN (${chunkGlobal}, ${chunkA}, ${chunkB})
+          AND (scope = 'global' OR tenant_id = ${tenantA})
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
   });
 
   it("itinerary lookup scope returns global and tenant A chunks, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT kc.id
-      FROM public.itineraries i
-      JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id
-      WHERE i.ship ILIKE ${`%${ship}%`}
-        AND i.departure_date = ${sailDate}
-        AND (kc.scope = 'global' OR kc.tenant_id = ${tenantA})
-    `;
-    expect(ids(rows)).toEqual([chunkGlobal, chunkA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT kc.id
+        FROM public.itineraries i
+        JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id
+        WHERE i.ship ILIKE ${`%${ship}%`}
+          AND i.departure_date = ${sailDate}
+          AND (kc.scope = 'global' OR kc.tenant_id = ${tenantA})
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
   });
 
   it("ship lookup scope returns global and tenant A chunks, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT id
-      FROM public.knowledge_chunks
-      WHERE ship_or_property ILIKE ${`%${ship}%`}
-        AND category IN ('deck_intel', 'ship_intel')
-        AND status = 'approved'
-        AND superseded_by_chunk_id IS NULL
-        AND embedding IS NOT NULL
-        AND sell_by_at IS NULL
-        AND (scope = 'global' OR tenant_id = ${tenantA})
-    `;
-    expect(ids(rows)).toEqual([chunkGlobal, chunkA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT id
+        FROM public.knowledge_chunks
+        WHERE ship_or_property ILIKE ${`%${ship}%`}
+          AND category IN ('deck_intel', 'ship_intel')
+          AND status = 'approved'
+          AND superseded_by_chunk_id IS NULL
+          AND embedding IS NOT NULL
+          AND sell_by_at IS NULL
+          AND (scope = 'global' OR tenant_id = ${tenantA})
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
   });
 
   it("port lookup scope returns global and tenant A chunks, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT kc.id
-      FROM public.itineraries i
-      JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id
-      WHERE i.departure_port ILIKE ${`%${port}%`}
-        AND i.departure_date = ${sailDate}
-        AND (kc.scope = 'global' OR kc.tenant_id = ${tenantA})
-    `;
-    expect(ids(rows)).toEqual([chunkGlobal, chunkA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT kc.id
+        FROM public.itineraries i
+        JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id
+        WHERE i.departure_port ILIKE ${`%${port}%`}
+          AND i.departure_date = ${sailDate}
+          AND (kc.scope = 'global' OR kc.tenant_id = ${tenantA})
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
   });
 
   it("region lookup scope returns global and tenant A chunks, not tenant B", async () => {
-    const rows = await sql<{ id: string }[]>`
-      SELECT kc.id
-      FROM public.match_region_itinerary_chunks(
-        ARRAY[${region}]::text[], ARRAY[]::text[], ${sailDate}::date,
-        ${sailDate}::date, ARRAY[]::text[], 12
-      ) matched
-      JOIN public.knowledge_chunks kc ON kc.id = matched.related_chunk_id
-      WHERE kc.scope = 'global' OR kc.tenant_id = ${tenantA}
-    `;
-    expect(ids(rows)).toEqual([chunkGlobal, chunkA].sort());
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT kc.id
+        FROM public.match_region_itinerary_chunks(
+          ARRAY[${region}]::text[], ARRAY[]::text[], ${sailDate}::date,
+          ${sailDate}::date, ARRAY[]::text[], 12
+        ) matched
+        JOIN public.knowledge_chunks kc ON kc.id = matched.related_chunk_id
+        WHERE kc.scope = 'global' OR kc.tenant_id = ${tenantA}
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
   });
 });

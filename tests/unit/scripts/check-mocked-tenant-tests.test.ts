@@ -18,24 +18,25 @@ const TSX = path.join(ROOT, "node_modules/.bin/tsx");
 const F = "apps/main/test/unit/notes.test.ts";
 const EMPTY = new Map<string, string>();
 const RLS_FILE = "apps/main/test/integration/rls.test.ts";
-const RLS_TEST = "bookings: userB cannot SELECT tenantA rows";
+const RLS_TEST = "RLS integration bookings: userB cannot SELECT tenantA rows";
+const RLS_RESOURCE = "table:public.bookings";
 const REAL_DB_COVERAGE = `
 import { createClient } from "@supabase/supabase-js";
-import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
 const DB_URL = process.env.SUPABASE_DB_URL;
-it("${RLS_TEST}", async () => {
-  const db = createClient("https://db.example.test", "anon-key");
-  await db.from("bookings").select("id");
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const db = createClient("https://db.example.test", "anon-key");
+    await assertIsolationQuery({
+      query: () => db.from("bookings").select("id"),
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
 });
 `;
-const EMPTY_DB_COVERAGE = REAL_DB_COVERAGE.replace(
-  /async \(\) => \{[\s\S]*?\n\}\);/,
-  "async () => {});",
-);
-const PURE_DB_COVERAGE = REAL_DB_COVERAGE.replace(
-  /  const db =[\s\S]*?select\("id"\);/,
-  "  expect(1 + 1).toBe(2);",
-);
+const pointer = (testName = RLS_TEST, resources = RLS_RESOURCE) =>
+  `// @rls-covered-by resources=${resources} target=${RLS_FILE}#${testName}`;
 
 const claimTest = (body: string) => `
 import { describe, it, vi } from "vitest";
@@ -109,7 +110,7 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
   it("accepts a directly attached pointer to a runnable real-DB integration test", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
-      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
     );
     const files = new Map([[RLS_FILE, REAL_DB_COVERAGE]]);
     expect(findMockedTenantTests(F, source, files)).toEqual([]);
@@ -118,7 +119,7 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
   it("fails loud when an annotation points to a missing integration test", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
-      `  // @rls-covered-by ${RLS_FILE}#missing test title\n  it("enforces tenant isolation on the list query", async () => {});`,
+      `  ${pointer("missing test title")}\n  it("enforces tenant isolation on the list query", async () => {});`,
     );
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, REAL_DB_COVERAGE]]));
     expect(result).toHaveLength(1);
@@ -128,7 +129,7 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
   it("fails loud when an annotation target mocks the DB client", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
-      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
     );
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("@supabase/supabase-js");`;
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
@@ -136,24 +137,85 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
     expect(result[0]?.annotationError).toMatch(/coverage target mocks/);
   });
 
-  it("fails loud when the exact target test is empty despite real-DB file markers", () => {
+  it("rejects a DB operation without the canonical isolation assertion", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
-      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
     );
-    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, EMPTY_DB_COVERAGE]]));
+    const operationOnly = REAL_DB_COVERAGE.replace(
+      /    await assertIsolationQuery\(\{[\s\S]*?    \}\);/,
+      '    await db.from("bookings").select("id");',
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, operationOnly]]));
     expect(result).toHaveLength(1);
-    expect(result[0]?.annotationError).toMatch(/does not execute an awaited Supabase\/Postgres operation/);
+    expect(result[0]?.annotationError).toMatch(/exactly one canonical isolation witness/);
   });
 
-  it("fails loud when the exact target test only makes a pure assertion", () => {
+  it("rejects a suffix-only title instead of binding to a longer full title", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
-      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+      `  ${pointer("bookings: userB cannot SELECT tenantA rows")}\n  it("enforces tenant isolation on the list query", async () => {});`,
     );
-    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, PURE_DB_COVERAGE]]));
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, REAL_DB_COVERAGE]]));
     expect(result).toHaveLength(1);
-    expect(result[0]?.annotationError).toMatch(/does not execute an awaited Supabase\/Postgres operation/);
+    expect(result[0]?.annotationError).toMatch(/coverage test not found/);
+  });
+
+  it("rejects duplicate exact full titles", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const duplicate = REAL_DB_COVERAGE.replace("\n});\n", `
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const db = createClient("https://db.example.test", "anon-key");
+    await assertIsolationQuery({
+      query: () => db.from("bookings").select("id"),
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`);
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, duplicate]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/title is ambiguous.*2 matches/);
+  });
+
+  it("rejects an isolation witness querying a different resource", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const wrongResource = REAL_DB_COVERAGE.replace('db.from("bookings")', 'db.from("notes")');
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, wrongResource]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*table:public.notes/);
+  });
+
+  it("rejects a witness that returns unrelated data after a DB operation", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const unrelatedResult = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      'query: async () => { await db.from("bookings").select("id"); return []; }',
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, unrelatedResult]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects an isolation witness with no denied IDs", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const noDeniedIds = REAL_DB_COVERAGE.replace('deniedIds: ["booking-a"]', "deniedIds: []");
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, noDeniedIds]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/deniedIds must be a non-empty array literal/);
   });
 
   it("does not let a valid pointer annotate the following sibling test", () => {
@@ -161,7 +223,7 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
 import { describe, it, vi } from "vitest";
 vi.mock("@supabase/supabase-js");
 describe("notes route", () => {
-  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}
+  ${pointer()}
   it("enforces tenant isolation on the list query", async () => {});
   it("enforces tenant isolation on the detail query", async () => {});
 });

@@ -203,7 +203,7 @@ describe("POST /api/auth/transfer-session", () => {
     expect(res.status).toBe(409);
   });
 
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#anonymous_sessions: userB cannot SELECT tenantA rows
+  // @rls-covered-by resources=table:public.anonymous_sessions target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies anonymous_sessions: userB cannot SELECT tenantA rows
   it("a session belonging to a different tenant → 404 (don't leak cross-tenant existence)", async () => {
     // The route's .eq("tenant_id", ctx.tenant_id) filter is what makes this
     // happen — we model it by having the mock return null.
@@ -225,7 +225,7 @@ describe("GET /api/auth/transfer-session/preview", () => {
     expect(res.status).toBe(400);
   });
 
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#anonymous_sessions: userB cannot SELECT tenantA rows
+  // @rls-covered-by resources=table:public.anonymous_sessions target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies anonymous_sessions: userB cannot SELECT tenantA rows
   it("returns 404 when the session belongs to another tenant (same shape as missing)", async () => {
     mocks.sessionMaybeSingle.mockResolvedValue({ data: null, error: null });
     const res = await PREVIEW_GET(getReq(`?session=${SESSION_ID}`));

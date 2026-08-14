@@ -19,11 +19,10 @@
 //
 // A genuine app-layer unit test may declare a mechanically checked companion
 // integration test immediately above its registration:
-//   // @rls-covered-by apps/main/test/integration/rls.test.ts#bookings: userB cannot SELECT tenantA rows
-// The target must be a runnable real-DB integration test whose exact callback
-// performs an awaited Supabase/Postgres operation; missing, mocked, empty,
-// assertion-only, or stale pointers fail even while the legacy count baseline
-// is being burned down.
+//   // @rls-covered-by resources=table:public.bookings target=apps/main/test/integration/rls.test.ts#RLS integration bookings: userB cannot SELECT tenantA rows
+// The target must resolve to exactly one full runnable title. Its callback must
+// await the canonical isolation witness, which directly owns a real query for
+// the declared resource(s), an exact allow-list, and a non-empty deny-list.
 //
 // FREEZE-EXISTING / BLOCK-NEW: the existing claimed-but-mocked tests (#2028's
 // ~53 raw Harvey sites; fewer under this port's precision boundary) are frozen
@@ -47,8 +46,11 @@ const BASELINE_FILE = path.join(ROOT, "scripts/mocked-tenant-tests-baseline.txt"
 const TENANT_CLAIM =
   /tenant[- ]?(isolation|scope[ds]?|filter)|cross[- ]?tenant|(another|other|wrong|second)[- ]tenant'?s?\b|\brls\b|isolation|row[- ]?level/i;
 const SUPABASE_CLIENT_FACTORY = /\bcreate(Server|Browser|Route|Middleware)?Client\s*\(/;
-const COVERAGE_POINTER = /@rls-covered-by\s+([^\s#]+)#([^\r\n]+)/g;
+const COVERAGE_POINTER = /@rls-covered-by[^\r\n]*/g;
+const COVERAGE_POINTER_FORMAT = /^@rls-covered-by resources=([^\s]+) target=([^\s#]+)#(.+)$/;
+const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
+const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
 
 function parse(p: string, text: string): ts.SourceFile {
   return ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true, /x$/.test(p) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -163,57 +165,216 @@ function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   return tests;
 }
 
-function hasAuthoritativeDbOperation(testCall: ts.CallExpression): boolean {
-  const callback = testCall.arguments.find(
-    (arg): arg is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg),
-  );
-  if (!callback) return false;
+function isAwaitedWithin(node: ts.Node, boundary: ts.Node): boolean {
+  for (let current = node.parent; current && current !== boundary; current = current.parent) {
+    if (ts.isAwaitExpression(current)) return true;
+  }
+  return false;
+}
 
-  let found = false;
-  const isAwaited = (node: ts.Node): boolean => {
-    for (let current = node.parent; current && current !== callback; current = current.parent) {
-      if (ts.isAwaitExpression(current)) return true;
+function witnessBinding(sf: ts.SourceFile, targetPath: string): string | undefined {
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier.startsWith(".")) continue;
+    const resolved = path.posix
+      .normalize(path.posix.join(path.posix.dirname(targetPath), specifier))
+      .replace(/\.[cm]?[jt]sx?$/, "");
+    if (resolved !== ISOLATION_WITNESS_PATH) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const imported = bindings.elements.find(
+      (element) => (element.propertyName?.text ?? element.name.text) === "assertIsolationQuery",
+    );
+    if (imported) return imported.name.text;
+  }
+  return undefined;
+}
+
+function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
+  const property = object.properties.find(
+    (candidate): candidate is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(candidate) &&
+      ((ts.isIdentifier(candidate.name) || ts.isStringLiteralLike(candidate.name)) && candidate.name.text === name),
+  );
+  return property?.initializer;
+}
+
+function postgresBindings(sf: ts.SourceFile): Set<string> {
+  const factories = new Set<string>();
+  for (const statement of sf.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "postgres" &&
+      statement.importClause?.name
+    ) {
+      factories.add(statement.importClause.name.text);
+    }
+  }
+
+  const bindings = new Set<string>();
+  const isFactoryCall = (node: ts.Expression): node is ts.CallExpression =>
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text);
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isFactoryCall(node.initializer)) {
+      bindings.add(node.name.text);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      isFactoryCall(node.right)
+    ) {
+      bindings.add(node.left.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return bindings;
+}
+
+function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.SourceFile): string[] {
+  const resources = new Set<string>();
+  const sqlBindings = postgresBindings(sf);
+  const returned: ts.Expression[] = [];
+  if (ts.isArrowFunction(query) && !ts.isBlock(query.body)) {
+    returned.push(query.body);
+  } else {
+    const collectReturns = (node: ts.Node) => {
+      if (node !== query.body && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node) && node.expression) returned.push(node.expression);
+      ts.forEachChild(node, collectReturns);
+    };
+    collectReturns(query.body);
+  }
+
+  const isSupabaseFromOperation = (fromCall: ts.CallExpression): boolean => {
+    for (let current = fromCall.parent; current && current !== query; current = current.parent) {
+      if (
+        ts.isCallExpression(current) &&
+        ts.isPropertyAccessExpression(current.expression) &&
+        ["select", "insert", "update", "delete", "upsert"].includes(current.expression.name.text)
+      ) {
+        return true;
+      }
     }
     return false;
   };
   const visit = (node: ts.Node) => {
-    if (found) return;
-    // An unused helper declared inside the test does not make the test execute
-    // a DB operation. Only inspect the runnable callback's own control flow.
-    if (node !== callback && ts.isFunctionLike(node)) return;
-    if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && node.tag.text === "sql" && isAwaited(node)) {
-      found = true;
-      return;
-    }
+    if (ts.isFunctionLike(node)) return;
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      (node.expression.name.text === "from" || node.expression.name.text === "rpc") &&
-      isAwaited(node)
+      (node.expression.name.text === "from" || node.expression.name.text === "rpc")
     ) {
-      found = true;
-      return;
+      const name = node.arguments[0];
+      if (
+        name &&
+        ts.isStringLiteralLike(name) &&
+        (node.expression.name.text === "rpc" || isSupabaseFromOperation(node))
+      ) {
+        const kind = node.expression.name.text === "from" ? "table" : "rpc";
+        resources.add(`${kind}:public.${name.text}`);
+      }
+    }
+    if (
+      ts.isTaggedTemplateExpression(node) &&
+      ts.isIdentifier(node.tag) &&
+      sqlBindings.has(node.tag.text)
+    ) {
+      const sql = node.template.getText(sf);
+      const relation = /\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:([a-z_][a-z0-9_]*)\.)?([a-z_][a-z0-9_]*)(\s*\()?/gi;
+      for (const match of sql.matchAll(relation)) {
+        const schema = match[1] ?? "public";
+        const name = match[2];
+        if (!name) continue;
+        resources.add(`${match[3] ? "rpc" : "table"}:${schema}.${name}`);
+      }
     }
     ts.forEachChild(node, visit);
   };
+  for (const expression of returned) visit(expression);
+  return [...resources].sort();
+}
+
+function isolationWitnessError(
+  testCall: ts.CallExpression,
+  sf: ts.SourceFile,
+  targetPath: string,
+  expectedResources: string[],
+): string | undefined {
+  const callback = testCall.arguments.find(
+    (arg): arg is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg),
+  );
+  if (!callback) return "coverage test has no runnable callback";
+  const binding = witnessBinding(sf, targetPath);
+  if (!binding) return "coverage test does not import the canonical assertIsolationQuery witness";
+
+  const witnesses: ts.CallExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (node !== callback && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === binding) witnesses.push(node);
+    ts.forEachChild(node, visit);
+  };
   visit(callback);
-  return found;
+  if (witnesses.length !== 1) return `coverage test must execute exactly one canonical isolation witness (found ${witnesses.length})`;
+
+  const witness = witnesses[0]!;
+  if (!isAwaitedWithin(witness, callback)) return "coverage test does not await its isolation witness";
+  const options = witness.arguments[0];
+  if (!options || !ts.isObjectLiteralExpression(options)) return "isolation witness options must be an object literal";
+  const query = propertyInitializer(options, "query");
+  const allowedIds = propertyInitializer(options, "allowedIds");
+  const deniedIds = propertyInitializer(options, "deniedIds");
+  if (!query || (!ts.isArrowFunction(query) && !ts.isFunctionExpression(query))) {
+    return "isolation witness query must be an inline function";
+  }
+  if (!allowedIds || !ts.isArrayLiteralExpression(allowedIds)) {
+    return "isolation witness allowedIds must be an array literal";
+  }
+  if (!deniedIds || !ts.isArrayLiteralExpression(deniedIds) || deniedIds.elements.length === 0) {
+    return "isolation witness deniedIds must be a non-empty array literal";
+  }
+
+  const actualResources = queryResources(query, sf);
+  if (actualResources.join(",") !== expectedResources.join(",")) {
+    return `isolation witness resource mismatch (declared ${expectedResources.join(",")}; queried ${actualResources.join(",") || "none"})`;
+  }
+  return undefined;
 }
 
 interface CoveragePointer {
   file: string;
   testName: string;
+  resources: string[];
+  parseError?: string;
 }
 
 function coveragePointer(node: ts.CallExpression, sf: ts.SourceFile): CoveragePointer | undefined {
   const trivia = sf.text.slice(node.getFullStart(), node.getStart(sf));
   const matches = [...trivia.matchAll(COVERAGE_POINTER)];
   const match = matches.at(-1);
-  if (!match?.[1] || !match[2]) return undefined;
-  return { file: path.posix.normalize(match[1]), testName: match[2].trim() };
+  if (!match?.[0]) return undefined;
+  if (matches.length !== 1) {
+    return { file: "", testName: "", resources: [], parseError: "multiple @rls-covered-by annotations attach to one test" };
+  }
+  const parsed = COVERAGE_POINTER_FORMAT.exec(match[0].trim());
+  if (!parsed?.[1] || !parsed[2] || !parsed[3]) {
+    return { file: "", testName: "", resources: [], parseError: "annotation must use resources=<kind:schema.name,...> target=<file>#<exact full title>" };
+  }
+  const resources = parsed[1].split(",").sort();
+  if (resources.some((resource) => !COVERAGE_RESOURCE.test(resource))) {
+    return { file: "", testName: "", resources, parseError: `invalid coverage resource list: ${parsed[1]}` };
+  }
+  if (new Set(resources).size !== resources.length) {
+    return { file: "", testName: "", resources, parseError: `duplicate coverage resource: ${parsed[1]}` };
+  }
+  return { file: path.posix.normalize(parsed[2]), testName: parsed[3].trim(), resources };
 }
 
 function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<string, string>): string | undefined {
+  if (pointer.parseError) return pointer.parseError;
   if (!INTEGRATION_TEST_PATH.test(pointer.file) || pointer.file.includes("..")) {
     return `coverage target must be an apps/*/test/integration/*.test.* path, got "${pointer.file}"`;
   }
@@ -228,14 +389,16 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
     .find((description): description is string => description !== undefined);
   if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
-  const targetTest = runnableTests(targetSf).find(
-    (test) => test.fullName === pointer.testName || test.fullName.endsWith(` ${pointer.testName}`),
-  );
-  if (!targetTest) {
+  const targetTests = runnableTests(targetSf).filter((test) => test.fullName === pointer.testName);
+  if (targetTests.length === 0) {
     return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;
   }
-  if (!hasAuthoritativeDbOperation(targetTest.call)) {
-    return `coverage test does not execute an awaited Supabase/Postgres operation in ${pointer.file}: "${pointer.testName}"`;
+  if (targetTests.length > 1) {
+    return `coverage test title is ambiguous in ${pointer.file}: "${pointer.testName}" (${targetTests.length} matches)`;
+  }
+  const witnessError = isolationWitnessError(targetTests[0]!.call, targetSf, pointer.file, pointer.resources);
+  if (witnessError) {
+    return `${witnessError} in ${pointer.file}: "${pointer.testName}"`;
   }
   return undefined;
 }

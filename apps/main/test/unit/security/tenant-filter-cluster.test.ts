@@ -77,7 +77,7 @@ function req(body: unknown = {}): Request {
 }
 
 describe("F-001/#715 — trip_resources POST is tenant-scoped (the HIGH cross-tenant read)", () => {
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#trip_resources: userB cannot SELECT tenantA rows
+  // @rls-covered-by resources=table:public.trip_resources target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies trip_resources: userB cannot SELECT tenantA rows
   it("scopes the idempotency read by tenant_id, so another tenant's booking UUID can't return its row", async () => {
     const eqLog: string[] = [];
     // #715: booking ownership check added — supply the booking row so the handler proceeds past it.
@@ -94,7 +94,7 @@ describe("F-001/#715 — trip_resources POST is tenant-scoped (the HIGH cross-te
     expect(eqLog).toContain("trip_resources.booking_id");
   });
 
-  // @rls-covered-by apps/main/test/integration/rls.test.ts#user in tenant A cannot SELECT rows from tenant B
+  // @rls-covered-by resources=table:public.users target=apps/main/test/integration/rls.test.ts#RLS integration user in tenant A cannot SELECT rows from tenant B
   it("also scopes the sibling agent users read by tenant_id (F-041 hardening, same handler)", async () => {
     const eqLog: string[] = [];
     // #715: booking ownership check added — supply the booking row so handler proceeds.

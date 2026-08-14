@@ -543,13 +543,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run RLS + RAG scope + Stripe-webhook integration suites
-        # Absent secrets (Dependabot PRs get none) => haveSupabase/haveAll/
-        # describeIf in these suites evaluate false => describe.skip => 0 tests
-        # run, job still exits 0 — same no-secrets posture as rls-snapshot-diff.
-        run: |
-          pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
-          pnpm -C apps/rag exec vitest run test/integration/retrieval-scope-isolation.test.ts
+      - name: Require the RAG isolation test DB
+        id: rag-db-preflight
+        env:
+          # Use the PR author, not github.actor: a human can rerun a Dependabot
+          # PR, but GitHub still withholds repository secrets from that PR.
+          RAG_SCOPE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: pnpm tsx scripts/check-critical-rag-db.ts
+
+      - name: Run RLS + Stripe-webhook integration suites
+        run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
+
+      - name: Run seeded RAG scope integration suite
+        if: steps.rag-db-preflight.outputs.run_rag_scope == 'true'
+        env:
+          # The suite throws rather than describe.skip if this evidence-bearing
+          # invocation ever reaches it without the preflighted connection.
+          RAG_SCOPE_DB_REQUIRED: "true"
+        run: pnpm -C apps/rag exec vitest run test/integration/retrieval-scope-isolation.test.ts
 
   contract-tests:
     name: Contract Tests

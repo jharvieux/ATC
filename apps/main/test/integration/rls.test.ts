@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -26,8 +27,6 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DB_URL = process.env.SUPABASE_DB_URL;
 
 const haveSupabase = Boolean(SUPABASE_URL && ANON_KEY && SERVICE_KEY && DB_URL);
-
-const describeIf = haveSupabase ? describe : describe.skip;
 
 // Random prefix scopes all fixtures to this test run; afterAll uses it to
 // clean up even if intermediate assertions fail.
@@ -66,7 +65,7 @@ async function authedClient(
   return client;
 }
 
-describeIf("RLS integration", () => {
+describe.skipIf(!haveSupabase)("RLS integration", () => {
   beforeAll(async () => {
     const admin = createClient(SUPABASE_URL!, SERVICE_KEY!, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -171,13 +170,14 @@ describeIf("RLS integration", () => {
 
   it("user in tenant A cannot SELECT rows from tenant B", async () => {
     const clientA = await authedClient(fx.userA.email, fx.userA.password);
-    const { data, error } = await clientA
-      .from("users")
-      .select("id, tenant_id")
-      .eq("tenant_id", fx.tenantB.id);
-
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    await assertIsolationQuery({
+      query: () => clientA
+        .from("users")
+        .select("id, tenant_id")
+        .eq("tenant_id", fx.tenantB.id),
+      allowedIds: [],
+      deniedIds: [fx.userB.rowId],
+    });
   });
 
   it("user in suspended tenant CAN SELECT but CANNOT INSERT", async () => {
@@ -267,6 +267,7 @@ describeIf("RLS integration", () => {
     let convAId: string;
     let convSuspId: string;
     let bookingAId: string;
+    let commissionAId: string;
 
     beforeAll(async () => {
       if (!fx) return;
@@ -305,7 +306,7 @@ describeIf("RLS integration", () => {
       bookingAId = bookingA.id;
 
       // commissions (tenantA, references bookingAId)
-      await sql`
+      const [commission] = await sql<{ id: string }[]>`
         INSERT INTO public.commissions (
           tenant_id, booking_id,
           commissionable_fare_cents, commission_rate, platform_split_rate,
@@ -317,7 +318,10 @@ describeIf("RLS integration", () => {
           10000, 0,
           8000, 2000, 8000
         )
+        RETURNING id
       `;
+      if (!commission) throw new Error("commission A insert failed");
+      commissionAId = commission.id;
 
       // subcontractors (tenantA)
       await sql`
@@ -365,12 +369,14 @@ describeIf("RLS integration", () => {
 
     it("conversations: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("conversations")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("conversations")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [convAId],
+      });
     });
 
     it("conversations: suspended user CANNOT SELECT or INSERT (auth_user_can_access_conversation requires active status)", async () => {
@@ -404,12 +410,14 @@ describeIf("RLS integration", () => {
 
     it("bookings: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("bookings")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("bookings")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [bookingAId],
+      });
     });
 
     it("bookings: userA CAN SELECT own tenant row", async () => {
@@ -424,12 +432,14 @@ describeIf("RLS integration", () => {
 
     it("commissions: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("commissions")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("commissions")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [commissionAId],
+      });
     });
 
     it("subcontractors: userB cannot SELECT tenantA rows", async () => {
@@ -484,6 +494,7 @@ describeIf("RLS integration", () => {
   });
 
   describe("unit-scope companion policies", () => {
+    let customerMemoryAId: string;
     let anonymousSessionAId: string;
     let groupAId: string;
     let forumAId: string;
@@ -496,10 +507,13 @@ describeIf("RLS integration", () => {
       if (!fx) return;
       const { sql, tenantA, userA } = fx;
 
-      await sql`
+      const [customerMemory] = await sql<{ id: string }[]>`
         INSERT INTO public.customer_memories (tenant_id, user_id, notes_freeform)
         VALUES (${tenantA.id}, ${userA.rowId}, 'unit-scope companion fixture')
+        RETURNING id
       `;
+      if (!customerMemory) throw new Error("customer memory insert failed");
+      customerMemoryAId = customerMemory.id;
 
       const [anonymousSession] = await sql<{ id: string }[]>`
         INSERT INTO public.anonymous_sessions (tenant_id, last_active_at)
@@ -587,72 +601,86 @@ describeIf("RLS integration", () => {
 
     it("customer_memories: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("customer_memories")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("customer_memories")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [customerMemoryAId],
+      });
     });
 
     it("anonymous_sessions: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("anonymous_sessions")
-        .select("id")
-        .eq("id", anonymousSessionAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("anonymous_sessions")
+          .select("id")
+          .eq("id", anonymousSessionAId),
+        allowedIds: [],
+        deniedIds: [anonymousSessionAId],
+      });
     });
 
     it("groups: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("groups")
-        .select("id")
-        .eq("id", groupAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("groups")
+          .select("id")
+          .eq("id", groupAId),
+        allowedIds: [],
+        deniedIds: [groupAId],
+      });
     });
 
     it("forums: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("forums")
-        .select("id")
-        .eq("id", forumAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("forums")
+          .select("id")
+          .eq("id", forumAId),
+        allowedIds: [],
+        deniedIds: [forumAId],
+      });
     });
 
     it("forum_threads: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("forum_threads")
-        .select("id")
-        .eq("id", forumThreadAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("forum_threads")
+          .select("id")
+          .eq("id", forumThreadAId),
+        allowedIds: [],
+        deniedIds: [forumThreadAId],
+      });
     });
 
     it("import_queue: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("import_queue")
-        .select("id")
-        .eq("id", importQueueAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("import_queue")
+          .select("id")
+          .eq("id", importQueueAId),
+        allowedIds: [],
+        deniedIds: [importQueueAId],
+      });
     });
 
     it("trip_resources: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("trip_resources")
-        .select("id")
-        .eq("id", tripResourceAId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("trip_resources")
+          .select("id")
+          .eq("id", tripResourceAId),
+        allowedIds: [],
+        deniedIds: [tripResourceAId],
+      });
     });
   });
 
@@ -712,12 +740,14 @@ describeIf("RLS integration", () => {
 
     it("§12.1: userA cannot SELECT tenantB contact (contactBId)", async () => {
       const clientA = await authedClient(fx.userA.email, fx.userA.password);
-      const { data, error } = await clientA
-        .from("contacts")
-        .select("id")
-        .eq("id", contactBId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientA
+          .from("contacts")
+          .select("id")
+          .eq("id", contactBId),
+        allowedIds: [],
+        deniedIds: [contactBId],
+      });
     });
 
     it("§12.2: duplicate contact_relationship edge is rejected (UNIQUE 23505)", async () => {
