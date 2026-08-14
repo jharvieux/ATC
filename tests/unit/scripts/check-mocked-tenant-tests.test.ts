@@ -614,6 +614,53 @@ describe("RLS integration", () => {
     expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
   });
 
+  it.each([
+    [
+      "for-of initializer",
+      "  for (const assertIsolationQuery of [async () => {}]) {\n",
+    ],
+    [
+      "destructured for-of initializer",
+      "  for (const [assertIsolationQuery] of [[async () => {}]]) {\n",
+    ],
+    [
+      "for-in initializer",
+      "  for (const assertIsolationQuery in { fake: true }) {\n",
+    ],
+    [
+      "classic for initializer",
+      "  for (let assertIsolationQuery = async () => {}, once = true; once; once = false) {\n",
+    ],
+  ])("rejects a canonical witness shadowed by a %s", (_shape, loopStart) => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+        `${loopStart}  it("bookings: userB cannot SELECT tenantA rows", async () => {`,
+      )
+      .replace("  });\n});", "  });\n  }\n});");
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
+  it("rejects a named function-expression binding shadowing the canonical witness", () => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+        '  (function assertIsolationQuery() {\n  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+      )
+      .replace("  });\n});", "  });\n  })();\n});");
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
+  it("rejects a named class-expression binding shadowing the canonical witness", () => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+        '  (class assertIsolationQuery { static register() {\n  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+      )
+      .replace("  });\n});", "  });\n  }}).register();\n});");
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
   it("rejects a DB operation without the canonical isolation assertion", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',

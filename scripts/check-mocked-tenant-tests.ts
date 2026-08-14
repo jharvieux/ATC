@@ -809,7 +809,12 @@ function isolationWitnessError(
     return name.elements.some((element) => !ts.isOmittedExpression(element) && bindingNameContains(element.name));
   };
   const statementDeclaresBinding = (statement: ts.Statement): boolean => {
-    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+    if (
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)
+    ) {
       return statement.name?.text === binding;
     }
     return (
@@ -822,7 +827,27 @@ function isolationWitnessError(
     if (ts.isFunctionLike(scope) && scope.parameters.some((parameter) => bindingNameContains(parameter.name))) {
       return "coverage test shadows the imported canonical isolation witness";
     }
+    if (
+      ((ts.isFunctionExpression(scope) && scope.name?.text === binding) ||
+        (ts.isClassExpression(scope) && scope.name?.text === binding))
+    ) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
     if (ts.isBlock(scope) && scope.statements.some(statementDeclaresBinding)) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
+    if (
+      (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
+      scope.initializer &&
+      ts.isVariableDeclarationList(scope.initializer) &&
+      scope.initializer.declarations.some((declaration) => bindingNameContains(declaration.name))
+    ) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
+    if (
+      ts.isCaseBlock(scope) &&
+      scope.clauses.some((clause) => clause.statements.some(statementDeclaresBinding))
+    ) {
       return "coverage test shadows the imported canonical isolation witness";
     }
     if (ts.isCatchClause(scope) && scope.variableDeclaration && bindingNameContains(scope.variableDeclaration.name)) {
