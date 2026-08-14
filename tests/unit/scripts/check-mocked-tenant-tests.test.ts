@@ -38,6 +38,30 @@ describe("RLS integration", () => {
 const pointer = (testName = RLS_TEST, resources = RLS_RESOURCE) =>
   `// @rls-covered-by resources=${resources} target=${RLS_FILE}#${testName}`;
 
+const MUTATED_LOADER_FACTORIES = [
+  ["direct reassignment", "loader = fake;", "loader"],
+  ["conditional reassignment", "process.env.USE_FAKE ? loader = fake : 0;", "loader"],
+  ["logical expression reassignment", "process.env.USE_FAKE && (loader = fake);", "loader"],
+  ["logical AND assignment", "loader &&= fake;", "loader"],
+  ["logical OR assignment", "loader ||= fake;", "loader"],
+  ["nullish assignment", "loader ??= fake;", "loader"],
+  ["array destructuring assignment", "[loader] = [fake];", "loader"],
+  ["object destructuring assignment", "({ load: loader } = { load: fake });", "loader"],
+  ["nested mutator closure", "const mutate = () => { loader = fake; }; mutate();", "loader"],
+  ["nested mutator function", "function mutate() { loader = fake; } mutate();", "loader"],
+  ["reassigned alias funnel", "let alias = loader; alias = fake;", "alias"],
+] as const;
+
+const PROVEN_LOADER_FACTORIES = [
+  ["immutable aliases", "const alias = loader; const alias2 = alias;", "alias2"],
+  ["restored loader", "const pristine = loader; loader = fake; loader = pristine;", "loader"],
+  [
+    "branch-restored loader",
+    "const pristine = loader; if (process.env.USE_FAKE) loader = fake; loader = pristine;",
+    "loader",
+  ],
+] as const;
+
 const claimTest = (body: string) => `
 import { describe, it, vi } from "vitest";
 ${body}
@@ -111,6 +135,26 @@ describe("findMockedTenantTests", () => {
       expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toEqual([]);
     },
   );
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js"],
+    ["Postgres", "postgres"],
+  ])("rejects %s factories whose original loader provenance is mutated", (_kind, specifier) => {
+    for (const [_shape, mutation, callee] of MUTATED_LOADER_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${mutation} return { ...(await ${callee}()) }; }`;
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js"],
+    ["Postgres", "postgres"],
+  ])("accepts %s factories with proven restored or immutable loaders", (_kind, specifier) => {
+    for (const [_shape, setup, callee] of PROVEN_LOADER_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${setup} return { ...(await ${callee}()) }; }`;
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toEqual([]);
+    }
+  });
 
   it.each([
     ["bare loader mention", `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ note: importOriginal.name }));`],
@@ -720,6 +764,22 @@ describe("RLS integration", () => {
   it("accepts a witness factory when every return path preserves the original module", () => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => { if (process.env.FIRST_SHAPE) return { ...(await importOriginal()), first: true }; return { ...(await importOriginal()), second: true }; });`;
     expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+  });
+
+  it("rejects witness factories whose original loader provenance is mutated", () => {
+    for (const [_shape, mutation, callee] of MUTATED_LOADER_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${mutation} return { ...(await ${callee}()) }; }`;
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
+    }
+  });
+
+  it("accepts witness factories with proven restored or immutable loaders", () => {
+    for (const [_shape, setup, callee] of PROVEN_LOADER_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${setup} return { ...(await ${callee}()) }; }`;
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+    }
   });
 
   it("rejects a partial Postgres mock that replaces the default factory", () => {

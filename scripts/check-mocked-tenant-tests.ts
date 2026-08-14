@@ -64,10 +64,347 @@ interface MockCall {
   replacesWitness: boolean;
 }
 
+interface LoaderBinding {
+  name: string;
+  declaration: ts.Identifier;
+  scope: ts.Node;
+  initializer?: ts.Expression;
+  localFunction?: ts.FunctionLikeDeclaration;
+  parameter: boolean;
+}
+
+function originalLoaderCallProvenance(
+  factory: ts.ArrowFunction | ts.FunctionExpression,
+): (expression: ts.Expression) => boolean {
+  const loaderName = factory.parameters[0]?.name;
+  if (!loaderName || !ts.isIdentifier(loaderName)) return () => false;
+
+  const bindings: LoaderBinding[] = [
+    {
+      name: loaderName.text,
+      declaration: loaderName,
+      scope: factory,
+      parameter: true,
+    },
+  ];
+  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
+    if (ts.isIdentifier(name)) return [name];
+    return name.elements.flatMap((element) =>
+      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
+    );
+  };
+  const bindingScope = (node: ts.Node): ts.Node => {
+    for (let current = node.parent; current && current !== factory; current = current.parent) {
+      if (ts.isBlock(current) || ts.isFunctionLike(current)) return current;
+    }
+    return factory;
+  };
+  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
+  const resolve = (identifier: ts.Identifier): LoaderBinding | undefined =>
+    bindings
+      .filter(
+        (binding) =>
+          binding.name === identifier.text &&
+          contains(binding.scope, identifier) &&
+          binding.declaration.pos <= identifier.pos,
+      )
+      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
+
+  const collectBindings = (node: ts.Node) => {
+    if (node !== factory && ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        for (const identifier of bindingIdentifiers(parameter.name)) {
+          bindings.push({
+            name: identifier.text,
+            declaration: identifier,
+            scope: node,
+            parameter: false,
+          });
+        }
+      }
+    }
+    if (ts.isVariableDeclaration(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) {
+        bindings.push({
+          name: identifier.text,
+          declaration: identifier,
+          scope: bindingScope(node),
+          ...(ts.isIdentifier(node.name) && node.initializer ? { initializer: node.initializer } : {}),
+          ...(ts.isIdentifier(node.name) &&
+          node.initializer &&
+          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+            ? { localFunction: node.initializer }
+            : {}),
+          parameter: false,
+        });
+      }
+    }
+    if (node !== factory && ts.isFunctionDeclaration(node) && node.name) {
+      bindings.push({
+        name: node.name.text,
+        declaration: node.name,
+        scope: bindingScope(node),
+        ...(node.body ? { localFunction: node } : {}),
+        parameter: false,
+      });
+    }
+    ts.forEachChild(node, collectBindings);
+  };
+  collectBindings(factory.body);
+
+  const assignmentIdentifiers = (input: ts.Expression): ts.Identifier[] => {
+    const expression = unwrapExpression(input);
+    if (ts.isIdentifier(expression)) return [expression];
+    if (ts.isArrayLiteralExpression(expression)) {
+      return expression.elements.flatMap((element) =>
+        ts.isOmittedExpression(element)
+          ? []
+          : assignmentIdentifiers(ts.isSpreadElement(element) ? element.expression : element),
+      );
+    }
+    if (ts.isObjectLiteralExpression(expression)) {
+      return expression.properties.flatMap((property) => {
+        if (ts.isShorthandPropertyAssignment(property)) return [property.name];
+        if (ts.isPropertyAssignment(property)) return assignmentIdentifiers(property.initializer);
+        if (ts.isSpreadAssignment(property)) return assignmentIdentifiers(property.expression);
+        return [];
+      });
+    }
+    return [];
+  };
+
+  type LoaderEnvironment = Map<LoaderBinding, boolean>;
+  interface Flow {
+    environment: LoaderEnvironment;
+    terminal: boolean;
+  }
+  const callProof = new Map<ts.CallExpression, boolean>();
+  const clone = (environment: LoaderEnvironment): LoaderEnvironment => new Map(environment);
+  const valueIsOriginal = (input: ts.Expression, environment: LoaderEnvironment): boolean => {
+    const expression = unwrapExpression(input);
+    return ts.isIdentifier(expression) && environment.get(resolve(expression)) === true;
+  };
+  const assign = (target: ts.Expression, original: boolean, environment: LoaderEnvironment): LoaderEnvironment => {
+    const next = clone(environment);
+    const identifiers = assignmentIdentifiers(target);
+    for (const identifier of identifiers) {
+      const binding = resolve(identifier);
+      if (binding) next.set(binding, identifiers.length === 1 && original);
+    }
+    return next;
+  };
+
+  const evaluateFunction = (
+    fn: ts.FunctionLikeDeclaration,
+    environment: LoaderEnvironment,
+    activeFunctions: ReadonlySet<LoaderBinding>,
+  ): LoaderEnvironment[] => {
+    if (!fn.body) return [environment];
+    if (!ts.isBlock(fn.body)) return evaluateExpression(fn.body, environment, activeFunctions);
+    return evaluateStatements(fn.body.statements, [{ environment, terminal: false }], activeFunctions).map(
+      (flow) => flow.environment,
+    );
+  };
+  const evaluateExpression = (
+    input: ts.Expression,
+    environment: LoaderEnvironment,
+    activeFunctions: ReadonlySet<LoaderBinding>,
+  ): LoaderEnvironment[] => {
+    const expression = unwrapExpression(input);
+    if (ts.isAwaitExpression(expression)) return evaluateExpression(expression.expression, environment, activeFunctions);
+    if (ts.isConditionalExpression(expression)) {
+      return evaluateExpression(expression.condition, environment, activeFunctions).flatMap((afterCondition) => [
+        ...evaluateExpression(expression.whenTrue, clone(afterCondition), activeFunctions),
+        ...evaluateExpression(expression.whenFalse, clone(afterCondition), activeFunctions),
+      ]);
+    }
+    if (ts.isBinaryExpression(expression)) {
+      const operator = expression.operatorToken.kind;
+      if (operator === ts.SyntaxKind.EqualsToken) {
+        return evaluateExpression(expression.right, environment, activeFunctions).map((afterRight) =>
+          assign(expression.left, valueIsOriginal(expression.right, afterRight), afterRight),
+        );
+      }
+      if (
+        operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+        operator === ts.SyntaxKind.BarBarEqualsToken ||
+        operator === ts.SyntaxKind.QuestionQuestionEqualsToken
+      ) {
+        return [
+          clone(environment),
+          ...evaluateExpression(expression.right, clone(environment), activeFunctions).map((afterRight) =>
+            assign(expression.left, valueIsOriginal(expression.right, afterRight), afterRight),
+          ),
+        ];
+      }
+      if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) {
+        return evaluateExpression(expression.right, environment, activeFunctions).map((afterRight) =>
+          assign(expression.left, false, afterRight),
+        );
+      }
+      if (
+        operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+        operator === ts.SyntaxKind.BarBarToken ||
+        operator === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        return evaluateExpression(expression.left, environment, activeFunctions).flatMap((afterLeft) => [
+          clone(afterLeft),
+          ...evaluateExpression(expression.right, clone(afterLeft), activeFunctions),
+        ]);
+      }
+      return evaluateExpression(expression.left, environment, activeFunctions).flatMap((afterLeft) =>
+        evaluateExpression(expression.right, afterLeft, activeFunctions),
+      );
+    }
+    if (ts.isCallExpression(expression)) {
+      let environments = [environment];
+      for (const argument of expression.arguments) {
+        environments = environments.flatMap((current) => evaluateExpression(argument, current, activeFunctions));
+      }
+      if (!ts.isIdentifier(expression.expression)) return environments;
+      const binding = resolve(expression.expression);
+      const proven = environments.every((current) => current.get(binding) === true);
+      callProof.set(expression, (callProof.get(expression) ?? true) && proven);
+      const localFunction = binding?.localFunction;
+      if (!binding || !localFunction || activeFunctions.has(binding)) {
+        return environments;
+      }
+      const nextActive = new Set(activeFunctions).add(binding);
+      return environments.flatMap((current) => evaluateFunction(localFunction, current, nextActive));
+    }
+    if (ts.isObjectLiteralExpression(expression)) {
+      return expression.properties.reduce<LoaderEnvironment[]>((environments, property) => {
+        const value = ts.isSpreadAssignment(property)
+          ? property.expression
+          : ts.isPropertyAssignment(property)
+            ? property.initializer
+            : undefined;
+        return value
+          ? environments.flatMap((current) => evaluateExpression(value, current, activeFunctions))
+          : environments;
+      }, [environment]);
+    }
+    if (ts.isArrayLiteralExpression(expression)) {
+      return expression.elements.reduce<LoaderEnvironment[]>((environments, element) => {
+        if (ts.isOmittedExpression(element)) return environments;
+        const value = ts.isSpreadElement(element) ? element.expression : element;
+        return environments.flatMap((current) => evaluateExpression(value, current, activeFunctions));
+      }, [environment]);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
+      (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(expression.operand)
+    ) {
+      return [assign(expression.operand, false, environment)];
+    }
+    return [environment];
+  };
+  const evaluateStatement = (
+    statement: ts.Statement,
+    environment: LoaderEnvironment,
+    activeFunctions: ReadonlySet<LoaderBinding>,
+  ): Flow[] => {
+    if (ts.isExpressionStatement(statement)) {
+      return evaluateExpression(statement.expression, environment, activeFunctions).map((next) => ({
+        environment: next,
+        terminal: false,
+      }));
+    }
+    if (ts.isVariableStatement(statement)) {
+      let environments = [environment];
+      for (const declaration of statement.declarationList.declarations) {
+        environments = environments.flatMap((current) => {
+          if (!declaration.initializer) return [current];
+          return evaluateExpression(declaration.initializer, current, activeFunctions).map((afterInitializer) => {
+            if (!ts.isIdentifier(declaration.name)) {
+              const next = clone(afterInitializer);
+              for (const identifier of bindingIdentifiers(declaration.name)) {
+                const binding = resolve(identifier);
+                if (binding) next.set(binding, false);
+              }
+              return next;
+            }
+            const binding = resolve(declaration.name);
+            const next = clone(afterInitializer);
+            if (binding) next.set(binding, valueIsOriginal(declaration.initializer!, afterInitializer));
+            return next;
+          });
+        });
+      }
+      return environments.map((next) => ({ environment: next, terminal: false }));
+    }
+    if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) {
+      const expression = ts.isReturnStatement(statement) ? statement.expression : statement.expression;
+      const environments = expression
+        ? evaluateExpression(expression, environment, activeFunctions)
+        : [environment];
+      return environments.map((next) => ({ environment: next, terminal: true }));
+    }
+    if (ts.isBlock(statement)) {
+      return evaluateStatements(statement.statements, [{ environment, terminal: false }], activeFunctions);
+    }
+    if (ts.isIfStatement(statement)) {
+      return evaluateExpression(statement.expression, environment, activeFunctions).flatMap((afterCondition) => {
+        const whenTrue = evaluateStatement(statement.thenStatement, clone(afterCondition), activeFunctions);
+        const whenFalse = statement.elseStatement
+          ? evaluateStatement(statement.elseStatement, clone(afterCondition), activeFunctions)
+          : [{ environment: clone(afterCondition), terminal: false }];
+        return [...whenTrue, ...whenFalse];
+      });
+    }
+    if (ts.isFunctionDeclaration(statement)) return [{ environment, terminal: false }];
+    const next = clone(environment);
+    const invalidateWrites = (node: ts.Node) => {
+      if (node !== statement && ts.isFunctionLike(node)) return;
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) {
+        for (const identifier of assignmentIdentifiers(node.left)) {
+          const binding = resolve(identifier);
+          if (binding) next.set(binding, false);
+        }
+      }
+      if (
+        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+        ts.isIdentifier(node.operand)
+      ) {
+        const binding = resolve(node.operand);
+        if (binding) next.set(binding, false);
+      }
+      ts.forEachChild(node, invalidateWrites);
+    };
+    invalidateWrites(statement);
+    return [{ environment: next, terminal: false }];
+  };
+  const evaluateStatements = (
+    statements: ts.NodeArray<ts.Statement>,
+    initial: Flow[],
+    activeFunctions: ReadonlySet<LoaderBinding>,
+  ): Flow[] =>
+    statements.reduce<Flow[]>((flows, statement) =>
+      flows.flatMap((flow) =>
+        flow.terminal ? [flow] : evaluateStatement(statement, flow.environment, activeFunctions),
+      ), initial);
+
+  const initial = new Map<LoaderBinding, boolean>(bindings.map((binding) => [binding, binding === bindings[0]]));
+  if (ts.isBlock(factory.body)) {
+    evaluateStatements(factory.body.statements, [{ environment: initial, terminal: false }], new Set());
+  } else {
+    evaluateExpression(factory.body, initial, new Set());
+  }
+  return (input: ts.Expression): boolean => {
+    const expression = unwrapExpression(input);
+    return ts.isCallExpression(expression) && callProof.get(expression) === true;
+  };
+}
+
 function factoryReplacesExport(factory: ts.Expression | undefined, exportName: string, sf: ts.SourceFile): boolean {
   if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
-  const originalLoader = factory.parameters[0]?.name;
-  if (!originalLoader || !ts.isIdentifier(originalLoader)) return false;
+  const isOriginalLoaderCall = originalLoaderCallProvenance(factory);
 
   const declarations = new Map<string, ts.Expression[]>();
   const collectDeclarations = (node: ts.Node) => {
@@ -122,13 +459,7 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
   };
   const applySpread = (input: ts.Expression, incoming: boolean, checking: ReadonlySet<string>): boolean[] => {
     const expression = unwrapSpread(input);
-    if (
-      ts.isCallExpression(expression) &&
-      ts.isIdentifier(expression.expression) &&
-      expression.expression.text === originalLoader.text
-    ) {
-      return [true];
-    }
+    if (isOriginalLoaderCall(expression)) return [true];
     if (ts.isConditionalExpression(expression)) {
       return [
         ...applySpread(expression.whenTrue, incoming, checking),
@@ -168,8 +499,7 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
 
 function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
   if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
-  const originalLoader = factory.parameters[0]?.name;
-  if (!originalLoader || !ts.isIdentifier(originalLoader)) return false;
+  const isOriginalLoaderCall = originalLoaderCallProvenance(factory);
 
   const expressionPreservesOriginal = (returned: ts.Expression): boolean => {
     const expression = unwrapExpression(returned);
@@ -183,7 +513,7 @@ function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
         if (!ts.isSpreadAssignment(property)) return false;
         let spread = unwrapExpression(property.expression);
         if (ts.isAwaitExpression(spread)) spread = unwrapExpression(spread.expression);
-        return ts.isCallExpression(spread) && ts.isIdentifier(spread.expression) && spread.expression.text === originalLoader.text;
+        return isOriginalLoaderCall(spread);
       })
     );
   };
