@@ -96,16 +96,16 @@
     "mutate:rag": "stryker run stryker.rag.config.json"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.104.1",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
     "@testing-library/react": "^16.3.0",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
-    "@supabase/supabase-js": "^2.108.1",
+    "@supabase/supabase-js": "^2.112.3",
     "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.8",
-    "inngest": "^4.5.1",
+    "inngest": "^4.18.1",
     "jsdom": "^29.1.1",
     "jscpd": "^5.0.9",
     "knip": "^6.16.1",
@@ -119,6 +119,6 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.0"
+    "@supabase/ssr": "^0.12.4"
   }
 }
