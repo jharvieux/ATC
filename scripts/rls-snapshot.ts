@@ -13,7 +13,11 @@
 
 import postgres from "postgres";
 
-type Target = "main" | "rag";
+export type Target = "main" | "rag";
+
+export function snapshotSchemas(target: Target): readonly string[] {
+  return target === "main" ? ["public", "storage.objects"] : ["public"];
+}
 
 function parseTarget(argv: string[]): Target {
   const arg = argv.find((a) => a.startsWith("--target="));
@@ -56,11 +60,13 @@ interface PolicyRow {
 export async function generateSnapshot(target: Target = "main"): Promise<string> {
   const sql = postgres(resolveDbUrl(target), { max: 1, idle_timeout: 10 });
   try {
+    const schemas = snapshotSchemas(target);
+    const includeStorageObjects = schemas.includes("storage.objects");
     const tables = await sql<TableRow[]>`
       SELECT n.nspname AS schemaname, c.relname AS tablename, c.relrowsecurity AS rowsecurity
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE (n.nspname = 'public' OR (n.nspname = 'storage' AND c.relname = 'objects'))
+      WHERE (n.nspname = 'public' OR (${includeStorageObjects} AND n.nspname = 'storage' AND c.relname = 'objects'))
         AND c.relkind = 'r'
       ORDER BY n.nspname, c.relname
     `;
@@ -85,7 +91,7 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       FROM pg_policy p
       JOIN pg_class c ON c.oid = p.polrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' OR (n.nspname = 'storage' AND c.relname = 'objects')
+      WHERE n.nspname = 'public' OR (${includeStorageObjects} AND n.nspname = 'storage' AND c.relname = 'objects')
       ORDER BY n.nspname, c.relname, p.polname
     `;
 
@@ -93,7 +99,7 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       "-- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY",
       `-- Target: ${target}`,
       `-- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=${target} > db/rls-snapshot-${target}.sql`,
-      "-- Generated against schemas: public, storage.objects",
+      `-- Generated against ${schemas.length === 1 ? "schema" : "schemas"}: ${schemas.join(", ")}`,
       "",
     ];
 
