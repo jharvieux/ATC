@@ -6,7 +6,8 @@
 --         fixups, in db-copy, which runs BEFORE deploy-staging's
 --         `supabase db push` (db-copy is a `needs:` of deploy-staging). That
 --         ordering is safe: these policies' owning migrations (bp34,
---         quote_pdfs) are already recorded in the migration ledger, so the
+--         quote_pdfs, and help_docs) are already recorded in the migration
+--         ledger, so the
 --         later `db push` treats them as already-applied and is a no-op for
 --         them either way — it neither recreates nor disturbs what this file
 --         just restored.
@@ -15,7 +16,8 @@
 --         DEPENDS ON a public object. Storage RLS policies on storage.objects
 --         reference public functions (auth_user_in_tenant / tenant_is_active),
 --         so CASCADE drops them. The migrations that originally created them
---         (bp34, quote_pdfs) are already in the migration ledger, so the
+--         (bp34, quote_pdfs, and help_docs) are already in the migration
+--         ledger, so the
 --         later `supabase db push` treats them as applied and does NOT recreate
 --         them — staging is left without storage RLS until this file re-applies
 --         it. See issue #1316.
@@ -32,6 +34,8 @@
 --       apps/main/supabase/migrations/20260617000000_bp34_phase_c_gmail_storage.sql
 --   - quote_pdfs_tenant_select →
 --       apps/main/supabase/migrations/20260625000003_quote_pdfs_bucket.sql
+--   - help_docs_tenant_select →
+--       apps/main/supabase/migrations/20260814041302_help_docs_storage_tenant_select.sql
 --
 -- Idempotent (DROP POLICY IF EXISTS before each CREATE) and guarded on the
 -- storage schema so a non-Supabase Postgres (local/CI) no-ops cleanly.
@@ -72,5 +76,18 @@ BEGIN
       )
   $sql$;
 
-  RAISE NOTICE 'Storage RLS policies restored: imported_documents_tenant_select, quote_pdfs_tenant_select.';
+  -- ── help-docs bucket (#2072) ──────────────────────────────────────────
+  EXECUTE 'DROP POLICY IF EXISTS help_docs_tenant_select ON storage.objects';
+  EXECUTE $sql$
+    CREATE POLICY help_docs_tenant_select ON storage.objects
+      FOR SELECT TO authenticated
+      USING (
+        bucket_id = 'help-docs'
+        AND auth_user_in_tenant(
+          (regexp_match(name, '^tenant_([0-9a-f-]+)/'))[1]::uuid
+        )
+      )
+  $sql$;
+
+  RAISE NOTICE 'Storage RLS policies restored: imported_documents_tenant_select, quote_pdfs_tenant_select, help_docs_tenant_select.';
 END $$;
