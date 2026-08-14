@@ -731,4 +731,62 @@ describeIf("RLS integration", () => {
       expect(outsider.data).toBe(false);
     });
   });
+
+  describe("#2072 help-docs storage tenant isolation", () => {
+    const objectName = `${RUN_TAG}.pdf`;
+
+    beforeAll(async () => {
+      const uploads = await Promise.all([
+        fx.admin.storage
+          .from("help-docs")
+          .upload(`tenant_${fx.tenantA.id}/help-docs/${objectName}`, new Blob(["tenant-a"], { type: "application/pdf" }), {
+            contentType: "application/pdf",
+            upsert: true,
+          }),
+        fx.admin.storage
+          .from("help-docs")
+          .upload(`tenant_${fx.tenantB.id}/help-docs/${objectName}`, new Blob(["tenant-b"], { type: "application/pdf" }), {
+            contentType: "application/pdf",
+            upsert: true,
+          }),
+      ]);
+      for (const upload of uploads) expect(upload.error).toBeNull();
+    });
+
+    afterAll(async () => {
+      if (!fx) return;
+      const cleanup = await fx.admin.storage.from("help-docs").remove([
+        `tenant_${fx.tenantA.id}/help-docs/${objectName}`,
+        `tenant_${fx.tenantB.id}/help-docs/${objectName}`,
+      ]);
+      expect(cleanup.error).toBeNull();
+    });
+
+    it("keeps the help-docs bucket private", async () => {
+      const { data: bucket, error } = await fx.admin.storage.getBucket("help-docs");
+
+      expect(error).toBeNull();
+      expect(bucket?.public).toBe(false);
+    });
+
+    it("allows an authenticated user to list own-tenant exports", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const result = await clientA.storage
+        .from("help-docs")
+        .list(`tenant_${fx.tenantA.id}/help-docs`, { search: objectName });
+
+      expect(result.error).toBeNull();
+      expect(result.data?.map((object) => object.name)).toContain(objectName);
+    });
+
+    it("denies an authenticated user access to cross-tenant exports", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const result = await clientA.storage
+        .from("help-docs")
+        .list(`tenant_${fx.tenantB.id}/help-docs`, { search: objectName });
+
+      expect(result.error).toBeNull();
+      expect(result.data).toEqual([]);
+    });
+  });
 });
