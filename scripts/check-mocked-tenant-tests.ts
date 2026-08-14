@@ -56,6 +56,27 @@ function parse(p: string, text: string): ts.SourceFile {
   return ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true, /x$/.test(p) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 }
 
+function assignmentTargetIdentifiers(input: ts.Expression): ts.Identifier[] {
+  const expression = unwrapExpression(input);
+  if (ts.isIdentifier(expression)) return [expression];
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.flatMap((element) =>
+      ts.isOmittedExpression(element)
+        ? []
+        : assignmentTargetIdentifiers(ts.isSpreadElement(element) ? element.expression : element),
+    );
+  }
+  if (ts.isObjectLiteralExpression(expression)) {
+    return expression.properties.flatMap((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) return [property.name];
+      if (ts.isPropertyAssignment(property)) return assignmentTargetIdentifiers(property.initializer);
+      if (ts.isSpreadAssignment(property)) return assignmentTargetIdentifiers(property.expression);
+      return [];
+    });
+  }
+  return [];
+}
+
 interface MockCall {
   specifier: string;
   partial: boolean; // importActual/requireActual/importOriginal factory — some real exports still run
@@ -70,6 +91,7 @@ interface LoaderBinding {
   scope: ts.Node;
   initializer?: ts.Expression;
   localFunction?: ts.FunctionLikeDeclaration;
+  memberSource?: { object: ts.Expression; property: string };
   parameter: boolean;
 }
 
@@ -106,7 +128,8 @@ function originalLoaderCallProvenance(
         (binding) =>
           binding.name === identifier.text &&
           contains(binding.scope, identifier) &&
-          binding.declaration.pos <= identifier.pos,
+          (binding.declaration.pos <= identifier.pos ||
+            (binding.localFunction !== undefined && ts.isFunctionDeclaration(binding.localFunction))),
       )
       .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
 
@@ -125,6 +148,14 @@ function originalLoaderCallProvenance(
     }
     if (ts.isVariableDeclaration(node)) {
       for (const identifier of bindingIdentifiers(node.name)) {
+        const bindingElement = ts.isBindingElement(identifier.parent) ? identifier.parent : undefined;
+        const memberName =
+          bindingElement && ts.isObjectBindingPattern(bindingElement.parent)
+            ? bindingElement.propertyName &&
+              (ts.isIdentifier(bindingElement.propertyName) || ts.isStringLiteralLike(bindingElement.propertyName))
+              ? bindingElement.propertyName.text
+              : identifier.text
+            : undefined;
         bindings.push({
           name: identifier.text,
           declaration: identifier,
@@ -134,6 +165,9 @@ function originalLoaderCallProvenance(
           node.initializer &&
           (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
             ? { localFunction: node.initializer }
+            : {}),
+          ...(memberName && node.initializer
+            ? { memberSource: { object: node.initializer, property: memberName } }
             : {}),
           parameter: false,
         });
@@ -152,23 +186,118 @@ function originalLoaderCallProvenance(
   };
   collectBindings(factory.body);
 
-  const assignmentIdentifiers = (input: ts.Expression): ts.Identifier[] => {
-    const expression = unwrapExpression(input);
-    if (ts.isIdentifier(expression)) return [expression];
-    if (ts.isArrayLiteralExpression(expression)) {
-      return expression.elements.flatMap((element) =>
-        ts.isOmittedExpression(element)
-          ? []
-          : assignmentIdentifiers(ts.isSpreadElement(element) ? element.expression : element),
-      );
+  const callableWrites = new Map<LoaderBinding, { at: number; value?: ts.Expression }[]>();
+  const collectCallableWrites = (node: ts.Node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      const identifiers = assignmentTargetIdentifiers(node.left);
+      for (const identifier of identifiers) {
+        const binding = resolve(identifier);
+        if (!binding) continue;
+        const writes = callableWrites.get(binding) ?? [];
+        writes.push({
+          at: node.end,
+          ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
+            ? { value: node.right }
+            : {}),
+        });
+        callableWrites.set(binding, writes);
+      }
     }
-    if (ts.isObjectLiteralExpression(expression)) {
-      return expression.properties.flatMap((property) => {
-        if (ts.isShorthandPropertyAssignment(property)) return [property.name];
-        if (ts.isPropertyAssignment(property)) return assignmentIdentifiers(property.initializer);
-        if (ts.isSpreadAssignment(property)) return assignmentIdentifiers(property.expression);
-        return [];
-      });
+    ts.forEachChild(node, collectCallableWrites);
+  };
+  collectCallableWrites(factory.body);
+
+  const objectLiteralFor = (
+    input: ts.Expression,
+    checking = new Set<LoaderBinding>(),
+  ): ts.ObjectLiteralExpression | undefined => {
+    const expression = unwrapExpression(input);
+    if (ts.isObjectLiteralExpression(expression)) return expression;
+    if (!ts.isIdentifier(expression)) return undefined;
+    const binding = resolve(expression);
+    if (!binding?.initializer || checking.has(binding)) return undefined;
+    checking.add(binding);
+    const object = objectLiteralFor(binding.initializer, checking);
+    checking.delete(binding);
+    return object;
+  };
+  const functionsFor = (
+    input: ts.Expression,
+    checking = new Set<LoaderBinding>(),
+  ): ts.FunctionLikeDeclaration[] => {
+    const expression = unwrapExpression(input);
+    if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return [expression];
+    if (ts.isIdentifier(expression)) {
+      const binding = resolve(expression);
+      if (!binding || checking.has(binding)) return [];
+      const latestWrite = callableWrites
+        .get(binding)
+        ?.filter((write) => write.at < expression.pos)
+        .sort((a, b) => b.at - a.at)[0];
+      if (latestWrite) return latestWrite.value ? functionsFor(latestWrite.value, checking) : [];
+      if (binding.localFunction) return [binding.localFunction];
+      if (binding.memberSource) {
+        const object = objectLiteralFor(binding.memberSource.object);
+        const property = object?.properties.find(
+          (candidate) =>
+            !ts.isSpreadAssignment(candidate) &&
+            (ts.isIdentifier(candidate.name) || ts.isStringLiteralLike(candidate.name)) &&
+            candidate.name.text === binding.memberSource!.property,
+        );
+        if (property && ts.isMethodDeclaration(property)) return [property];
+        if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
+        if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
+      }
+      if (!binding.initializer) return [];
+      checking.add(binding);
+      const functions = functionsFor(binding.initializer, checking);
+      checking.delete(binding);
+      return functions;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      if (expression.name.text === "call" || expression.name.text === "apply") {
+        return functionsFor(expression.expression, checking);
+      }
+      const object = objectLiteralFor(expression.expression);
+      const property = object?.properties.find(
+        (candidate) => {
+          if (ts.isSpreadAssignment(candidate)) return false;
+          const name = candidate.name;
+          const text =
+            ts.isIdentifier(name) || ts.isStringLiteralLike(name)
+              ? name.text
+              : ts.isComputedPropertyName(name) && ts.isStringLiteralLike(unwrapExpression(name.expression))
+                ? (unwrapExpression(name.expression) as ts.StringLiteralLike).text
+                : undefined;
+          return text === expression.name.text;
+        },
+      );
+      if (property && (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property))) return [property];
+      if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
+      if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
+    }
+    if (ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression)) {
+      const object = objectLiteralFor(expression.expression);
+      const property = object?.properties.find(
+        (candidate) => {
+          if (ts.isSpreadAssignment(candidate)) return false;
+          const name = candidate.name;
+          const text =
+            ts.isIdentifier(name) || ts.isStringLiteralLike(name)
+              ? name.text
+              : ts.isComputedPropertyName(name) && ts.isStringLiteralLike(unwrapExpression(name.expression))
+                ? (unwrapExpression(name.expression) as ts.StringLiteralLike).text
+                : undefined;
+          return text === expression.argumentExpression.text;
+        },
+      );
+      if (property && ts.isMethodDeclaration(property)) return [property];
+      if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
+      if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
     }
     return [];
   };
@@ -186,7 +315,7 @@ function originalLoaderCallProvenance(
   };
   const assign = (target: ts.Expression, original: boolean, environment: LoaderEnvironment): LoaderEnvironment => {
     const next = clone(environment);
-    const identifiers = assignmentIdentifiers(target);
+    const identifiers = assignmentTargetIdentifiers(target);
     for (const identifier of identifiers) {
       const binding = resolve(identifier);
       if (binding) next.set(binding, identifiers.length === 1 && original);
@@ -197,7 +326,7 @@ function originalLoaderCallProvenance(
   const evaluateFunction = (
     fn: ts.FunctionLikeDeclaration,
     environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<LoaderBinding>,
+    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): LoaderEnvironment[] => {
     if (!fn.body) return [environment];
     if (!ts.isBlock(fn.body)) return evaluateExpression(fn.body, environment, activeFunctions);
@@ -208,7 +337,7 @@ function originalLoaderCallProvenance(
   const evaluateExpression = (
     input: ts.Expression,
     environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<LoaderBinding>,
+    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): LoaderEnvironment[] => {
     const expression = unwrapExpression(input);
     if (ts.isAwaitExpression(expression)) return evaluateExpression(expression.expression, environment, activeFunctions);
@@ -257,20 +386,39 @@ function originalLoaderCallProvenance(
       );
     }
     if (ts.isCallExpression(expression)) {
-      let environments = [environment];
+      let environments = evaluateExpression(expression.expression, environment, activeFunctions);
       for (const argument of expression.arguments) {
         environments = environments.flatMap((current) => evaluateExpression(argument, current, activeFunctions));
       }
-      if (!ts.isIdentifier(expression.expression)) return environments;
-      const binding = resolve(expression.expression);
-      const proven = environments.every((current) => current.get(binding) === true);
+      const loaderCallee = ts.isIdentifier(expression.expression)
+        ? expression.expression
+        : ts.isPropertyAccessExpression(expression.expression) &&
+            (expression.expression.name.text === "call" || expression.expression.name.text === "apply") &&
+            ts.isIdentifier(expression.expression.expression)
+          ? expression.expression.expression
+          : undefined;
+      const loaderBinding = loaderCallee ? resolve(loaderCallee) : undefined;
+      const proven = !!loaderBinding && environments.every((current) => current.get(loaderBinding) === true);
       callProof.set(expression, (callProof.get(expression) ?? true) && proven);
-      const localFunction = binding?.localFunction;
-      if (!binding || !localFunction || activeFunctions.has(binding)) {
-        return environments;
+
+      const callees = functionsFor(expression.expression).filter((fn) => !activeFunctions.has(fn));
+      if (callees.length > 0) {
+        return callees.flatMap((callee) => {
+          const nextActive = new Set(activeFunctions).add(callee);
+          return environments.flatMap((current) => evaluateFunction(callee, current, nextActive));
+        });
       }
-      const nextActive = new Set(activeFunctions).add(binding);
-      return environments.flatMap((current) => evaluateFunction(localFunction, current, nextActive));
+      if (loaderBinding) return environments;
+
+      const callbacks = expression.arguments.flatMap((argument) => functionsFor(argument));
+      if (callbacks.length === 0) return environments;
+      return [
+        ...environments,
+        ...callbacks.flatMap((callback) => {
+          const nextActive = new Set(activeFunctions).add(callback);
+          return environments.flatMap((current) => evaluateFunction(callback, clone(current), nextActive));
+        }),
+      ];
     }
     if (ts.isObjectLiteralExpression(expression)) {
       return expression.properties.reduce<LoaderEnvironment[]>((environments, property) => {
@@ -303,7 +451,7 @@ function originalLoaderCallProvenance(
   const evaluateStatement = (
     statement: ts.Statement,
     environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<LoaderBinding>,
+    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): Flow[] => {
     if (ts.isExpressionStatement(statement)) {
       return evaluateExpression(statement.expression, environment, activeFunctions).map((next) => ({
@@ -362,7 +510,7 @@ function originalLoaderCallProvenance(
         node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
         node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
       ) {
-        for (const identifier of assignmentIdentifiers(node.left)) {
+        for (const identifier of assignmentTargetIdentifiers(node.left)) {
           const binding = resolve(identifier);
           if (binding) next.set(binding, false);
         }
@@ -383,7 +531,7 @@ function originalLoaderCallProvenance(
   const evaluateStatements = (
     statements: ts.NodeArray<ts.Statement>,
     initial: Flow[],
-    activeFunctions: ReadonlySet<LoaderBinding>,
+    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): Flow[] =>
     statements.reduce<Flow[]>((flows, statement) =>
       flows.flatMap((flow) =>
@@ -798,7 +946,7 @@ interface PostgresBinding {
   name: string;
   declaration: ts.Identifier;
   scope: ts.Node;
-  values: ts.Expression[];
+  writes: { at: number; value?: ts.Expression }[];
 }
 
 function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => boolean {
@@ -846,7 +994,7 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
             name: identifier.text,
             declaration: identifier,
             scope: node,
-            values: [],
+            writes: [],
           });
         }
       }
@@ -857,7 +1005,10 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
           name: identifier.text,
           declaration: identifier,
           scope: bindingScope(node),
-          values: ts.isIdentifier(node.name) && node.initializer ? [node.initializer] : [],
+          writes:
+            ts.isIdentifier(node.name) && node.initializer
+              ? [{ at: node.name.end, value: node.initializer }]
+              : [],
         });
       }
     }
@@ -868,38 +1019,51 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
   const collectAssignments = (node: ts.Node) => {
     if (
       ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left)
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
-      resolve(node.left)?.values.push(node.right);
+      const identifiers = assignmentTargetIdentifiers(node.left);
+      for (const identifier of identifiers) {
+        const binding = resolve(identifier);
+        if (binding) {
+          binding.writes.push({
+            at: node.end,
+            ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
+              ? { value: node.right }
+              : {}),
+          });
+        }
+      }
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    ) {
+      resolve(node.operand)?.writes.push({ at: node.end });
     }
     ts.forEachChild(node, collectAssignments);
   };
   collectAssignments(sf);
 
-  const proven = (identifier: ts.Identifier, checking = new Set<PostgresBinding>()): boolean => {
+  const proven = (identifier: ts.Identifier, checking = new Set<string>()): boolean => {
     const binding = resolve(identifier);
-    if (!binding || binding.values.length === 0 || checking.has(binding)) return false;
-    checking.add(binding);
-    const result = binding.values.every((input) => {
-      let expression = input;
-      while (
-        ts.isParenthesizedExpression(expression) ||
-        ts.isAsExpression(expression) ||
-        ts.isTypeAssertionExpression(expression) ||
-        ts.isNonNullExpression(expression)
-      ) {
-        expression = expression.expression;
-      }
-      if (ts.isIdentifier(expression)) return proven(expression, checking);
-      return (
-        ts.isCallExpression(expression) &&
+    if (!binding) return false;
+    const write = binding.writes
+      .filter((candidate) => candidate.at < identifier.pos)
+      .sort((a, b) => b.at - a.at)[0];
+    if (!write?.value) return false;
+    const key = `${binding.declaration.pos}:${identifier.pos}`;
+    if (checking.has(key)) return false;
+    checking.add(key);
+    const expression = unwrapExpression(write.value);
+    const result = ts.isIdentifier(expression)
+      ? proven(expression, checking)
+      : ts.isCallExpression(expression) &&
         ts.isIdentifier(expression.expression) &&
         factories.has(expression.expression.text) &&
-        !resolve(expression.expression)
-      );
-    });
-    checking.delete(binding);
+        !resolve(expression.expression);
+    checking.delete(key);
     return result;
   };
   return proven;
@@ -909,7 +1073,7 @@ interface SupabaseBinding {
   name: string;
   declaration: ts.Identifier;
   scope: ts.Node;
-  values: ts.Expression[];
+  writes: { at: number; value?: ts.Expression }[];
   factory: boolean;
   helperReturns?: ts.Expression[];
 }
@@ -933,7 +1097,7 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
           name: element.name.text,
           declaration: element.name,
           scope: sf,
-          values: [],
+          writes: [],
           factory: true,
         });
       }
@@ -977,7 +1141,7 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
             name: identifier.text,
             declaration: identifier,
             scope: node,
-            values: [],
+            writes: [],
             factory: false,
           });
         }
@@ -988,7 +1152,7 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
         name: node.name.text,
         declaration: node.name,
         scope: bindingScope(node),
-        values: [],
+        writes: [],
         factory: false,
         helperReturns: returnedExpressions(node),
       });
@@ -1002,7 +1166,10 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
           name: identifier.text,
           declaration: identifier,
           scope: bindingScope(node),
-          values: ts.isIdentifier(node.name) && node.initializer && !helper ? [node.initializer] : [],
+          writes:
+            ts.isIdentifier(node.name) && node.initializer && !helper
+              ? [{ at: node.name.end, value: node.initializer }]
+              : [],
           factory: false,
           ...(helper ? { helperReturns: returnedExpressions(node.initializer as ts.ArrowFunction | ts.FunctionExpression) } : {}),
         });
@@ -1015,16 +1182,34 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
   const collectAssignments = (node: ts.Node) => {
     if (
       ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left)
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
-      resolve(node.left)?.values.push(node.right);
+      const identifiers = assignmentTargetIdentifiers(node.left);
+      for (const identifier of identifiers) {
+        const binding = resolve(identifier);
+        if (binding) {
+          binding.writes.push({
+            at: node.end,
+            ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
+              ? { value: node.right }
+              : {}),
+          });
+        }
+      }
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    ) {
+      resolve(node.operand)?.writes.push({ at: node.end });
     }
     ts.forEachChild(node, collectAssignments);
   };
   collectAssignments(sf);
 
-  const expressionProven = (input: ts.Expression, checking = new Set<SupabaseBinding>()): boolean => {
+  const expressionProven = (input: ts.Expression, checking = new Set<string>()): boolean => {
     let expression = input;
     while (
       ts.isAwaitExpression(expression) ||
@@ -1036,19 +1221,25 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
       expression = expression.expression;
     }
     const bindingFor = (identifier: ts.Identifier): SupabaseBinding | undefined => resolve(identifier);
-    const bindingProven = (binding: SupabaseBinding | undefined): boolean => {
-      if (!binding || checking.has(binding)) return false;
+    const bindingProven = (binding: SupabaseBinding | undefined, before: number): boolean => {
+      if (!binding) return false;
       if (binding.factory) return true;
-      checking.add(binding);
-      const expressions = binding.helperReturns ?? binding.values;
-      const result = expressions.length > 0 && expressions.every((value) => expressionProven(value, checking));
-      checking.delete(binding);
+      const key = `${binding.declaration.pos}:${before}`;
+      if (checking.has(key)) return false;
+      checking.add(key);
+      const write = binding.writes
+        .filter((candidate) => candidate.at < before)
+        .sort((a, b) => b.at - a.at)[0];
+      const result = binding.helperReturns
+        ? binding.helperReturns.length > 0 && binding.helperReturns.every((value) => expressionProven(value, checking))
+        : !!write?.value && expressionProven(write.value, checking);
+      checking.delete(key);
       return result;
     };
-    if (ts.isIdentifier(expression)) return bindingProven(bindingFor(expression));
+    if (ts.isIdentifier(expression)) return bindingProven(bindingFor(expression), expression.pos);
     if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return false;
     const callee = bindingFor(expression.expression);
-    return !!callee && (callee.factory || (callee.helperReturns !== undefined && bindingProven(callee)));
+    return !!callee && (callee.factory || (callee.helperReturns !== undefined && bindingProven(callee, expression.pos)));
   };
   return expressionProven;
 }

@@ -62,6 +62,48 @@ const PROVEN_LOADER_FACTORIES = [
   ],
 ] as const;
 
+const MUTATOR_CALL_FACTORIES = [
+  ["arrow IIFE", "(() => { loader = fake; })();"],
+  ["function IIFE", "(function () { loader = fake; })();"],
+  ["assignment callee", "(loader = fake)();"],
+  ["Function.call", "const mutate = () => { loader = fake; }; mutate.call(undefined);"],
+  ["Function.apply", "const mutate = () => { loader = fake; }; mutate.apply(undefined, []);"],
+  ["direct Function.call", "(function () { loader = fake; }).call(undefined);"],
+  ["object method", "const mutators = { mutate() { loader = fake; } }; mutators.mutate();"],
+  [
+    "destructured method alias",
+    "const mutators = { mutate() { loader = fake; } }; const { mutate } = mutators; mutate();",
+  ],
+  [
+    "computed method through receiver alias",
+    'const mutators = { ["mutate"]() { loader = fake; } }; const receiver = mutators; receiver["mutate"]();',
+  ],
+  ["hoisted function", "mutate(); function mutate() { loader = fake; }"],
+  ["immutable function alias", "const mutate = () => { loader = fake; }; const alias = mutate; alias();"],
+  ["unknown callback runner", "runNow(() => { loader = fake; });"],
+  [
+    "aliased unknown callback",
+    "const mutate = () => { loader = fake; }; const alias = mutate; runNow(alias);",
+  ],
+] as const;
+
+const SAFE_CALL_FACTORIES = [
+  ["restoring IIFE", "const pristine = loader; (() => { loader = fake; loader = pristine; })();"],
+  ["non-mutating method", "const helpers = { run() { return 42; } }; helpers.run();"],
+  ["non-mutating unknown callback", "runNow(() => 42);"],
+  ["uninvoked mutator", "const mutate = () => { loader = fake; }; void mutate;"],
+  ["shadowed callback parameter", "runNow((loader) => { loader = fake; });"],
+  ["shadowed function parameter", "function mutate(loader) { loader = fake; } mutate(fake);"],
+  [
+    "overwritten callable alias",
+    "const mutate = () => { loader = fake; }; let alias = mutate; alias = () => 42; alias();",
+  ],
+  [
+    "resolved no-op runner",
+    "const mutate = () => { loader = fake; }; const run = (_callback) => 42; run(mutate);",
+  ],
+] as const;
+
 const claimTest = (body: string) => `
 import { describe, it, vi } from "vitest";
 ${body}
@@ -152,6 +194,26 @@ describe("findMockedTenantTests", () => {
   ])("accepts %s factories with proven restored or immutable loaders", (_kind, specifier) => {
     for (const [_shape, setup, callee] of PROVEN_LOADER_FACTORIES) {
       const factory = `async (loader) => { const fake = async () => ({}); ${setup} return { ...(await ${callee}()) }; }`;
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js"],
+    ["Postgres", "postgres"],
+  ])("rejects %s factories whose loader is mutated through a callable", (_kind, specifier) => {
+    for (const [_shape, invocation] of MUTATOR_CALL_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${invocation} return { ...(await loader()) }; }`;
+      expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js"],
+    ["Postgres", "postgres"],
+  ])("accepts %s factories after callables leave the loader proven", (_kind, specifier) => {
+    for (const [_shape, invocation] of SAFE_CALL_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${invocation} return { ...(await loader()) }; }`;
       expect(findMockedTenantTests(F, claimTest(`vi.mock("${specifier}", ${factory});`), EMPTY)).toEqual([]);
     }
   });
@@ -350,6 +412,28 @@ describe("RLS integration", () => {
     expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
   });
 
+  it.each([
+    ["compound assignment", "db += fake;"],
+    ["logical assignment", "db &&= fake;"],
+    ["array destructuring assignment", "[db] = [fake];"],
+    ["object destructuring assignment", "({ db } = { db: fake });"],
+    ["update expression", "db++;"],
+  ])("rejects a Supabase client after %s", (_shape, mutation) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      '    const db = createClient("https://db.example.test", "anon-key");',
+      `    let db = createClient("https://db.example.test", "anon-key");\n    const fake = {} as never;\n    ${mutation}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("accepts a Supabase client after definite restoration", () => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      '    const db = createClient("https://db.example.test", "anon-key");',
+      '    let db = createClient("https://db.example.test", "anon-key");\n    const real = db;\n    db = {} as never;\n    db = real;',
+    );
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
   it("accepts Supabase factory imports, helper returns, and client aliases", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
@@ -430,6 +514,47 @@ describe("RLS integration", () => {
 });
 `;
     expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, postgresCoverage]]))).toEqual([]);
+  });
+
+  it.each([
+    ["compound assignment", "sql += fake;"],
+    ["logical assignment", "sql &&= fake;"],
+    ["array destructuring assignment", "[sql] = [fake];"],
+    ["object destructuring assignment", "({ sql } = { sql: fake });"],
+    ["update expression", "sql++;"],
+  ])("rejects a Postgres client after %s", (_shape, mutation) => {
+    const postgresCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+let sql = postgres(DB_URL!);
+const fake = (() => Promise.resolve([])) as never;
+${mutation}
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(postgresCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("accepts a Postgres client after definite restoration", () => {
+    const postgresCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+let sql = postgres(DB_URL!);
+const real = sql;
+sql = (() => Promise.resolve([])) as never;
+sql = real;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(postgresCoverage)).toBeUndefined();
   });
 
   it("rejects a fake Postgres factory supplied through an IIFE parameter", () => {
@@ -777,6 +902,22 @@ describe("RLS integration", () => {
   it("accepts witness factories with proven restored or immutable loaders", () => {
     for (const [_shape, setup, callee] of PROVEN_LOADER_FACTORIES) {
       const factory = `async (loader) => { const fake = async () => ({}); ${setup} return { ...(await ${callee}()) }; }`;
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+    }
+  });
+
+  it("rejects witness factories whose loader is mutated through a callable", () => {
+    for (const [_shape, invocation] of MUTATOR_CALL_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${invocation} return { ...(await loader()) }; }`;
+      const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+      expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
+    }
+  });
+
+  it("accepts witness factories after callables leave the loader proven", () => {
+    for (const [_shape, invocation] of SAFE_CALL_FACTORIES) {
+      const factory = `async (loader) => { const fake = async () => ({}); ${invocation} return { ...(await loader()) }; }`;
       const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
       expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
     }
