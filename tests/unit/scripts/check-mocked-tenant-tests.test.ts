@@ -75,6 +75,43 @@ describe("findMockedTenantTests", () => {
     expect(findMockedTenantTests(F, src, EMPTY)).toEqual([]);
   });
 
+  it.each(["@supabase/supabase-js", "postgres"])(
+    "flags a %s factory when one return path drops the original module",
+    (specifier) => {
+      const moduleMock = `vi.mock("${specifier}", async (importOriginal) => { if (process.env.PRESERVE_ORIGINAL) return { ...(await importOriginal()) }; return {}; });`;
+      expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toHaveLength(1);
+    },
+  );
+
+  it.each(["@supabase/supabase-js", "postgres"])(
+    "flags a %s concise conditional factory when one branch drops the original module",
+    (specifier) => {
+      const moduleMock = `vi.mock("${specifier}", async (importOriginal) => process.env.PRESERVE_ORIGINAL ? { ...(await importOriginal()) } : {});`;
+      expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    [
+      "implicit fallthrough",
+      "async (importOriginal) => { if (process.env.PRESERVE_ORIGINAL) return { ...(await importOriginal()) }; }",
+    ],
+    [
+      "throw path",
+      'async (importOriginal) => { if (process.env.PRESERVE_ORIGINAL) return { ...(await importOriginal()) }; throw new Error("unavailable"); }',
+    ],
+  ])("flags a Supabase factory with an unsafe %s", (_shape, factory) => {
+    expect(findMockedTenantTests(F, claimTest(`vi.mock("@supabase/supabase-js", ${factory});`), EMPTY)).toHaveLength(1);
+  });
+
+  it.each(["@supabase/supabase-js", "postgres"])(
+    "accepts a %s factory when every conditional branch preserves the original module",
+    (specifier) => {
+      const moduleMock = `vi.mock("${specifier}", async (importOriginal) => { if (process.env.FIRST_SHAPE) return { ...(await importOriginal()), first: true }; return { ...(await importOriginal()), second: true }; });`;
+      expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toEqual([]);
+    },
+  );
+
   it.each([
     ["bare loader mention", `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ note: importOriginal.name }));`],
     ["unrelated actual call", `vi.mock("@supabase/supabase-js", async (loadReal) => { await loadReal(); return {}; });`],
@@ -110,6 +147,26 @@ describe("findMockedTenantTests", () => {
     );
     expect(findMockedTenantTests(F, source, EMPTY)).toHaveLength(1);
   });
+
+  it.each([
+    ["Supabase", "@supabase/supabase-js"],
+    ["Postgres", "postgres"],
+  ])("flags a partial %s mock with an unknown computed replacement key", (_kind, specifier) => {
+    const source = claimTest(
+      `const replacementName = process.env.REPLACEMENT_NAME!;\nvi.mock("${specifier}", async (importOriginal) => ({ ...(await importOriginal()), [replacementName]: vi.fn() }));`,
+    );
+    expect(findMockedTenantTests(F, source, EMPTY)).toHaveLength(1);
+  });
+
+  it.each(["@supabase/supabase-js", "postgres"])(
+    "accepts a partial %s mock with a statically unrelated computed key",
+    (specifier) => {
+      const source = claimTest(
+        `vi.mock("${specifier}", async (importOriginal) => ({ ...(await importOriginal()), ["helper" + "Fn"]: vi.fn() }));`,
+      );
+      expect(findMockedTenantTests(F, source, EMPTY)).toEqual([]);
+    },
+  );
 
   it("stays silent on a DB mock when no test claims isolation coverage", () => {
     const src = `
@@ -251,6 +308,27 @@ describe("RLS integration", () => {
       )
       .replace("  });\n});\n", "  });\n});\n})(undefined);\n");
     expect(annotationErrorFor(shadowed)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it.each([
+    ["direct object", "{ createClient }", "{ createClient: () => ({}) }"],
+    ["nested object", "{ client: { createClient } }", "{ client: { createClient: () => ({}) } }"],
+    ["defaulted object", "{ createClient = () => ({}) }", "{}"],
+    ["object rest", "{ ...createClient }", "{ createClient: () => ({}) }"],
+    ["array rest", "[...createClient]", "[() => ({})]"],
+  ])("rejects a fake Supabase factory from block-local %s destructuring", (_shape, pattern, value) => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace('describe("RLS integration", () => {', `{\nconst ${pattern} = ${value};\ndescribe("RLS integration", () => {`)
+      .replace("  });\n});\n", "  });\n});\n}\n");
+    expect(annotationErrorFor(shadowed)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("keeps the imported Supabase factory proven when destructuring binds a different local name", () => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'describe("RLS integration", () => {',
+      'const { createClient: fakeFactory } = { createClient: () => ({}) };\ndescribe("RLS integration", () => {',
+    );
+    expect(annotationErrorFor(coverage)).toBeUndefined();
   });
 
   it("accepts Postgres factory assignment and query aliases", () => {
@@ -558,6 +636,30 @@ describe("RLS integration", () => {
   ])("rejects a partial witness mock that replaces the export through %s", (_shape, key) => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nconst replacementName = "assertIsolationQuery";\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => ({ ...(await importOriginal()), ${key}: vi.fn() }));`;
     expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
+  });
+
+  it("accepts a partial witness mock with a statically unrelated computed key", () => {
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => ({ ...(await importOriginal()), ["helper" + "Fn"]: vi.fn() }));`;
+    expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "block branches",
+      "async (importOriginal) => { if (process.env.PRESERVE_ORIGINAL) return { ...(await importOriginal()) }; return {}; }",
+    ],
+    [
+      "conditional expression branches",
+      "async (importOriginal) => process.env.PRESERVE_ORIGINAL ? { ...(await importOriginal()) } : {}",
+    ],
+  ])("rejects a witness factory when one of its %s drops the original module", (_shape, factory) => {
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", ${factory});`;
+    expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
+  });
+
+  it("accepts a witness factory when every return path preserves the original module", () => {
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => { if (process.env.FIRST_SHAPE) return { ...(await importOriginal()), first: true }; return { ...(await importOriginal()), second: true }; });`;
+    expect(annotationErrorFor(mockedCoverage)).toBeUndefined();
   });
 
   it("rejects a partial Postgres mock that replaces the default factory", () => {

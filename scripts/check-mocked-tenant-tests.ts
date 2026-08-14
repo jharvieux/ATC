@@ -112,7 +112,7 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
           propertyName = property.name.text;
         } else if (ts.isComputedPropertyName(property.name)) {
           propertyName = staticPropertyName(property.name.expression);
-          if (propertyName === undefined && exportName === "assertIsolationQuery") return true;
+          if (propertyName === undefined) return true;
         }
         if (propertyName === exportName) return true;
       }
@@ -131,18 +131,11 @@ function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
   const originalLoader = factory.parameters[0]?.name;
   if (!originalLoader || !ts.isIdentifier(originalLoader)) return false;
 
-  const returns: ts.Expression[] = [];
-  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) returns.push(factory.body);
-  else if (factory.body) {
-    const collectReturns = (node: ts.Node) => {
-      if (node !== factory.body && ts.isFunctionLike(node)) return;
-      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
-      ts.forEachChild(node, collectReturns);
-    };
-    collectReturns(factory.body);
-  }
-
-  return returns.some((returned) => {
+  const expressionPreservesOriginal = (returned: ts.Expression): boolean => {
+    const expression = unwrapExpression(returned);
+    if (ts.isConditionalExpression(expression)) {
+      return expressionPreservesOriginal(expression.whenTrue) && expressionPreservesOriginal(expression.whenFalse);
+    }
     const object = unwrapExpression(returned);
     return (
       ts.isObjectLiteralExpression(object) &&
@@ -153,7 +146,56 @@ function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
         return ts.isCallExpression(spread) && ts.isIdentifier(spread.expression) && spread.expression.text === originalLoader.text;
       })
     );
-  });
+  };
+
+  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) {
+    return expressionPreservesOriginal(factory.body);
+  }
+  if (!factory.body) return false;
+
+  type Outcome = "preserved" | "unsafe" | "continues";
+  const statementOutcomes = (statement: ts.Statement): Set<Outcome> => {
+    if (ts.isReturnStatement(statement)) {
+      return new Set([statement.expression && expressionPreservesOriginal(statement.expression) ? "preserved" : "unsafe"]);
+    }
+    if (ts.isThrowStatement(statement)) return new Set(["unsafe"]);
+    if (ts.isBlock(statement)) return statementsOutcomes(statement.statements);
+    if (ts.isIfStatement(statement)) {
+      return new Set([
+        ...statementOutcomes(statement.thenStatement),
+        ...(statement.elseStatement ? statementOutcomes(statement.elseStatement) : (["continues"] as Outcome[])),
+      ]);
+    }
+    if (
+      ts.isForStatement(statement) ||
+      ts.isForInStatement(statement) ||
+      ts.isForOfStatement(statement) ||
+      ts.isWhileStatement(statement) ||
+      ts.isDoStatement(statement) ||
+      ts.isSwitchStatement(statement) ||
+      ts.isTryStatement(statement)
+    ) {
+      return new Set(["unsafe"]);
+    }
+    return new Set(["continues"]);
+  };
+  const statementsOutcomes = (statements: ts.NodeArray<ts.Statement>): Set<Outcome> => {
+    let outcomes = new Set<Outcome>(["continues"]);
+    for (const statement of statements) {
+      const next = new Set<Outcome>();
+      for (const outcome of outcomes) {
+        if (outcome === "continues") {
+          for (const replacement of statementOutcomes(statement)) next.add(replacement);
+        } else {
+          next.add(outcome);
+        }
+      }
+      outcomes = next;
+    }
+    return outcomes;
+  };
+  const outcomes = statementsOutcomes(factory.body.statements);
+  return outcomes.size === 1 && outcomes.has("preserved");
 }
 
 function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
@@ -580,16 +622,21 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
         factory: false,
         helperReturns: returnedExpressions(node),
       });
-    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      const helper = node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer));
-      bindings.push({
-        name: node.name.text,
-        declaration: node.name,
-        scope: bindingScope(node),
-        values: node.initializer && !helper ? [node.initializer] : [],
-        factory: false,
-        ...(helper ? { helperReturns: returnedExpressions(node.initializer as ts.ArrowFunction | ts.FunctionExpression) } : {}),
-      });
+    } else if (ts.isVariableDeclaration(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) {
+        const helper =
+          ts.isIdentifier(node.name) &&
+          node.initializer &&
+          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer));
+        bindings.push({
+          name: identifier.text,
+          declaration: identifier,
+          scope: bindingScope(node),
+          values: ts.isIdentifier(node.name) && node.initializer && !helper ? [node.initializer] : [],
+          factory: false,
+          ...(helper ? { helperReturns: returnedExpressions(node.initializer as ts.ArrowFunction | ts.FunctionExpression) } : {}),
+        });
+      }
     }
     ts.forEachChild(node, collectDeclarations);
   };
