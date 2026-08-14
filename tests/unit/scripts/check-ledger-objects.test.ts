@@ -65,6 +65,35 @@ describe("parseMigrations", () => {
     ]);
   });
 
+  it("matches array aliases and typmod types without conflating distinct signatures", () => {
+    const ledger = parseMigrations([{ version: "1", sql: `
+      CREATE FUNCTION public.lookup(p_ids int4[], p_code varchar(20))
+      RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+    ` }]);
+
+    expect(ledger.expected).toEqual([
+      {
+        kind: "function",
+        schema: "public",
+        name: "lookup",
+        identityArgs: "integer[], character varying",
+        migration: "1",
+      },
+    ]);
+    expect(reconcile(ledger, [{
+      kind: "function",
+      schema: "public",
+      name: "lookup",
+      identityArgs: "integer[], character varying",
+    }], []).missing).toEqual([]);
+    expect(reconcile(ledger, [{
+      kind: "function",
+      schema: "public",
+      name: "lookup",
+      identityArgs: "bigint[], character varying",
+    }], []).missing).toEqual(ledger.expected);
+  });
+
   it("removes enum values when their type is dropped", () => {
     const ledger = parseMigrations([{ version: "1", sql: `
       CREATE TYPE public.status AS ENUM ('new');

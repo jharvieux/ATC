@@ -69,6 +69,28 @@ const TYPE_STARTERS = new Set([
   "varchar", "vector", "void", "xml",
 ]);
 
+const TYPE_ALIASES = new Map([
+  ["int", "integer"],
+  ["int4", "integer"],
+  ["int8", "bigint"],
+  ["bool", "boolean"],
+  ["varchar", "character varying"],
+  ["timestamptz", "timestamp with time zone"],
+  ["timetz", "time with time zone"],
+  ["float8", "double precision"],
+]);
+
+function normalizeIdentityType(value: string): string {
+  const normalized = value.toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*([()[\],])\s*/g, "$1");
+  const arrayDimensions = normalized.match(/(?:\[\])+$/)?.[0] ?? "";
+  const baseType = normalized.slice(0, normalized.length - arrayDimensions.length)
+    .replace(/\([^()]*\)/g, "")
+    .trim();
+  return `${TYPE_ALIASES.get(baseType) ?? baseType}${arrayDimensions}`;
+}
+
 export function normalizeIdentityArguments(value: string): string {
   const argumentsList: string[] = [];
   let start = 0;
@@ -112,17 +134,7 @@ export function normalizeIdentityArguments(value: string): string {
       const remainder = argument.slice(firstSpace).trim();
       if (!TYPE_STARTERS.has(first) && !first.includes(".") && !first.endsWith("[]")) argument = remainder;
     }
-    return argument.toLowerCase()
-      .replace(/^int$/, "integer")
-      .replace(/^int4$/, "integer")
-      .replace(/^int8$/, "bigint")
-      .replace(/^bool$/, "boolean")
-      .replace(/^varchar$/, "character varying")
-      .replace(/^timestamptz$/, "timestamp with time zone")
-      .replace(/^timetz$/, "time with time zone")
-      .replace(/^float8$/, "double precision")
-      .replace(/\s+/g, " ")
-      .replace(/\s*([()[\],])\s*/g, "$1");
+    return normalizeIdentityType(argument);
   }).join(", ");
 }
 
