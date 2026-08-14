@@ -681,6 +681,13 @@ describeIf("RLS integration", () => {
       expect(cleanup.error).toBeNull();
     });
 
+    it("keeps the help-docs bucket private", async () => {
+      const { data: bucket, error } = await fx.admin.storage.getBucket("help-docs");
+
+      expect(error).toBeNull();
+      expect(bucket?.public).toBe(false);
+    });
+
     it("allows an authenticated user to list own-tenant exports", async () => {
       const clientA = await authedClient(fx.userA.email, fx.userA.password);
       const result = await clientA.storage
