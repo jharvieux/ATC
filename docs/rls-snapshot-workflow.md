@@ -2,7 +2,7 @@
 
 ## What this is
 
-`db/rls-snapshot-main.sql` and `db/rls-snapshot-rag.sql` are committed baselines of all Row Level Security (RLS) policies on each database's `public` schema. The `rls-snapshot-diff` CI job compares the live databases against these baselines on every PR and push to `release/*`, failing the build if they diverge.
+`db/rls-snapshot-main.sql` is the committed baseline for all Row Level Security (RLS) policies on `public.*` plus `storage.objects`. `db/rls-snapshot-rag.sql` covers the RAG database's `public.*` relations. The `rls-snapshot-diff` CI job compares the live databases against these baselines on every PR and push to `release/*`, failing the build if they diverge.
 
 This catches accidental RLS changes: a policy accidentally dropped or modified in dev won't silently reach production.
 
