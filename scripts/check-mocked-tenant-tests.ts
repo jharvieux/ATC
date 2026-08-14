@@ -17,9 +17,16 @@
 // mocks (importActual/importOriginal factories) are exempt: the real code
 // still runs.
 //
+// A genuine app-layer unit test may declare a mechanically checked companion
+// integration test immediately above its registration:
+//   // @rls-covered-by apps/main/test/integration/rls.test.ts#bookings: userB cannot SELECT tenantA rows
+// The target must be a runnable real-DB integration test; missing, mocked, or
+// stale pointers fail even while the legacy count baseline is being burned down.
+//
 // FREEZE-EXISTING / BLOCK-NEW: the existing claimed-but-mocked tests (#2028's
-// ~53) are frozen in scripts/mocked-tenant-tests-baseline.txt, count-keyed by
-// file. NEW ones fail. Fails loud when zero test files are scanned.
+// ~53 raw Harvey sites; fewer under this port's precision boundary) are frozen
+// in scripts/mocked-tenant-tests-baseline.txt, count-keyed by file. NEW ones
+// fail. Fails loud when zero test files are scanned.
 //
 // Usage: tsx scripts/check-mocked-tenant-tests.ts [testDir ...]
 
@@ -38,6 +45,8 @@ const BASELINE_FILE = path.join(ROOT, "scripts/mocked-tenant-tests-baseline.txt"
 const TENANT_CLAIM =
   /tenant[- ]?(isolation|scope[ds]?|filter)|cross[- ]?tenant|(another|other|wrong|second)[- ]tenant'?s?\b|\brls\b|isolation|row[- ]?level/i;
 const SUPABASE_CLIENT_FACTORY = /\bcreate(Server|Browser|Route|Middleware)?Client\s*\(/;
+const COVERAGE_POINTER = /@rls-covered-by\s+([^\s#]+)#([^\r\n]+)/g;
+const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 
 function parse(p: string, text: string): ts.SourceFile {
   return ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true, /x$/.test(p) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -104,6 +113,7 @@ export interface MockedTenantTest {
   line: number;
   fullName: string; // enclosing describe titles + own title
   mockedModule: string;
+  annotationError?: string;
 }
 
 // Walk describe/it/test registrations recording the title stack; skip/todo
@@ -117,6 +127,68 @@ function callHead(node: ts.CallExpression): { base: string; mod?: string } | und
     return { base: callee.expression.text, mod: callee.name.text };
   }
   if (ts.isCallExpression(callee)) return callHead(callee); // it.each(rows)("name", fn)
+  return undefined;
+}
+
+function runnableTestNames(contents: string, file: string): string[] {
+  const sf = parse(file, contents);
+  const names: string[] = [];
+  const describeStack: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const head = callHead(node);
+      if (head && EXEMPT_MODS.has(head.mod ?? "")) return;
+      const titleArg = node.arguments[0];
+      const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
+      if (head?.base === "describe") {
+        describeStack.push(title);
+        ts.forEachChild(node, visit);
+        describeStack.pop();
+        return;
+      }
+      if (head && (head.base === "it" || head.base === "test")) {
+        names.push([...describeStack, title].filter(Boolean).join(" "));
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return names;
+}
+
+interface CoveragePointer {
+  file: string;
+  testName: string;
+}
+
+function coveragePointer(node: ts.CallExpression, sf: ts.SourceFile): CoveragePointer | undefined {
+  const trivia = sf.text.slice(node.getFullStart(), node.getStart(sf));
+  const matches = [...trivia.matchAll(COVERAGE_POINTER)];
+  const match = matches.at(-1);
+  if (!match?.[1] || !match[2]) return undefined;
+  return { file: path.posix.normalize(match[1]), testName: match[2].trim() };
+}
+
+function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<string, string>): string | undefined {
+  if (!INTEGRATION_TEST_PATH.test(pointer.file) || pointer.file.includes("..")) {
+    return `coverage target must be an apps/*/test/integration/*.test.* path, got "${pointer.file}"`;
+  }
+  const target = byPath.get(pointer.file);
+  if (target === undefined) return `coverage target does not exist: ${pointer.file}`;
+  if (!/from\s+["'](?:@supabase\/supabase-js|postgres)["']/.test(target) || !/SUPABASE_[A-Z_]*(?:DB_)?URL/.test(target)) {
+    return `coverage target is not a real-DB integration test: ${pointer.file}`;
+  }
+  const targetSf = parse(pointer.file, target);
+  const mockedDb = collectModuleMocks(targetSf)
+    .filter((mock) => !mock.partial)
+    .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
+    .find((description): description is string => description !== undefined);
+  if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
+  const targetNames = runnableTestNames(target, pointer.file);
+  if (!targetNames.some((name) => name === pointer.testName || name.endsWith(` ${pointer.testName}`))) {
+    return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;
+  }
   return undefined;
 }
 
@@ -147,11 +219,15 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
       if (head && (head.base === "it" || head.base === "test")) {
         const fullName = [...describeStack, title].filter(Boolean).join(" ");
         if (TENANT_CLAIM.test(fullName)) {
+          const pointer = coveragePointer(node, sf);
+          const annotationError = pointer ? coveragePointerError(pointer, byPath) : undefined;
+          if (pointer && annotationError === undefined) return;
           out.push({
             file: relPath,
             line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
             fullName,
             mockedModule: dbMock,
+            ...(annotationError ? { annotationError } : {}),
           });
         }
         return;
@@ -252,6 +328,12 @@ function main(): void {
   // works; only files under the scanned test dirs are checked for findings.
   const byPath = new Map(files.map((abs) => [path.relative(ROOT, abs), fs.readFileSync(abs, "utf8")]));
   const testRels = new Set(byPath.keys());
+  // Annotation targets may sit outside an explicitly scanned subtree. Load all
+  // app tests for pointer resolution, but retain testRels as the only scan set.
+  for (const abs of defaultDirs().flatMap((d) => walk(d))) {
+    const rel = path.relative(ROOT, abs);
+    if (!byPath.has(rel)) byPath.set(rel, fs.readFileSync(abs, "utf8"));
+  }
   // Arrow (not bare `walk`): flatMap would pass the array index as walk's second
   // arg, forcing swallowMissing=0 and throwing on an app without a src/ tree.
   for (const abs of resolutionDirs().flatMap((d) => walk(d))) {
@@ -260,6 +342,14 @@ function main(): void {
   }
 
   const findings = [...testRels].flatMap((rel) => findMockedTenantTests(rel, byPath.get(rel)!, byPath));
+  const annotationErrors = findings.filter((finding) => finding.annotationError !== undefined);
+  if (annotationErrors.length > 0) {
+    console.error("mocked-tenant-tests guard: invalid @rls-covered-by annotation(s):\n");
+    for (const finding of annotationErrors) {
+      console.error(`  ${finding.file}:${finding.line}  ${finding.annotationError}`);
+    }
+    process.exit(1);
+  }
   const liveCounts = new Map<string, number>();
   for (const f of findings) liveCounts.set(f.file, (liveCounts.get(f.file) ?? 0) + 1);
 
