@@ -5,6 +5,8 @@
 // their OAuth provider (Google, Microsoft, or Facebook). If no cookie is found
 // the user is prompted to open the platform in a tab and sign in there first.
 
+import { ensureHostPermission } from "./permissions.js";
+
 const loadingView = document.getElementById("loading-view");
 const connectedView = document.getElementById("connected-view");
 const connectView = document.getElementById("connect-view");
@@ -45,18 +47,6 @@ function isTokenExpired(expiresAt) {
 function cookieBaseName(supabaseUrl) {
   const ref = new URL(supabaseUrl).hostname.split(".")[0];
   return `sb-${ref}-auth-token`;
-}
-
-// Cookie reads need host permission for the tenant origin. The manifest only
-// declares optional_host_permissions (no origin is granted by default), so
-// each new origin must be requested — this keeps the extension from ever
-// holding standing cookie access to sites other than the platform the user
-// connected to.
-async function ensureHostPermission(tenantUrl, { requestIfMissing }) {
-  const origin = `${new URL(tenantUrl).origin}/*`;
-  if (await chrome.permissions.contains({ origins: [origin] })) return true;
-  if (!requestIfMissing) return false;
-  return chrome.permissions.request({ origins: [origin] });
 }
 
 async function readSupabaseSessionFromCookies(tenantUrl, supabaseUrl) {
