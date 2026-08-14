@@ -38,11 +38,13 @@ function resolveDbUrl(target: Target): string {
 }
 
 interface TableRow {
+  schemaname: string;
   tablename: string;
   rowsecurity: boolean;
 }
 
 interface PolicyRow {
+  schemaname: string;
   tablename: string;
   policyname: string;
   cmd: string;
@@ -55,15 +57,17 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
   const sql = postgres(resolveDbUrl(target), { max: 1, idle_timeout: 10 });
   try {
     const tables = await sql<TableRow[]>`
-      SELECT c.relname AS tablename, c.relrowsecurity AS rowsecurity
+      SELECT n.nspname AS schemaname, c.relname AS tablename, c.relrowsecurity AS rowsecurity
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND c.relkind = 'r'
-      ORDER BY c.relname
+      WHERE (n.nspname = 'public' OR (n.nspname = 'storage' AND c.relname = 'objects'))
+        AND c.relkind = 'r'
+      ORDER BY n.nspname, c.relname
     `;
 
     const policies = await sql<PolicyRow[]>`
       SELECT
+        n.nspname AS schemaname,
         c.relname AS tablename,
         p.polname AS policyname,
         CASE p.polcmd
@@ -81,15 +85,15 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       FROM pg_policy p
       JOIN pg_class c ON c.oid = p.polrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public'
-      ORDER BY c.relname, p.polname
+      WHERE n.nspname = 'public' OR (n.nspname = 'storage' AND c.relname = 'objects')
+      ORDER BY n.nspname, c.relname, p.polname
     `;
 
     const lines: string[] = [
       "-- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY",
       `-- Target: ${target}`,
       `-- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=${target} > db/rls-snapshot-${target}.sql`,
-      "-- Generated against schema: public",
+      "-- Generated against schemas: public, storage.objects",
       "",
     ];
 
@@ -101,7 +105,7 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       lines.push("-- (none)");
     } else {
       for (const t of rlsEnabled) {
-        lines.push(`-- public.${t.tablename} (rls_enabled)`);
+        lines.push(`-- ${t.schemaname}.${t.tablename} (rls_enabled)`);
       }
     }
 
@@ -109,7 +113,7 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
       lines.push("--");
       lines.push("-- Tables with RLS disabled:");
       for (const t of rlsDisabled) {
-        lines.push(`-- public.${t.tablename} (rls_disabled)`);
+        lines.push(`-- ${t.schemaname}.${t.tablename} (rls_disabled)`);
       }
     }
 
@@ -118,18 +122,19 @@ export async function generateSnapshot(target: Target = "main"): Promise<string>
 
     const byTable = new Map<string, PolicyRow[]>();
     for (const p of policies) {
-      if (!byTable.has(p.tablename)) byTable.set(p.tablename, []);
-      byTable.get(p.tablename)!.push(p);
+      const qualifiedTable = `${p.schemaname}.${p.tablename}`;
+      if (!byTable.has(qualifiedTable)) byTable.set(qualifiedTable, []);
+      byTable.get(qualifiedTable)!.push(p);
     }
 
     if (byTable.size === 0) {
       lines.push("-- (none)");
     } else {
-      for (const tablename of Array.from(byTable.keys()).sort()) {
-        lines.push(`-- TABLE: public.${tablename}`);
-        for (const p of byTable.get(tablename)!) {
+      for (const qualifiedTable of Array.from(byTable.keys()).sort()) {
+        lines.push(`-- TABLE: ${qualifiedTable}`);
+        for (const p of byTable.get(qualifiedTable)!) {
           const roles = p.roles.length === 0 ? "PUBLIC" : p.roles.join(", ");
-          let stmt = `CREATE POLICY "${p.policyname}" ON public.${tablename}\n  FOR ${p.cmd} TO ${roles}`;
+          let stmt = `CREATE POLICY "${p.policyname}" ON ${qualifiedTable}\n  FOR ${p.cmd} TO ${roles}`;
           if (p.qual) stmt += `\n  USING (${p.qual})`;
           if (p.with_check) stmt += `\n  WITH CHECK (${p.with_check})`;
           stmt += ";";

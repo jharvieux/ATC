@@ -1,7 +1,7 @@
 -- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY
 -- Target: main
 -- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql
--- Generated against schema: public
+-- Generated against schemas: public, storage.objects
 
 -- Tables with RLS enabled:
 -- public.abuse_recompute_drift_log (rls_enabled)
@@ -137,6 +137,7 @@
 -- public.voice_samples (rls_enabled)
 -- public.weather_forecast_cache (rls_enabled)
 -- public.weather_usage_metrics (rls_enabled)
+-- storage.objects (rls_enabled)
 
 -- Policies:
 -- TABLE: public.abuse_recompute_drift_log
@@ -1752,4 +1753,18 @@ CREATE POLICY "weather_usage_metrics_no_user_select" ON public.weather_usage_met
 CREATE POLICY "weather_usage_metrics_no_user_update" ON public.weather_usage_metrics
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: storage.objects
+CREATE POLICY "help_docs_tenant_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'help-docs'::text AND auth_user_in_tenant((regexp_match(name, '^tenant_([0-9a-f-]+)/'::text))[1]::uuid));
+CREATE POLICY "imported_documents_tenant_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'imported-documents'::text AND (storage.foldername(name))[1] = (( SELECT t.id::text AS id
+   FROM tenants t
+  WHERE auth_user_in_tenant(t.id) AND tenant_is_active(t.id)
+ LIMIT 1)));
+CREATE POLICY "quote_pdfs_tenant_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'quote-pdfs'::text AND auth_user_in_tenant((regexp_match(name, '^tenant_([0-9a-f-]+)/'::text))[1]::uuid));
 
