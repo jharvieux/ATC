@@ -45,12 +45,34 @@ describe("parseMigrations", () => {
 
     expect(ledger.expected).toEqual(expect.arrayContaining([
       { kind: "enum_value", schema: "app", name: "ready", parent: "status", migration: "7" },
-      { kind: "function", schema: "app", name: "refresh_items", migration: "7" },
+      { kind: "function", schema: "app", name: "refresh_items", identityArgs: "", migration: "7" },
       { kind: "table", schema: "app", name: "items", migration: "7" },
       { kind: "type", schema: "app", name: "status", migration: "7" },
       { kind: "view", schema: "app", name: "current_items", migration: "7" },
     ]));
     expect(ledger.expected).not.toContainEqual(expect.objectContaining({ kind: "column", name: "inner_column" }));
+  });
+
+  it("keeps function overloads distinct and drops only the named signature", () => {
+    const ledger = parseMigrations([{ version: "1", sql: `
+      CREATE FUNCTION public.lookup(p_id uuid) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+      CREATE FUNCTION public.lookup(p_id text DEFAULT '') RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+      DROP FUNCTION public.lookup(uuid);
+    ` }]);
+
+    expect(ledger.expected).toEqual([
+      { kind: "function", schema: "public", name: "lookup", identityArgs: "text", migration: "1" },
+    ]);
+  });
+
+  it("removes enum values when their type is dropped", () => {
+    const ledger = parseMigrations([{ version: "1", sql: `
+      CREATE TYPE public.status AS ENUM ('new');
+      ALTER TYPE public.status ADD VALUE 'ready';
+      DROP TYPE public.status;
+    ` }]);
+
+    expect(ledger.expected).toEqual([]);
   });
 });
 
@@ -87,5 +109,19 @@ describe("reconcile", () => {
     const ledger = parseMigrations([{ version: "1", sql: "CREATE TABLE public.tenants (id uuid);" }]);
     expect(reconcile(ledger, [{ kind: "table", schema: "public", name: "tenants" }], ["tenants"]))
       .toEqual({ missing: [], outOfBandTables: [] });
+  });
+
+  it("reports a missing overload when the catalog contains only its sibling", () => {
+    const ledger = parseMigrations([{ version: "1", sql: `
+      CREATE FUNCTION public.lookup(p_id uuid) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+      CREATE FUNCTION public.lookup(p_id text) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+    ` }]);
+    const result = reconcile(ledger, [
+      { kind: "function", schema: "public", name: "lookup", identityArgs: "uuid" },
+    ], []);
+
+    expect(result.missing).toEqual([
+      { kind: "function", schema: "public", name: "lookup", identityArgs: "text", migration: "1" },
+    ]);
   });
 });

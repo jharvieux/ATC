@@ -22,6 +22,7 @@ export interface LedgerObject {
   schema: string;
   name: string;
   parent?: string;
+  identityArgs?: string;
   migration: string;
 }
 
@@ -30,6 +31,7 @@ interface CatalogObject {
   schema: string;
   name: string;
   parent?: string;
+  identityArgs?: string;
 }
 
 interface LedgerState {
@@ -53,8 +55,90 @@ function qualifiedName(value: string): { schema: string; name: string } {
     : { schema: unquote(parts[0]), name: unquote(parts[1]) };
 }
 
-function key(object: Pick<CatalogObject, "kind" | "schema" | "name" | "parent">): string {
-  return [object.kind, object.schema, object.parent ?? "", object.name].join("\u0000");
+function key(object: Pick<CatalogObject, "kind" | "schema" | "name" | "parent" | "identityArgs">): string {
+  return [object.kind, object.schema, object.parent ?? "", object.name, object.identityArgs ?? ""].join("\u0000");
+}
+
+const TYPE_STARTERS = new Set([
+  "bigint", "bigserial", "bit", "boolean", "box", "bytea", "char", "character",
+  "cidr", "circle", "date", "decimal", "double", "inet", "int", "int2", "int4",
+  "int8", "integer", "interval", "json", "jsonb", "line", "lseg", "macaddr",
+  "money", "numeric", "path", "point", "polygon", "real", "record", "serial",
+  "serial2", "serial4", "serial8", "smallint", "smallserial", "text", "time",
+  "timestamp", "timestamptz", "timetz", "tsquery", "tsvector", "uuid", "varbit",
+  "varchar", "vector", "void", "xml",
+]);
+
+export function normalizeIdentityArguments(value: string): string {
+  const argumentsList: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === quote && value[index + 1] === quote) index += 1;
+      else if (char === quote) quote = null;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "," && depth === 0) {
+      argumentsList.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  argumentsList.push(value.slice(start));
+  return argumentsList.map((rawArgument) => rawArgument.trim()).filter(Boolean).map((rawArgument) => {
+    let argument = rawArgument;
+    depth = 0;
+    quote = null;
+    for (let index = 0; index < argument.length; index += 1) {
+      const char = argument[index];
+      if (quote) {
+        if (char === quote && argument[index + 1] === quote) index += 1;
+        else if (char === quote) quote = null;
+      } else if (char === "'" || char === '"') quote = char;
+      else if (char === "(") depth += 1;
+      else if (char === ")") depth -= 1;
+      else if (depth === 0 && (char === "=" || /^default\b/i.test(argument.slice(index)))) {
+        argument = argument.slice(0, index).trim();
+        break;
+      }
+    }
+    argument = argument.replace(/^(?:inout|in|out|variadic)\s+/i, "").trim();
+    const firstSpace = argument.search(/\s/);
+    if (firstSpace > 0) {
+      const first = unquote(argument.slice(0, firstSpace)).toLowerCase();
+      const remainder = argument.slice(firstSpace).trim();
+      if (!TYPE_STARTERS.has(first) && !first.includes(".") && !first.endsWith("[]")) argument = remainder;
+    }
+    return argument.toLowerCase()
+      .replace(/^int$/, "integer")
+      .replace(/^int4$/, "integer")
+      .replace(/^int8$/, "bigint")
+      .replace(/^bool$/, "boolean")
+      .replace(/^varchar$/, "character varying")
+      .replace(/^timestamptz$/, "timestamp with time zone")
+      .replace(/^timetz$/, "time with time zone")
+      .replace(/^float8$/, "double precision")
+      .replace(/\s+/g, " ")
+      .replace(/\s*([()[\],])\s*/g, "$1");
+  }).join(", ");
+}
+
+function parenthesizedContent(sql: string, openAt: number): string {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = openAt; index < sql.length; index += 1) {
+    const char = sql[index];
+    if (quote) {
+      if (char === quote && sql[index + 1] === quote) index += 1;
+      else if (char === quote) quote = null;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")" && --depth === 0) return sql.slice(openAt + 1, index);
+  }
+  return sql.slice(openAt + 1);
 }
 
 function stripComments(sql: string): string {
@@ -105,6 +189,10 @@ export function parseMigrations(
       if (kind === "table") {
         removeTableDependents(schema, name);
         if (schema === "public") mentionedPublicTables.add(name);
+      } else if (kind === "type") {
+        for (const [objectKey, object] of objects) {
+          if (object.kind === "enum_value" && object.schema === schema && object.parent === name) objects.delete(objectKey);
+        }
       }
     });
     matches(new RegExp(`\\bCREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?(${QUALIFIED})\\s+ON\\s+(?:ONLY\\s+)?(${QUALIFIED})`, "gi"), (match) => {
@@ -121,10 +209,12 @@ export function parseMigrations(
     });
     matches(new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(${QUALIFIED})\\s*\\(`, "gi"), (match) => {
       const name = qualifiedName(match[1]);
-      put({ kind: "function", ...name, migration: migration.version });
+      const openAt = match.index + match[0].lastIndexOf("(");
+      put({ kind: "function", ...name, identityArgs: normalizeIdentityArguments(parenthesizedContent(sql, openAt)), migration: migration.version });
     });
     matches(new RegExp(`\\bDROP\\s+FUNCTION\\s+(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})\\s*\\(`, "gi"), (match) => {
-      remove({ kind: "function", ...qualifiedName(match[1]) });
+      const openAt = match.index + match[0].lastIndexOf("(");
+      remove({ kind: "function", ...qualifiedName(match[1]), identityArgs: normalizeIdentityArguments(parenthesizedContent(sql, openAt)) });
     });
     matches(new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?TRIGGER\\s+(${IDENT})[\\s\\S]*?\\bON\\s+(${QUALIFIED})`, "gi"), (match) => {
       const table = qualifiedName(match[2]);
@@ -224,8 +314,9 @@ async function catalogObjects(dbUrl: string): Promise<{ objects: CatalogObject[]
     const indexes = await sql<Array<{ kind: ObjectKind; schema: string; name: string; parent: string }>>`
       SELECT 'index' AS kind, schemaname AS schema, indexname AS name, tablename AS parent FROM pg_catalog.pg_indexes
     `;
-    const functions = await sql<Array<{ kind: ObjectKind; schema: string; name: string }>>`
-      SELECT 'function' AS kind, n.nspname AS schema, p.proname AS name
+    const functions = await sql<Array<{ kind: ObjectKind; schema: string; name: string; identityArgs: string }>>`
+      SELECT 'function' AS kind, n.nspname AS schema, p.proname AS name,
+             pg_catalog.pg_get_function_identity_arguments(p.oid) AS "identityArgs"
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
     `;
     const types = await sql<Array<{ kind: ObjectKind; schema: string; name: string }>>`
@@ -252,7 +343,10 @@ async function catalogObjects(dbUrl: string): Promise<{ objects: CatalogObject[]
       JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     `;
     return {
-      objects: [...relations, ...indexes, ...functions, ...types, ...columns, ...constraints, ...triggers, ...enumValues],
+      objects: [...relations, ...indexes, ...functions.map((row) => ({
+        ...row,
+        identityArgs: normalizeIdentityArguments(row.identityArgs),
+      })), ...types, ...columns, ...constraints, ...triggers, ...enumValues],
       publicTables: relations.filter((row) => row.kind === "table" && row.schema === "public").map((row) => row.name),
       appliedVersions: new Set(migrationRows.map((row) => row.version)),
     };
