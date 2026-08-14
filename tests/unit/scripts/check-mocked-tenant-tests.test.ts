@@ -23,8 +23,19 @@ const REAL_DB_COVERAGE = `
 import { createClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 const DB_URL = process.env.SUPABASE_DB_URL;
-it("${RLS_TEST}", async () => {});
+it("${RLS_TEST}", async () => {
+  const db = createClient("https://db.example.test", "anon-key");
+  await db.from("bookings").select("id");
+});
 `;
+const EMPTY_DB_COVERAGE = REAL_DB_COVERAGE.replace(
+  /async \(\) => \{[\s\S]*?\n\}\);/,
+  "async () => {});",
+);
+const PURE_DB_COVERAGE = REAL_DB_COVERAGE.replace(
+  /  const db =[\s\S]*?select\("id"\);/,
+  "  expect(1 + 1).toBe(2);",
+);
 
 const claimTest = (body: string) => `
 import { describe, it, vi } from "vitest";
@@ -123,6 +134,26 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
     expect(result).toHaveLength(1);
     expect(result[0]?.annotationError).toMatch(/coverage target mocks/);
+  });
+
+  it("fails loud when the exact target test is empty despite real-DB file markers", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, EMPTY_DB_COVERAGE]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/does not execute an awaited Supabase\/Postgres operation/);
+  });
+
+  it("fails loud when the exact target test only makes a pure assertion", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  // @rls-covered-by ${RLS_FILE}#${RLS_TEST}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, PURE_DB_COVERAGE]]));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.annotationError).toMatch(/does not execute an awaited Supabase\/Postgres operation/);
   });
 
   it("does not let a valid pointer annotate the following sibling test", () => {

@@ -20,8 +20,10 @@
 // A genuine app-layer unit test may declare a mechanically checked companion
 // integration test immediately above its registration:
 //   // @rls-covered-by apps/main/test/integration/rls.test.ts#bookings: userB cannot SELECT tenantA rows
-// The target must be a runnable real-DB integration test; missing, mocked, or
-// stale pointers fail even while the legacy count baseline is being burned down.
+// The target must be a runnable real-DB integration test whose exact callback
+// performs an awaited Supabase/Postgres operation; missing, mocked, empty,
+// assertion-only, or stale pointers fail even while the legacy count baseline
+// is being burned down.
 //
 // FREEZE-EXISTING / BLOCK-NEW: the existing claimed-but-mocked tests (#2028's
 // ~53 raw Harvey sites; fewer under this port's precision boundary) are frozen
@@ -130,9 +132,13 @@ function callHead(node: ts.CallExpression): { base: string; mod?: string } | und
   return undefined;
 }
 
-function runnableTestNames(contents: string, file: string): string[] {
-  const sf = parse(file, contents);
-  const names: string[] = [];
+interface RunnableTest {
+  fullName: string;
+  call: ts.CallExpression;
+}
+
+function runnableTests(sf: ts.SourceFile): RunnableTest[] {
+  const tests: RunnableTest[] = [];
   const describeStack: string[] = [];
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
@@ -147,14 +153,51 @@ function runnableTestNames(contents: string, file: string): string[] {
         return;
       }
       if (head && (head.base === "it" || head.base === "test")) {
-        names.push([...describeStack, title].filter(Boolean).join(" "));
+        tests.push({ fullName: [...describeStack, title].filter(Boolean).join(" "), call: node });
         return;
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return names;
+  return tests;
+}
+
+function hasAuthoritativeDbOperation(testCall: ts.CallExpression): boolean {
+  const callback = testCall.arguments.find(
+    (arg): arg is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg),
+  );
+  if (!callback) return false;
+
+  let found = false;
+  const isAwaited = (node: ts.Node): boolean => {
+    for (let current = node.parent; current && current !== callback; current = current.parent) {
+      if (ts.isAwaitExpression(current)) return true;
+    }
+    return false;
+  };
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    // An unused helper declared inside the test does not make the test execute
+    // a DB operation. Only inspect the runnable callback's own control flow.
+    if (node !== callback && ts.isFunctionLike(node)) return;
+    if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && node.tag.text === "sql" && isAwaited(node)) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      (node.expression.name.text === "from" || node.expression.name.text === "rpc") &&
+      isAwaited(node)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(callback);
+  return found;
 }
 
 interface CoveragePointer {
@@ -185,9 +228,14 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
     .find((description): description is string => description !== undefined);
   if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
-  const targetNames = runnableTestNames(target, pointer.file);
-  if (!targetNames.some((name) => name === pointer.testName || name.endsWith(` ${pointer.testName}`))) {
+  const targetTest = runnableTests(targetSf).find(
+    (test) => test.fullName === pointer.testName || test.fullName.endsWith(` ${pointer.testName}`),
+  );
+  if (!targetTest) {
     return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;
+  }
+  if (!hasAuthoritativeDbOperation(targetTest.call)) {
+    return `coverage test does not execute an awaited Supabase/Postgres operation in ${pointer.file}: "${pointer.testName}"`;
   }
   return undefined;
 }
