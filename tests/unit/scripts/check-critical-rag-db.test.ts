@@ -134,6 +134,13 @@ describe("deploy workflow wiring", () => {
     expect(testJob.slice(0, testJob.indexOf("    steps:"))).not.toContain("workflows_only != 'true'");
     expect(testJob).toContain("if: needs.detect-changes.outputs.workflows_only == 'true'");
     expect(testJob).toContain("pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts");
+    expect(testJob).toContain("SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}");
+    expect(testJob).toContain("SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
+    expect(testJob).toContain("ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}");
+    expect(testJob).toContain("pnpm tsx scripts/check-critical-rag-db.ts");
+    expect(testJob.indexOf("pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts")).toBeLessThan(
+      testJob.indexOf("pnpm tsx scripts/check-critical-rag-db.ts"),
+    );
   });
 
   it("reports missing API or DB credentials from scheduled and manual nightly runs", () => {

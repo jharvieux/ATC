@@ -183,6 +183,8 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -206,6 +208,12 @@ jobs:
       - name: Run workflow wiring tests
         if: needs.detect-changes.outputs.workflows_only == 'true'
         run: pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts
+
+      - name: Require critical isolation test databases for workflow-only changes
+        if: needs.detect-changes.outputs.workflows_only == 'true'
+        env:
+          ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: pnpm tsx scripts/check-critical-rag-db.ts
 
       - name: Decide test scope (full vs affected)
         id: scope

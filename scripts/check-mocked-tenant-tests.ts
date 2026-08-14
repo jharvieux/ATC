@@ -114,6 +114,36 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
   return containsReplacement(factory);
 }
 
+function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
+  if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
+  const originalLoader = factory.parameters[0]?.name;
+  if (!originalLoader || !ts.isIdentifier(originalLoader)) return false;
+
+  const returns: ts.Expression[] = [];
+  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) returns.push(factory.body);
+  else if (factory.body) {
+    const collectReturns = (node: ts.Node) => {
+      if (node !== factory.body && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
+      ts.forEachChild(node, collectReturns);
+    };
+    collectReturns(factory.body);
+  }
+
+  return returns.some((returned) => {
+    const object = unwrapExpression(returned);
+    return (
+      ts.isObjectLiteralExpression(object) &&
+      object.properties.some((property) => {
+        if (!ts.isSpreadAssignment(property)) return false;
+        let spread = unwrapExpression(property.expression);
+        if (ts.isAwaitExpression(spread)) spread = unwrapExpression(spread.expression);
+        return ts.isCallExpression(spread) && ts.isIdentifier(spread.expression) && spread.expression.text === originalLoader.text;
+      })
+    );
+  });
+}
+
 function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
   const out: MockCall[] = [];
   const visit = (node: ts.Node) => {
@@ -123,10 +153,9 @@ function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
         const arg = node.arguments[0];
         if (arg && ts.isStringLiteralLike(arg)) {
           const factory = node.arguments[1];
-          const factoryText = factory?.getText(sf) ?? "";
           out.push({
             specifier: arg.text,
-            partial: /importActual|requireActual|importOriginal/.test(factoryText),
+            partial: factoryPreservesOriginal(factory),
             replacesCreateClient: factoryReplacesExport(factory, "createClient", sf),
             replacesDefault: factoryReplacesExport(factory, "default", sf),
             replacesWitness: factoryReplacesExport(factory, "assertIsolationQuery", sf),
@@ -213,6 +242,9 @@ function staticBoolean(input: ts.Expression | undefined): boolean | undefined {
   const expression = unwrapExpression(input);
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return true;
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (expression.kind === ts.SyntaxKind.NullKeyword) return false;
+  if (ts.isNumericLiteral(expression)) return Number(expression.text) !== 0;
+  if (ts.isStringLiteralLike(expression)) return expression.text.length > 0;
   if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.ExclamationToken) {
     const operand = staticBoolean(expression.operand);
     return operand === undefined ? undefined : !operand;
@@ -220,7 +252,7 @@ function staticBoolean(input: ts.Expression | undefined): boolean | undefined {
   return undefined;
 }
 
-function registrationIsStaticallyDisabled(node: ts.CallExpression): boolean {
+function registrationIsStaticallyDisabled(node: ts.CallExpression, sf: ts.SourceFile): boolean {
   if (!ts.isCallExpression(node.expression) || !ts.isPropertyAccessExpression(node.expression.expression)) return false;
   const modifier = node.expression.expression;
   if (!ts.isIdentifier(modifier.expression) || !["describe", "it", "test"].includes(modifier.expression.text)) return false;
@@ -228,7 +260,24 @@ function registrationIsStaticallyDisabled(node: ts.CallExpression): boolean {
   if (modifier.name.text === "skipIf") return staticBoolean(argument) === true;
   if (modifier.name.text === "runIf") return staticBoolean(argument) === false;
   if (modifier.name.text !== "each" || !argument) return false;
-  const rows = unwrapExpression(argument);
+  let rows = unwrapExpression(argument);
+  if (ts.isIdentifier(rows)) {
+    const declarations: ts.Expression[] = [];
+    const collect = (candidate: ts.Node) => {
+      if (
+        ts.isVariableDeclaration(candidate) &&
+        ts.isIdentifier(candidate.name) &&
+        candidate.name.text === rows.getText(sf) &&
+        candidate.initializer &&
+        candidate.pos < node.pos
+      ) {
+        declarations.push(candidate.initializer);
+      }
+      ts.forEachChild(candidate, collect);
+    };
+    collect(sf);
+    if (declarations.length === 1) rows = unwrapExpression(declarations[0]!);
+  }
   return ts.isArrayLiteralExpression(rows) && rows.elements.length === 0;
 }
 
@@ -243,7 +292,7 @@ function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const head = callHead(node);
-      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node))) return;
+      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node, sf))) return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
       if (head?.base === "describe") {
@@ -280,6 +329,36 @@ function witnessBinding(sf: ts.SourceFile, targetPath: string): string | undefin
     if (imported) return imported.name.text;
   }
   return undefined;
+}
+
+function witnessBindingIsMocked(sf: ts.SourceFile, binding: string): boolean {
+  let mocked = false;
+  const visit = (node: ts.Node) => {
+    if (mocked) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      /^(?:mock|withImplementation)/.test(node.expression.name.text)
+    ) {
+      const configured = node.expression.expression;
+      if (
+        ts.isCallExpression(configured) &&
+        ts.isPropertyAccessExpression(configured.expression) &&
+        ts.isIdentifier(configured.expression.expression) &&
+        ["vi", "jest"].includes(configured.expression.expression.text) &&
+        configured.expression.name.text === "mocked" &&
+        configured.arguments[0] &&
+        ts.isIdentifier(configured.arguments[0]) &&
+        configured.arguments[0].text === binding
+      ) {
+        mocked = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return mocked;
 }
 
 function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
@@ -529,15 +608,21 @@ function dbReceiverMockDescription(sf: ts.SourceFile): string | undefined {
   let mocked: DbReceiverKind | undefined;
   const visit = (node: ts.Node) => {
     if (mocked) return;
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      (node.left.name.text === "from" || node.left.name.text === "rpc") &&
-      isProvenSupabase(node.left.expression)
-    ) {
-      mocked = "Supabase";
-      return;
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const receiver = ts.isPropertyAccessExpression(node.left)
+        ? node.left.expression
+        : ts.isElementAccessExpression(node.left)
+          ? node.left.expression
+          : undefined;
+      const member = ts.isPropertyAccessExpression(node.left)
+        ? node.left.name.text
+        : ts.isElementAccessExpression(node.left)
+          ? propertyName(node.left.argumentExpression)
+          : undefined;
+      if (receiver && ["from", "rpc"].includes(member ?? "") && isProvenSupabase(receiver)) {
+        mocked = "Supabase";
+        return;
+      }
     }
     if (ts.isCallExpression(node)) {
       const method = frameworkMethod(node);
@@ -689,6 +774,19 @@ function isolationWitnessError(
   targetPath: string,
   expectedResources: string[],
 ): string | undefined {
+  const statementAlwaysExits = (statement: ts.Statement): boolean => {
+    if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+    if (ts.isBlock(statement)) return statement.statements.some(statementAlwaysExits);
+    if (ts.isIfStatement(statement)) {
+      const condition = staticBoolean(statement.expression);
+      if (condition === true) return statementAlwaysExits(statement.thenStatement);
+      if (condition === false && statement.elseStatement) return statementAlwaysExits(statement.elseStatement);
+      if (statement.elseStatement) {
+        return statementAlwaysExits(statement.thenStatement) && statementAlwaysExits(statement.elseStatement);
+      }
+    }
+    return false;
+  };
   const callback = testCall.arguments.find(
     (arg): arg is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg),
   );
@@ -734,7 +832,7 @@ function isolationWitnessError(
   const witnessIndex = callback.body.statements.indexOf(executionNode);
   if (
     witnessIndex < 0 ||
-    callback.body.statements.slice(0, witnessIndex).some((statement) => ts.isReturnStatement(statement) || ts.isThrowStatement(statement))
+    callback.body.statements.slice(0, witnessIndex).some(statementAlwaysExits)
   ) {
     return "coverage test isolation witness is unreachable after an earlier return or throw";
   }
@@ -825,6 +923,10 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     return resolved === ISOLATION_WITNESS_PATH;
   });
   if (mockedWitness) return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
+  const binding = witnessBinding(targetSf, pointer.file);
+  if (binding && witnessBindingIsMocked(targetSf, binding)) {
+    return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
+  }
   const targetTests = runnableTests(targetSf).filter((test) => test.fullName === pointer.testName);
   if (targetTests.length === 0) {
     return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;
@@ -859,7 +961,7 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const head = callHead(node);
-      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node))) return;
+      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node, sf))) return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
       if (head?.base === "describe") {

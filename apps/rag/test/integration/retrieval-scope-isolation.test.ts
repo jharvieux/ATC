@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, it } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+import { fetchApprovedChunksByIds } from "../../src/app/api/retrieve/route";
 
 const ragDbUrl = process.env.SUPABASE_RAG_DB_URL;
 if (process.env.RAG_SCOPE_DB_REQUIRED === "true" && !ragDbUrl) {
@@ -29,6 +30,48 @@ const sailDate = "2098-04-12";
 const zeroEmbedding = `[${Array(1536).fill(0).join(",")}]`;
 
 let sql: ReturnType<typeof postgres>;
+
+function productionChunkDb() {
+  return {
+    from: (table: string) => {
+      if (table !== "knowledge_chunks") throw new Error(`unexpected production table: ${table}`);
+      let ids: string[] = [];
+      let tenantId: string | undefined;
+      const builder: Record<string, unknown> = {};
+      for (const method of ["select", "eq", "is", "not"]) builder[method] = () => builder;
+      builder.in = (_column: string, values: string[]) => {
+        ids = values;
+        return builder;
+      };
+      builder.or = (filter: string) => {
+        tenantId = /(?:^|,)tenant_id\.eq\.([^,]+)/.exec(filter)?.[1];
+        return builder;
+      };
+      builder.then = async (resolve: (result: { data: unknown[]; error: null }) => unknown) => {
+        const rows = tenantId
+          ? await sql<{ id: string }[]>`
+              SELECT * FROM public.knowledge_chunks
+              WHERE id IN ${sql(ids)}
+                AND status = 'approved'
+                AND superseded_by_chunk_id IS NULL
+                AND embedding IS NOT NULL
+                AND sell_by_at IS NULL
+                AND (scope = 'global' OR tenant_id = ${tenantId})
+            `
+          : await sql<{ id: string }[]>`
+              SELECT * FROM public.knowledge_chunks
+              WHERE id IN ${sql(ids)}
+                AND status = 'approved'
+                AND superseded_by_chunk_id IS NULL
+                AND embedding IS NOT NULL
+                AND sell_by_at IS NULL
+            `;
+        return resolve({ data: rows, error: null });
+      };
+      return builder;
+    },
+  } as unknown as Parameters<typeof fetchApprovedChunksByIds>[0];
+}
 
 describe.skipIf(!ragDbUrl)("seeded RAG retrieval scope", () => {
   beforeAll(async () => {
@@ -103,6 +146,14 @@ describe.skipIf(!ragDbUrl)("seeded RAG retrieval scope", () => {
         WHERE id IN (${chunkGlobal}, ${chunkA}, ${chunkB})
           AND (scope = 'global' OR tenant_id = ${tenantA})
       `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
+  });
+
+  it("production approved-chunk retrieval returns global and tenant A chunks, not tenant B", async () => {
+    await assertIsolationQuery({
+      query: () => fetchApprovedChunksByIds(productionChunkDb(), tenantA, [chunkGlobal, chunkA, chunkB]) as Promise<Array<{ id: string }>>,
       allowedIds: [chunkGlobal, chunkA],
       deniedIds: [chunkB],
     });

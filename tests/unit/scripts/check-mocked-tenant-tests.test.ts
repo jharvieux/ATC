@@ -76,6 +76,18 @@ describe("findMockedTenantTests", () => {
   });
 
   it.each([
+    ["bare loader mention", `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ note: importOriginal.name }));`],
+    ["unrelated actual call", `vi.mock("@supabase/supabase-js", async (loadReal) => { await loadReal(); return {}; });`],
+  ])("flags an async Supabase mock that does not preserve the real factory via a %s", (_shape, moduleMock) => {
+    expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toHaveLength(1);
+  });
+
+  it("flags an async Postgres mock that drops the real default factory", () => {
+    const source = claimTest(`vi.mock("postgres", async (requireActual) => ({ helper: requireActual }));`);
+    expect(findMockedTenantTests(F, source, EMPTY)).toHaveLength(1);
+  });
+
+  it.each([
     [
       "computed export",
       `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), ["createClient"]: vi.fn() }));`,
@@ -343,6 +355,10 @@ describe("RLS integration", () => {
       "direct method assignment",
       'alias.from = (() => ({ select: async () => ({ data: [], error: null }) })) as never;',
     ],
+    [
+      "computed method assignment",
+      'alias["from"] = (() => ({ select: async () => ({ data: [], error: null }) })) as never;',
+    ],
   ])("rejects a Supabase receiver alias changed through an instance %s", (_shape, mutation) => {
     const mockedReceiver = REAL_DB_COVERAGE.replace(
       "    await assertIsolationQuery({",
@@ -374,13 +390,25 @@ describe("RLS integration", () => {
 
   it.each([
     ["skipIf(true)", "it.skipIf(true)"],
+    ["skipIf(1)", "it.skipIf(1)"],
     ["runIf(false)", "it.runIf(false)"],
+    ["runIf(0)", "it.runIf(0)"],
     ["it.each([])", "it.each([])"],
   ])("rejects a coverage target registered through the dead %s path", (_shape, registration) => {
     const disabled = REAL_DB_COVERAGE.replace(
       '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
       `  ${registration}("bookings: userB cannot SELECT tenantA rows", async () => {`,
     );
+    expect(annotationErrorFor(disabled)).toMatch(/coverage test not found/);
+  });
+
+  it("rejects a coverage target registered through an aliased empty each family", () => {
+    const disabled = REAL_DB_COVERAGE
+      .replace('describe("RLS integration", () => {', 'const noCases: unknown[] = [];\ndescribe("RLS integration", () => {')
+      .replace(
+        '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+        '  it.each(noCases)("bookings: userB cannot SELECT tenantA rows", async () => {',
+      );
     expect(annotationErrorFor(disabled)).toMatch(/coverage test not found/);
   });
 
@@ -412,6 +440,14 @@ describe("RLS integration", () => {
     const unreachable = REAL_DB_COVERAGE.replace(
       "    await assertIsolationQuery({",
       "    return;\n    await assertIsolationQuery({",
+    );
+    expect(annotationErrorFor(unreachable)).toMatch(/unreachable after an earlier return/);
+  });
+
+  it("rejects an isolation witness after a statically unconditional return", () => {
+    const unreachable = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      "    if (true) return;\n    await assertIsolationQuery({",
     );
     expect(annotationErrorFor(unreachable)).toMatch(/unreachable after an earlier return/);
   });
@@ -503,6 +539,14 @@ describe("RLS integration", () => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness");`;
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
     expect(result[0]?.annotationError).toMatch(/mocks the canonical isolation witness/);
+  });
+
+  it("rejects a coverage target that mocks the imported canonical witness binding", () => {
+    const mockedCoverage = REAL_DB_COVERAGE.replace(
+      'describe("RLS integration", () => {',
+      'vi.mocked(assertIsolationQuery).mockResolvedValue(undefined);\ndescribe("RLS integration", () => {',
+    );
+    expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
   });
 
   it("rejects a DB operation without the canonical isolation assertion", () => {
