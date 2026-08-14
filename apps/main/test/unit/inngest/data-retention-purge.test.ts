@@ -23,9 +23,15 @@ vi.mock("@/inngest/client", () => ({
 const mockWriteAuditLog = vi.fn(async (_row: { action: string; [k: string]: unknown }) => {});
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 
-// Rows may carry a lifecycle timestamp so `.lt()` NULL-semantics can be modeled
-// (open rows keep a NULL closed_at/decided_at and must never be selected).
-type Batch = Array<{ id: string; closed_at?: string | null; decided_at?: string | null }>;
+// Rows carry the timestamp and relationship shapes each purge predicate uses.
+type Batch = Array<{
+  id: string;
+  started_at?: string;
+  closed_at?: string | null;
+  decided_at?: string | null;
+  bug_submissions?: Array<{ id: string }>;
+  feature_requests?: Array<{ id: string }>;
+}>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
 let mutateErrors: Record<string, { message: string } | undefined>;
@@ -37,6 +43,7 @@ const calls = {
   deletes: [] as Array<{ table: string; col: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
   inserts: [] as Array<{ table: string }>,
+  is: [] as Array<{ table: string; column: string; value: unknown }>,
 };
 
 function makeChain(table: string) {
@@ -44,6 +51,7 @@ function makeChain(table: string) {
     select() {
       let ltCol: string | null = null;
       let ltCutoff: string | null = null;
+      const nullRelations = new Set<string>();
       const chain = {
         lt(column: string, cutoff: string) {
           ltCalls.push({ table, column, cutoff });
@@ -54,20 +62,28 @@ function makeChain(table: string) {
         not() {
           return chain;
         },
+        is(column: string, value: unknown) {
+          calls.is.push({ table, column, value });
+          if (value === null) nullRelations.add(column);
+          return chain;
+        },
         limit() {
           if (selectErrors[table]) return Promise.resolve({ data: null, error: selectErrors[table] });
           const batch = (selectQueues[table] ?? []).shift() ?? [];
           // Model `.lt(col, cutoff)` three-valued logic: a NULL never matches, so
           // open rows (NULL lifecycle ts) survive. A row that doesn't model the
           // column at all keeps the legacy always-eligible behavior.
-          const filtered = ltCol
-            ? batch.filter((row) => {
-                const v = (row as Record<string, unknown>)[ltCol!];
-                if (v === undefined) return true;
-                if (v === null) return false;
-                return Date.parse(v as string) < Date.parse(ltCutoff!);
-              })
-            : batch;
+          const filtered = batch.filter((row) => {
+            if (ltCol) {
+              const v = (row as Record<string, unknown>)[ltCol!];
+              if (v === null) return false;
+              if (v !== undefined && Date.parse(v as string) >= Date.parse(ltCutoff!)) return false;
+            }
+            return [...nullRelations].every((relation) => {
+              const value = (row as Record<string, unknown>)[relation];
+              return value === undefined || value === null || (Array.isArray(value) && value.length === 0);
+            });
+          });
           return Promise.resolve({ data: filtered, error: null });
         },
       };
@@ -141,6 +157,7 @@ beforeEach(() => {
   calls.deletes = [];
   calls.updates = [];
   calls.inserts = [];
+  calls.is = [];
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.stubEnv("STAGING_MODE", "");
@@ -241,6 +258,29 @@ describe("data-retention-purge — #1590", () => {
     expect(result.results!.find((r) => r.table === "feature_requests")!.affected).toBe(1);
   });
 
+  it("deletes only aged help_sessions with no surviving submission children", async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const aged = new Date(Date.now() - 400 * DAY).toISOString();
+    const recent = new Date(Date.now() - 30 * DAY).toISOString();
+    selectQueues["help_sessions"] = [[
+      { id: "aged-orphan", started_at: aged, bug_submissions: [], feature_requests: [] },
+      { id: "aged-live-bug", started_at: aged, bug_submissions: [{ id: "bug-1" }], feature_requests: [] },
+      { id: "aged-live-feature", started_at: aged, bug_submissions: [], feature_requests: [{ id: "feature-1" }] },
+      { id: "recent-orphan", started_at: recent, bug_submissions: [], feature_requests: [] },
+    ]];
+
+    const result = await runPurge();
+
+    expect(calls.is.filter((call) => call.table === "help_sessions")).toEqual([
+      { table: "help_sessions", column: "bug_submissions", value: null },
+      { table: "help_sessions", column: "feature_requests", value: null },
+    ]);
+    expect(calls.deletes.filter((d) => d.table === "help_sessions")).toEqual([
+      { table: "help_sessions", col: "id", ids: ["aged-orphan"] },
+    ]);
+    expect(result.results!.find((r) => r.table === "help_sessions")!.affected).toBe(1);
+  });
+
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {
     selectQueues["stripe_webhook_events"] = [ids(2, "s")];
     const result = await runPurge();
@@ -291,6 +331,7 @@ describe("data-retention-purge — #1590", () => {
       // #2033 — lifecycle timestamps: only terminal-state rows age out.
       bug_submissions: { column: "closed_at", days: 365 },
       feature_requests: { column: "decided_at", days: 365 },
+      help_sessions: { column: "started_at", days: 365 },
     };
 
     const now = Date.now();
