@@ -46,6 +46,14 @@ describe("notes route", () => {
 });
 `;
 
+const annotationErrorFor = (coverageTarget: string): string | undefined => {
+  const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+    '  it("enforces tenant isolation on the list query", async () => {});',
+    `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+  );
+  return findMockedTenantTests(F, source, new Map([[RLS_FILE, coverageTarget]]))[0]?.annotationError;
+};
+
 describe("findMockedTenantTests", () => {
   it("flags an isolation-claiming test in a file that mocks @supabase/*", () => {
     const r = findMockedTenantTests(F, claimTest(`vi.mock("@supabase/supabase-js");`), EMPTY);
@@ -65,6 +73,30 @@ describe("findMockedTenantTests", () => {
   it("stays silent when the mock is partial (importActual — real code still runs)", () => {
     const src = claimTest(`vi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()) }));`);
     expect(findMockedTenantTests(F, src, EMPTY)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "computed export",
+      `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), ["createClient"]: vi.fn() }));`,
+    ],
+    [
+      "method export",
+      `vi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), createClient() {} }));`,
+    ],
+    [
+      "spread export",
+      `const replacements = { createClient: vi.fn() };\nvi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), ...replacements }));`,
+    ],
+  ])("flags a partial Supabase mock that replaces createClient via a %s", (_shape, moduleMock) => {
+    expect(findMockedTenantTests(F, claimTest(moduleMock), EMPTY)).toHaveLength(1);
+  });
+
+  it("flags a partial Postgres mock that replaces the default factory", () => {
+    const source = claimTest(
+      `vi.mock("postgres", async (importOriginal) => ({ ...(await importOriginal()), ["default"]: vi.fn() }));`,
+    );
+    expect(findMockedTenantTests(F, source, EMPTY)).toHaveLength(1);
   });
 
   it("stays silent on a DB mock when no test claims isolation coverage", () => {
@@ -293,6 +325,115 @@ describe("RLS integration", () => {
     expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
   });
 
+  it("rejects a query parameter that shadows a proven Supabase client", () => {
+    const shadowedQuery = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      'query: (db = { from: () => ({ select: async () => ({ data: [], error: null }) }) } as never) => db.from("bookings").select("id")',
+    );
+    expect(annotationErrorFor(shadowedQuery)).toMatch(/query must be a zero-argument inline function/);
+  });
+
+  it.each([
+    ["spy", 'vi.spyOn(alias, "from").mockReturnValue({ select: async () => ({ data: [], error: null }) } as never);'],
+    [
+      "property replacement",
+      'vi.replaceProperty(alias, "from", () => ({ select: async () => ({ data: [], error: null }) }) as never);',
+    ],
+    [
+      "direct method assignment",
+      'alias.from = (() => ({ select: async () => ({ data: [], error: null }) })) as never;',
+    ],
+  ])("rejects a Supabase receiver alias changed through an instance %s", (_shape, mutation) => {
+    const mockedReceiver = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      `    const alias = db;\n    ${mutation}\n    await assertIsolationQuery({`,
+    );
+    expect(annotationErrorFor(mockedReceiver)).toMatch(/mocks the Supabase client receiver at instance level/);
+  });
+
+  it("rejects a mocked Postgres receiver alias", () => {
+    const mockedReceiver = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const sql = postgres(DB_URL!);
+const queryDb = sql;
+vi.mocked(queryDb).mockImplementation(() => Promise.resolve([]));
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({
+      query: () => sql\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    expect(annotationErrorFor(mockedReceiver)).toMatch(/mocks the Postgres client receiver at instance level/);
+  });
+
+  it.each([
+    ["skipIf(true)", "it.skipIf(true)"],
+    ["runIf(false)", "it.runIf(false)"],
+    ["it.each([])", "it.each([])"],
+  ])("rejects a coverage target registered through the dead %s path", (_shape, registration) => {
+    const disabled = REAL_DB_COVERAGE.replace(
+      '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+      `  ${registration}("bookings: userB cannot SELECT tenantA rows", async () => {`,
+    );
+    expect(annotationErrorFor(disabled)).toMatch(/coverage test not found/);
+  });
+
+  it("rejects an isolation witness inside if (false)", () => {
+    const conditional = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      "    if (false) await assertIsolationQuery({",
+    );
+    expect(annotationErrorFor(conditional)).toMatch(/unconditional top-level statement/);
+  });
+
+  it("rejects an isolation witness behind short-circuit evaluation", () => {
+    const conditional = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      "    false && (await assertIsolationQuery({",
+    ).replace("    });\n  });", "    }));\n  });");
+    expect(annotationErrorFor(conditional)).toMatch(/unconditional top-level statement/);
+  });
+
+  it("rejects an isolation witness in a zero-iteration loop", () => {
+    const conditional = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      "    for (; false; ) await assertIsolationQuery({",
+    );
+    expect(annotationErrorFor(conditional)).toMatch(/unconditional top-level statement/);
+  });
+
+  it("rejects an isolation witness after an early return", () => {
+    const unreachable = REAL_DB_COVERAGE.replace(
+      "    await assertIsolationQuery({",
+      "    return;\n    await assertIsolationQuery({",
+    );
+    expect(annotationErrorFor(unreachable)).toMatch(/unreachable after an earlier return/);
+  });
+
+  it.each([
+    [
+      "comma expression",
+      '(db.from("bookings").select("id"), Promise.resolve({ data: [], error: null }))',
+    ],
+    [
+      "logical expression",
+      'db.from("bookings").select("id") && Promise.resolve({ data: [], error: null })',
+    ],
+    [
+      ".then transform",
+      'db.from("bookings").select("id").then(() => ({ data: [], error: null }))',
+    ],
+  ])("rejects DB evidence whose result is laundered through a %s", (_shape, queryResult) => {
+    const laundered = REAL_DB_COVERAGE.replace('db.from("bookings").select("id")', queryResult);
+    expect(annotationErrorFor(laundered)).toMatch(/resource mismatch.*queried none/);
+  });
+
   it("fails loud when an annotation points to a missing integration test", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
@@ -332,6 +473,26 @@ describe("RLS integration", () => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), createClient: vi.fn() }));`;
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
     expect(result[0]?.annotationError).toMatch(/coverage target mocks the Supabase client/);
+  });
+
+  it("rejects a partial Postgres mock that replaces the default factory", () => {
+    const mockedCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+vi.mock("postgres", async (importOriginal) => ({ ...(await importOriginal()), ...{ default: vi.fn() } }));
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    await assertIsolationQuery({
+      query: () => sql\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    expect(annotationErrorFor(mockedCoverage)).toMatch(/coverage target mocks the Postgres client/);
   });
 
   it("rejects a coverage target that mocks the canonical witness", () => {

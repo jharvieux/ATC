@@ -14,8 +14,8 @@
 //
 // Deliberately narrow (Harvey's own precision boundary): only name-claiming
 // tests are eligible — a keyword miss is a silent skip, not an FP. Partial
-// mocks (importActual/importOriginal factories) are exempt: the real code
-// still runs.
+// mocks (importActual/importOriginal factories) are exempt only while they
+// preserve the real DB client factory.
 //
 // A genuine app-layer unit test may declare a mechanically checked companion
 // integration test immediately above its registration:
@@ -58,9 +58,60 @@ function parse(p: string, text: string): ts.SourceFile {
 
 interface MockCall {
   specifier: string;
-  partial: boolean; // importActual/requireActual/importOriginal factory — real code still runs
+  partial: boolean; // importActual/requireActual/importOriginal factory — some real exports still run
   replacesCreateClient: boolean;
+  replacesDefault: boolean;
   replacesWitness: boolean;
+}
+
+function factoryReplacesExport(factory: ts.Expression | undefined, exportName: string, sf: ts.SourceFile): boolean {
+  if (!factory) return false;
+  const declarations = new Map<string, ts.Expression[]>();
+  const collectDeclarations = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const values = declarations.get(node.name.text) ?? [];
+      values.push(node.initializer);
+      declarations.set(node.name.text, values);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(sf);
+
+  const containsReplacement = (node: ts.Node, checking = new Set<string>()): boolean => {
+    if (ts.isIdentifier(node)) {
+      if (checking.has(node.text)) return false;
+      const values = declarations.get(node.text);
+      if (!values) return false;
+      checking.add(node.text);
+      const found = values.some((value) => containsReplacement(value, checking));
+      checking.delete(node.text);
+      return found;
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const property of node.properties) {
+        if (ts.isSpreadAssignment(property)) {
+          if (containsReplacement(property.expression, checking)) return true;
+          continue;
+        }
+        let propertyName: string | undefined;
+        if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
+          propertyName = property.name.text;
+        } else if (
+          ts.isComputedPropertyName(property.name) &&
+          (ts.isStringLiteralLike(property.name.expression) || ts.isNoSubstitutionTemplateLiteral(property.name.expression))
+        ) {
+          propertyName = property.name.expression.text;
+        }
+        if (propertyName === exportName) return true;
+      }
+    }
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      if (!found && containsReplacement(child, checking)) found = true;
+    });
+    return found;
+  };
+  return containsReplacement(factory);
 }
 
 function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
@@ -76,8 +127,9 @@ function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
           out.push({
             specifier: arg.text,
             partial: /importActual|requireActual|importOriginal/.test(factoryText),
-            replacesCreateClient: /\bcreateClient\s*(?=:|,|\})/.test(factoryText),
-            replacesWitness: /\bassertIsolationQuery\s*(?=:|,|\})/.test(factoryText),
+            replacesCreateClient: factoryReplacesExport(factory, "createClient", sf),
+            replacesDefault: factoryReplacesExport(factory, "default", sf),
+            replacesWitness: factoryReplacesExport(factory, "assertIsolationQuery", sf),
           });
         }
       }
@@ -143,6 +195,43 @@ function callHead(node: ts.CallExpression): { base: string; mod?: string } | und
   return undefined;
 }
 
+function unwrapExpression(input: ts.Expression): ts.Expression {
+  let expression = input;
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
+function staticBoolean(input: ts.Expression | undefined): boolean | undefined {
+  if (!input) return undefined;
+  const expression = unwrapExpression(input);
+  if (expression.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (expression.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.ExclamationToken) {
+    const operand = staticBoolean(expression.operand);
+    return operand === undefined ? undefined : !operand;
+  }
+  return undefined;
+}
+
+function registrationIsStaticallyDisabled(node: ts.CallExpression): boolean {
+  if (!ts.isCallExpression(node.expression) || !ts.isPropertyAccessExpression(node.expression.expression)) return false;
+  const modifier = node.expression.expression;
+  if (!ts.isIdentifier(modifier.expression) || !["describe", "it", "test"].includes(modifier.expression.text)) return false;
+  const argument = node.expression.arguments[0];
+  if (modifier.name.text === "skipIf") return staticBoolean(argument) === true;
+  if (modifier.name.text === "runIf") return staticBoolean(argument) === false;
+  if (modifier.name.text !== "each" || !argument) return false;
+  const rows = unwrapExpression(argument);
+  return ts.isArrayLiteralExpression(rows) && rows.elements.length === 0;
+}
+
 interface RunnableTest {
   fullName: string;
   call: ts.CallExpression;
@@ -154,7 +243,7 @@ function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const head = callHead(node);
-      if (head && EXEMPT_MODS.has(head.mod ?? "")) return;
+      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node))) return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
       if (head?.base === "describe") {
@@ -172,13 +261,6 @@ function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   };
   visit(sf);
   return tests;
-}
-
-function isAwaitedWithin(node: ts.Node, boundary: ts.Node): boolean {
-  for (let current = node.parent; current && current !== boundary; current = current.parent) {
-    if (ts.isAwaitExpression(current)) return true;
-  }
-  return false;
 }
 
 function witnessBinding(sf: ts.SourceFile, targetPath: string): string | undefined {
@@ -419,6 +501,95 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
   return expressionProven;
 }
 
+type DbReceiverKind = "Supabase" | "Postgres";
+
+function dbReceiverMockDescription(sf: ts.SourceFile): string | undefined {
+  const isProvenSupabase = supabaseProvenance(sf);
+  const isProvenPostgres = postgresProvenance(sf);
+  const receiverKind = (input: ts.Expression): DbReceiverKind | undefined => {
+    const expression = unwrapExpression(input);
+    if (ts.isIdentifier(expression) && isProvenPostgres(expression)) return "Postgres";
+    if (isProvenSupabase(expression)) return "Supabase";
+    if (
+      ts.isPropertyAccessExpression(expression) &&
+      (expression.name.text === "from" || expression.name.text === "rpc") &&
+      isProvenSupabase(expression.expression)
+    ) {
+      return "Supabase";
+    }
+    return undefined;
+  };
+  const frameworkMethod = (call: ts.CallExpression): { owner: string; method: string } | undefined => {
+    if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return undefined;
+    return { owner: call.expression.expression.text, method: call.expression.name.text };
+  };
+  const propertyName = (expression: ts.Expression | undefined): string | undefined =>
+    expression && (ts.isStringLiteralLike(expression) || ts.isIdentifier(expression)) ? expression.text : undefined;
+
+  let mocked: DbReceiverKind | undefined;
+  const visit = (node: ts.Node) => {
+    if (mocked) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      (node.left.name.text === "from" || node.left.name.text === "rpc") &&
+      isProvenSupabase(node.left.expression)
+    ) {
+      mocked = "Supabase";
+      return;
+    }
+    if (ts.isCallExpression(node)) {
+      const method = frameworkMethod(node);
+      if (method && ["vi", "jest"].includes(method.owner) && ["spyOn", "replaceProperty"].includes(method.method)) {
+        const kind = node.arguments[0] ? receiverKind(node.arguments[0]) : undefined;
+        const mockedProperty = propertyName(node.arguments[1]);
+        if (kind === "Postgres" || (kind === "Supabase" && ["from", "rpc"].includes(mockedProperty ?? ""))) {
+          mocked = kind;
+          return;
+        }
+      }
+      if (
+        method &&
+        ((method.owner === "Object" && ["defineProperty", "assign"].includes(method.method)) ||
+          (method.owner === "Reflect" && method.method === "set"))
+      ) {
+        const kind = node.arguments[0] ? receiverKind(node.arguments[0]) : undefined;
+        const replacesSupabaseMethod =
+          method.method === "assign"
+            ? !!node.arguments[1] &&
+              ts.isObjectLiteralExpression(node.arguments[1]) &&
+              node.arguments[1].properties.some(
+                (property) =>
+                  (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
+                  (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)) &&
+                  (property.name.text === "from" || property.name.text === "rpc"),
+              )
+            : ["from", "rpc"].includes(propertyName(node.arguments[1]) ?? "");
+        if (kind === "Postgres" || (kind === "Supabase" && replacesSupabaseMethod)) {
+          mocked = kind;
+          return;
+        }
+      }
+      if (ts.isPropertyAccessExpression(node.expression) && /^(?:mock|withImplementation)/.test(node.expression.name.text)) {
+        const configured = node.expression.expression;
+        if (ts.isCallExpression(configured)) {
+          const configuredMethod = frameworkMethod(configured);
+          if (configuredMethod && ["vi", "jest"].includes(configuredMethod.owner) && configuredMethod.method === "mocked") {
+            mocked = configured.arguments[0] ? receiverKind(configured.arguments[0]) : undefined;
+          }
+        } else {
+          mocked = receiverKind(configured);
+        }
+        if (mocked) return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return mocked ? `the ${mocked} client receiver at instance level` : undefined;
+}
+
 function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.SourceFile): string[] {
   const resources = new Set<string>();
   const isProvenSupabase = supabaseProvenance(sf);
@@ -426,13 +597,13 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
   const returned: ts.Expression[] = [];
   if (ts.isArrowFunction(query) && !ts.isBlock(query.body)) {
     returned.push(query.body);
-  } else {
-    const collectReturns = (node: ts.Node) => {
-      if (node !== query.body && ts.isFunctionLike(node)) return;
-      if (ts.isReturnStatement(node) && node.expression) returned.push(node.expression);
-      ts.forEachChild(node, collectReturns);
-    };
-    collectReturns(query.body);
+  } else if (
+    ts.isBlock(query.body) &&
+    query.body.statements.length === 1 &&
+    ts.isReturnStatement(query.body.statements[0]) &&
+    query.body.statements[0].expression
+  ) {
+    returned.push(query.body.statements[0].expression);
   }
 
   const isSupabaseFromOperation = (fromCall: ts.CallExpression): boolean => {
@@ -445,21 +616,32 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
       access.parent.expression === access
     );
   };
-  const conditionallyEvaluated = (node: ts.Node, returnedExpression: ts.Expression): boolean => {
-    for (let current = node; current !== returnedExpression; current = current.parent) {
+  const resultFlowsToReturn = (node: ts.Expression, returnedExpression: ts.Expression): boolean => {
+    let current: ts.Node = node;
+    while (current !== returnedExpression) {
       const parent = current.parent;
       if (
-        (ts.isConditionalExpression(parent) && (parent.whenTrue === current || parent.whenFalse === current)) ||
-        (ts.isBinaryExpression(parent) &&
-          parent.right === current &&
-          [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(
-            parent.operatorToken.kind,
-          ))
+        ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isTypeAssertionExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isAwaitExpression(parent)
       ) {
-        return true;
+        current = parent;
+        continue;
       }
+      if (ts.isPropertyAccessExpression(parent) && parent.expression === current) {
+        if (["then", "catch", "finally"].includes(parent.name.text)) return false;
+        current = parent;
+        continue;
+      }
+      if (ts.isCallExpression(parent) && parent.expression === current) {
+        current = parent;
+        continue;
+      }
+      return false;
     }
-    return false;
+    return true;
   };
   const visit = (node: ts.Node, returnedExpression: ts.Expression) => {
     if (ts.isFunctionLike(node)) return;
@@ -472,7 +654,7 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
       if (
         name &&
         ts.isStringLiteralLike(name) &&
-        !conditionallyEvaluated(node, returnedExpression) &&
+        resultFlowsToReturn(node, returnedExpression) &&
         isProvenSupabase(node.expression.expression) &&
         (node.expression.name.text === "rpc" || isSupabaseFromOperation(node))
       ) {
@@ -483,7 +665,7 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
     if (
       ts.isTaggedTemplateExpression(node) &&
       ts.isIdentifier(node.tag) &&
-      !conditionallyEvaluated(node, returnedExpression) &&
+      resultFlowsToReturn(node, returnedExpression) &&
       isProvenPostgres(node.tag)
     ) {
       const sql = node.template.getText(sf);
@@ -524,7 +706,38 @@ function isolationWitnessError(
   if (witnesses.length !== 1) return `coverage test must execute exactly one canonical isolation witness (found ${witnesses.length})`;
 
   const witness = witnesses[0]!;
-  if (!isAwaitedWithin(witness, callback)) return "coverage test does not await its isolation witness";
+  let executionNode: ts.Node = witness;
+  let awaited = false;
+  while (executionNode.parent && executionNode.parent !== callback.body) {
+    const parent = executionNode.parent;
+    if (ts.isAwaitExpression(parent)) awaited = true;
+    if (
+      ts.isAwaitExpression(parent) ||
+      ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent)
+    ) {
+      executionNode = parent;
+      continue;
+    }
+    if (ts.isExpressionStatement(parent) && parent.parent === callback.body) {
+      executionNode = parent;
+      break;
+    }
+    return "coverage test must await its isolation witness as an unconditional top-level statement";
+  }
+  if (!awaited) return "coverage test does not await its isolation witness";
+  if (!ts.isExpressionStatement(executionNode) || !ts.isBlock(callback.body)) {
+    return "coverage test must await its isolation witness as an unconditional top-level statement";
+  }
+  const witnessIndex = callback.body.statements.indexOf(executionNode);
+  if (
+    witnessIndex < 0 ||
+    callback.body.statements.slice(0, witnessIndex).some((statement) => ts.isReturnStatement(statement) || ts.isThrowStatement(statement))
+  ) {
+    return "coverage test isolation witness is unreachable after an earlier return or throw";
+  }
   const options = witness.arguments[0];
   if (!options || !ts.isObjectLiteralExpression(options)) return "isolation witness options must be an object literal";
   const query = propertyInitializer(options, "query");
@@ -532,6 +745,9 @@ function isolationWitnessError(
   const deniedIds = propertyInitializer(options, "deniedIds");
   if (!query || (!ts.isArrowFunction(query) && !ts.isFunctionExpression(query))) {
     return "isolation witness query must be an inline function";
+  }
+  if (query.parameters.length !== 0) {
+    return "isolation witness query must be a zero-argument inline function";
   }
   if (!allowedIds || !ts.isArrayLiteralExpression(allowedIds)) {
     return "isolation witness allowedIds must be an array literal";
@@ -592,11 +808,14 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     .filter(
       (mock) =>
         !mock.partial ||
-        (mock.specifier === "@supabase/supabase-js" && mock.replacesCreateClient),
+        mock.replacesCreateClient ||
+        (mock.specifier === "postgres" && mock.replacesDefault),
     )
     .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
     .find((description): description is string => description !== undefined);
   if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
+  const mockedReceiver = dbReceiverMockDescription(targetSf);
+  if (mockedReceiver) return `coverage target mocks ${mockedReceiver}: ${pointer.file}`;
   const mockedWitness = targetMocks.find((mock) => {
     if (mock.partial && !mock.replacesWitness) return false;
     if (!mock.specifier.startsWith(".")) return false;
@@ -625,7 +844,12 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
   if (!/\b(vi|jest)\.(mock|doMock)\s*\(/.test(contents)) return [];
   const sf = parse(relPath, contents);
   const dbMock = collectModuleMocks(sf)
-    .filter((m) => !m.partial)
+    .filter(
+      (mock) =>
+        !mock.partial ||
+        mock.replacesCreateClient ||
+        (mock.specifier === "postgres" && mock.replacesDefault),
+    )
     .map((m) => dbClientMockDescription(m, relPath, byPath))
     .find((d): d is string => d !== undefined);
   if (!dbMock) return [];
@@ -635,7 +859,7 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const head = callHead(node);
-      if (head && EXEMPT_MODS.has(head.mod ?? "")) return;
+      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node))) return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
       if (head?.base === "describe") {

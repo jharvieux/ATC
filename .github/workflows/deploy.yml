@@ -177,7 +177,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     needs: [detect-changes]
-    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true'
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
@@ -203,8 +203,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run workflow wiring tests
+        if: needs.detect-changes.outputs.workflows_only == 'true'
+        run: pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts
+
       - name: Decide test scope (full vs affected)
         id: scope
+        if: needs.detect-changes.outputs.workflows_only != 'true'
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -222,7 +227,7 @@ jobs:
           exit "$STATUS"
 
       - name: Run full vitest suite (with coverage)
-        if: steps.scope.outputs.mode == 'full'
+        if: needs.detect-changes.outputs.workflows_only != 'true' && steps.scope.outputs.mode == 'full'
         env:
           REASON: ${{ steps.scope.outputs.reason }}
         run: |
@@ -230,7 +235,7 @@ jobs:
           pnpm test
 
       - name: Run affected vitest tests
-        if: steps.scope.outputs.mode == 'affected'
+        if: needs.detect-changes.outputs.workflows_only != 'true' && steps.scope.outputs.mode == 'affected'
         env:
           REASON: ${{ steps.scope.outputs.reason }}
         run: |
@@ -543,19 +548,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Require the RAG isolation test DB
-        id: rag-db-preflight
+      - name: Require the critical isolation test databases
+        id: isolation-db-preflight
         env:
           # Use the PR author, not github.actor: a human can rerun a Dependabot
-          # PR, but GitHub still withholds repository secrets from that PR.
-          RAG_SCOPE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          # PR, but GitHub still withholds repository secrets from that PR. The
+          # preflight requires all four main credentials plus the RAG DB URL on
+          # every other event before either evidence-bearing suite can run.
+          ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: pnpm tsx scripts/check-critical-rag-db.ts
 
-      - name: Run RLS + Stripe-webhook integration suites
-        run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
+      - name: Run main RLS integration suite
+        if: steps.isolation-db-preflight.outputs.run_main_rls == 'true'
+        run: pnpm vitest run apps/main/test/integration/rls.test.ts
+
+      - name: Run Stripe-webhook integration suite
+        run: pnpm vitest run apps/main/test/integration/stripe-webhook.test.ts
 
       - name: Run seeded RAG scope integration suite
-        if: steps.rag-db-preflight.outputs.run_rag_scope == 'true'
+        if: steps.isolation-db-preflight.outputs.run_rag_scope == 'true'
         env:
           # The suite throws rather than describe.skip if this evidence-bearing
           # invocation ever reaches it without the preflighted connection.
