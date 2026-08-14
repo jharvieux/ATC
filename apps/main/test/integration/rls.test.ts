@@ -258,6 +258,72 @@ describeIf("RLS integration", () => {
     expect(remaining.length).toBe(0);
   });
 
+  it("#2037 — only the service-role orphan-purge RPC can delete aged help sessions", async () => {
+    const oldStartedAt = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+    const recentStartedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const seededIds: string[] = [];
+
+    const seedSession = async (startedAt: string): Promise<string> => {
+      const [session] = await fx.sql<{ id: string }[]>`
+        INSERT INTO public.help_sessions (tenant_id, user_id, session_type, source_surface, started_at)
+        VALUES (${fx.tenantA.id}, ${fx.userA.rowId}, 'help', 'admin', ${startedAt})
+        RETURNING id
+      `;
+      if (!session) throw new Error("#2037 help-session fixture insert failed");
+      seededIds.push(session.id);
+      return session.id;
+    };
+
+    try {
+      const oldOrphanId = await seedSession(oldStartedAt);
+      const oldBugId = await seedSession(oldStartedAt);
+      const oldFeatureId = await seedSession(oldStartedAt);
+      const recentOrphanId = await seedSession(recentStartedAt);
+
+      await fx.sql`
+        INSERT INTO public.bug_submissions (help_session_id, tenant_id, submitter_user_id, source_type)
+        VALUES (${oldBugId}, ${fx.tenantA.id}, ${fx.userA.rowId}, 'tenant_admin')
+      `;
+      await fx.sql`
+        INSERT INTO public.feature_requests (help_session_id, tenant_id, submitter_user_id, source_type)
+        VALUES (${oldFeatureId}, ${fx.tenantA.id}, ${fx.userA.rowId}, 'tenant_admin')
+      `;
+
+      const purged = await fx.admin.rpc("purge_orphaned_help_sessions", {
+        p_cutoff: new Date().toISOString(),
+        p_limit: 1000,
+      });
+      expect(purged.error).toBeNull();
+      expect(purged.data).toBe(1);
+
+      const remaining = await fx.sql<{ id: string }[]>`
+        SELECT id FROM public.help_sessions
+        WHERE id IN (${oldOrphanId}, ${oldBugId}, ${oldFeatureId}, ${recentOrphanId})
+      `;
+      expect(remaining.map((row) => row.id).sort()).toEqual(
+        [oldBugId, oldFeatureId, recentOrphanId].sort(),
+      );
+
+      const directDelete = await fx.admin.from("help_sessions").delete().eq("id", recentOrphanId);
+      expect(directDelete.error).not.toBeNull();
+      expect(directDelete.error?.code).toBe("42501");
+
+      const privileges = await fx.sql<{ grantee: string }[]>`
+        SELECT grantee
+        FROM information_schema.routine_privileges
+        WHERE routine_schema = 'public'
+          AND routine_name = 'purge_orphaned_help_sessions'
+          AND privilege_type = 'EXECUTE'
+        ORDER BY grantee
+      `;
+      expect(privileges).toEqual([{ grantee: "service_role" }]);
+    } finally {
+      await fx.sql`DELETE FROM public.feature_requests WHERE help_session_id = ANY(${seededIds})`;
+      await fx.sql`DELETE FROM public.bug_submissions WHERE help_session_id = ANY(${seededIds})`;
+      await fx.sql`DELETE FROM public.help_sessions WHERE id = ANY(${seededIds})`;
+    }
+  });
+
   // ── BP05 domain tables ────────────────────────────────────────────────────
   // One cross-tenant isolation check per new table. Also verifies that
   // suspended-tenant users can SELECT but cannot INSERT on conversations,

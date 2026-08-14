@@ -146,32 +146,18 @@ async function purgeOrphanedHelpSessions(
   const cutoff = cutoffIso(windowDays);
   let deleted = 0;
 
-  // serial-await-ok: each batch must delete its selected IDs before selecting the next batch.
+  // serial-await-ok: each batch must finish before the next bounded RPC call.
   for (let batch = 0; batch < MAX_BATCHES; batch++) {
-    const { data: rows, error: selErr } = await svc
-      // d091-allow:service-role-tenant global retention sweep intentionally spans every tenant.
-      .from("help_sessions")
-      .select("id,bug_submissions!left(id),feature_requests!left(id)")
-      .lt("started_at", cutoff)
-      .is("bug_submissions", null)
-      .is("feature_requests", null)
-      .limit(DELETE_BATCH);
-    if (selErr) {
-      throw new Error(`data-retention-purge: help_sessions select failed: ${selErr.message}`);
+    const { data, error } = await svc.rpc("purge_orphaned_help_sessions", {
+      p_cutoff: cutoff,
+      p_limit: DELETE_BATCH,
+    });
+    if (error) {
+      throw new Error(`data-retention-purge: help_sessions purge failed: ${error.message}`);
     }
-    const ids = ((rows ?? []) as unknown as Array<{ id: string }>).map((row) => row.id);
-    if (ids.length === 0) break;
-
-    const { count, error: delErr } = await svc
-      // d091-allow:service-role-tenant candidates came from the global retention query above.
-      .from("help_sessions")
-      .delete({ count: "exact" })
-      .in("id", ids);
-    if (delErr) {
-      throw new Error(`data-retention-purge: help_sessions delete failed: ${delErr.message}`);
-    }
-    deleted += count ?? ids.length;
-    if (ids.length < DELETE_BATCH) break;
+    const affected = data ?? 0;
+    deleted += affected;
+    if (affected < DELETE_BATCH) break;
   }
 
   return { table: "help_sessions", affected: deleted, window_days: windowDays };

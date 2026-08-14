@@ -26,11 +26,8 @@ vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 // Rows carry the timestamp and relationship shapes each purge predicate uses.
 type Batch = Array<{
   id: string;
-  started_at?: string;
   closed_at?: string | null;
   decided_at?: string | null;
-  bug_submissions?: Array<{ id: string }>;
-  feature_requests?: Array<{ id: string }>;
 }>;
 let selectQueues: Record<string, Batch[]>;
 let selectErrors: Record<string, { message: string } | undefined>;
@@ -43,15 +40,15 @@ const calls = {
   deletes: [] as Array<{ table: string; col: string; ids: string[] }>,
   updates: [] as Array<{ table: string; ids: string[] }>,
   inserts: [] as Array<{ table: string }>,
-  is: [] as Array<{ table: string; column: string; value: unknown }>,
+  rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 };
+let rpcResults: Array<{ data: number | null; error: { message: string } | null }>;
 
 function makeChain(table: string) {
   return {
     select() {
       let ltCol: string | null = null;
       let ltCutoff: string | null = null;
-      const nullRelations = new Set<string>();
       const chain = {
         lt(column: string, cutoff: string) {
           ltCalls.push({ table, column, cutoff });
@@ -60,11 +57,6 @@ function makeChain(table: string) {
           return chain;
         },
         not() {
-          return chain;
-        },
-        is(column: string, value: unknown) {
-          calls.is.push({ table, column, value });
-          if (value === null) nullRelations.add(column);
           return chain;
         },
         limit() {
@@ -79,10 +71,7 @@ function makeChain(table: string) {
               if (v === null) return false;
               if (v !== undefined && Date.parse(v as string) >= Date.parse(ltCutoff!)) return false;
             }
-            return [...nullRelations].every((relation) => {
-              const value = (row as Record<string, unknown>)[relation];
-              return value === undefined || value === null || (Array.isArray(value) && value.length === 0);
-            });
+            return true;
           });
           return Promise.resolve({ data: filtered, error: null });
         },
@@ -115,7 +104,13 @@ function makeChain(table: string) {
 }
 
 vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({ from: (t: string) => makeChain(t) }),
+  createServiceRoleClient: () => ({
+    from: (t: string) => makeChain(t),
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.rpc.push({ fn, args });
+      return Promise.resolve(rpcResults.shift() ?? { data: 0, error: null });
+    },
+  }),
 }));
 
 function ids(n: number, prefix = "x"): Batch {
@@ -157,7 +152,8 @@ beforeEach(() => {
   calls.deletes = [];
   calls.updates = [];
   calls.inserts = [];
-  calls.is = [];
+  calls.rpc = [];
+  rpcResults = [];
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.stubEnv("STAGING_MODE", "");
@@ -258,26 +254,19 @@ describe("data-retention-purge — #1590", () => {
     expect(result.results!.find((r) => r.table === "feature_requests")!.affected).toBe(1);
   });
 
-  it("deletes only aged help_sessions with no surviving submission children", async () => {
-    const DAY = 24 * 60 * 60 * 1000;
-    const aged = new Date(Date.now() - 400 * DAY).toISOString();
-    const recent = new Date(Date.now() - 30 * DAY).toISOString();
-    selectQueues["help_sessions"] = [[
-      { id: "aged-orphan", started_at: aged, bug_submissions: [], feature_requests: [] },
-      { id: "aged-live-bug", started_at: aged, bug_submissions: [{ id: "bug-1" }], feature_requests: [] },
-      { id: "aged-live-feature", started_at: aged, bug_submissions: [], feature_requests: [{ id: "feature-1" }] },
-      { id: "recent-orphan", started_at: recent, bug_submissions: [], feature_requests: [] },
-    ]];
+  it("purges help_sessions through the bounded orphan-only RPC", async () => {
+    rpcResults = [{ data: 1, error: null }];
+    const now = Date.now();
 
     const result = await runPurge();
 
-    expect(calls.is.filter((call) => call.table === "help_sessions")).toEqual([
-      { table: "help_sessions", column: "bug_submissions", value: null },
-      { table: "help_sessions", column: "feature_requests", value: null },
-    ]);
-    expect(calls.deletes.filter((d) => d.table === "help_sessions")).toEqual([
-      { table: "help_sessions", col: "id", ids: ["aged-orphan"] },
-    ]);
+    expect(calls.rpc).toHaveLength(1);
+    expect(calls.rpc[0]).toMatchObject({
+      fn: "purge_orphaned_help_sessions",
+      args: { p_limit: 1000 },
+    });
+    expect(Math.abs(Date.parse(calls.rpc[0]!.args.p_cutoff as string) - (now - 365 * 24 * 60 * 60 * 1000))).toBeLessThan(60_000);
+    expect(calls.deletes.some((call) => call.table === "help_sessions")).toBe(false);
     expect(result.results!.find((r) => r.table === "help_sessions")!.affected).toBe(1);
   });
 
@@ -331,7 +320,6 @@ describe("data-retention-purge — #1590", () => {
       // #2033 — lifecycle timestamps: only terminal-state rows age out.
       bug_submissions: { column: "closed_at", days: 365 },
       feature_requests: { column: "decided_at", days: 365 },
-      help_sessions: { column: "started_at", days: 365 },
     };
 
     const now = Date.now();
