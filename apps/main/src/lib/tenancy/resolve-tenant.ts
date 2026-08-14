@@ -19,6 +19,8 @@ export type Tenant = {
   tenant_type: string;
   status: string;
   custom_domain: string | null;
+  custom_domain_status: string;
+  search_indexing_enabled: boolean;
   // §15.16 — fields the middleware payment gate reads (PR #118 /
   // /lib/billing/payment-state.ts). Cached alongside the rest of the
   // tenant row so a payment-state lookup doesn't cost a second DB hit.
@@ -55,7 +57,7 @@ const idCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_M
 // Lookups
 // ---------------------------------------------------------------------------
 
-const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscription_status, non_paying_since, is_platform_internal";
+const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, custom_domain_status, search_indexing_enabled, subscription_status, non_paying_since, is_platform_internal";
 
 /**
  * Resolves a subdomain slug to a tenant.

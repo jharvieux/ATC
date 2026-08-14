@@ -983,22 +983,63 @@ describe("proxy()", () => {
     });
   });
 
-  // D-368 — only the platform domain is indexable. Asserted on the response
-  // rather than on any single branch because proxy() has a dozen return
-  // points; the header is applied by the wrapper so a future early-return
-  // can't quietly become indexable.
+  // D-368 + #2058 — the platform domain and explicitly enabled verified
+  // custom domains are indexable. The wrapper owns the header so a future
+  // early-return cannot quietly bypass the policy.
   describe("indexing gate", () => {
-    it("marks tenant subdomains noindex", async () => {
-      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+    it("marks tenant subdomains noindex even when their tenant opted in", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(
+        payingTenant({
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: true,
+        }),
+      );
 
       const res = await proxy(makeReq({ host: "atc-tenant1.ai-travelconcierge.com" }));
 
       expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
     });
 
-    it("marks custom domains noindex", async () => {
+    it("marks disabled custom domains noindex", async () => {
       mocks.getTenantBySlug.mockResolvedValue(null);
-      mocks.getTenantByCustomDomain.mockResolvedValue(payingTenant());
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: false,
+        }),
+      );
+
+      const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    });
+
+    it("omits the noindex header on an enabled verified custom domain", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: true,
+        }),
+      );
+
+      const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBeNull();
+    });
+
+    it("keeps an opted-in but unverified custom domain noindex", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "pending_verification",
+          search_indexing_enabled: true,
+        }),
+      );
 
       const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
 

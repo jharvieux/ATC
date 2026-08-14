@@ -259,6 +259,8 @@ export default function BrandingSettingsPage() {
 
       <CustomDomainRequestCard />
 
+      <SearchIndexingCard />
+
       <div className="flex justify-end gap-3">
         <Button onClick={onSave} disabled={saving}>
           {saving ? "Saving…" : "Save changes"}
@@ -550,6 +552,119 @@ function CustomDomainRequestCard() {
             {submitting ? "Submitting…" : "Submit request"}
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface SearchIndexingStatus {
+  agency_eligible: boolean;
+  custom_domain: string | null;
+  custom_domain_status: string;
+  search_indexing_enabled: boolean;
+}
+
+export function SearchIndexingCard() {
+  const [status, setStatus] = useState<SearchIndexingStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/tenant/search-indexing");
+        if (!res.ok) throw new Error(`load_failed_${res.status}`);
+        const data = (await res.json()) as SearchIndexingStatus;
+        if (!cancelled) setStatus(data);
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error ? loadError.message : "load_failed",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function setEnabled(enabled: boolean) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/tenant/search-indexing", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ search_indexing_enabled: enabled }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        search_indexing_enabled?: boolean;
+      };
+      if (!res.ok) {
+        setError(data.error ?? "save_failed");
+        return;
+      }
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              search_indexing_enabled:
+                data.search_indexing_enabled ?? enabled,
+            }
+          : current,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!status && !error) return null;
+
+  const verified =
+    status?.custom_domain != null &&
+    status.custom_domain_status === "verified";
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-base">Search indexing</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+        {!status?.agency_eligible ? (
+          <p className="text-sm text-gray-600">
+            Search indexing for a custom domain is available on the Agency
+            tier.
+          </p>
+        ) : !verified ? (
+          <p className="text-sm text-gray-600">
+            Verify your custom domain before enabling search indexing. Your
+            platform subdomain always stays out of search results.
+          </p>
+        ) : (
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="font-medium">Allow search engines to index</p>
+              <p className="text-sm text-gray-500 mt-1">
+                {status.custom_domain} will publish its own robots policy and
+                sitemap. Your platform subdomain remains private from search.
+              </p>
+            </div>
+            <Switch
+              aria-label="Allow search engines to index this custom domain"
+              checked={status.search_indexing_enabled}
+              onCheckedChange={(enabled) => void setEnabled(enabled)}
+              disabled={saving}
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

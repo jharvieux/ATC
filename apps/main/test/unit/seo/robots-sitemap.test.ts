@@ -3,7 +3,15 @@
 // starts serving "index me", produces no error — just wrong pages in the
 // index, discovered weeks later.
 
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  getTenantByCustomDomain: vi.fn(),
+}));
+
+vi.mock("@/lib/tenancy/resolve-tenant", () => ({
+  getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+}));
 
 import { GET as robotsGet } from "@/app/robots.txt/route";
 import { GET as sitemapGet } from "@/app/sitemap.xml/route";
@@ -13,12 +21,14 @@ import {
   AI_CRAWLER_USER_AGENTS,
   DISALLOWED_PATHS,
   SITEMAP_ENTRIES,
+  TENANT_SITEMAP_ENTRIES,
 } from "@/lib/seo/site";
 
 const PLATFORM = "ai-travelconcierge.com";
 const original = process.env.PLATFORM_PRIMARY_DOMAIN;
 
 beforeEach(() => {
+  vi.clearAllMocks();
   process.env.PLATFORM_PRIMARY_DOMAIN = PLATFORM;
 });
 
@@ -29,6 +39,16 @@ afterEach(() => {
 
 function req(host: string): Request {
   return new Request(`https://${host}/robots.txt`, { headers: { host } });
+}
+
+function customDomainTenant(enabled: boolean) {
+  return {
+    id: "tenant-1",
+    status: "active",
+    custom_domain: "harborlighttravel.com",
+    custom_domain_status: "verified",
+    search_indexing_enabled: enabled,
+  };
 }
 
 describe("robots.txt", () => {
@@ -78,15 +98,40 @@ describe("robots.txt", () => {
     expect(body).not.toMatch(/^Allow: \/$/m);
   });
 
-  it("blanket-disallows tenant subdomains and custom domains", async () => {
-    for (const host of [
-      `harborlight.${PLATFORM}`,
-      "harborlighttravel.com",
-      "atc-main-abc123.vercel.app",
-    ]) {
-      const body = await (await robotsGet(req(host))).text();
-      expect(body).toBe("User-agent: *\nDisallow: /\n");
+  it("blanket-disallows a disabled custom domain", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(false));
+
+    const body = await (
+      await robotsGet(req("harborlighttravel.com"))
+    ).text();
+
+    expect(body).toBe("User-agent: *\nDisallow: /\n");
+  });
+
+  it("serves the full crawl policy at an enabled custom-domain origin", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(true));
+
+    const body = await (
+      await robotsGet(req("harborlighttravel.com"))
+    ).text();
+
+    expect(body).toContain(
+      "Sitemap: https://harborlighttravel.com/sitemap.xml",
+    );
+    for (const path of DISALLOWED_PATHS) {
+      expect(body).toContain(`Disallow: ${path}`);
     }
+  });
+
+  it("blanket-disallows a platform subdomain regardless of tenant opt-in", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(true));
+
+    const body = await (
+      await robotsGet(req(`harborlight.${PLATFORM}`))
+    ).text();
+
+    expect(body).toBe("User-agent: *\nDisallow: /\n");
+    expect(mocks.getTenantByCustomDomain).not.toHaveBeenCalled();
   });
 });
 
@@ -124,10 +169,33 @@ describe("sitemap.xml", () => {
     }
   });
 
-  it("404s on any host that is not the platform domain", async () => {
-    for (const host of [`harborlight.${PLATFORM}`, "harborlighttravel.com"]) {
-      expect((await sitemapGet(req(host))).status).toBe(404);
+  it("404s on a disabled custom domain", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(false));
+
+    expect((await sitemapGet(req("harborlighttravel.com"))).status).toBe(404);
+  });
+
+  it("lists only tenant-public URLs at the enabled custom-domain origin", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(true));
+
+    const res = await sitemapGet(req("harborlighttravel.com"));
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    for (const entry of TENANT_SITEMAP_ENTRIES) {
+      expect(body).toContain(
+        `<loc>https://harborlighttravel.com${entry.path}</loc>`,
+      );
     }
+    expect(body).not.toContain(`https://${PLATFORM}`);
+    expect(body).not.toContain("/travelers");
+  });
+
+  it("404s on a platform subdomain regardless of tenant opt-in", async () => {
+    mocks.getTenantByCustomDomain.mockResolvedValue(customDomainTenant(true));
+
+    expect((await sitemapGet(req(`harborlight.${PLATFORM}`))).status).toBe(404);
+    expect(mocks.getTenantByCustomDomain).not.toHaveBeenCalled();
   });
 
   it("omits /for-agencies, which permanently redirects to /", async () => {
