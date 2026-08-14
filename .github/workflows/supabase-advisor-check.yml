@@ -16,6 +16,11 @@ on:
   schedule:
     - cron: "0 9 * * 1" # 09:00 UTC every Monday
   workflow_dispatch:
+    inputs:
+      rag_extension_probe_revision:
+        description: "Full revision SHA to probe against the shared RAG test database"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ permissions:
 
 jobs:
   advisor-check:
+    if: github.event_name == 'schedule' || inputs.rag_extension_probe_revision == ''
     name: Supabase Security Advisor scan
     runs-on: ubuntu-latest
     env:
@@ -112,3 +118,55 @@ jobs:
         run: |
           echo "Supabase advisor scan failed — see the tracked issue."
           exit 1
+
+  rag-extension-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.rag_extension_probe_revision != ''
+    name: RAG extension relocation rollback probe
+    runs-on: ubuntu-latest
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      PROBE_ACTUAL_REVISION: ${{ github.sha }}
+      PROBE_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+      PROBE_EXPECTED_REVISION: ${{ inputs.rag_extension_probe_revision }}
+    steps:
+      - name: Checkout requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rag_extension_probe_revision }}
+          fetch-depth: 1
+
+      - name: Verify revision provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PROBE_EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Probe revision must be a full lowercase SHA."
+            exit 1
+          fi
+          checked_out_revision="$(git rev-parse HEAD)"
+          if [[ "$checked_out_revision" != "$PROBE_EXPECTED_REVISION" ]]; then
+            echo "Checked-out revision does not match the requested revision."
+            exit 1
+          fi
+          if [[ "$PROBE_ACTUAL_REVISION" != "$PROBE_EXPECTED_REVISION" ]]; then
+            echo "Workflow revision does not match the requested revision."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Probe extension relocation and rollback
+        run: pnpm tsx scripts/probe-rag-extension-relocation.ts
