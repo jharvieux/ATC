@@ -584,6 +584,36 @@ describe("RLS integration", () => {
     expect(annotationErrorFor(aliased)).toBeUndefined();
   });
 
+  it.each([
+    ["const", "  const assertIsolationQuery = async () => {};\n"],
+    ["function", "  async function assertIsolationQuery() {}\n"],
+    ["class", "  class assertIsolationQuery {}\n"],
+  ])("rejects a describe-scope %s shadowing the canonical witness", (_shape, declaration) => {
+    const shadowed = REAL_DB_COVERAGE.replace(
+      'describe("RLS integration", () => {\n',
+      `describe("RLS integration", () => {\n${declaration}`,
+    );
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
+  it("rejects an enclosing callback parameter shadowing the canonical witness", () => {
+    const shadowed = REAL_DB_COVERAGE.replace(
+      'describe("RLS integration", () => {',
+      'describe("RLS integration", (assertIsolationQuery = async () => {}) => {',
+    );
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
+  it("rejects an enclosing block declaration shadowing the canonical witness", () => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        '  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+        '  {\n    const assertIsolationQuery = async () => {};\n  it("bookings: userB cannot SELECT tenantA rows", async () => {',
+      )
+      .replace("  });\n});", "  });\n  }\n});");
+    expect(annotationErrorFor(shadowed)).toMatch(/shadows the imported canonical isolation witness/);
+  });
+
   it("rejects a DB operation without the canonical isolation assertion", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',

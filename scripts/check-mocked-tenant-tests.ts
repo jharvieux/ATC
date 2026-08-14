@@ -794,24 +794,6 @@ function isolationWitnessError(
   const binding = witnessBinding(sf, targetPath);
   if (!binding) return "coverage test does not import the canonical assertIsolationQuery witness";
 
-  const bindingNameMatches = (name: ts.BindingName | undefined): boolean =>
-    !!name && ts.isIdentifier(name) && name.text === binding;
-  const callbackShadowsWitness =
-    callback.parameters.some((parameter) => bindingNameMatches(parameter.name)) ||
-    (ts.isBlock(callback.body) &&
-      callback.body.statements.some((statement) => {
-        if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
-          return statement.name?.text === binding;
-        }
-        return (
-          ts.isVariableStatement(statement) &&
-          statement.declarationList.declarations.some((declaration) => bindingNameMatches(declaration.name))
-        );
-      }));
-  if (callbackShadowsWitness) {
-    return "coverage test shadows the imported canonical isolation witness";
-  }
-
   const witnesses: ts.CallExpression[] = [];
   const visit = (node: ts.Node) => {
     if (node !== callback && ts.isFunctionLike(node)) return;
@@ -822,6 +804,32 @@ function isolationWitnessError(
   if (witnesses.length !== 1) return `coverage test must execute exactly one canonical isolation witness (found ${witnesses.length})`;
 
   const witness = witnesses[0]!;
+  const bindingNameContains = (name: ts.BindingName): boolean => {
+    if (ts.isIdentifier(name)) return name.text === binding;
+    return name.elements.some((element) => !ts.isOmittedExpression(element) && bindingNameContains(element.name));
+  };
+  const statementDeclaresBinding = (statement: ts.Statement): boolean => {
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      return statement.name?.text === binding;
+    }
+    return (
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some((declaration) => bindingNameContains(declaration.name))
+    );
+  };
+  let scope: ts.Node | undefined = witness.parent;
+  while (scope && !ts.isSourceFile(scope)) {
+    if (ts.isFunctionLike(scope) && scope.parameters.some((parameter) => bindingNameContains(parameter.name))) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
+    if (ts.isBlock(scope) && scope.statements.some(statementDeclaresBinding)) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
+    if (ts.isCatchClause(scope) && scope.variableDeclaration && bindingNameContains(scope.variableDeclaration.name)) {
+      return "coverage test shadows the imported canonical isolation witness";
+    }
+    scope = scope.parent;
+  }
   let executionNode: ts.Node = witness;
   let awaited = false;
   while (executionNode.parent && executionNode.parent !== callback.body) {
