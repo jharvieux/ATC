@@ -62,6 +62,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  document.cookie = "sb-access-token=; Max-Age=0; path=/";
 });
 
 describe("Stage2PassengerDetails — stable row keys (#1813)", () => {
