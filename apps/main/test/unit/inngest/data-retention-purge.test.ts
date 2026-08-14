@@ -23,7 +23,7 @@ vi.mock("@/inngest/client", () => ({
 const mockWriteAuditLog = vi.fn(async (_row: { action: string; [k: string]: unknown }) => {});
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: mockWriteAuditLog }));
 
-// Rows carry the timestamp and relationship shapes each purge predicate uses.
+// Rows can carry the optional lifecycle timestamps used by submission purges.
 type Batch = Array<{
   id: string;
   closed_at?: string | null;
@@ -268,6 +268,29 @@ describe("data-retention-purge — #1590", () => {
     expect(Math.abs(Date.parse(calls.rpc[0]!.args.p_cutoff as string) - (now - 365 * 24 * 60 * 60 * 1000))).toBeLessThan(60_000);
     expect(calls.deletes.some((call) => call.table === "help_sessions")).toBe(false);
     expect(result.results!.find((r) => r.table === "help_sessions")!.affected).toBe(1);
+  });
+
+  it("names help_sessions RPC failures, continues later work, and fails loud", async () => {
+    rpcResults = [{ data: null, error: { message: "connection reset" } }];
+    selectQueues["stripe_webhook_events"] = [ids(1, "s")];
+
+    await expect(runPurge()).rejects.toThrow(
+      "help_sessions (data-retention-purge: help_sessions purge failed: connection reset)",
+    );
+
+    expect(calls.updates.some((call) => call.table === "stripe_webhook_events")).toBe(true);
+    expect(mockWriteAuditLog).toHaveBeenCalledOnce();
+    const audit = mockWriteAuditLog.mock.calls[0]![0] as {
+      action: string;
+      changes: { results: Array<{ table: string; error: string | null }> };
+    };
+    expect(audit.action).toBe("data_retention_purge_partial_failure");
+    expect(audit.changes.results).toContainEqual(
+      expect.objectContaining({
+        table: "help_sessions",
+        error: "data-retention-purge: help_sessions purge failed: connection reset",
+      }),
+    );
   });
 
   it("stripe_webhook_events is scrubbed via UPDATE (raw_event NULLed), never DELETEd", async () => {
