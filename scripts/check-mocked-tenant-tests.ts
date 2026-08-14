@@ -794,6 +794,24 @@ function isolationWitnessError(
   const binding = witnessBinding(sf, targetPath);
   if (!binding) return "coverage test does not import the canonical assertIsolationQuery witness";
 
+  const bindingNameMatches = (name: ts.BindingName | undefined): boolean =>
+    !!name && ts.isIdentifier(name) && name.text === binding;
+  const callbackShadowsWitness =
+    callback.parameters.some((parameter) => bindingNameMatches(parameter.name)) ||
+    (ts.isBlock(callback.body) &&
+      callback.body.statements.some((statement) => {
+        if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+          return statement.name?.text === binding;
+        }
+        return (
+          ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.some((declaration) => bindingNameMatches(declaration.name))
+        );
+      }));
+  if (callbackShadowsWitness) {
+    return "coverage test shadows the imported canonical isolation witness";
+  }
+
   const witnesses: ts.CallExpression[] = [];
   const visit = (node: ts.Node) => {
     if (node !== callback && ts.isFunctionLike(node)) return;
