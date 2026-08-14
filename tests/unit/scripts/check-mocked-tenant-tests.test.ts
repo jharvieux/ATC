@@ -233,6 +233,26 @@ describe("RLS integration", () => {
     expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, helperCoverage]]))).toEqual([]);
   });
 
+  it.each([
+    ["IIFE parameter", "createClient", "() => ({ from: () => ({ select: async () => ({ data: [], error: null }) }) })"],
+    ["destructured IIFE parameter", "{ createClient }", "{ createClient: () => ({ from: () => ({ select: async () => ({ data: [], error: null }) }) }) }"],
+  ])("rejects a fake Supabase factory supplied through an %s", (_shape, parameter, argument) => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace('describe("RLS integration", () => {', `((${parameter}) => {\ndescribe("RLS integration", () => {`)
+      .replace("  });\n});\n", `  });\n});\n})(${argument});\n`);
+    expect(annotationErrorFor(shadowed)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a fake Supabase factory supplied through a default parameter", () => {
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        'describe("RLS integration", () => {',
+        '((createClient = () => ({ from: () => ({ select: async () => ({ data: [], error: null }) }) })) => {\ndescribe("RLS integration", () => {',
+      )
+      .replace("  });\n});\n", "  });\n});\n})(undefined);\n");
+    expect(annotationErrorFor(shadowed)).toMatch(/resource mismatch.*queried none/);
+  });
+
   it("accepts Postgres factory assignment and query aliases", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
@@ -256,6 +276,27 @@ describe("RLS integration", () => {
 });
 `;
     expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, postgresCoverage]]))).toEqual([]);
+  });
+
+  it("rejects a fake Postgres factory supplied through an IIFE parameter", () => {
+    const postgresCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+((postgres) => {
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    await assertIsolationQuery({
+      query: () => sql\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+})(() => (() => Promise.resolve([])));
+`;
+    expect(annotationErrorFor(postgresCoverage)).toMatch(/resource mismatch.*queried none/);
   });
 
   it("rejects a real from call nested under an unrelated select chain", () => {
@@ -509,6 +550,14 @@ describe("RLS integration", () => {
     const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), createClient: vi.fn() }));`;
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
     expect(result[0]?.annotationError).toMatch(/coverage target mocks the Supabase client/);
+  });
+
+  it.each([
+    ['["assert" + "IsolationQuery"]', '["assert" + "IsolationQuery"]'],
+    ["an unknown computed key", "[replacementName]"],
+  ])("rejects a partial witness mock that replaces the export through %s", (_shape, key) => {
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nconst replacementName = "assertIsolationQuery";\nvi.mock("../../../../tests/helpers/isolation-witness", async (importOriginal) => ({ ...(await importOriginal()), ${key}: vi.fn() }));`;
+    expect(annotationErrorFor(mockedCoverage)).toMatch(/mocks the canonical isolation witness/);
   });
 
   it("rejects a partial Postgres mock that replaces the default factory", () => {

@@ -77,6 +77,20 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
   };
   collectDeclarations(sf);
 
+  const staticPropertyName = (expression: ts.Expression): string | undefined => {
+    const unwrapped = unwrapExpression(expression);
+    if (ts.isStringLiteralLike(unwrapped) || ts.isNumericLiteral(unwrapped)) return unwrapped.text;
+    if (
+      ts.isBinaryExpression(unwrapped) &&
+      unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken
+    ) {
+      const left = staticPropertyName(unwrapped.left);
+      const right = staticPropertyName(unwrapped.right);
+      return left === undefined || right === undefined ? undefined : left + right;
+    }
+    return undefined;
+  };
+
   const containsReplacement = (node: ts.Node, checking = new Set<string>()): boolean => {
     if (ts.isIdentifier(node)) {
       if (checking.has(node.text)) return false;
@@ -96,11 +110,9 @@ function factoryReplacesExport(factory: ts.Expression | undefined, exportName: s
         let propertyName: string | undefined;
         if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
           propertyName = property.name.text;
-        } else if (
-          ts.isComputedPropertyName(property.name) &&
-          (ts.isStringLiteralLike(property.name.expression) || ts.isNoSubstitutionTemplateLiteral(property.name.expression))
-        ) {
-          propertyName = property.name.expression.text;
+        } else if (ts.isComputedPropertyName(property.name)) {
+          propertyName = staticPropertyName(property.name.expression);
+          if (propertyName === undefined && exportName === "assertIsolationQuery") return true;
         }
         if (propertyName === exportName) return true;
       }
@@ -391,6 +403,12 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
   }
 
   const bindings: PostgresBinding[] = [];
+  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
+    if (ts.isIdentifier(name)) return [name];
+    return name.elements.flatMap((element) =>
+      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
+    );
+  };
   const bindingScope = (node: ts.Node): ts.Node => {
     for (let current = node.parent; current; current = current.parent) {
       if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) return current;
@@ -409,13 +427,27 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
       .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
 
   const collectDeclarations = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      bindings.push({
-        name: node.name.text,
-        declaration: node.name,
-        scope: bindingScope(node),
-        values: node.initializer ? [node.initializer] : [],
-      });
+    if (ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        for (const identifier of bindingIdentifiers(parameter.name)) {
+          bindings.push({
+            name: identifier.text,
+            declaration: identifier,
+            scope: node,
+            values: [],
+          });
+        }
+      }
+    }
+    if (ts.isVariableDeclaration(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) {
+        bindings.push({
+          name: identifier.text,
+          declaration: identifier,
+          scope: bindingScope(node),
+          values: ts.isIdentifier(node.name) && node.initializer ? [node.initializer] : [],
+        });
+      }
     }
     ts.forEachChild(node, collectDeclarations);
   };
@@ -448,7 +480,12 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
         expression = expression.expression;
       }
       if (ts.isIdentifier(expression)) return proven(expression, checking);
-      return ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && factories.has(expression.expression.text);
+      return (
+        ts.isCallExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        factories.has(expression.expression.text) &&
+        !resolve(expression.expression)
+      );
     });
     checking.delete(binding);
     return result;
@@ -467,6 +504,12 @@ interface SupabaseBinding {
 
 function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => boolean {
   const bindings: SupabaseBinding[] = [];
+  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
+    if (ts.isIdentifier(name)) return [name];
+    return name.elements.flatMap((element) =>
+      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
+    );
+  };
   for (const statement of sf.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
     if (statement.moduleSpecifier.text !== "@supabase/supabase-js") continue;
@@ -515,6 +558,19 @@ function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => b
       .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
 
   const collectDeclarations = (node: ts.Node) => {
+    if (ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        for (const identifier of bindingIdentifiers(parameter.name)) {
+          bindings.push({
+            name: identifier.text,
+            declaration: identifier,
+            scope: node,
+            values: [],
+            factory: false,
+          });
+        }
+      }
+    }
     if (ts.isFunctionDeclaration(node) && node.name) {
       bindings.push({
         name: node.name.text,
