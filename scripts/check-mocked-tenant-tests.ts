@@ -59,6 +59,8 @@ function parse(p: string, text: string): ts.SourceFile {
 interface MockCall {
   specifier: string;
   partial: boolean; // importActual/requireActual/importOriginal factory — real code still runs
+  replacesCreateClient: boolean;
+  replacesWitness: boolean;
 }
 
 function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
@@ -70,7 +72,13 @@ function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
         const arg = node.arguments[0];
         if (arg && ts.isStringLiteralLike(arg)) {
           const factory = node.arguments[1];
-          out.push({ specifier: arg.text, partial: !!factory && /importActual|requireActual|importOriginal/.test(factory.getText(sf)) });
+          const factoryText = factory?.getText(sf) ?? "";
+          out.push({
+            specifier: arg.text,
+            partial: /importActual|requireActual|importOriginal/.test(factoryText),
+            replacesCreateClient: /\bcreateClient\s*(?=:|,|\})/.test(factoryText),
+            replacesWitness: /\bassertIsolationQuery\s*(?=:|,|\})/.test(factoryText),
+          });
         }
       }
     }
@@ -100,6 +108,7 @@ function resolveModule(fromPath: string, specifier: string, byPath: ReadonlyMap<
 
 function dbClientMockDescription(mock: MockCall, fromPath: string, byPath: ReadonlyMap<string, string>): string | undefined {
   const spec = mock.specifier;
+  if (spec === "postgres") return 'the Postgres client package "postgres"';
   if (spec.startsWith("@supabase/")) return `the Supabase client package "${spec}"`;
   if (/supabase/i.test(spec)) return `"${spec}" (a Supabase client module by name)`;
   const resolved = resolveModule(fromPath, spec, byPath);
@@ -200,7 +209,21 @@ function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): 
   return property?.initializer;
 }
 
-function postgresBindings(sf: ts.SourceFile): Set<string> {
+type DbClientKind = "supabase" | "postgres";
+
+interface DbClientProvenance {
+  bindings: Map<string, DbClientKind>;
+  expressionKind: (expression: ts.Expression) => DbClientKind | undefined;
+}
+
+interface PostgresBinding {
+  name: string;
+  declaration: ts.Identifier;
+  scope: ts.Node;
+  values: ts.Expression[];
+}
+
+function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => boolean {
   const factories = new Set<string>();
   for (const statement of sf.statements) {
     if (
@@ -213,30 +236,173 @@ function postgresBindings(sf: ts.SourceFile): Set<string> {
     }
   }
 
-  const bindings = new Set<string>();
-  const isFactoryCall = (node: ts.Expression): node is ts.CallExpression =>
-    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text);
+  const bindings: PostgresBinding[] = [];
+  const bindingScope = (node: ts.Node): ts.Node => {
+    for (let current = node.parent; current; current = current.parent) {
+      if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) return current;
+    }
+    return sf;
+  };
+  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
+  const resolve = (identifier: ts.Identifier): PostgresBinding | undefined =>
+    bindings
+      .filter(
+        (binding) =>
+          binding.name === identifier.text &&
+          contains(binding.scope, identifier) &&
+          binding.declaration.pos <= identifier.pos,
+      )
+      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
+
+  const collectDeclarations = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      bindings.push({
+        name: node.name.text,
+        declaration: node.name,
+        scope: bindingScope(node),
+        values: node.initializer ? [node.initializer] : [],
+      });
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(sf);
+
+  const collectAssignments = (node: ts.Node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left)
+    ) {
+      resolve(node.left)?.values.push(node.right);
+    }
+    ts.forEachChild(node, collectAssignments);
+  };
+  collectAssignments(sf);
+
+  const proven = (identifier: ts.Identifier, checking = new Set<PostgresBinding>()): boolean => {
+    const binding = resolve(identifier);
+    if (!binding || binding.values.length === 0 || checking.has(binding)) return false;
+    checking.add(binding);
+    const result = binding.values.every((input) => {
+      let expression = input;
+      while (
+        ts.isParenthesizedExpression(expression) ||
+        ts.isAsExpression(expression) ||
+        ts.isTypeAssertionExpression(expression) ||
+        ts.isNonNullExpression(expression)
+      ) {
+        expression = expression.expression;
+      }
+      if (ts.isIdentifier(expression)) return proven(expression, checking);
+      return ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && factories.has(expression.expression.text);
+    });
+    checking.delete(binding);
+    return result;
+  };
+  return proven;
+}
+
+function dbClientProvenance(sf: ts.SourceFile): DbClientProvenance {
+  const supabaseFactories = new Set<string>();
+  const postgresFactories = new Set<string>();
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+    if (statement.moduleSpecifier.text === "postgres" && statement.importClause?.name) {
+      postgresFactories.add(statement.importClause.name.text);
+      continue;
+    }
+    if (statement.moduleSpecifier.text !== "@supabase/supabase-js") continue;
+    const imports = statement.importClause?.namedBindings;
+    if (!imports || !ts.isNamedImports(imports)) continue;
+    for (const element of imports.elements) {
+      if ((element.propertyName?.text ?? element.name.text) === "createClient") {
+        supabaseFactories.add(element.name.text);
+      }
+    }
+  }
+
+  const bindings = new Map<string, DbClientKind>();
+  const helpers = new Map<string, { returns: ts.Expression[]; kind?: DbClientKind }>();
+  const candidates: { name: string; value: ts.Expression }[] = [];
+
+  const returnedExpressions = (fn: ts.FunctionLikeDeclaration): ts.Expression[] => {
+    if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return [fn.body];
+    if (!fn.body) return [];
+    const returns: ts.Expression[] = [];
+    const collect = (node: ts.Node) => {
+      if (node !== fn.body && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
+      ts.forEachChild(node, collect);
+    };
+    collect(fn.body);
+    return returns;
+  };
+
   const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isFactoryCall(node.initializer)) {
-      bindings.add(node.name.text);
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      helpers.set(node.name.text, { returns: returnedExpressions(node) });
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)) {
+        helpers.set(node.name.text, { returns: returnedExpressions(node.initializer) });
+      } else {
+        candidates.push({ name: node.name.text, value: node.initializer });
+      }
     }
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      isFactoryCall(node.right)
+      ts.isIdentifier(node.left)
     ) {
-      bindings.add(node.left.text);
+      candidates.push({ name: node.left.text, value: node.right });
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return bindings;
+
+  const expressionKind = (input: ts.Expression): DbClientKind | undefined => {
+    let expression = input;
+    while (
+      ts.isAwaitExpression(expression) ||
+      ts.isParenthesizedExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isTypeAssertionExpression(expression) ||
+      ts.isNonNullExpression(expression)
+    ) {
+      expression = expression.expression;
+    }
+    if (ts.isIdentifier(expression)) return bindings.get(expression.text);
+    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return undefined;
+    if (supabaseFactories.has(expression.expression.text)) return "supabase";
+    if (postgresFactories.has(expression.expression.text)) return "postgres";
+    return helpers.get(expression.expression.text)?.kind;
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const helper of helpers.values()) {
+      if (helper.kind || helper.returns.length === 0) continue;
+      const kinds = helper.returns.map(expressionKind);
+      if (kinds[0] && kinds.every((kind) => kind === kinds[0])) {
+        helper.kind = kinds[0];
+        changed = true;
+      }
+    }
+    for (const candidate of candidates) {
+      const kind = expressionKind(candidate.value);
+      if (kind && bindings.get(candidate.name) !== kind) {
+        bindings.set(candidate.name, kind);
+        changed = true;
+      }
+    }
+  }
+  return { bindings, expressionKind };
 }
 
 function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.SourceFile): string[] {
   const resources = new Set<string>();
-  const sqlBindings = postgresBindings(sf);
+  const provenance = dbClientProvenance(sf);
+  const isProvenPostgres = postgresProvenance(sf);
   const returned: ts.Expression[] = [];
   if (ts.isArrowFunction(query) && !ts.isBlock(query.body)) {
     returned.push(query.body);
@@ -250,18 +416,32 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
   }
 
   const isSupabaseFromOperation = (fromCall: ts.CallExpression): boolean => {
-    for (let current = fromCall.parent; current && current !== query; current = current.parent) {
+    const access = fromCall.parent;
+    return (
+      ts.isPropertyAccessExpression(access) &&
+      access.expression === fromCall &&
+      ["select", "insert", "update", "delete", "upsert"].includes(access.name.text) &&
+      ts.isCallExpression(access.parent) &&
+      access.parent.expression === access
+    );
+  };
+  const conditionallyEvaluated = (node: ts.Node, returnedExpression: ts.Expression): boolean => {
+    for (let current = node; current !== returnedExpression; current = current.parent) {
+      const parent = current.parent;
       if (
-        ts.isCallExpression(current) &&
-        ts.isPropertyAccessExpression(current.expression) &&
-        ["select", "insert", "update", "delete", "upsert"].includes(current.expression.name.text)
+        (ts.isConditionalExpression(parent) && (parent.whenTrue === current || parent.whenFalse === current)) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.right === current &&
+          [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(
+            parent.operatorToken.kind,
+          ))
       ) {
         return true;
       }
     }
     return false;
   };
-  const visit = (node: ts.Node) => {
+  const visit = (node: ts.Node, returnedExpression: ts.Expression) => {
     if (ts.isFunctionLike(node)) return;
     if (
       ts.isCallExpression(node) &&
@@ -272,6 +452,8 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
       if (
         name &&
         ts.isStringLiteralLike(name) &&
+        !conditionallyEvaluated(node, returnedExpression) &&
+        provenance.expressionKind(node.expression.expression) === "supabase" &&
         (node.expression.name.text === "rpc" || isSupabaseFromOperation(node))
       ) {
         const kind = node.expression.name.text === "from" ? "table" : "rpc";
@@ -281,7 +463,8 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
     if (
       ts.isTaggedTemplateExpression(node) &&
       ts.isIdentifier(node.tag) &&
-      sqlBindings.has(node.tag.text)
+      !conditionallyEvaluated(node, returnedExpression) &&
+      isProvenPostgres(node.tag)
     ) {
       const sql = node.template.getText(sf);
       const relation = /\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:([a-z_][a-z0-9_]*)\.)?([a-z_][a-z0-9_]*)(\s*\()?/gi;
@@ -292,9 +475,9 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
         resources.add(`${match[3] ? "rpc" : "table"}:${schema}.${name}`);
       }
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, returnedExpression));
   };
-  for (const expression of returned) visit(expression);
+  for (const expression of returned) visit(expression, expression);
   return [...resources].sort();
 }
 
@@ -384,11 +567,25 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     return `coverage target is not a real-DB integration test: ${pointer.file}`;
   }
   const targetSf = parse(pointer.file, target);
-  const mockedDb = collectModuleMocks(targetSf)
-    .filter((mock) => !mock.partial)
+  const targetMocks = collectModuleMocks(targetSf);
+  const mockedDb = targetMocks
+    .filter(
+      (mock) =>
+        !mock.partial ||
+        (mock.specifier === "@supabase/supabase-js" && mock.replacesCreateClient),
+    )
     .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
     .find((description): description is string => description !== undefined);
   if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
+  const mockedWitness = targetMocks.find((mock) => {
+    if (mock.partial && !mock.replacesWitness) return false;
+    if (!mock.specifier.startsWith(".")) return false;
+    const resolved = path.posix
+      .normalize(path.posix.join(path.posix.dirname(pointer.file), mock.specifier))
+      .replace(/\.[cm]?[jt]sx?$/, "");
+    return resolved === ISOLATION_WITNESS_PATH;
+  });
+  if (mockedWitness) return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
   const targetTests = runnableTests(targetSf).filter((test) => test.fullName === pointer.testName);
   if (targetTests.length === 0) {
     return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;

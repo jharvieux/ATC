@@ -116,6 +116,152 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
     expect(findMockedTenantTests(F, source, files)).toEqual([]);
   });
 
+  it("rejects a fake query receiver despite unused real-DB imports and configuration", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const fakeCoverage = `
+import { createClient } from "@supabase/supabase-js";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const fake = {
+  from: () => ({ select: () => Promise.resolve({ data: [], error: null }) }),
+};
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({
+      query: () => fake.from("bookings").select("id"),
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, fakeCoverage]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("accepts Supabase factory imports, helper returns, and client aliases", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const helperCoverage = REAL_DB_COVERAGE
+      .replace("import { createClient }", "import { createClient as makeClient }")
+      .replace(
+        'describe("RLS integration", () => {',
+        'async function authedClient() { return makeClient("https://db.example.test", "anon-key"); }\ndescribe("RLS integration", () => {',
+      )
+      .replace('const db = createClient("https://db.example.test", "anon-key");', "const db = await authedClient();\n    const alias = db;")
+      .replace('db.from("bookings")', 'alias.from("bookings")');
+    expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, helperCoverage]]))).toEqual([]);
+  });
+
+  it("accepts Postgres factory assignment and query aliases", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const postgresCoverage = `
+import pgFactory from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+let sql;
+sql = pgFactory(DB_URL!);
+const queryDb = sql;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({
+      query: () => queryDb\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, postgresCoverage]]))).toEqual([]);
+  });
+
+  it("rejects a real from call nested under an unrelated select chain", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const unrelatedSelect = REAL_DB_COVERAGE.replace(
+      'db.from("bookings").select("id")',
+      'wrap(db.from("bookings")).select("id")',
+    ).replace(
+      'describe("RLS integration", () => {',
+      'const wrap = (value: unknown) => ({ select: async () => value });\ndescribe("RLS integration", () => {',
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, unrelatedSelect]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a real query confined to a dead conditional branch", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const deadQuery = REAL_DB_COVERAGE.replace(
+      'db.from("bookings").select("id")',
+      'false ? db.from("bookings").select("id") : Promise.resolve({ data: [], error: null })',
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, deadQuery]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects an overwritten Postgres binding", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const overwritten = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+let sql = postgres(DB_URL!);
+sql = (() => Promise.resolve([])) as never;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    await assertIsolationQuery({
+      query: () => sql\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, overwritten]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a shadowed Postgres binding with no factory provenance", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const shadowed = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const sql = postgres(DB_URL!);
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = (() => Promise.resolve([])) as never;
+    await assertIsolationQuery({
+      query: () => sql\`SELECT id FROM public.bookings\`,
+      allowedIds: [],
+      deniedIds: ["booking-a"],
+    });
+  });
+});
+`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, shadowed]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
   it("fails loud when an annotation points to a missing integration test", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',
@@ -135,6 +281,36 @@ describe("cross-tenant probe", () => { it("returns nothing", () => {}); });
     const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
     expect(result).toHaveLength(1);
     expect(result[0]?.annotationError).toMatch(/coverage target mocks/);
+  });
+
+  it("rejects a coverage target that fully mocks Postgres", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("postgres");`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
+    expect(result[0]?.annotationError).toMatch(/coverage target mocks the Postgres client/);
+  });
+
+  it("rejects a partial Supabase mock that replaces createClient", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("@supabase/supabase-js", async (importOriginal) => ({ ...(await importOriginal()), createClient: vi.fn() }));`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
+    expect(result[0]?.annotationError).toMatch(/coverage target mocks the Supabase client/);
+  });
+
+  it("rejects a coverage target that mocks the canonical witness", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const mockedCoverage = `${REAL_DB_COVERAGE}\nvi.mock("../../../../tests/helpers/isolation-witness");`;
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, mockedCoverage]]));
+    expect(result[0]?.annotationError).toMatch(/mocks the canonical isolation witness/);
   });
 
   it("rejects a DB operation without the canonical isolation assertion", () => {
