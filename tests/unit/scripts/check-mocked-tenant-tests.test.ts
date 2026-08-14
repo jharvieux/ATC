@@ -142,6 +142,37 @@ describe("RLS integration", () => {
     expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
   });
 
+  it("rejects a fake Supabase client shadowing a proven outer binding", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const shadowed = REAL_DB_COVERAGE
+      .replace(
+        'describe("RLS integration", () => {',
+        'const db = createClient("https://db.example.test", "anon-key");\ndescribe("RLS integration", () => {',
+      )
+      .replace(
+        '    const db = createClient("https://db.example.test", "anon-key");',
+        '    const db = { from: () => ({ select: async () => ({ data: [], error: null }) }) } as never;',
+      );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, shadowed]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a proven Supabase binding after an unproven overwrite", () => {
+    const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
+      '  it("enforces tenant isolation on the list query", async () => {});',
+      `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    );
+    const overwritten = REAL_DB_COVERAGE.replace(
+      '    const db = createClient("https://db.example.test", "anon-key");',
+      '    let db = createClient("https://db.example.test", "anon-key");\n    db = { from: () => ({ select: async () => ({ data: [], error: null }) }) } as never;',
+    );
+    const result = findMockedTenantTests(F, source, new Map([[RLS_FILE, overwritten]]));
+    expect(result[0]?.annotationError).toMatch(/resource mismatch.*queried none/);
+  });
+
   it("accepts Supabase factory imports, helper returns, and client aliases", () => {
     const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
       '  it("enforces tenant isolation on the list query", async () => {});',

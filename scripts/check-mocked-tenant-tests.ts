@@ -209,13 +209,6 @@ function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): 
   return property?.initializer;
 }
 
-type DbClientKind = "supabase" | "postgres";
-
-interface DbClientProvenance {
-  bindings: Map<string, DbClientKind>;
-  expressionKind: (expression: ts.Expression) => DbClientKind | undefined;
-}
-
 interface PostgresBinding {
   name: string;
   declaration: ts.Identifier;
@@ -302,28 +295,34 @@ function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => b
   return proven;
 }
 
-function dbClientProvenance(sf: ts.SourceFile): DbClientProvenance {
-  const supabaseFactories = new Set<string>();
-  const postgresFactories = new Set<string>();
+interface SupabaseBinding {
+  name: string;
+  declaration: ts.Identifier;
+  scope: ts.Node;
+  values: ts.Expression[];
+  factory: boolean;
+  helperReturns?: ts.Expression[];
+}
+
+function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => boolean {
+  const bindings: SupabaseBinding[] = [];
   for (const statement of sf.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
-    if (statement.moduleSpecifier.text === "postgres" && statement.importClause?.name) {
-      postgresFactories.add(statement.importClause.name.text);
-      continue;
-    }
     if (statement.moduleSpecifier.text !== "@supabase/supabase-js") continue;
     const imports = statement.importClause?.namedBindings;
     if (!imports || !ts.isNamedImports(imports)) continue;
     for (const element of imports.elements) {
       if ((element.propertyName?.text ?? element.name.text) === "createClient") {
-        supabaseFactories.add(element.name.text);
+        bindings.push({
+          name: element.name.text,
+          declaration: element.name,
+          scope: sf,
+          values: [],
+          factory: true,
+        });
       }
     }
   }
-
-  const bindings = new Map<string, DbClientKind>();
-  const helpers = new Map<string, { returns: ts.Expression[]; kind?: DbClientKind }>();
-  const candidates: { name: string; value: ts.Expression }[] = [];
 
   const returnedExpressions = (fn: ts.FunctionLikeDeclaration): ts.Expression[] => {
     if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return [fn.body];
@@ -337,29 +336,61 @@ function dbClientProvenance(sf: ts.SourceFile): DbClientProvenance {
     collect(fn.body);
     return returns;
   };
-
-  const visit = (node: ts.Node) => {
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      helpers.set(node.name.text, { returns: returnedExpressions(node) });
-    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      if (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)) {
-        helpers.set(node.name.text, { returns: returnedExpressions(node.initializer) });
-      } else {
-        candidates.push({ name: node.name.text, value: node.initializer });
-      }
+  const bindingScope = (node: ts.Node): ts.Node => {
+    for (let current = node.parent; current; current = current.parent) {
+      if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) return current;
     }
+    return sf;
+  };
+  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
+  const resolve = (identifier: ts.Identifier): SupabaseBinding | undefined =>
+    bindings
+      .filter(
+        (binding) =>
+          binding.name === identifier.text &&
+          contains(binding.scope, identifier) &&
+          binding.declaration.pos <= identifier.pos,
+      )
+      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
+
+  const collectDeclarations = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      bindings.push({
+        name: node.name.text,
+        declaration: node.name,
+        scope: bindingScope(node),
+        values: [],
+        factory: false,
+        helperReturns: returnedExpressions(node),
+      });
+    } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const helper = node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer));
+      bindings.push({
+        name: node.name.text,
+        declaration: node.name,
+        scope: bindingScope(node),
+        values: node.initializer && !helper ? [node.initializer] : [],
+        factory: false,
+        ...(helper ? { helperReturns: returnedExpressions(node.initializer as ts.ArrowFunction | ts.FunctionExpression) } : {}),
+      });
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(sf);
+
+  const collectAssignments = (node: ts.Node) => {
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       ts.isIdentifier(node.left)
     ) {
-      candidates.push({ name: node.left.text, value: node.right });
+      resolve(node.left)?.values.push(node.right);
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, collectAssignments);
   };
-  visit(sf);
+  collectAssignments(sf);
 
-  const expressionKind = (input: ts.Expression): DbClientKind | undefined => {
+  const expressionProven = (input: ts.Expression, checking = new Set<SupabaseBinding>()): boolean => {
     let expression = input;
     while (
       ts.isAwaitExpression(expression) ||
@@ -370,38 +401,27 @@ function dbClientProvenance(sf: ts.SourceFile): DbClientProvenance {
     ) {
       expression = expression.expression;
     }
-    if (ts.isIdentifier(expression)) return bindings.get(expression.text);
-    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return undefined;
-    if (supabaseFactories.has(expression.expression.text)) return "supabase";
-    if (postgresFactories.has(expression.expression.text)) return "postgres";
-    return helpers.get(expression.expression.text)?.kind;
+    const bindingFor = (identifier: ts.Identifier): SupabaseBinding | undefined => resolve(identifier);
+    const bindingProven = (binding: SupabaseBinding | undefined): boolean => {
+      if (!binding || checking.has(binding)) return false;
+      if (binding.factory) return true;
+      checking.add(binding);
+      const expressions = binding.helperReturns ?? binding.values;
+      const result = expressions.length > 0 && expressions.every((value) => expressionProven(value, checking));
+      checking.delete(binding);
+      return result;
+    };
+    if (ts.isIdentifier(expression)) return bindingProven(bindingFor(expression));
+    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return false;
+    const callee = bindingFor(expression.expression);
+    return !!callee && (callee.factory || (callee.helperReturns !== undefined && bindingProven(callee)));
   };
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const helper of helpers.values()) {
-      if (helper.kind || helper.returns.length === 0) continue;
-      const kinds = helper.returns.map(expressionKind);
-      if (kinds[0] && kinds.every((kind) => kind === kinds[0])) {
-        helper.kind = kinds[0];
-        changed = true;
-      }
-    }
-    for (const candidate of candidates) {
-      const kind = expressionKind(candidate.value);
-      if (kind && bindings.get(candidate.name) !== kind) {
-        bindings.set(candidate.name, kind);
-        changed = true;
-      }
-    }
-  }
-  return { bindings, expressionKind };
+  return expressionProven;
 }
 
 function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.SourceFile): string[] {
   const resources = new Set<string>();
-  const provenance = dbClientProvenance(sf);
+  const isProvenSupabase = supabaseProvenance(sf);
   const isProvenPostgres = postgresProvenance(sf);
   const returned: ts.Expression[] = [];
   if (ts.isArrowFunction(query) && !ts.isBlock(query.body)) {
@@ -453,7 +473,7 @@ function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.
         name &&
         ts.isStringLiteralLike(name) &&
         !conditionallyEvaluated(node, returnedExpression) &&
-        provenance.expressionKind(node.expression.expression) === "supabase" &&
+        isProvenSupabase(node.expression.expression) &&
         (node.expression.name.text === "rpc" || isSupabaseFromOperation(node))
       ) {
         const kind = node.expression.name.text === "from" ? "table" : "rpc";
