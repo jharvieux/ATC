@@ -483,6 +483,179 @@ describeIf("RLS integration", () => {
     });
   });
 
+  describe("unit-scope companion policies", () => {
+    let anonymousSessionAId: string;
+    let groupAId: string;
+    let forumAId: string;
+    let forumThreadAId: string;
+    let importQueueAId: string;
+    let bookingAId: string;
+    let tripResourceAId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, userA } = fx;
+
+      await sql`
+        INSERT INTO public.customer_memories (tenant_id, user_id, notes_freeform)
+        VALUES (${tenantA.id}, ${userA.rowId}, 'unit-scope companion fixture')
+      `;
+
+      const [anonymousSession] = await sql<{ id: string }[]>`
+        INSERT INTO public.anonymous_sessions (tenant_id, last_active_at)
+        VALUES (${tenantA.id}, NOW())
+        RETURNING id
+      `;
+      if (!anonymousSession) throw new Error("anonymous session insert failed");
+      anonymousSessionAId = anonymousSession.id;
+
+      const [group] = await sql<{ id: string }[]>`
+        INSERT INTO public.groups (
+          tenant_id, coordinator_user_id, cruise_line, ship_name,
+          sailing_date, departure_port
+        ) VALUES (
+          ${tenantA.id}, ${userA.rowId}, 'Test Line', 'Test Ship',
+          CURRENT_DATE + 30, 'Test Port'
+        )
+        RETURNING id
+      `;
+      if (!group) throw new Error("group insert failed");
+      groupAId = group.id;
+
+      const [forum] = await sql<{ id: string }[]>`
+        INSERT INTO public.forums (group_id, tenant_id)
+        VALUES (${groupAId}, ${tenantA.id})
+        RETURNING id
+      `;
+      if (!forum) throw new Error("forum insert failed");
+      forumAId = forum.id;
+
+      const [thread] = await sql<{ id: string }[]>`
+        INSERT INTO public.forum_threads (
+          forum_id, tenant_id, created_by_user_id, title
+        ) VALUES (
+          ${forumAId}, ${tenantA.id}, ${userA.rowId}, 'Companion RLS thread'
+        )
+        RETURNING id
+      `;
+      if (!thread) throw new Error("forum thread insert failed");
+      forumThreadAId = thread.id;
+
+      const [importQueue] = await sql<{ id: string }[]>`
+        INSERT INTO public.import_queue (tenant_id, import_path, source_ref)
+        VALUES (${tenantA.id}, 'manual', ${RUN_TAG + '-import'})
+        RETURNING id
+      `;
+      if (!importQueue) throw new Error("import queue insert failed");
+      importQueueAId = importQueue.id;
+
+      const [booking] = await sql<{ id: string }[]>`
+        INSERT INTO public.bookings (tenant_id, booking_type, status)
+        VALUES (${tenantA.id}, 'cruise', 'draft')
+        RETURNING id
+      `;
+      if (!booking) throw new Error("companion booking insert failed");
+      bookingAId = booking.id;
+
+      const [tripResource] = await sql<{ id: string }[]>`
+        INSERT INTO public.trip_resources (
+          tenant_id, booking_id, access_token, status
+        ) VALUES (
+          ${tenantA.id}, ${bookingAId}, ${RUN_TAG + '-resource-token'}, 'draft'
+        )
+        RETURNING id
+      `;
+      if (!tripResource) throw new Error("trip resource insert failed");
+      tripResourceAId = tripResource.id;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, userA } = fx;
+      await sql`DELETE FROM public.trip_resources WHERE id = ${tripResourceAId}`;
+      await sql`DELETE FROM public.bookings WHERE id = ${bookingAId}`;
+      await sql`DELETE FROM public.import_queue WHERE id = ${importQueueAId}`;
+      await sql`DELETE FROM public.forum_threads WHERE id = ${forumThreadAId}`;
+      await sql`DELETE FROM public.forums WHERE id = ${forumAId}`;
+      await sql`DELETE FROM public.groups WHERE id = ${groupAId}`;
+      await sql`DELETE FROM public.anonymous_sessions WHERE id = ${anonymousSessionAId}`;
+      await sql`
+        DELETE FROM public.customer_memories
+        WHERE tenant_id = ${tenantA.id} AND user_id = ${userA.rowId}
+      `;
+    }, 30000);
+
+    it("customer_memories: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("customer_memories")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("anonymous_sessions: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("anonymous_sessions")
+        .select("id")
+        .eq("id", anonymousSessionAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("groups: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("groups")
+        .select("id")
+        .eq("id", groupAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("forums: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("forums")
+        .select("id")
+        .eq("id", forumAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("forum_threads: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("forum_threads")
+        .select("id")
+        .eq("id", forumThreadAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("import_queue: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("import_queue")
+        .select("id")
+        .eq("id", importQueueAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("trip_resources: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("trip_resources")
+        .select("id")
+        .eq("id", tripResourceAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+  });
+
   // ── §12.1 contacts isolation + §12.2 FK unique constraint ─────────────────
 
   describe("contacts + contact_relationships", () => {

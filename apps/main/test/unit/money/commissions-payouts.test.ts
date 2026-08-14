@@ -154,6 +154,7 @@ describe("GET /api/commissions/[id] (detail)", () => {
     expect(res.status).toBe(200);
   });
 
+  // @rls-covered-by apps/main/test/integration/rls.test.ts#commissions: userB cannot SELECT tenantA rows
   it("returns 404 when RLS hides a cross-tenant row (same shape as truly missing)", async () => {
     mocks.commissionDetail.mockResolvedValue({ data: null, error: null });
     const res = await COMMISSIONS_DETAIL(getReq("/api/commissions/commission-1"), PARAMS);

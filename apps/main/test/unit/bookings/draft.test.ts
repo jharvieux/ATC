@@ -113,6 +113,7 @@ describe("POST /api/bookings/draft", () => {
     expect(mocks.contactMaybeSingle).toHaveBeenCalledTimes(1);
   });
 
+  // @rls-covered-by apps/main/test/integration/rls.test.ts#§12.1: userA cannot SELECT tenantB contact (contactBId)
   it("returns 422 when primary_contact_id is not found in this tenant (RLS hides cross-tenant rows)", async () => {
     mocks.contactMaybeSingle.mockResolvedValue({ data: null, error: null });
     const res = await POST(postReq({ primary_contact_id: CONTACT_ID }));

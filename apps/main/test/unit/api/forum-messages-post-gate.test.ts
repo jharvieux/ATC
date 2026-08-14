@@ -178,6 +178,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (§19.3–19.4)", () => {
+  // @rls-covered-by apps/main/test/integration/rls.test.ts#forums: userB cannot SELECT tenantA rows
   it("forum not in tenant → 404 before any write (cross-tenant isolation)", async () => {
     // The tenant_id filter on the forum lookup returns no row — simulates a
     // request where forumId exists but belongs to a different tenant.
@@ -190,6 +191,7 @@ describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (
     expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
   });
 
+  // @rls-covered-by apps/main/test/integration/rls.test.ts#forum_threads: userB cannot SELECT tenantA rows
   it("thread not in forum → 404 before any write (cross-forum isolation)", async () => {
     // The forum_id + tenant_id filter on the thread lookup returns no row —
     // simulates a threadId that belongs to a different forum or tenant.
