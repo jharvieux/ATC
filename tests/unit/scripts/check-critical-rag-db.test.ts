@@ -131,16 +131,39 @@ describe("deploy workflow wiring", () => {
 
   it("runs this workflow-wiring fixture on workflow-only pull requests", () => {
     const testJob = workflow.slice(workflow.indexOf("\n  test:"), workflow.indexOf("\n  secret-scan:"));
-    expect(testJob.slice(0, testJob.indexOf("    steps:"))).not.toContain("workflows_only != 'true'");
+    const testJobHeader = testJob.slice(0, testJob.indexOf("    steps:"));
+    const preflightStep = testJob.slice(
+      testJob.indexOf("      - name: Require critical isolation test databases for workflow-only changes"),
+      testJob.indexOf("      - name: Decide test scope"),
+    );
+    expect(testJobHeader).not.toContain("workflows_only != 'true'");
+    expect(testJobHeader).not.toContain("SUPABASE_DB_URL:");
+    expect(testJobHeader).not.toContain("SUPABASE_RAG_DB_URL:");
     expect(testJob).toContain("if: needs.detect-changes.outputs.workflows_only == 'true'");
     expect(testJob).toContain("pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts");
-    expect(testJob).toContain("SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}");
-    expect(testJob).toContain("SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
-    expect(testJob).toContain("ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}");
-    expect(testJob).toContain("pnpm tsx scripts/check-critical-rag-db.ts");
+    for (const line of [
+      "NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}",
+      "SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}",
+      "SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}",
+      "SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}",
+      "ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}",
+    ]) {
+      expect(preflightStep).toContain(line);
+    }
+    expect(preflightStep).toContain("pnpm tsx scripts/check-critical-rag-db.ts");
     expect(testJob.indexOf("pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts")).toBeLessThan(
       testJob.indexOf("pnpm tsx scripts/check-critical-rag-db.ts"),
     );
+  });
+
+  it("keeps live isolation suites in the serialized integration job", () => {
+    const integrationJob = workflow.slice(workflow.indexOf("\n  integration-tests-critical:"), workflow.indexOf("\n  contract-tests:"));
+    expect(integrationJob).toContain("concurrency:\n      group: shared-test-db\n      cancel-in-progress: false");
+    expect(integrationJob).toContain("SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}");
+    expect(integrationJob).toContain("SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
+    expect(integrationJob).toContain("pnpm vitest run apps/main/test/integration/rls.test.ts");
+    expect(integrationJob).toContain("test/integration/retrieval-scope-isolation.test.ts");
   });
 
   it("reports missing API or DB credentials from scheduled and manual nightly runs", () => {
