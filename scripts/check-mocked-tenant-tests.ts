@@ -243,6 +243,8 @@ const WITNESS_ATOM = "witness:canonical";
 class LocalFlowEngine {
   readonly checker: ts.TypeChecker;
   private readonly functions = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
+  private readonly classes = new Map<FlowAtom, ts.ConstructorDeclaration | undefined>();
+  private readonly generatorTargets = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
   private readonly boundTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member: string }>();
@@ -270,6 +272,12 @@ class LocalFlowEngine {
   private functionAtom(fn: ts.FunctionLikeDeclaration): FlowAtom {
     const atom = this.atom("function", fn);
     this.functions.set(atom, fn);
+    return atom;
+  }
+
+  private classAtom(declaration: ts.ClassLikeDeclaration): FlowAtom {
+    const atom = this.atom("class", declaration);
+    this.classes.set(atom, declaration.members.find(ts.isConstructorDeclaration));
     return atom;
   }
 
@@ -454,6 +462,13 @@ class LocalFlowEngine {
         value.add(wrapper);
         continue;
       }
+      if (receiver.startsWith("generator:") && member === "next") {
+        const next = this.atom("generator-next", node);
+        const target = this.generatorTargets.get(receiver);
+        if (target) this.generatorTargets.set(next, target);
+        value.add(target ? next : UNKNOWN_ATOM);
+        continue;
+      }
       if (receiver.startsWith("client:supabase:") && member && ["from", "rpc"].includes(member)) {
         if (state.dirty.has(receiver)) value.add(UNKNOWN_ATOM);
         else {
@@ -530,7 +545,8 @@ class LocalFlowEngine {
       atom.startsWith("apply:") ||
       atom.startsWith("bind:") ||
       atom.startsWith("supabase-") ||
-      atom.startsWith("configure:")
+      atom.startsWith("configure:") ||
+      atom.startsWith("generator-next:")
     );
   }
 
@@ -560,6 +576,11 @@ class LocalFlowEngine {
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       const atom = this.functionAtom(expression);
       if (ts.isFunctionExpression(expression) && expression.name) this.setCell(state, expression.name, this.values(atom));
+      return [{ state, value: this.values(atom) }];
+    }
+    if (ts.isClassExpression(expression)) {
+      const atom = this.classAtom(expression);
+      if (expression.name) this.setCell(state, expression.name, this.values(atom));
       return [{ state, value: this.values(atom) }];
     }
     if (ts.isPropertyAccessExpression(expression)) {
@@ -1003,7 +1024,9 @@ class LocalFlowEngine {
       const fn = this.functions.get(callee);
       if (fn) {
         if (fn.asteriskToken && !construct) {
-          results.push({ state: branch, value: this.values(this.atom("generator", call)) });
+          const generator = this.atom("generator", call);
+          this.generatorTargets.set(generator, fn);
+          results.push({ state: branch, value: this.values(generator) });
         } else if (active.has(fn)) {
           branch.unsupported = true;
           results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
@@ -1014,6 +1037,32 @@ class LocalFlowEngine {
               : value,
           );
           results.push(...this.executeFunction(fn, directArgs, branch, new Set(active).add(fn)));
+        }
+        continue;
+      }
+      const generatorTarget = this.generatorTargets.get(callee);
+      if (generatorTarget) {
+        if (active.has(generatorTarget)) {
+          branch.unsupported = true;
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        } else {
+          results.push(...this.executeFunction(generatorTarget, [], branch, new Set(active).add(generatorTarget)));
+        }
+        continue;
+      }
+      if (construct && this.classes.has(callee)) {
+        const constructor = this.classes.get(callee);
+        if (!constructor) results.push({ state: branch, value: this.values(this.atom("instance", call)) });
+        else if (active.has(constructor)) {
+          branch.unsupported = true;
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        } else {
+          results.push(
+            ...this.executeFunction(constructor, args, branch, new Set(active).add(constructor)).map((result) => ({
+              state: result.state,
+              value: this.values(this.atom("instance", call)),
+            })),
+          );
         }
         continue;
       }
@@ -1041,17 +1090,30 @@ class LocalFlowEngine {
         continue;
       }
       if (ts.isIdentifier(call.expression) && call.expression.text === "eval") branch.unsupported = true;
-      for (const value of args) {
-        for (const atom of value) {
-          const callback = this.functions.get(atom);
-          if (callback && !active.has(callback)) {
-            results.push(...this.executeFunction(callback, [], this.cloneState(branch), new Set(active).add(callback)));
-          }
+      for (const callback of this.callbacksInValues(branch, args)) {
+        if (!active.has(callback)) {
+          results.push(...this.executeFunction(callback, [], this.cloneState(branch), new Set(active).add(callback)));
         }
       }
       results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
     }
     return results.length ? results : [{ state, value: this.values(UNKNOWN_ATOM) }];
+  }
+
+  private callbacksInValues(state: FlowState, values: readonly FlowValue[]): Set<ts.FunctionLikeDeclaration> {
+    const callbacks = new Set<ts.FunctionLikeDeclaration>();
+    const visited = new Set<FlowAtom>();
+    const visit = (atom: FlowAtom) => {
+      if (visited.has(atom)) return;
+      visited.add(atom);
+      const callback = this.functions.get(atom);
+      if (callback) callbacks.add(callback);
+      for (const members of state.members.get(atom)?.values() ?? []) {
+        for (const member of members) visit(member);
+      }
+    };
+    for (const value of values) for (const atom of value) visit(atom);
+    return callbacks;
   }
 
   private literalText(input: ts.Expression | undefined): string | undefined {
@@ -1118,12 +1180,17 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowEvaluation[] {
-    return this.evaluateExpression(expression.tag, state, new Set(active)).map((tag) => {
-      const isRealPostgres = [...tag.value].some(
-        (atom) => atom.startsWith("client:postgres:") && !tag.state.dirty.has(atom),
-      );
-      if (!isRealPostgres) {
-        return { state: tag.state, value: this.values(UNKNOWN_ATOM) };
+    return this.evaluateExpression(expression.tag, state, new Set(active)).flatMap((tag) => {
+      let inputs: { state: FlowState; values: Set<FlowAtom>[] }[] = [{ state: tag.state, values: [] }];
+      if (ts.isTemplateExpression(expression.template)) {
+        for (const span of expression.template.templateSpans) {
+          inputs = inputs.flatMap((input) =>
+            this.evaluateExpression(span.expression, input.state, new Set(active)).map((value) => ({
+              state: value.state,
+              values: [...input.values, value.value],
+            })),
+          );
+        }
       }
       const sql = ts.isNoSubstitutionTemplateLiteral(expression.template)
         ? expression.template.text
@@ -1131,11 +1198,26 @@ class LocalFlowEngine {
             expression.template.head.text,
             ...expression.template.templateSpans.map((span) => ` ? ${span.literal.text}`),
           ].join("");
-      const resources = this.sqlResources(sql);
-      if (!resources.length) return { state: tag.state, value: this.values(UNKNOWN_ATOM) };
-      const result = this.atom("result:query", expression);
-      this.queryResourcesByAtom.set(result, new Set(resources));
-      return { state: tag.state, value: this.values(result) };
+      return inputs.flatMap((input) => {
+        const results: FlowEvaluation[] = [];
+        for (const atom of tag.value) {
+          const branch = this.cloneState(input.state);
+          if (atom.startsWith("client:postgres:") && !branch.dirty.has(atom)) {
+            const resources = this.sqlResources(sql);
+            if (!resources.length) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+            else {
+              const result = this.atom("result:query", expression);
+              this.queryResourcesByAtom.set(result, new Set(resources));
+              results.push({ state: branch, value: this.values(result) });
+            }
+          } else if (this.functions.has(atom) || this.boundTargets.has(atom)) {
+            results.push(
+              ...this.invokeAtoms(this.values(atom), [this.values(UNKNOWN_ATOM), ...input.values], branch, expression as unknown as ts.CallExpression, active, false, false),
+            );
+          } else results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        }
+        return results;
+      });
     });
   }
 
@@ -1208,8 +1290,39 @@ class LocalFlowEngine {
         index += identifier.length;
         continue;
       }
-      if (char === "." || char === "(") tokens.push(char);
+      if (char === "." || char === "(" || char === ")" || char === ",") tokens.push(char);
       index += 1;
+    }
+    const cteNames = new Set<string>();
+    for (let start = 0; start < tokens.length; start += 1) {
+      if (tokens[start]?.toUpperCase() !== "WITH") continue;
+      let cursor = start + 1;
+      if (tokens[cursor]?.toUpperCase() === "RECURSIVE") cursor += 1;
+      while (cursor < tokens.length) {
+        const name = tokens[cursor];
+        if (!name || ["(", ")", ",", "."].includes(name)) break;
+        cteNames.add(name.toLowerCase());
+        cursor += 1;
+        if (tokens[cursor] === "(") {
+          let depth = 1;
+          cursor += 1;
+          while (cursor < tokens.length && depth > 0) {
+            if (tokens[cursor] === "(") depth += 1;
+            else if (tokens[cursor] === ")") depth -= 1;
+            cursor += 1;
+          }
+        }
+        if (tokens[cursor]?.toUpperCase() !== "AS" || tokens[cursor + 1] !== "(") break;
+        cursor += 2;
+        let depth = 1;
+        while (cursor < tokens.length && depth > 0) {
+          if (tokens[cursor] === "(") depth += 1;
+          else if (tokens[cursor] === ")") depth -= 1;
+          cursor += 1;
+        }
+        if (tokens[cursor] !== ",") break;
+        cursor += 1;
+      }
     }
     const resources = new Set<string>();
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
@@ -1221,11 +1334,13 @@ class LocalFlowEngine {
       if (!first || first === "(") continue;
       let schema = "public";
       let name = first;
-      if (tokens[cursor + 1] === "." && tokens[cursor + 2]) {
+      const qualified = tokens[cursor + 1] === "." && !!tokens[cursor + 2];
+      if (qualified) {
         schema = first;
         name = tokens[cursor + 2]!;
         cursor += 2;
       }
+      if (!qualified && cteNames.has(name.toLowerCase())) continue;
       const kind = tokens[cursor + 1] === "(" ? "rpc" : "table";
       resources.add(`${kind}:${schema.toLowerCase()}.${name.toLowerCase()}`);
     }
@@ -1284,9 +1399,12 @@ class LocalFlowEngine {
       ts.isInterfaceDeclaration(statement) ||
       ts.isTypeAliasDeclaration(statement) ||
       ts.isEnumDeclaration(statement) ||
-      ts.isModuleDeclaration(statement) ||
-      ts.isClassDeclaration(statement)
+      ts.isModuleDeclaration(statement)
     ) {
+      return [state];
+    }
+    if (ts.isClassDeclaration(statement)) {
+      if (statement.name) this.setCell(state, statement.name, this.values(this.classAtom(statement)));
       return [state];
     }
     if (ts.isExpressionStatement(statement)) {
@@ -1450,6 +1568,40 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowState[] {
+    const iterableExpression = unwrapExpression(statement.expression);
+    if (
+      ts.isForOfStatement(statement) &&
+      ts.isArrayLiteralExpression(iterableExpression) &&
+      !iterableExpression.elements.some(ts.isSpreadElement)
+    ) {
+      let states = [state];
+      const finished: FlowState[] = [];
+      for (const item of iterableExpression.elements) {
+        if (ts.isOmittedExpression(item)) continue;
+        const next: FlowState[] = [];
+        for (const current of states) {
+          for (const element of this.evaluateExpression(item, current, new Set(active))) {
+            if (ts.isVariableDeclarationList(statement.initializer)) {
+              for (const declaration of statement.initializer.declarations) {
+                this.bindName(element.state, declaration.name, element.value);
+              }
+            } else this.assignTarget(element.state, statement.initializer, element.value);
+            for (const result of this.evaluateStatement(statement.statement, element.state, active)) {
+              if (result.outcome === "break") {
+                result.outcome = "normal";
+                finished.push(result);
+              } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
+              else {
+                if (result.outcome === "continue") result.outcome = "normal";
+                next.push(result);
+              }
+            }
+          }
+        }
+        states = next;
+      }
+      return [...finished, ...states];
+    }
     return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((iterable) => {
       const one = this.cloneState(iterable.state);
       const element =
@@ -1513,11 +1665,52 @@ class LocalFlowEngine {
   }
 
   private widenStates(states: readonly FlowState[]): FlowState[] {
-    const byOutcome = new Map<FlowOutcome, FlowState>();
+    const sameSet = <T>(left: ReadonlySet<T>, right: ReadonlySet<T>) =>
+      left.size === right.size && [...left].every((value) => right.has(value));
+    const proofAtom = (atom: FlowAtom) =>
+      atom === ORIGINAL_LOADER_ATOM ||
+      atom === ORIGINAL_MODULE_ATOM ||
+      atom === SUPABASE_FACTORY_ATOM ||
+      atom === POSTGRES_FACTORY_ATOM ||
+      atom === WITNESS_ATOM ||
+      /^(?:client|query|result:query):/.test(atom);
+    const sameProofCells = (left: FlowState["cells"], right: FlowState["cells"]) => {
+      const symbols = new Set([...left.keys(), ...right.keys()]);
+      return [...symbols].every((symbol) => {
+        const leftValue = left.get(symbol) ?? new Set<FlowAtom>();
+        const rightValue = right.get(symbol) ?? new Set<FlowAtom>();
+        return ![...leftValue, ...rightValue].some(proofAtom) || sameSet(leftValue, rightValue);
+      });
+    };
+    const sameProofMembers = (left: FlowState["members"], right: FlowState["members"]) => {
+      const atoms = new Set([...left.keys(), ...right.keys()]);
+      return [...atoms].every((atom) => {
+        const leftMembers = left.get(atom) ?? new Map<string, Set<FlowAtom>>();
+        const rightMembers = right.get(atom) ?? new Map<string, Set<FlowAtom>>();
+        const names = new Set([...leftMembers.keys(), ...rightMembers.keys()]);
+        return [...names].every((name) => {
+          const leftValue = leftMembers.get(name) ?? new Set<FlowAtom>();
+          const rightValue = rightMembers.get(name) ?? new Set<FlowAtom>();
+          return name !== "@seenOriginal" && ![...leftValue, ...rightValue].some(proofAtom)
+            ? true
+            : sameSet(leftValue, rightValue);
+        });
+      });
+    };
+    const widened: FlowState[] = [];
     for (const state of states) {
-      const merged = byOutcome.get(state.outcome);
+      const merged = widened.find((candidate) =>
+        candidate.outcome === state.outcome &&
+        sameProofCells(candidate.cells, state.cells) &&
+        sameProofMembers(candidate.members, state.members) &&
+        sameSet(candidate.dirty, state.dirty) &&
+        (state.outcome !== "return" || sameSet(candidate.returned, state.returned)) &&
+        candidate.witnessCount === state.witnessCount &&
+        candidate.awaitedWitnessCount === state.awaitedWitnessCount &&
+        sameSet(candidate.witnessResources, state.witnessResources),
+      );
       if (!merged) {
-        byOutcome.set(state.outcome, this.cloneState(state));
+        widened.push(this.cloneState(state));
         continue;
       }
       for (const [symbol, value] of state.cells) {
@@ -1531,7 +1724,7 @@ class LocalFlowEngine {
       for (const resource of state.witnessResources) merged.witnessResources.add(resource);
       merged.unsupported ||= state.unsupported;
     }
-    return [...byOutcome.values()];
+    return widened;
   }
 
   private globalStates(executeSuites: boolean): FlowState[] {
@@ -1650,27 +1843,76 @@ class LocalFlowEngine {
 
   private bindingSource(identifier: ts.Identifier): { source: ts.Expression; property?: string } | undefined {
     const symbol = this.symbol(identifier);
-    const declaration = symbol?.declarations?.find(
-      (candidate): candidate is ts.VariableDeclaration | ts.BindingElement =>
-        ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate),
-    );
-    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      return { source: declaration.initializer };
-    }
-    if (declaration && ts.isBindingElement(declaration)) {
-      let current: ts.Node = declaration.parent;
-      while (!ts.isVariableDeclaration(current) && current.parent) current = current.parent;
-      if (!ts.isVariableDeclaration(current) || !current.initializer) return undefined;
-      const property = declaration.propertyName;
-      return {
-        source: current.initializer,
-        property:
-          property && (ts.isIdentifier(property) || ts.isStringLiteralLike(property))
-            ? property.text
-            : declaration.name.getText(this.sourceFile),
-      };
-    }
-    return undefined;
+    if (!symbol) return undefined;
+    const root: ts.Node = this.sourceFile;
+    let current: { source: ts.Expression; property?: string } | undefined;
+
+    const matches = (node: ts.Identifier) => this.symbol(node) === symbol;
+    const propertyName = (node: ts.PropertyName | undefined, fallback: string): string | undefined => {
+      if (!node) return fallback;
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return node.text;
+      return this.staticKey(node);
+    };
+    const bindDeclaration = (name: ts.BindingName, source: ts.Expression | undefined) => {
+      if (ts.isIdentifier(name)) {
+        if (matches(name)) current = source ? { source } : undefined;
+        return;
+      }
+      if (!source) {
+        for (const element of name.elements) {
+          if (!ts.isOmittedExpression(element)) bindDeclaration(element.name, undefined);
+        }
+        return;
+      }
+      for (const element of name.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        if (ts.isIdentifier(element.name) && matches(element.name)) {
+          current = { source, property: propertyName(element.propertyName, element.name.text) };
+        } else bindDeclaration(element.name, source);
+      }
+    };
+    const bindAssignment = (target: ts.Expression, source: ts.Expression) => {
+      const unwrapped = unwrapExpression(target);
+      if (ts.isIdentifier(unwrapped)) {
+        if (matches(unwrapped)) current = { source };
+        return;
+      }
+      if (ts.isObjectLiteralExpression(unwrapped)) {
+        for (const property of unwrapped.properties) {
+          if (ts.isShorthandPropertyAssignment(property) && matches(property.name)) {
+            current = { source, property: property.name.text };
+          } else if (ts.isPropertyAssignment(property) && ts.isIdentifier(unwrapExpression(property.initializer))) {
+            const targetIdentifier = unwrapExpression(property.initializer) as ts.Identifier;
+            if (matches(targetIdentifier)) current = { source, property: propertyName(property.name, targetIdentifier.text) };
+          }
+        }
+      }
+    };
+    const visit = (node: ts.Node): void => {
+      if (
+        node !== root &&
+        ts.isFunctionLike(node) &&
+        !(node.pos <= identifier.pos && node.end >= identifier.end)
+      ) return;
+      if (node.pos >= identifier.pos) return;
+      if (ts.isVariableDeclaration(node)) {
+        if (node.initializer) visit(node.initializer);
+        bindDeclaration(node.name, node.initializer);
+        return;
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        node.end <= identifier.pos
+      ) {
+        visit(node.right);
+        bindAssignment(node.left, node.right);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+    return current;
   }
 
   frameworkTags(input: ts.Expression, checking = new Set<ts.Symbol>()): Set<FrameworkTag> {
@@ -1746,16 +1988,16 @@ class LocalFlowEngine {
       const binding = this.bindingSource(expression);
       if (!binding) return [];
       checking.add(symbol);
-      const values =
-        binding.property && this.frameworkTags(binding.source, checking).has("vitest")
-          ? binding.property === "describe"
-            ? [{ kind: "suite", state: "enabled" } satisfies RegistrationValue]
-            : ["it", "test"].includes(binding.property)
-              ? [{ kind: "test", state: "enabled" } satisfies RegistrationValue]
-              : []
-          : this.registrationValues(binding.source, checking);
+      const frameworkProperty = binding.property && this.frameworkTags(binding.source, checking).has("vitest");
+      const values = frameworkProperty
+        ? binding.property === "describe"
+          ? [{ kind: "suite", state: "enabled" } satisfies RegistrationValue]
+          : binding.property && ["it", "test"].includes(binding.property)
+            ? [{ kind: "test", state: "enabled" } satisfies RegistrationValue]
+            : []
+        : this.registrationValues(binding.source, checking);
       checking.delete(symbol);
-      return binding.property ? this.registrationMember(values, binding.property) : values;
+      return binding.property && !frameworkProperty ? this.registrationMember(values, binding.property) : values;
     }
     if (ts.isPropertyAccessExpression(expression)) {
       const baseTags = this.frameworkTags(expression.expression, checking);
@@ -1772,10 +2014,9 @@ class LocalFlowEngine {
       return this.registrationMember(this.registrationValues(expression.expression, checking), key.text);
     }
     if (ts.isConditionalExpression(expression)) {
-      return [
-        ...this.registrationValues(expression.whenTrue, checking),
-        ...this.registrationValues(expression.whenFalse, checking),
-      ];
+      const whenTrue = this.registrationValues(expression.whenTrue, checking);
+      const whenFalse = this.registrationValues(expression.whenFalse, checking);
+      return whenTrue.length && whenFalse.length ? [...whenTrue, ...whenFalse] : [];
     }
     if (ts.isCallExpression(expression)) {
       const values = this.registrationValues(expression.expression, checking);
