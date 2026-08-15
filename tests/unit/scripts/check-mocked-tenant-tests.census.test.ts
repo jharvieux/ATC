@@ -586,6 +586,123 @@ regress("sql:typed-token", "quoted relation identifiers retain resource", "safe"
 regress("sql:typed-token", "ONLY relation modifier retains resource", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM ONLY public.bookings`"));
 regress("sql:typed-token", "LATERAL relation modifier retains nested resource", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT visible.id FROM LATERAL (SELECT id FROM public.bookings) visible`"));
 
+const mixedPrimaryRegistration = (alternate: string) => registrationTarget("primary").replace(
+  'describe("RLS integration", () => {',
+  `const primary = process.env.PRIMARY ? it : ${alternate};\ndescribe("RLS integration", () => {`,
+);
+regress(
+  "registration:mixed-primary",
+  "Vitest it or no-op retains unknown test registration",
+  "unsafe",
+  pointerUnit,
+  mixedPrimaryRegistration("((_name: string, _callback: () => void) => {})"),
+);
+regress(
+  "registration:mixed-primary",
+  "Vitest it or test retains enabled test registration",
+  "safe",
+  pointerUnit,
+  mixedPrimaryRegistration("test"),
+);
+
+const tryIntermediateTarget = (operation: string, assignment: string) => supabaseTarget(
+  `const real = createClient(DB_URL!, "key"); let db = real; try { ${assignment}; ${operation}; db = real; } catch {}`,
+);
+for (const [shape, operation] of [
+  ["unresolved call", "unknownCall()"],
+  ["unresolved new", "new UnknownThing()"],
+  ["unresolved await", "await unknownPromise"],
+  ["unresolved tag", "unknownTag`value`"],
+] as const) {
+  regress("effects:try-intermediate", `${shape} retains preceding mutation`, "unsafe", pointerUnit, tryIntermediateTarget(operation, "db = fake"));
+  regress("effects:try-intermediate", `${shape} no-op inverse`, "safe", pointerUnit, tryIntermediateTarget(operation, "db = real"));
+}
+
+regress(
+  "effects:generic-for-of",
+  "aliased array later iteration mutates loader",
+  "unsafe",
+  supabaseLoader("const actions = [() => {}, () => { loader = fake; }]; const iterable = actions; for (const action of iterable) action();"),
+);
+regress(
+  "effects:generic-for-of",
+  "aliased array iterations are no-ops",
+  "safe",
+  supabaseLoader("const actions = [() => {}, () => {}]; const iterable = actions; for (const action of iterable) action();"),
+);
+regress(
+  "effects:generic-for-of-alias-mutation",
+  "earlier iteration replaces later slot with mutator",
+  "unsafe",
+  supabaseLoader("const actions = [() => {}, () => {}]; for (const action of actions) { actions[1] = () => { loader = fake; }; action(); }"),
+);
+regress(
+  "effects:generic-for-of-alias-mutation",
+  "earlier iteration replaces later slot with no-op",
+  "safe",
+  supabaseLoader("const actions = [() => {}, () => {}]; for (const action of actions) { actions[1] = () => {}; action(); }"),
+);
+regress(
+  "effects:promise-all-array",
+  "Promise.all array later iteration mutates loader",
+  "unsafe",
+  supabaseLoader("const actions = await Promise.all([() => {}, () => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-array",
+  "Promise.all array iterations are no-ops",
+  "safe",
+  supabaseLoader("const actions = await Promise.all([() => {}, () => {}]); for (const action of actions) action();"),
+);
+
+regress(
+  "effects:generator-for-of",
+  "later generator iteration mutates loader",
+  "unsafe",
+  supabaseLoader("function* actions() { yield () => {}; yield () => { loader = fake; }; } for (const action of actions()) action();"),
+);
+regress(
+  "effects:generator-for-of",
+  "generator iterations are no-ops",
+  "safe",
+  supabaseLoader("function* actions() { yield () => {}; yield () => {}; } for (const action of actions()) action();"),
+);
+
+regress(
+  "effects:generator-heap-frame",
+  "suspended iterator retains its object member allocation",
+  "unsafe",
+  supabaseLoader("function* run(action: () => void) { const box = { action }; yield 1; box.action(); } function make(action: () => void) { return run(action); } const first = make(() => { loader = fake; }); const second = make(() => {}); first.next(); second.next(); first.next();"),
+);
+regress(
+  "effects:generator-heap-frame",
+  "suspended iterator does not borrow another object's mutator",
+  "safe",
+  supabaseLoader("function* run(action: () => void) { const box = { action }; yield 1; box.action(); } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.next(); second.next(); first.next();"),
+);
+
+regress("effects:default-argument", "omitted argument runs mutating default", "unsafe", supabaseLoader("function run(action = () => { loader = fake; }) { action(); } run();"));
+regress("effects:default-argument", "omitted argument runs no-op default", "safe", supabaseLoader("function run(action = () => {}) { action(); } run();"));
+regress("effects:default-argument", "global undefined runs mutating default", "unsafe", supabaseLoader("function run(action = () => { loader = fake; }) { action(); } run(undefined);"));
+regress("effects:default-argument", "shadowed undefined remains supplied", "safe", supabaseLoader("function run(action = () => { loader = fake; }) { action(); } function call(undefined: () => void) { run(undefined); } call(() => {});"));
+regress("effects:default-argument", "unknown supplied value retains mutating default alternative", "unsafe", supabaseLoader("function run(action = () => { loader = fake; }) { action(); } run(unknownAction);"));
+regress("effects:default-argument", "unknown supplied value with no-op default", "safe", supabaseLoader("function run(action = () => {}) { action(); } run(unknownAction);"));
+
+regress("sql:parentheses", "unmatched opening parenthesis fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings WHERE (true`"));
+regress("sql:parentheses", "unmatched closing parenthesis fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings WHERE true)`"));
+regress("sql:parentheses", "balanced nested SELECT remains read-only", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings WHERE id IN (SELECT id FROM public.bookings)`"));
+
+for (const lockingClause of ["FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FOR KEY SHARE"] as const) {
+  regress(
+    "sql:locking-clause",
+    `${lockingClause} is not read-only`,
+    "unsafe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`SELECT id FROM public.bookings ${lockingClause}\``),
+  );
+}
+regress("sql:locking-clause", "plain balanced SELECT inverse", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings WHERE (id IS NOT NULL)`"));
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);

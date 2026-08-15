@@ -259,6 +259,8 @@ class LocalFlowEngine {
   private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member: string }>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
   private readonly executedWitnessCalls = new Set<ts.CallExpression>();
+  private allocationFrame: FlowAtom | undefined;
+  private mayThrowSnapshots: FlowState[] | undefined;
   private executeSuites = false;
 
   constructor(readonly sourceFile: ts.SourceFile) {
@@ -275,7 +277,8 @@ class LocalFlowEngine {
   }
 
   private atom(prefix: string, node: ts.Node): FlowAtom {
-    return `${prefix}:${node.pos}:${node.end}`;
+    const base = `${prefix}:${node.pos}:${node.end}`;
+    return this.allocationFrame ? `${base}:frame:${this.allocationFrame}` : base;
   }
 
   private functionAtom(fn: ts.FunctionLikeDeclaration): FlowAtom {
@@ -380,8 +383,21 @@ class LocalFlowEngine {
     state.unsupportedReasons.add(reason);
   }
 
+  private recordMayThrow(state: FlowState): void {
+    if (!this.mayThrowSnapshots) return;
+    const thrown = this.cloneState(state);
+    thrown.outcome = "throw";
+    this.mayThrowSnapshots.push(thrown);
+  }
+
   private cellValue(state: FlowState, node: ts.Identifier): Set<FlowAtom> {
     const symbol = this.symbol(node);
+    if (
+      node.text === "undefined" &&
+      !symbol?.declarations?.some((declaration) => declaration.getSourceFile() === this.sourceFile)
+    ) {
+      return this.values(UNDEFINED_ATOM);
+    }
     if (symbol) return new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
     if (node.text === "vi" || node.text === "jest") return this.values(`framework:${node.text}`);
     return this.values(UNKNOWN_ATOM);
@@ -637,7 +653,10 @@ class LocalFlowEngine {
   ): FlowEvaluation[] {
     const expression = unwrapExpression(input);
     if (ts.isAwaitExpression(expression)) {
-      return this.evaluateExpression(expression.expression, state, active, true);
+      return this.evaluateExpression(expression.expression, state, active, true).map((evaluated) => {
+        if (evaluated.value.has(UNKNOWN_ATOM)) this.recordMayThrow(evaluated.state);
+        return evaluated;
+      });
     }
     if (ts.isVoidExpression(expression)) {
       return this.evaluateExpression(expression.expression, state, active).map((evaluated) => ({
@@ -700,18 +719,27 @@ class LocalFlowEngine {
     if (ts.isBinaryExpression(expression)) return this.evaluateBinary(expression, state, active, awaited);
     if (ts.isObjectLiteralExpression(expression)) return this.evaluateObject(expression, state, active);
     if (ts.isArrayLiteralExpression(expression)) {
-      let evaluations: FlowEvaluation[] = [{ state, value: this.values(this.atom("array", expression)) }];
-      for (const element of expression.elements) {
-        if (ts.isOmittedExpression(element)) continue;
+      const arrayAtom = this.atom("array", expression);
+      state.members.set(arrayAtom, new Map());
+      let evaluations: FlowEvaluation[] = [{ state, value: this.values(arrayAtom) }];
+      expression.elements.forEach((element, index) => {
+        if (ts.isOmittedExpression(element)) {
+          for (const current of evaluations) {
+            this.setMember(current.state, this.values(arrayAtom), String(index), this.values(UNDEFINED_ATOM));
+          }
+          return;
+        }
         const item = ts.isSpreadElement(element) ? element.expression : element;
         evaluations = evaluations.flatMap((current) =>
           this.evaluateExpression(item, current.state, active).map((evaluated) => {
-            if (ts.isSpreadElement(element) && [...evaluated.value].some((atom) => atom.startsWith("generator:"))) {
-              this.markUnsupported(evaluated.state, "generator spread consumption");
-            }
+            if (ts.isSpreadElement(element)) this.markUnsupported(evaluated.state, "array spread enumeration");
+            else this.setMember(evaluated.state, this.values(arrayAtom), String(index), evaluated.value);
             return { state: evaluated.state, value: current.value };
           }),
         );
+      });
+      for (const current of evaluations) {
+        current.state.members.get(arrayAtom)?.set(`@array-length:${expression.elements.length}`, new Set());
       }
       return evaluations;
     }
@@ -992,10 +1020,27 @@ class LocalFlowEngine {
           })),
         );
       }
+      if (this.isUnshadowedPromiseAll(call)) {
+        return inputs.map((input) => {
+          this.recordMayThrow(input.state);
+          return {
+            state: input.state,
+            value: new Set(input.args[0] ?? [UNKNOWN_ATOM]),
+          };
+        });
+      }
       return inputs.flatMap((input) =>
         this.invokeAtoms(callee.value, input.args, input.state, call, active, awaited, construct),
       );
     });
+  }
+
+  private isUnshadowedPromiseAll(call: ts.CallExpression): boolean {
+    const callee = unwrapExpression(call.expression);
+    if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "all") return false;
+    const receiver = unwrapExpression(callee.expression);
+    if (!ts.isIdentifier(receiver) || receiver.text !== "Promise") return false;
+    return !this.symbol(receiver)?.declarations?.some((declaration) => declaration.getSourceFile() === this.sourceFile);
   }
 
   private evaluateNew(
@@ -1193,7 +1238,7 @@ class LocalFlowEngine {
       }
       const registration = this.registration(call);
       if (registration) {
-        if (this.executeSuites && registration.kind === "suite" && registration.state === "enabled") {
+        if (this.executeSuites && registration.kind === "suite" && registration.state !== "disabled") {
           const callbacks = args
             .flatMap((value) => [...value])
             .map((atom) => this.functions.get(atom))
@@ -1217,6 +1262,7 @@ class LocalFlowEngine {
       if (ts.isIdentifier(call.expression) && call.expression.text === "eval") {
         this.markUnsupported(branch, "eval call");
       }
+      this.recordMayThrow(branch);
       for (const callback of this.callbacksInValues(branch, args)) {
         if (!active.has(callback)) {
           results.push(...this.executeFunction(callback, [], this.cloneState(branch), new Set(active).add(callback)));
@@ -1232,10 +1278,21 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowEvaluation[] {
+    return this.advanceGeneratorFrame(generator, state, active).map((frame) => ({
+      state: frame.state,
+      value: this.values(UNKNOWN_ATOM),
+    }));
+  }
+
+  private advanceGeneratorFrame(
+    generator: FlowAtom,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): Array<{ state: FlowState; value: Set<FlowAtom>; done: boolean }> {
     const fn = this.generatorTargets.get(generator);
     if (!fn || !fn.body || !ts.isBlock(fn.body) || active.has(fn)) {
       this.markUnsupported(state, "invalid or recursive generator frame");
-      return [{ state, value: this.values(UNKNOWN_ATOM) }];
+      return [{ state, value: this.values(UNKNOWN_ATOM), done: true }];
     }
     const segments: Array<{ statements: ts.Statement[]; yielded?: ts.Expression }> = [{ statements: [] }];
     for (const statement of fn.body.statements) {
@@ -1243,7 +1300,7 @@ class LocalFlowEngine {
       if (expression && ts.isYieldExpression(expression)) {
         if (expression.asteriskToken) {
           this.markUnsupported(state, "delegating generator yield");
-          return [{ state, value: this.values(UNKNOWN_ATOM) }];
+          return [{ state, value: this.values(UNKNOWN_ATOM), done: true }];
         }
         segments[segments.length - 1]!.yielded = expression.expression;
         segments.push({ statements: [] });
@@ -1258,45 +1315,62 @@ class LocalFlowEngine {
       visit(statement);
       if (nestedYield) {
         this.markUnsupported(state, "nested generator yield");
-        return [{ state, value: this.values(UNKNOWN_ATOM) }];
+        return [{ state, value: this.values(UNKNOWN_ATOM), done: true }];
       }
       segments[segments.length - 1]!.statements.push(statement);
     }
     const step = state.generatorSteps.get(generator) ?? 0;
-    if (step >= segments.length) return [{ state, value: this.values(UNKNOWN_ATOM) }];
-    const entered = this.cloneState(state);
+    if (step >= segments.length) {
+      return [{ state: this.cloneState(state), value: this.values(UNDEFINED_ATOM), done: true }];
+    }
     const localSymbols = this.localSymbols(fn);
-    if (step === 0) {
-      const args = entered.generatorArguments.get(generator) ?? [];
-      fn.parameters.forEach((parameter, index) => {
-        this.bindName(entered, parameter.name, args[index] ?? this.values(UNKNOWN_ATOM));
-      });
-      if (fn.body && ts.isBlock(fn.body)) this.initialiseHoisted(fn.body.statements, entered);
-    } else {
-      for (const [symbol, value] of entered.generatorLocals.get(generator) ?? []) {
-        entered.cells.set(symbol, new Set(value));
+    const previousFrame = this.allocationFrame;
+    this.allocationFrame = generator;
+    try {
+      let entered: FlowState[];
+      if (step === 0) {
+        const args = state.generatorArguments.get(generator) ?? [];
+        entered = this.bindParameters(fn.parameters, args, state, new Set(active).add(fn));
+        for (const candidate of entered) this.initialiseHoisted(fn.body.statements, candidate);
+      } else {
+        const resumed = this.cloneState(state);
+        for (const [symbol, value] of resumed.generatorLocals.get(generator) ?? []) {
+          resumed.cells.set(symbol, new Set(value));
+        }
+        entered = [resumed];
       }
+      const segment = segments[step]!;
+      const afterStatements = this.evaluateStatements(segment.statements, entered, new Set(active).add(fn));
+      const frames = afterStatements.flatMap((candidate) => {
+        if (candidate.outcome === "return") {
+          candidate.outcome = "normal";
+          return [{ state: candidate, value: new Set(candidate.returned), done: true }];
+        }
+        if (candidate.outcome !== "normal" || !segment.yielded) {
+          return [{ state: candidate, value: this.values(UNDEFINED_ATOM), done: true }];
+        }
+        return this.evaluateExpression(segment.yielded, candidate, new Set(active).add(fn)).map((evaluated) => ({
+          state: evaluated.state,
+          value: evaluated.value,
+          done: false,
+        }));
+      });
+      for (const frame of frames) {
+        frame.state.generatorSteps.set(generator, step + 1);
+        frame.state.generatorLocals.set(
+          generator,
+          new Map(
+            [...localSymbols].map((symbol) => [
+              symbol,
+              new Set(frame.state.cells.get(symbol) ?? [UNDEFINED_ATOM]),
+            ]),
+          ),
+        );
+      }
+      return frames;
+    } finally {
+      this.allocationFrame = previousFrame;
     }
-    const segment = segments[step]!;
-    let states = this.evaluateStatements(segment.statements, [entered], new Set(active).add(fn));
-    if (segment.yielded) {
-      states = states.flatMap((candidate) =>
-        candidate.outcome === "normal"
-          ? this.evaluateExpression(segment.yielded!, candidate, new Set(active).add(fn)).map((result) => result.state)
-          : [candidate],
-      );
-    }
-    return states.map((finished) => {
-      if (finished.outcome === "return") finished.outcome = "normal";
-      finished.generatorSteps.set(generator, step + 1);
-      finished.generatorLocals.set(
-        generator,
-        new Map(
-          [...localSymbols].map((symbol) => [symbol, new Set(finished.cells.get(symbol) ?? [UNDEFINED_ATOM])]),
-        ),
-      );
-      return { state: finished, value: this.values(UNKNOWN_ATOM) };
-    });
   }
 
   private localSymbols(fn: ts.FunctionLikeDeclaration): Set<ts.Symbol> {
@@ -1647,7 +1721,10 @@ class LocalFlowEngine {
             results.push(
               ...this.invokeAtoms(this.values(atom), [this.values(UNKNOWN_ATOM), ...input.values], branch, expression as unknown as ts.CallExpression, active, false, false),
             );
-          } else results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          } else {
+            this.recordMayThrow(branch);
+            results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          }
         }
         return results;
       });
@@ -1663,6 +1740,7 @@ class LocalFlowEngine {
     const isName = (token: SqlToken | undefined): token is SqlToken =>
       token?.kind === "word" || token?.kind === "quotedIdentifier";
     let index = 0;
+    let parenthesisDepth = 0;
     while (index < sql.length) {
       const char = sql[index]!;
       const next = sql[index + 1];
@@ -1740,10 +1818,16 @@ class LocalFlowEngine {
         continue;
       }
       if (char === "." || char === "(" || char === ")" || char === "," || char === ";") {
+        if (char === "(") parenthesisDepth += 1;
+        else if (char === ")") {
+          if (parenthesisDepth === 0) return [];
+          parenthesisDepth -= 1;
+        }
         tokens.push(punctuation(char));
       }
       index += 1;
     }
+    if (parenthesisDepth !== 0) return [];
     const firstSemicolon = tokens.findIndex((token) => token.kind === "punctuation" && token.text === ";");
     if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return [];
     const firstKeyword = tokens.find((token) => token.kind === "word")?.text.toUpperCase();
@@ -1777,6 +1861,27 @@ class LocalFlowEngine {
         isName(tokens[cursor + 1]) &&
         topLevelFrom.some((from) => from > cursor + 1)
       ) return [];
+    }
+    depth = 0;
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      const token = tokens[cursor]!;
+      if (token.text === "(") {
+        depth += 1;
+        continue;
+      }
+      if (token.text === ")") {
+        depth -= 1;
+        continue;
+      }
+      if (depth !== 0 || !isKeyword(token, "FOR")) continue;
+      const locking =
+        isKeyword(tokens[cursor + 1], "UPDATE") ||
+        isKeyword(tokens[cursor + 1], "SHARE") ||
+        (isKeyword(tokens[cursor + 1], "NO") &&
+          isKeyword(tokens[cursor + 2], "KEY") &&
+          isKeyword(tokens[cursor + 3], "UPDATE")) ||
+        (isKeyword(tokens[cursor + 1], "KEY") && isKeyword(tokens[cursor + 2], "SHARE"));
+      if (locking) return [];
     }
     for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
       if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") continue;
@@ -1892,7 +1997,7 @@ class LocalFlowEngine {
   ): FlowState[] {
     let states = [this.cloneState(state)];
     parameters.forEach((parameter, index) => {
-      const supplied = args[index] ?? this.values(UNKNOWN_ATOM);
+      const supplied = args[index] ?? this.values(UNDEFINED_ATOM);
       states = states.flatMap((candidate) => {
         if (!parameter.initializer || (!supplied.has(UNDEFINED_ATOM) && !supplied.has(UNKNOWN_ATOM))) {
           this.bindName(candidate, parameter.name, supplied);
@@ -2207,65 +2312,122 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowState[] {
-    const iterableExpression = unwrapExpression(statement.expression);
-    if (
-      ts.isForOfStatement(statement) &&
-      ts.isArrayLiteralExpression(iterableExpression) &&
-      !iterableExpression.elements.some(ts.isSpreadElement)
-    ) {
-      let states = [state];
-      const finished: FlowState[] = [];
-      for (const item of iterableExpression.elements) {
-        if (ts.isOmittedExpression(item)) continue;
-        const next: FlowState[] = [];
-        for (const current of states) {
-          for (const element of this.evaluateExpression(item, current, new Set(active))) {
-            if (ts.isVariableDeclarationList(statement.initializer)) {
-              for (const declaration of statement.initializer.declarations) {
-                this.bindName(element.state, declaration.name, element.value);
-              }
-            } else this.assignTarget(element.state, statement.initializer, element.value);
-            for (const result of this.evaluateStatement(statement.statement, element.state, active)) {
-              if (result.outcome === "break") {
-                result.outcome = "normal";
-                finished.push(result);
-              } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
-              else {
-                if (result.outcome === "continue") result.outcome = "normal";
-                next.push(result);
-              }
+    if (ts.isForInStatement(statement) || statement.awaitModifier) {
+      const unsupported = this.cloneState(state);
+      this.markUnsupported(unsupported, ts.isForInStatement(statement) ? "for-in enumeration" : "async for-of enumeration");
+      return [unsupported];
+    }
+    return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((iterable) => {
+      const results: FlowState[] = [];
+      for (const atom of iterable.value) {
+        const arrayLength = this.arrayLength(iterable.state, atom);
+        if (arrayLength !== undefined) {
+          results.push(...this.runArrayForEach(statement, atom, arrayLength, this.cloneState(iterable.state), active));
+          continue;
+        }
+        if (atom.startsWith("generator:") && this.generatorTargets.has(atom)) {
+          results.push(...this.runGeneratorForEach(statement, atom, this.cloneState(iterable.state), active));
+          continue;
+        }
+        const unsupported = this.cloneState(iterable.state);
+        this.markUnsupported(unsupported, "unresolved for-of iterable");
+        results.push(unsupported);
+      }
+      return results;
+    });
+  }
+
+  private arrayLength(state: FlowState, atom: FlowAtom): number | undefined {
+    if (!atom.startsWith("array:")) return undefined;
+    const members = state.members.get(atom);
+    const lengthEntry = [...(members?.keys() ?? [])].find((key) => key.startsWith("@array-length:"));
+    if (!members || !lengthEntry) return undefined;
+    const length = Number(lengthEntry.slice("@array-length:".length));
+    if (!Number.isSafeInteger(length) || length < 0) return undefined;
+    return length;
+  }
+
+  private bindForEachValue(
+    statement: ts.ForOfStatement,
+    state: FlowState,
+    value: FlowValue,
+  ): void {
+    if (ts.isVariableDeclarationList(statement.initializer)) {
+      for (const declaration of statement.initializer.declarations) this.bindName(state, declaration.name, value);
+    } else this.assignTarget(state, statement.initializer, value);
+  }
+
+  private runArrayForEach(
+    statement: ts.ForOfStatement,
+    array: FlowAtom,
+    length: number,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let frontier = [state];
+    const finished: FlowState[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const next: FlowState[] = [];
+      for (const current of frontier) {
+        const value = current.members.get(array)?.get(String(index));
+        if (!value) {
+          this.markUnsupported(current, "unresolved array element");
+          finished.push(current);
+          continue;
+        }
+        this.bindForEachValue(statement, current, value);
+        for (const result of this.evaluateStatement(statement.statement, current, active)) {
+          if (result.outcome === "break") {
+            result.outcome = "normal";
+            finished.push(result);
+          } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
+          else {
+            if (result.outcome === "continue") result.outcome = "normal";
+            next.push(result);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return [...finished, ...frontier];
+  }
+
+  private runGeneratorForEach(
+    statement: ts.ForOfStatement,
+    generator: FlowAtom,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let frontier = [state];
+    const finished: FlowState[] = [];
+    for (let iteration = 0; iteration < 64 && frontier.length; iteration += 1) {
+      const next: FlowState[] = [];
+      for (const current of frontier) {
+        for (const frame of this.advanceGeneratorFrame(generator, current, active)) {
+          if (frame.done) {
+            finished.push(frame.state);
+            continue;
+          }
+          this.bindForEachValue(statement, frame.state, frame.value);
+          for (const result of this.evaluateStatement(statement.statement, frame.state, active)) {
+            if (result.outcome === "break") {
+              result.outcome = "normal";
+              finished.push(result);
+            } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
+            else {
+              if (result.outcome === "continue") result.outcome = "normal";
+              next.push(result);
             }
           }
         }
-        states = next;
       }
-      return [...finished, ...states];
+      frontier = next.length > 96 ? this.widenStates(next) : next;
     }
-    return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((iterable) => {
-      const one = this.cloneState(iterable.state);
-      const element =
-        ts.isArrayLiteralExpression(unwrapExpression(statement.expression)) &&
-        unwrapExpression(statement.expression).elements.length > 0
-          ? this.evaluateExpression(
-              (unwrapExpression(statement.expression) as ts.ArrayLiteralExpression).elements[0] as ts.Expression,
-              this.cloneState(one),
-              new Set(active),
-            )[0]?.value ?? this.values(UNKNOWN_ATOM)
-          : this.values(UNKNOWN_ATOM);
-      if (ts.isVariableDeclarationList(statement.initializer)) {
-        for (const declaration of statement.initializer.declarations) this.bindName(one, declaration.name, element);
-      } else {
-        this.assignTarget(one, statement.initializer, element);
-      }
-      const body = this.evaluateStatement(statement.statement, one, active).map((result) => {
-        if (result.outcome === "break" || result.outcome === "continue") result.outcome = "normal";
-        return result;
-      });
-      const definitelyNonempty =
-        ts.isArrayLiteralExpression(unwrapExpression(statement.expression)) &&
-        unwrapExpression(statement.expression).elements.length > 0;
-      return definitelyNonempty ? body : [this.cloneState(iterable.state), ...body];
-    });
+    if (frontier.length) {
+      for (const candidate of frontier) this.markUnsupported(candidate, "non-convergent generator for-of");
+      finished.push(...frontier);
+    }
+    return finished;
   }
 
   private evaluateTry(
@@ -2273,24 +2435,31 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowState[] {
-    const tryStates = this.evaluateStatement(statement.tryBlock, this.cloneState(state), active);
-    let states = [...tryStates];
+    const previousSnapshots = this.mayThrowSnapshots;
+    const localSnapshots: FlowState[] = [];
+    this.mayThrowSnapshots = localSnapshots;
+    let tryStates: FlowState[];
+    try {
+      tryStates = this.evaluateStatement(statement.tryBlock, this.cloneState(state), active);
+    } finally {
+      this.mayThrowSnapshots = previousSnapshots;
+    }
+    let states = tryStates.filter((candidate) => candidate.outcome !== "throw");
     if (statement.catchClause) {
-      const caught = this.cloneState(state);
-      if (statement.catchClause.variableDeclaration) {
-        this.bindName(caught, statement.catchClause.variableDeclaration.name, this.values(UNKNOWN_ATOM));
-      }
-      states.push(...this.evaluateStatement(statement.catchClause.block, caught, active));
-      states = states.flatMap((candidate) => {
-        if (candidate.outcome !== "throw") return [candidate];
+      const caught = [
+        this.cloneState(state),
+        ...localSnapshots,
+        ...tryStates.filter((candidate) => candidate.outcome === "throw"),
+      ];
+      states.push(...this.widenStates(caught).flatMap((candidate) => {
         const handled = this.cloneState(candidate);
         handled.outcome = "normal";
-        if (statement.catchClause?.variableDeclaration) {
-          this.bindName(handled, statement.catchClause.variableDeclaration.name, this.values(UNKNOWN_ATOM));
+        if (statement.catchClause!.variableDeclaration) {
+          this.bindName(handled, statement.catchClause!.variableDeclaration.name, this.values(UNKNOWN_ATOM));
         }
         return this.evaluateStatement(statement.catchClause!.block, handled, active);
-      });
-    }
+      }));
+    } else states.push(...tryStates.filter((candidate) => candidate.outcome === "throw"));
     if (!statement.finallyBlock) return states;
     return states.flatMap((candidate) => {
       const prior = candidate.outcome;
@@ -3001,13 +3170,17 @@ class LocalFlowEngine {
       }
       if (!symbol || checking.has(symbol)) return [];
       const bindings = this.bindingSources(expression);
-      if (!bindings.length || bindings.some((binding) => !binding)) return [];
+      if (!bindings.length) return [];
       checking.add(symbol);
       const alternatives: RegistrationValue[] = [];
+      let unresolved = false;
       for (const binding of bindings) {
-        if (!binding) continue;
+        if (!binding) {
+          unresolved = true;
+          continue;
+        }
         if (binding.unsupported) {
-          alternatives.push({ kind: "test", state: "unknown" }, { kind: "suite", state: "unknown" });
+          unresolved = true;
           continue;
         }
         let resolved = this.registrationValues(binding.source, checking);
@@ -3018,12 +3191,17 @@ class LocalFlowEngine {
           else resolved = this.registrationMember(resolved, property);
         }
         if (!resolved.length) {
-          checking.delete(symbol);
-          return [];
+          unresolved = true;
+          continue;
         }
         alternatives.push(...resolved);
       }
       checking.delete(symbol);
+      if (unresolved && alternatives.length) {
+        for (const kind of new Set(alternatives.map((value) => value.kind))) {
+          alternatives.push({ kind, state: "unknown" });
+        }
+      }
       return alternatives;
     }
     if (ts.isPropertyAccessExpression(expression)) {
@@ -3043,7 +3221,9 @@ class LocalFlowEngine {
     if (ts.isConditionalExpression(expression)) {
       const whenTrue = this.registrationValues(expression.whenTrue, checking);
       const whenFalse = this.registrationValues(expression.whenFalse, checking);
-      return whenTrue.length && whenFalse.length ? [...whenTrue, ...whenFalse] : [];
+      if (whenTrue.length && whenFalse.length) return [...whenTrue, ...whenFalse];
+      const known = whenTrue.length ? whenTrue : whenFalse;
+      return known.map((value) => ({ kind: value.kind, state: "unknown" }));
     }
     if (ts.isCallExpression(expression)) {
       const values = this.registrationValues(expression.expression, checking);
@@ -3140,26 +3320,37 @@ class LocalFlowEngine {
 interface RunnableTest {
   fullName: string;
   call: ts.CallExpression;
+  state: RegistrationState;
 }
 
 function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   const tests: RunnableTest[] = [];
   const describeStack: string[] = [];
+  const describeStates: RegistrationState[] = [];
   const engine = new LocalFlowEngine(sf);
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const registration = engine.registration(node);
-      if (registration && registration.state !== "enabled") return;
+      if (registration?.state === "disabled") return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
       if (registration?.kind === "suite") {
         describeStack.push(title);
+        describeStates.push(registration.state);
         ts.forEachChild(node, visit);
         describeStack.pop();
+        describeStates.pop();
         return;
       }
       if (registration?.kind === "test") {
-        tests.push({ fullName: [...describeStack, title].filter(Boolean).join(" "), call: node });
+        tests.push({
+          fullName: [...describeStack, title].filter(Boolean).join(" "),
+          call: node,
+          state:
+            registration.state === "unknown" || describeStates.includes("unknown")
+              ? "unknown"
+              : "enabled",
+        });
         return;
       }
     }
@@ -3447,6 +3638,9 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
   }
   if (targetTests.length > 1) {
     return `coverage test title is ambiguous in ${pointer.file}: "${pointer.testName}" (${targetTests.length} matches)`;
+  }
+  if (targetTests[0]!.state !== "enabled") {
+    return `coverage test registration is not definitely enabled in ${pointer.file}: "${pointer.testName}"`;
   }
   const proof = targetEngine.testFlowProof(targetTests[0]!.call);
   if (proof.mockedReceiver) {
