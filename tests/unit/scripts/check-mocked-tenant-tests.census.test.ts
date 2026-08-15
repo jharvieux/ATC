@@ -425,6 +425,62 @@ regress("sql:cte", "CTE alias cannot spoof physical table", "unsafe", pointerUni
 regress("sql:cte", "schema-qualified physical table", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings`"));
 regress("sql:cte", "physical table inside CTE", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"));
 
+regress("sql:read-only", "DELETE RETURNING is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`DELETE FROM public.bookings RETURNING id`"));
+regress("sql:read-only", "UPDATE RETURNING is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`UPDATE public.bookings SET status = 'x' RETURNING id`"));
+regress("sql:read-only", "INSERT RETURNING is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`INSERT INTO public.bookings (id) VALUES ('x') RETURNING id`"));
+regress("sql:read-only", "MERGE is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`MERGE INTO public.bookings USING public.contacts ON false WHEN NOT MATCHED THEN INSERT DEFAULT VALUES RETURNING id`"));
+regress("sql:read-only", "CALL is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`CALL public.bookings()`"));
+regress("sql:read-only", "data-modifying CTE is not a proof query", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH changed AS (DELETE FROM public.bookings RETURNING id) SELECT id FROM changed`"));
+regress("sql:read-only", "read followed by destructive statement", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings; DELETE FROM public.bookings`"));
+regress("sql:read-only", "plain SELECT remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings`"));
+regress("sql:read-only", "SELECT with trailing semicolon", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings;`"));
+regress("sql:read-only", "read-only SELECT CTE remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"));
+
+regress(
+  "effects:unknown-loop",
+  "second while iteration mutates loader",
+  "unsafe",
+  supabaseLoader("let action = () => {}; while (process.env.AGAIN) { action(); action = () => { loader = fake; }; }"),
+);
+regress("effects:unknown-loop", "unknown-count no-op loop", "safe", supabaseLoader("let action = () => {}; while (process.env.AGAIN) { action(); action = () => {}; }"));
+regress("effects:unknown-loop", "definite zero-iteration loop", "safe", supabaseLoader("let action = () => { loader = fake; }; while (false) { action(); }"));
+regress("effects:unknown-loop", "second do-while iteration mutates loader", "unsafe", supabaseLoader("let action = () => {}; do { action(); action = () => { loader = fake; }; } while (process.env.AGAIN);"));
+regress("effects:unknown-loop", "definite one-iteration do-while control", "safe", supabaseLoader("let action = () => {}; do { action(); action = () => { loader = fake; }; } while (false);"));
+
+regress("effects:void", "void operand mutates loader", "unsafe", supabaseLoader("void (() => { loader = fake; })();"));
+regress("effects:void", "void non-witness expression", "safe", supabaseLoader("void 0;"));
+regress(
+  "witness:void",
+  "void operand executes second unawaited witness",
+  "unsafe",
+  pointerUnit,
+  supabaseTarget("const db = createClient(DB_URL!, \"key\");", undefined, "class Extra { constructor() { void assertIsolationQuery({ query: () => db.from(\"bookings\").select(\"id\"), allowedIds: [], deniedIds: [\"booking-a\"] }); } } new Extra();"),
+);
+regress("witness:void", "void non-witness control", "safe", pointerUnit, supabaseTarget("const db = createClient(DB_URL!, \"key\");", undefined, "void Promise.resolve();"));
+
+regress("aliases:branch-mock", "framework then no-op branches", "unsafe", unit('let mock; if (process.env.X) mock = vi.mock; else mock = () => {}; mock("@supabase/supabase-js");'));
+regress("aliases:branch-mock", "no-op then framework branches", "unsafe", unit('let mock; if (process.env.X) mock = () => {}; else mock = vi.mock; mock("@supabase/supabase-js");'));
+regress("aliases:branch-mock", "destructured framework branch", "unsafe", unit('let mock; if (process.env.X) ({ mock } = vi); else mock = () => {}; mock("@supabase/supabase-js");'));
+regress("aliases:branch-mock", "both branches no-op", "safe", unit('let mock; if (process.env.X) mock = () => {}; else mock = () => {}; mock("@supabase/supabase-js");'));
+
+regress("aliases:branch-registration", "it then test branches", "safe", pointerUnit, assignedRegistrationTarget("if (process.env.X) register = it; else register = test;"));
+regress("aliases:branch-registration", "test then it branches", "safe", pointerUnit, assignedRegistrationTarget("if (process.env.X) register = test; else register = it;"));
+regress("aliases:branch-registration", "framework then no-op branches", "unsafe", pointerUnit, assignedRegistrationTarget("if (process.env.X) register = it; else register = () => {};"));
+regress("aliases:branch-registration", "no-op then framework branches", "unsafe", pointerUnit, assignedRegistrationTarget("if (process.env.X) register = () => {}; else register = test;"));
+regress("aliases:branch-registration", "destructured framework and test branches", "safe", pointerUnit, assignedRegistrationTarget("if (process.env.X) ({ it: register } = vitest); else register = test;"));
+regress("aliases:branch-registration", "destructured framework and no-op branches", "unsafe", pointerUnit, assignedRegistrationTarget("if (process.env.X) ({ it: register } = vitest); else register = () => {};"));
+
+regress("effects:class-static", "static block mutates loader", "unsafe", supabaseLoader("class Mutator { static { loader = fake; } }"));
+regress("effects:class-static", "static block no-op", "safe", supabaseLoader("class Noop { static {} }"));
+regress("effects:class-inheritance", "default child constructor invokes mutating base", "unsafe", supabaseLoader("class Base { constructor() { loader = fake; } } class Child extends Base {} new Child();"));
+regress("effects:class-inheritance", "explicit super invokes mutating base", "unsafe", supabaseLoader("class Base { constructor() { loader = fake; } } class Child extends Base { constructor() { super(); } } new Child();"));
+regress("effects:class-inheritance", "default child constructor with no-op base", "safe", supabaseLoader("class Base { constructor() {} } class Child extends Base {} new Child();"));
+
+regress("effects:generator-yield", "first next stops before post-yield mutation", "safe", supabaseLoader("function* mutate() { yield 1; loader = fake; } mutate().next();"));
+regress("effects:generator-yield", "second next reaches post-yield mutation", "unsafe", supabaseLoader("function* mutate() { yield 1; loader = fake; } const iterator = mutate(); iterator.next(); iterator.next();"));
+regress("effects:generator-yield", "first next includes pre-yield mutation", "unsafe", supabaseLoader("function* mutate() { loader = fake; yield 1; } mutate().next();"));
+regress("effects:generator-yield", "two no-op generator advances", "safe", supabaseLoader("function* noop() { yield 1; } const iterator = noop(); iterator.next(); iterator.next();"));
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);
