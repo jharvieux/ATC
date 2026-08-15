@@ -1,23 +1,26 @@
-# Session state — last updated 2026-08-10 17:00 CDT
+# Session state — last updated 2026-08-15 15:00 CDT
 
 ## Just completed
-- Investigated failed GitHub jobs and merged the CI/dependency repairs in PR #2081.
-- Discarded the redundant local `AGENTS.md` RTK addition; `AGENTS.md` remains unchanged.
-- Removed the obsolete untracked Memtrace `.codex/config.toml`; no Memtrace configuration or license material was committed.
-- Added portable shared Codex hooks and the pre-PR reviewer definition in PR #2085.
-- Hardened the hooks for Codex `apply_patch` payloads, fail-loud lint execution, macOS case aliases, and protected MEMORY/spec paths.
-- Added 23 focused hook/config regression tests; full `pnpm verify`, both audit agents, required CI, security checks, and Vercel previews passed.
-- Squash-merged PR #2085 into `dev` as `fc98605a` and deleted the feature branch.
+- Resumed issue sweep round 1 from `.git/issue-sweep-ledger.json`; it remains authoritative.
+- Merged independently verified PR #2093 as `a2e03b77` and verified #2028 closed. Final head `1921efa5` passed all 36 CI checks, both current hash-bound audits, exact close-set/GHAS inspection, and independent acceptance: hosted main RLS 33/33, production-path RAG 7/7, 25 production pointers, census 464/464, focused 641/641, live 0/0, and fail-closed runner. Removed its three clean worktrees and local/remote branches.
+- Merged independently verified PR #2097 as `a1aa625e` and verified #2072 closed. Exact-head CI, both audit markers, close-set, GHAS comments, and every acceptance criterion passed.
+- Filed #2098 for the confirmed shared-test-DB apply-to-test provenance race and #2099 for repeated local verification worker-starvation flakes.
+- PR #2094's live current-main evidence fix is pushed at `eecc93e2`; hosted run 31822410915 reports 756 ledger objects verified with no drift.
+- Merged independently verified PR #2092 as `a39f911b` and verified #2037 closed; the shared throwaway DB applied exactly its two migrations, while production application remains operator-gated.
+- Earlier in the sweep, merged PR #2089 for #2040 and PR #2091 for #2039; both issues are verified closed.
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- `database-ledger-2019`: PR #2094 at `eecc93e2` needs fresh exact-head D-091/pre-PR audits, independent acceptance verification, CI/gate checks, and merge.
+- `seo-2058`: PR #2100 at `f082316f` waits behind #2094 in the strict merge train.
+- `rag-extensions-2022` is parked until every other round-one and eligible fold-in batch is terminal. It then runs alone with an isolated local Docker/Postgres database and no concurrent sweep/audit/finalization work.
 
 ## Next step
-- After the operator completes #2044 and #2079, rerun `supabase-advisor-check` and `contracts-canary` respectively.
+- On the next resumed sweep session, update PR #2094 from `origin/dev`, re-verify its exact head, then run fresh D-091/pre-PR audits and independent acceptance before merge. Continue with #2100, fold-ins #2095/#2096/#2098/#2099, and finally #2022 alone.
 
 ## Blocked on user
-- #2044: create a Supabase PAT with `database:read` + `advisors_read`, add it as repository Actions secret `SUPABASE_ACCESS_TOKEN`, and rerun `supabase-advisor-check`.
-- #2079: enable Stripe Connect for the test platform behind `STRIPE_TEST_SECRET_KEY` (or rotate to a Connect-enabled test key), then rerun `contracts-canary`.
+- Sweep intentionally paused after PR #2093 because the operator requested this session wrap. Resume on the next sweep invocation.
 
 ## Open questions
-- #2080 tracks the residual moderate `@opentelemetry/core` audit advisory; no compatible patched 1.x line exists, and a forced 2.x override creates an invalid peer graph.
+- Fold-in round must include #2095, #2096, #2098, #2099, and any later eligible follow-ups.
+- Portable sweep skill sync-token is 11 while the repo copy is 2; #2090 tracks reconciliation.
+- #2080 remains deferred pending a compatible OpenTelemetry parent release.
