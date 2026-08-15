@@ -154,13 +154,10 @@ function dbClientMockDescription(mock: MockCall, fromPath: string, byPath: Reado
 export interface MockedTenantTest {
   file: string;
   line: number;
-  fullName: string; // enclosing describe titles + own title
+  fullName: string;
   mockedModule: string;
   annotationError?: string;
 }
-
-// Walk describe/it/test registrations recording the title stack; skip/todo
-// subtrees can't fail by design and are exempt (same allowlists as Harvey).
 
 function unwrapExpression(input: ts.Expression): ts.Expression {
   let expression = input;
@@ -266,7 +263,9 @@ class LocalFlowEngine {
   private readonly identityFunctions = new WeakMap<ts.FunctionLikeDeclaration, boolean>();
   private readonly boundTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlTargets = new Map<FlowAtom, Set<FlowAtom>>();
-  private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member: string }>();
+  private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member?: string }>();
+  private readonly controlOwners = new Map<FlowAtom, Set<FlowAtom>>();
+  private readonly controlMethods = new Map<FlowAtom, string>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
   private readonly executedWitnessCalls = new Set<ts.CallExpression>();
   private allocationFrame: FlowAtom | undefined;
@@ -475,16 +474,33 @@ class LocalFlowEngine {
     }
   }
 
-  private staticKey(node: ts.Node | undefined): string | undefined {
+  private staticKey(
+    node: ts.Node | undefined,
+    resolveIdentifier = false,
+    seen = new Set<ts.Symbol>(),
+  ): string | undefined {
     if (!node) return undefined;
     const computed = ts.isComputedPropertyName(node);
     const expression = computed ? unwrapExpression(node.expression) : unwrapExpression(node as ts.Expression);
-    if ((!computed && ts.isIdentifier(expression)) || ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
+    if (ts.isIdentifier(expression)) {
+      if (!computed && !resolveIdentifier) return expression.text;
+      const symbol = this.symbol(expression);
+      if (!symbol || seen.has(symbol)) return undefined;
+      const declarations = symbol.declarations ?? [];
+      if (declarations.length !== 1 || !ts.isVariableDeclaration(declarations[0])) return undefined;
+      const declaration = declarations[0];
+      const declarationList = declaration.parent;
+      if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) {
+        return undefined;
+      }
+      return this.staticKey(declaration.initializer, true, new Set(seen).add(symbol));
+    }
+    if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
       return expression.text;
     }
     if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-      const left = this.staticKey(expression.left);
-      const right = this.staticKey(expression.right);
+      const left = this.staticKey(expression.left, true, seen);
+      const right = this.staticKey(expression.right, true, seen);
       return left === undefined || right === undefined ? undefined : left + right;
     }
     return undefined;
@@ -505,6 +521,16 @@ class LocalFlowEngine {
         state.dirty.add(receiver);
       }
     }
+  }
+
+  private onceImplementationKeys(
+    members: ReadonlyMap<string, Set<FlowAtom>> | undefined,
+    member: string,
+  ): string[] {
+    const prefix = `@once:${member}:`;
+    return [...(members?.keys() ?? [])]
+      .filter((key) => key.startsWith(prefix))
+      .sort((left, right) => Number(left.slice(prefix.length)) - Number(right.slice(prefix.length)));
   }
 
   private assignTarget(state: FlowState, target: ts.Expression, value: FlowValue): void {
@@ -529,7 +555,7 @@ class LocalFlowEngine {
         state.cells = receiver.state.cells;
         state.members = receiver.state.members;
         state.dirty = receiver.state.dirty;
-        this.setMember(state, receiver.value, this.staticKey(expression.argumentExpression), value);
+        this.setMember(state, receiver.value, this.staticKey(expression.argumentExpression, true), value);
       }
       return;
     }
@@ -589,7 +615,23 @@ class LocalFlowEngine {
   ): Set<FlowAtom> {
     const value = new Set<FlowAtom>();
     for (const receiver of receivers) {
-      const explicit = state.members.get(receiver)?.get(member ?? "@unknown");
+      const members = state.members.get(receiver);
+      if (receiver === NATIVE_PROMISE_ATOM) {
+        if (member === "all" && this.onceImplementationKeys(members, member).length) {
+          const call = this.atom("promise-member", node);
+          this.memberTargets.set(call, { receiver: this.values(receiver), member });
+          value.add(call);
+        } else {
+          const explicit = members?.get(member ?? "@unknown");
+          if (explicit) {
+            for (const atom of explicit) value.add(atom);
+          } else if (member === "all" && !members?.has("@all") && !members?.has("@unknown")) {
+            value.add(NATIVE_PROMISE_ALL_ATOM);
+          } else value.add(UNKNOWN_ATOM);
+        }
+        continue;
+      }
+      const explicit = members?.get(member ?? "@unknown");
       if (explicit) {
         for (const atom of explicit) value.add(atom);
         continue;
@@ -599,13 +641,6 @@ class LocalFlowEngine {
           value.add(`framework:${member}`);
         }
         else value.add(UNKNOWN_ATOM);
-        continue;
-      }
-      if (receiver === NATIVE_PROMISE_ATOM) {
-        const members = state.members.get(receiver);
-        if (member === "all" && !members?.has("@all") && !members?.has("@unknown")) {
-          value.add(NATIVE_PROMISE_ALL_ATOM);
-        } else value.add(UNKNOWN_ATOM);
         continue;
       }
       if (member && ["call", "apply", "bind"].includes(member) && this.isCallableAtom(receiver)) {
@@ -687,9 +722,15 @@ class LocalFlowEngine {
         value.add(method);
         continue;
       }
-      if (receiver.startsWith("control:") && member && /^(?:mock|withImplementation)/.test(member)) {
+      if (
+        receiver.startsWith("control:") &&
+        member &&
+        (/^(?:mock|withImplementation)/.test(member) || member === "restore")
+      ) {
         const configure = this.atom("configure", node);
         this.controlTargets.set(configure, new Set(this.controlTargets.get(receiver) ?? [UNKNOWN_ATOM]));
+        this.controlOwners.set(configure, this.values(receiver));
+        this.controlMethods.set(configure, member);
         const mutationTarget = this.memberTargets.get(receiver);
         if (mutationTarget) {
           this.memberTargets.set(configure, {
@@ -722,6 +763,7 @@ class LocalFlowEngine {
       atom.startsWith("bind:") ||
       atom.startsWith("supabase-") ||
       atom.startsWith("configure:") ||
+      atom.startsWith("promise-member:") ||
       atom.startsWith("generator-next:")
     );
   }
@@ -780,7 +822,7 @@ class LocalFlowEngine {
         expression.argumentExpression
           ? this.evaluateExpression(expression.argumentExpression, base.state, active).map((argument) => ({
               state: argument.state,
-              value: this.memberValue(argument.state, base.value, this.staticKey(expression.argumentExpression), expression),
+              value: this.memberValue(argument.state, base.value, this.staticKey(expression.argumentExpression, true), expression),
             }))
           : [{
               state: base.state,
@@ -1045,67 +1087,100 @@ class LocalFlowEngine {
     return selected.size ? selected : this.values(UNKNOWN_ATOM);
   }
 
-  private bindName(state: FlowState, name: ts.BindingName, value: FlowValue): void {
+  private bindElement(
+    state: FlowState,
+    element: ts.BindingElement,
+    selected: Set<FlowAtom>,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    if (!element.initializer || (!selected.has(UNDEFINED_ATOM) && !selected.has(UNKNOWN_ATOM))) {
+      return this.bindName(state, element.name, selected, active);
+    }
+    const alternatives = this.evaluateExpression(
+      element.initializer,
+      this.cloneState(state),
+      new Set(active),
+    ).flatMap((evaluated) => this.bindName(evaluated.state, element.name, evaluated.value, active));
+    const present = new Set([...selected].filter((atom) => atom !== UNDEFINED_ATOM));
+    if (present.size) {
+      alternatives.push(...this.bindName(this.cloneState(state), element.name, present, active));
+    }
+    return alternatives;
+  }
+
+  private bindName(
+    state: FlowState,
+    name: ts.BindingName,
+    value: FlowValue,
+    active: ReadonlySet<ts.FunctionLikeDeclaration> = new Set(),
+  ): FlowState[] {
     if (ts.isIdentifier(name)) {
       this.setCell(state, name, value);
-      return;
+      return [state];
     }
     if (ts.isObjectBindingPattern(name)) {
+      let states = [state];
       for (const element of name.elements) {
         if (ts.isOmittedExpression(element)) continue;
-        const key = this.staticKey(element.propertyName ?? (ts.isIdentifier(element.name) ? element.name : undefined));
-        let selected =
-          key === undefined
+        states = states.flatMap((current) => {
+          const key = this.staticKey(
+            element.propertyName ?? (ts.isIdentifier(element.name) ? element.name : undefined),
+          );
+          const selected = key === undefined
             ? this.values(UNKNOWN_ATOM)
-            : this.memberValue(state, value, key, element);
-        if (element.initializer && (selected.has(UNDEFINED_ATOM) || selected.has(UNKNOWN_ATOM))) {
-          selected = this.evaluateExpression(element.initializer, this.cloneState(state))[0]?.value ?? this.values(UNKNOWN_ATOM);
-        }
-        this.bindName(state, element.name, selected);
+            : this.memberValue(current, value, key, element);
+          return this.bindElement(current, element, selected, active);
+        });
       }
-      return;
+      return states;
     }
+    let states = [state];
     for (let index = 0; index < name.elements.length; index += 1) {
       const element = name.elements[index]!;
       if (ts.isOmittedExpression(element)) continue;
-      let selected: Set<FlowAtom>;
-      if (element.dotDotDotToken) {
-        const rest = this.atom("array", element);
-        state.members.set(rest, new Map());
-        const lengths = new Set<number>();
-        let unresolved = false;
-        for (const array of value) {
-          const length = this.arrayLength(state, array);
-          if (length === undefined) {
-            unresolved = true;
-            continue;
-          }
-          const restLength = Math.max(0, length - index);
-          lengths.add(restLength);
-          for (let restIndex = 0; restIndex < restLength; restIndex += 1) {
-            const prior = state.members.get(rest)?.get(String(restIndex)) ?? new Set<FlowAtom>();
-            for (const item of this.arrayElementValue(state, this.values(array), index + restIndex, element)) {
-              prior.add(item);
+      states = states.flatMap((current) => {
+        let selected: Set<FlowAtom>;
+        if (element.dotDotDotToken) {
+          const rest = this.atom("array", element);
+          current.members.set(rest, new Map());
+          const lengths = new Set<number>();
+          let unresolved = false;
+          for (const array of value) {
+            const length = this.arrayLength(current, array);
+            if (length === undefined) {
+              unresolved = true;
+              continue;
             }
-            this.setMember(state, this.values(rest), String(restIndex), prior);
+            const restLength = Math.max(0, length - index);
+            lengths.add(restLength);
+            for (let restIndex = 0; restIndex < restLength; restIndex += 1) {
+              const prior = current.members.get(rest)?.get(String(restIndex)) ?? new Set<FlowAtom>();
+              for (const item of this.arrayElementValue(current, this.values(array), index + restIndex, element)) {
+                prior.add(item);
+              }
+              this.setMember(current, this.values(rest), String(restIndex), prior);
+            }
           }
-        }
-        if (unresolved || lengths.size !== 1) {
-          this.setMember(state, this.values(rest), "@all", this.values(UNKNOWN_ATOM));
-        } else {
-          state.members.get(rest)?.set(`@array-length:${[...lengths][0]}`, new Set());
-        }
-        selected = this.values(rest);
-      } else selected = this.arrayElementValue(state, value, index, element);
-      if (element.initializer && (selected.has(UNDEFINED_ATOM) || selected.has(UNKNOWN_ATOM))) {
-        const fallback = this.evaluateExpression(element.initializer, this.cloneState(state))[0]?.value ??
-          this.values(UNKNOWN_ATOM);
-        selected = new Set([
-          ...[...selected].filter((atom) => atom !== UNDEFINED_ATOM),
-          ...fallback,
-        ]);
-      }
-      this.bindName(state, element.name, selected);
+          if (unresolved || lengths.size !== 1) {
+            this.setMember(current, this.values(rest), "@all", this.values(UNKNOWN_ATOM));
+          } else {
+            current.members.get(rest)?.set(`@array-length:${[...lengths][0]}`, new Set());
+          }
+          selected = this.values(rest);
+        } else selected = this.arrayElementValue(current, value, index, element);
+        return this.bindElement(current, element, selected, active);
+      });
+    }
+    return states;
+  }
+
+  private declareName(state: FlowState, name: ts.BindingName): void {
+    if (ts.isIdentifier(name)) {
+      this.setCell(state, name, this.values(UNDEFINED_ATOM));
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) this.declareName(state, element.name);
     }
   }
 
@@ -1113,7 +1188,7 @@ class LocalFlowEngine {
     const visitVar = (node: ts.Node) => {
       if (node !== this.sourceFile && ts.isFunctionLike(node)) return;
       if (ts.isVariableDeclarationList(node) && !(node.flags & ts.NodeFlags.BlockScoped)) {
-        for (const declaration of node.declarations) this.bindName(state, declaration.name, this.values(UNDEFINED_ATOM));
+        for (const declaration of node.declarations) this.declareName(state, declaration.name);
       }
       ts.forEachChild(node, visitVar);
     };
@@ -1221,6 +1296,28 @@ class LocalFlowEngine {
     const results: FlowEvaluation[] = [];
     for (const callee of callees) {
       const branch = this.cloneState(state);
+      if (callee.startsWith("promise-member:")) {
+        const target = this.memberTargets.get(callee);
+        const member = target?.member;
+        const receiver = [...(target?.receiver ?? [])].find((atom) => atom === NATIVE_PROMISE_ATOM);
+        if (!receiver || !member) {
+          this.markUnsupported(branch, "unresolved Promise member call");
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          continue;
+        }
+        const members = branch.members.get(receiver);
+        const onceKey = this.onceImplementationKeys(members, member)[0];
+        const queued = onceKey ? members?.get(onceKey) : undefined;
+        if (onceKey) members?.delete(onceKey);
+        const implementation = queued ?? members?.get(member) ?? this.values(NATIVE_PROMISE_ALL_ATOM);
+        if (implementation.size === 1 && implementation.has(NATIVE_PROMISE_ALL_ATOM)) {
+          this.recordMayThrow(branch);
+          results.push({ state: branch, value: new Set(args[0] ?? [UNKNOWN_ATOM]) });
+        } else {
+          results.push(...this.invokeAtoms(implementation, args, branch, call, active, awaited, construct));
+        }
+        continue;
+      }
       if (callee === SUPABASE_FACTORY_ATOM || callee === POSTGRES_FACTORY_ATOM) {
         if (branch.dirty.has(callee)) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
         else {
@@ -1272,11 +1369,11 @@ class LocalFlowEngine {
       }
       if (callee === "framework:spyOn" || callee === "framework:replaceProperty") {
         const target = new Set(args[0] ?? [UNKNOWN_ATOM]);
-        const member = this.staticKey(call.arguments[1]);
+        const member = this.staticKey(call.arguments[1], true);
         for (const atom of target) {
           if (atom.startsWith("client:supabase:") || atom.startsWith("client:postgres:")) branch.dirty.add(atom);
         }
-        if (callee === "framework:replaceProperty" && member) {
+        if (callee === "framework:replaceProperty") {
           const nativePromise = new Set([...target].filter((atom) => atom === NATIVE_PROMISE_ATOM));
           if (nativePromise.size) {
             this.setMember(branch, nativePromise, member, args[2] ?? this.values(UNKNOWN_ATOM));
@@ -1284,18 +1381,64 @@ class LocalFlowEngine {
         }
         const control = this.atom("control", call);
         this.controlTargets.set(control, target);
-        if (member) this.memberTargets.set(control, { receiver: target, member });
+        this.memberTargets.set(control, { receiver: target, member });
         results.push({ state: branch, value: this.values(control) });
         continue;
       }
       const memberTarget = this.memberTargets.get(callee);
       if (callee.startsWith("configure:")) {
+        const method = this.controlMethods.get(callee);
+        const owners = this.controlOwners.get(callee) ?? this.values(UNKNOWN_ATOM);
+        if (method === "withImplementation" && memberTarget?.member) {
+          const nativeTargets = [...memberTarget.receiver].filter((target) => target === NATIVE_PROMISE_ATOM);
+          if (nativeTargets.length) {
+            const callback = args[1] ?? this.values(UNKNOWN_ATOM);
+            for (const target of nativeTargets) {
+              const members = branch.members.get(target) ?? new Map<string, Set<FlowAtom>>();
+              const memberKey = memberTarget.member;
+              const previous = members.get(memberKey) ? new Set(members.get(memberKey)!) : undefined;
+              const previousOnce = new Map(
+                this.onceImplementationKeys(members, memberKey).map((key) => [key, new Set(members.get(key)!)]),
+              );
+              members.set(memberKey, new Set(args[0] ?? [UNKNOWN_ATOM]));
+              for (const key of previousOnce.keys()) members.delete(key);
+              branch.members.set(target, members);
+              const callbacks = this.invokeAtoms(callback, [], branch, call, active, false, false);
+              for (const evaluated of callbacks) {
+                const restored = evaluated.state.members.get(target) ?? new Map<string, Set<FlowAtom>>();
+                if (previous) restored.set(memberKey, new Set(previous));
+                else restored.delete(memberKey);
+                for (const key of this.onceImplementationKeys(restored, memberKey)) restored.delete(key);
+                for (const [key, value] of previousOnce) restored.set(key, new Set(value));
+                evaluated.state.members.set(target, restored);
+                results.push({ state: evaluated.state, value: new Set(owners) });
+              }
+            }
+            continue;
+          }
+        }
         for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) {
-          if (target === NATIVE_PROMISE_ATOM && memberTarget?.member) {
-            this.setMember(branch, this.values(target), memberTarget.member, args[0] ?? this.values(UNKNOWN_ATOM));
+          if (target === NATIVE_PROMISE_ATOM) {
+            const member = memberTarget?.member;
+            const members = branch.members.get(target) ?? new Map<string, Set<FlowAtom>>();
+            const memberKey = member ?? "@unknown";
+            if (method === "mockImplementationOnce") {
+              const queued = this.onceImplementationKeys(members, memberKey);
+              const lastKey = queued.at(-1);
+              const nextIndex = lastKey === undefined
+                ? 0
+                : Number(lastKey.slice(`@once:${memberKey}:`.length)) + 1;
+              members.set(`@once:${memberKey}:${nextIndex}`, new Set(args[0] ?? [UNKNOWN_ATOM]));
+            } else if (method === "mockRestore" || method === "mockReset" || method === "restore") {
+              members.delete(memberKey);
+              for (const key of this.onceImplementationKeys(members, memberKey)) members.delete(key);
+            } else if (method !== "mockClear") {
+              members.set(memberKey, new Set(args[0] ?? [UNKNOWN_ATOM]));
+            }
+            branch.members.set(target, members);
           } else branch.dirty.add(target);
         }
-        results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        results.push({ state: branch, value: new Set(owners) });
         continue;
       }
       if (memberTarget?.member === "from" || memberTarget?.member === "rpc") {
@@ -2320,20 +2463,19 @@ class LocalFlowEngine {
       const supplied = args[index] ?? this.values(UNDEFINED_ATOM);
       states = states.flatMap((candidate) => {
         if (!parameter.initializer || (!supplied.has(UNDEFINED_ATOM) && !supplied.has(UNKNOWN_ATOM))) {
-          this.bindName(candidate, parameter.name, supplied);
-          return [candidate];
+          return this.bindName(candidate, parameter.name, supplied, active);
         }
-        const alternatives = this.evaluateExpression(parameter.initializer, this.cloneState(candidate), new Set(active)).map(
-          (evaluated) => {
-            this.bindName(evaluated.state, parameter.name, evaluated.value);
-            return evaluated.state;
-          },
+        const alternatives = this.evaluateExpression(
+          parameter.initializer,
+          this.cloneState(candidate),
+          new Set(active),
+        ).flatMap(
+          (evaluated) => this.bindName(evaluated.state, parameter.name, evaluated.value, active),
         );
         const direct = new Set([...supplied].filter((atom) => atom !== UNDEFINED_ATOM));
         if (direct.size > 0) {
           const directState = this.cloneState(candidate);
-          this.bindName(directState, parameter.name, direct);
-          alternatives.push(directState);
+          alternatives.push(...this.bindName(directState, parameter.name, direct, active));
         }
         return alternatives;
       });
@@ -2382,13 +2524,11 @@ class LocalFlowEngine {
       for (const declaration of statement.declarationList.declarations) {
         states = states.flatMap((current) => {
           if (!declaration.initializer) {
-            this.bindName(current, declaration.name, this.values(UNDEFINED_ATOM));
-            return [current];
+            return this.bindName(current, declaration.name, this.values(UNDEFINED_ATOM), active);
           }
-          return this.evaluateExpression(declaration.initializer, current, new Set(active)).map((evaluated) => {
-            this.bindName(evaluated.state, declaration.name, evaluated.value);
-            return evaluated.state;
-          });
+          return this.evaluateExpression(declaration.initializer, current, new Set(active)).flatMap((evaluated) =>
+            this.bindName(evaluated.state, declaration.name, evaluated.value, active)
+          );
         });
       }
       return states;
@@ -2671,10 +2811,17 @@ class LocalFlowEngine {
     statement: ts.ForOfStatement,
     state: FlowState,
     value: FlowValue,
-  ): void {
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
     if (ts.isVariableDeclarationList(statement.initializer)) {
-      for (const declaration of statement.initializer.declarations) this.bindName(state, declaration.name, value);
-    } else this.assignTarget(state, statement.initializer, value);
+      let states = [state];
+      for (const declaration of statement.initializer.declarations) {
+        states = states.flatMap((candidate) => this.bindName(candidate, declaration.name, value, active));
+      }
+      return states;
+    }
+    this.assignTarget(state, statement.initializer, value);
+    return [state];
   }
 
   private runArrayForEach(
@@ -2695,15 +2842,16 @@ class LocalFlowEngine {
           finished.push(current);
           continue;
         }
-        this.bindForEachValue(statement, current, value);
-        for (const result of this.evaluateStatement(statement.statement, current, active)) {
-          if (result.outcome === "break") {
-            result.outcome = "normal";
-            finished.push(result);
-          } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
-          else {
-            if (result.outcome === "continue") result.outcome = "normal";
-            next.push(result);
+        for (const bound of this.bindForEachValue(statement, current, value, active)) {
+          for (const result of this.evaluateStatement(statement.statement, bound, active)) {
+            if (result.outcome === "break") {
+              result.outcome = "normal";
+              finished.push(result);
+            } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
+            else {
+              if (result.outcome === "continue") result.outcome = "normal";
+              next.push(result);
+            }
           }
         }
       }
@@ -2728,15 +2876,16 @@ class LocalFlowEngine {
             finished.push(frame.state);
             continue;
           }
-          this.bindForEachValue(statement, frame.state, frame.value);
-          for (const result of this.evaluateStatement(statement.statement, frame.state, active)) {
-            if (result.outcome === "break") {
-              result.outcome = "normal";
-              finished.push(result);
-            } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
-            else {
-              if (result.outcome === "continue") result.outcome = "normal";
-              next.push(result);
+          for (const bound of this.bindForEachValue(statement, frame.state, frame.value, active)) {
+            for (const result of this.evaluateStatement(statement.statement, bound, active)) {
+              if (result.outcome === "break") {
+                result.outcome = "normal";
+                finished.push(result);
+              } else if (result.outcome === "return" || result.outcome === "throw") finished.push(result);
+              else {
+                if (result.outcome === "continue") result.outcome = "normal";
+                next.push(result);
+              }
             }
           }
         }
@@ -2774,10 +2923,17 @@ class LocalFlowEngine {
       states.push(...this.widenStates(caught).flatMap((candidate) => {
         const handled = this.cloneState(candidate);
         handled.outcome = "normal";
-        if (statement.catchClause!.variableDeclaration) {
-          this.bindName(handled, statement.catchClause!.variableDeclaration.name, this.values(UNKNOWN_ATOM));
-        }
-        return this.evaluateStatement(statement.catchClause!.block, handled, active);
+        const bound = statement.catchClause!.variableDeclaration
+          ? this.bindName(
+              handled,
+              statement.catchClause!.variableDeclaration.name,
+              this.values(UNKNOWN_ATOM),
+              active,
+            )
+          : [handled];
+        return bound.flatMap((candidateState) =>
+          this.evaluateStatement(statement.catchClause!.block, candidateState, active)
+        );
       }));
     } else states.push(...tryStates.filter((candidate) => candidate.outcome === "throw"));
     if (!statement.finallyBlock) return states;
@@ -3146,7 +3302,7 @@ class LocalFlowEngine {
         }
         return [...abrupt, ...evaluated.map(({ state }) => ({
           state,
-          value: { source: expression, ...(this.staticKey(expression.argumentExpression) === undefined ? { unsupported: true } : {}) },
+          value: { source: expression, ...(this.staticKey(expression.argumentExpression, true) === undefined ? { unsupported: true } : {}) },
         }))];
       }
       if (ts.isArrayLiteralExpression(expression)) {
