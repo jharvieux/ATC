@@ -412,7 +412,7 @@ describe("§23.7 soft-bounce retry — duplicate delivery & crash-after-claim re
   });
 });
 
-describe("§23.7 soft-bounce retry — step-boundary isolation (#1832)", () => {
+describe("§23.7 soft-bounce retry — step-boundary retries (#1832)", () => {
   // The audit finding this closes: sendEmail and the last_send_log_id write
   // used to share ONE step.run boundary. safeAwait throws on a transient DB
   // error writing the record, which escaped that shared step — so a real

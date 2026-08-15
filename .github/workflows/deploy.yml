@@ -177,12 +177,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     needs: [detect-changes]
-    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true'
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -203,8 +200,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run workflow wiring tests
+        if: needs.detect-changes.outputs.workflows_only == 'true'
+        run: pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts
+
+      - name: Require critical isolation test databases for workflow-only changes
+        if: needs.detect-changes.outputs.workflows_only == 'true'
+        env:
+          ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+        run: pnpm tsx scripts/check-critical-rag-db.ts
+
       - name: Decide test scope (full vs affected)
         id: scope
+        if: needs.detect-changes.outputs.workflows_only != 'true'
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -222,7 +235,7 @@ jobs:
           exit "$STATUS"
 
       - name: Run full vitest suite (with coverage)
-        if: steps.scope.outputs.mode == 'full'
+        if: needs.detect-changes.outputs.workflows_only != 'true' && steps.scope.outputs.mode == 'full'
         env:
           REASON: ${{ steps.scope.outputs.reason }}
         run: |
@@ -230,7 +243,7 @@ jobs:
           pnpm test
 
       - name: Run affected vitest tests
-        if: steps.scope.outputs.mode == 'affected'
+        if: needs.detect-changes.outputs.workflows_only != 'true' && steps.scope.outputs.mode == 'affected'
         env:
           REASON: ${{ steps.scope.outputs.reason }}
         run: |
@@ -484,11 +497,12 @@ jobs:
       # "Report snapshot/grants drift on dev" step above (it runs grants:check too).
 
   integration-tests-critical:
-    name: Integration Tests (RLS + Payments)
+    name: Integration Tests (RLS + RAG Scope + Payments)
     runs-on: ubuntu-latest
-    # Same shared-test-DB serialization as rls-snapshot-diff: this job's RLS +
-    # Stripe-webhook suites write ephemeral rows into the same main test DB, so
-    # it must not run while another run is resetting/pushing it. Within one run
+    # Same shared-test-DB serialization as rls-snapshot-diff: this job's RLS,
+    # RAG-scope, and Stripe-webhook suites write ephemeral rows into the main
+    # and RAG test DBs, so it must not run while another run is resetting or
+    # pushing either one. Within one run
     # it can't contend with rls-snapshot-diff anyway (needs it), but across runs
     # the group serializes it. See rls-snapshot-diff's concurrency note.
     concurrency:
@@ -521,6 +535,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
       # Placeholders are fine: the stripe-webhook suite self-signs events with
       # STRIPE_WEBHOOK_SECRET and the handler verifies with the same value
       # (pure HMAC, no live Stripe API call) — same posture as nightly-full-test.yml.
@@ -541,11 +556,32 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run RLS + Stripe-webhook integration suites
-        # Absent secrets (Dependabot PRs get none) => haveSupabase/haveAll
-        # in these suites evaluate false => describe.skip => 0 tests run,
-        # job still exits 0 — same no-secrets posture as rls-snapshot-diff.
-        run: pnpm vitest run apps/main/test/integration/rls.test.ts apps/main/test/integration/stripe-webhook.test.ts
+      - name: Require the critical isolation test databases
+        id: isolation-db-preflight
+        env:
+          # Use the PR author, not github.actor: a human can rerun a Dependabot
+          # PR, but GitHub still withholds repository secrets from that PR. The
+          # preflight requires all four main credentials plus the RAG DB URL on
+          # every other event before either evidence-bearing suite can run.
+          ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: pnpm tsx scripts/check-critical-rag-db.ts
+
+      - name: Run main RLS integration suite
+        if: steps.isolation-db-preflight.outputs.run_main_rls == 'true'
+        env:
+          MAIN_RLS_DB_REQUIRED: "true"
+        run: pnpm vitest run apps/main/test/integration/rls.test.ts
+
+      - name: Run Stripe-webhook integration suite
+        run: pnpm vitest run apps/main/test/integration/stripe-webhook.test.ts
+
+      - name: Run seeded RAG scope integration suite
+        if: steps.isolation-db-preflight.outputs.run_rag_scope == 'true'
+        env:
+          # The suite throws rather than describe.skip if this evidence-bearing
+          # invocation ever reaches it without the preflighted connection.
+          RAG_SCOPE_DB_REQUIRED: "true"
+        run: pnpm -C apps/rag exec vitest run test/integration/retrieval-scope-isolation.test.ts
 
   contract-tests:
     name: Contract Tests

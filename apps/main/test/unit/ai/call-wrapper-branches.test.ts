@@ -432,7 +432,7 @@ describe("instrumentedClaudeCall — happy path", () => {
     expect(a.p_billing_period).toMatch(/^\[\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2}\)$/);
   });
 
-  it("does NOT call the metrics RPC for PLATFORM_TENANT_ID (cross-tenant platform calls)", async () => {
+  it("does NOT call the metrics RPC for PLATFORM_TENANT_ID (platform-level calls)", async () => {
     await instrumentedClaudeCall({
       tenant_id: PLATFORM_TENANT_ID,
       model: "claude-haiku-4-5-20251001",

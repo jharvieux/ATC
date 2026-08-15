@@ -206,6 +206,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     warn.mockRestore();
   });
 
+  // @rls-covered-by resources=table:public.rag_media_assets target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope asset hydration scope returns global and tenant A assets, not tenant B
   it("scope filter: tenant-scope asset belonging to another tenant is dropped", async () => {
     rpcChunks = [rpcChunk({ id: "c1" })];
     const offlimits = "a-7777-7777-7777-777777777777";
@@ -220,6 +221,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     expect(json.chunks[0]!.related_asset_ids).toEqual([]);
   });
 
+  // @rls-covered-by resources=table:public.rag_media_assets target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope asset hydration scope returns global and tenant A assets, not tenant B
   it("two-layer isolation (#395): the rag_media_assets query carries a DB-layer scope/tenant .or() predicate", async () => {
     // The JS `continue` (tested above) is layer two. This pins layer one — the
     // DB-side filter — so a regression that drops .or() and leaves only the JS
@@ -236,6 +238,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     expect(capturedAssetOrFilter).toBe(`scope.eq.global,tenant_id.eq.${TENANT_ID}`);
   });
 
+  // @rls-covered-by resources=table:public.knowledge_chunks target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope chunk hydration scope returns global and tenant A chunks, not tenant B
   it("#743 DB-layer isolation: knowledge_chunks re-query carries scope/tenant .or() predicate", async () => {
     // Layer 1 of the two-layer isolation fix for #743: the DB query must include
     // the scope/tenant filter so another tenant's chunks can't be returned by the
@@ -248,6 +251,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     expect(capturedChunkOrFilter).toBe(`scope.eq.global,tenant_id.eq.${TENANT_ID}`);
   });
 
+  // @rls-covered-by resources=table:public.knowledge_chunks target=apps/rag/test/integration/retrieval-scope-isolation.test.ts#seeded RAG retrieval scope chunk hydration scope returns global and tenant A chunks, not tenant B
   it("#743 JS-layer isolation: tenant-scope chunk belonging to another tenant is excluded from assetIdsByChunk", async () => {
     // Layer 2: even if the .or() were somehow absent, the JS continue guard
     // keeps another tenant's chunk data out of the response.

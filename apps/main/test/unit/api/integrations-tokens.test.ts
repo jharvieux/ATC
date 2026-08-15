@@ -150,6 +150,7 @@ describe("POST /api/integrations/tokens", () => {
     expect(singleFn).toHaveBeenCalled();
   });
 
+  // @rls-covered-by resources=table:public.users target=apps/main/test/integration/rls.test.ts#RLS integration user in tenant A cannot SELECT rows from tenant B
   it("rejects user_id that is not an active member of this tenant (cross-tenant isolation)", async () => {
     mocks.assertPermission.mockResolvedValue(callerAs("tenant_owner", "u-owner"));
     // Member lookup returns null → not in tenant or not active

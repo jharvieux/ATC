@@ -107,7 +107,7 @@ describe("companion content cache (#1953)", () => {
     });
   });
 
-  it("revalidating one booking+phase does not purge another's entry (key isolation)", async () => {
+  it("revalidating one booking+phase does not purge an unrelated entry (key independence)", async () => {
     db.rows.set("b1:t_7", { a: 1 });
     db.rows.set("b9:t_7", { b: 2 });
     await getCompanionContent("b1", "t_7");

@@ -54,7 +54,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("runCrossTenantRlsBypassMonitor — fail-closed (D-094 / #1205)", () => {
+describe("bypass monitor — fail-closed (D-094 / #1205)", () => {
   it("throws when audit_log read returns an error", async () => {
     mocks.fetchError = { message: "synthetic DB error" };
     await expect(runCrossTenantRlsBypassMonitor()).rejects.toThrow(/synthetic DB error/);
@@ -67,7 +67,7 @@ describe("runCrossTenantRlsBypassMonitor — fail-closed (D-094 / #1205)", () =>
   });
 });
 
-describe("runCrossTenantRlsBypassMonitor — happy path", () => {
+describe("bypass monitor — happy path", () => {
   it("returns detected:0 and sends no alerts when no rows match", async () => {
     const result = await runCrossTenantRlsBypassMonitor();
     expect(result).toEqual({ detected: 0 });

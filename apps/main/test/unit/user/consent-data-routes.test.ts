@@ -169,7 +169,7 @@ describe("consent/pending — auth normalization (#1591)", () => {
   });
 });
 
-describe("data/export-request — auth + isolation (#1591)", () => {
+describe("data/export-request — auth + requester scoping (#1591)", () => {
   it("returns 401 when auth is missing", async () => {
     h.authed = null;
     const { POST } = await import("@/app/api/user/data/export-request/route");
