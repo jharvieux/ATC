@@ -207,6 +207,7 @@ type FlowOutcome = "normal" | "return" | "throw" | "break" | "continue" | "nonte
 interface ClosureEnvironment {
   frame: FlowAtom;
   cells: Map<ts.Symbol, Set<FlowAtom>>;
+  lexicalThis?: Set<FlowAtom>;
 }
 
 interface FlowState {
@@ -271,6 +272,8 @@ class LocalFlowEngine {
   private allocationFrame: FlowAtom | undefined;
   private lexicalFrame: FlowAtom | undefined;
   private lexicalLocals: ReadonlySet<ts.Symbol> | undefined;
+  private capturedFrame: FlowAtom | undefined;
+  private lexicalThis: FlowValue | undefined;
   private mayThrowSnapshots: FlowState[] | undefined;
   private executeSuites = false;
 
@@ -295,22 +298,24 @@ class LocalFlowEngine {
   private functionAtom(fn: ts.FunctionLikeDeclaration, state?: FlowState): FlowAtom {
     const atom = this.atom("function", fn);
     this.functions.set(atom, fn);
-    this.captureEnvironment(atom, state);
+    this.captureEnvironment(atom, state, ts.isArrowFunction(fn));
     return atom;
   }
 
-  private captureEnvironment(atom: FlowAtom, state?: FlowState): void {
-    if (state && this.lexicalFrame && this.lexicalLocals) {
+  private captureEnvironment(atom: FlowAtom, state?: FlowState, captureThis = false): void {
+    const lexicalThis = captureThis ? this.lexicalThis : undefined;
+    if (state && ((this.lexicalFrame && this.lexicalLocals) || lexicalThis)) {
       state.closureEnvironments.set(
         atom,
         {
-          frame: this.lexicalFrame,
+          frame: this.lexicalFrame ?? this.allocationFrame ?? atom,
           cells: new Map(
-            [...this.lexicalLocals].map((symbol) => [
+            [...(this.lexicalLocals ?? [])].map((symbol) => [
               symbol,
               new Set(state.cells.get(symbol) ?? [UNDEFINED_ATOM]),
             ]),
           ),
+          ...(lexicalThis ? { lexicalThis: new Set(lexicalThis) } : {}),
         },
       );
     }
@@ -354,6 +359,7 @@ class LocalFlowEngine {
           {
             frame: environment.frame,
             cells: new Map([...environment.cells].map(([symbol, value]) => [symbol, new Set(value)])),
+            ...(environment.lexicalThis ? { lexicalThis: new Set(environment.lexicalThis) } : {}),
           },
         ]),
       ),
@@ -409,7 +415,11 @@ class LocalFlowEngine {
       ) &&
       sameMap(left.generatorLocals, right.generatorLocals, (a, b) => sameMap(a, b, sameSet)) &&
       sameMap(left.closureEnvironments, right.closureEnvironments, (a, b) =>
-        a.frame === b.frame && sameMap(a.cells, b.cells, sameSet),
+        a.frame === b.frame &&
+        sameMap(a.cells, b.cells, sameSet) &&
+        (a.lexicalThis === undefined
+          ? b.lexicalThis === undefined
+          : b.lexicalThis !== undefined && sameSet(a.lexicalThis, b.lexicalThis)),
       ) &&
       left.allocationSerial === right.allocationSerial &&
       sameSet(left.unsupportedReasons, right.unsupportedReasons) &&
@@ -454,9 +464,12 @@ class LocalFlowEngine {
     const symbol = this.symbol(node);
     if (!symbol) return;
     state.cells.set(symbol, new Set(value));
-    if (!this.lexicalFrame) return;
+    const ownerFrames = new Set(
+      [this.lexicalFrame, this.capturedFrame].filter((frame): frame is FlowAtom => frame !== undefined),
+    );
+    if (!ownerFrames.size) return;
     for (const environment of state.closureEnvironments.values()) {
-      if (environment.frame === this.lexicalFrame && environment.cells.has(symbol)) {
+      if (ownerFrames.has(environment.frame) && environment.cells.has(symbol)) {
         environment.cells.set(symbol, new Set(value));
       }
     }
@@ -677,6 +690,13 @@ class LocalFlowEngine {
       if (receiver.startsWith("control:") && member && /^(?:mock|withImplementation)/.test(member)) {
         const configure = this.atom("configure", node);
         this.controlTargets.set(configure, new Set(this.controlTargets.get(receiver) ?? [UNKNOWN_ATOM]));
+        const mutationTarget = this.memberTargets.get(receiver);
+        if (mutationTarget) {
+          this.memberTargets.set(configure, {
+            receiver: new Set(mutationTarget.receiver),
+            member: mutationTarget.member,
+          });
+        }
         value.add(configure);
         continue;
       }
@@ -726,6 +746,9 @@ class LocalFlowEngine {
       }));
     }
     if (ts.isIdentifier(expression)) return [{ state, value: this.cellValue(state, expression) }];
+    if (expression.kind === ts.SyntaxKind.ThisKeyword) {
+      return [{ state, value: new Set(this.lexicalThis ?? [UNKNOWN_ATOM]) }];
+    }
     if (expression.kind === ts.SyntaxKind.UndefinedKeyword) {
       return [{ state, value: this.values(UNDEFINED_ATOM) }];
     }
@@ -1002,6 +1025,26 @@ class LocalFlowEngine {
     return result.size ? result : this.values(UNKNOWN_ATOM);
   }
 
+  private arrayElementValue(
+    state: FlowState,
+    arrays: FlowValue,
+    index: number,
+    node: ts.Node,
+  ): Set<FlowAtom> {
+    const selected = new Set<FlowAtom>();
+    for (const array of arrays) {
+      const length = this.arrayLength(state, array);
+      if (length !== undefined && index >= length) {
+        selected.add(UNDEFINED_ATOM);
+        continue;
+      }
+      for (const value of this.memberValue(state, this.values(array), String(index), node)) {
+        selected.add(value);
+      }
+    }
+    return selected.size ? selected : this.values(UNKNOWN_ATOM);
+  }
+
   private bindName(state: FlowState, name: ts.BindingName, value: FlowValue): void {
     if (ts.isIdentifier(name)) {
       this.setCell(state, name, value);
@@ -1022,8 +1065,47 @@ class LocalFlowEngine {
       }
       return;
     }
-    for (const element of name.elements) {
-      if (!ts.isOmittedExpression(element)) this.bindName(state, element.name, this.values(UNKNOWN_ATOM));
+    for (let index = 0; index < name.elements.length; index += 1) {
+      const element = name.elements[index]!;
+      if (ts.isOmittedExpression(element)) continue;
+      let selected: Set<FlowAtom>;
+      if (element.dotDotDotToken) {
+        const rest = this.atom("array", element);
+        state.members.set(rest, new Map());
+        const lengths = new Set<number>();
+        let unresolved = false;
+        for (const array of value) {
+          const length = this.arrayLength(state, array);
+          if (length === undefined) {
+            unresolved = true;
+            continue;
+          }
+          const restLength = Math.max(0, length - index);
+          lengths.add(restLength);
+          for (let restIndex = 0; restIndex < restLength; restIndex += 1) {
+            const prior = state.members.get(rest)?.get(String(restIndex)) ?? new Set<FlowAtom>();
+            for (const item of this.arrayElementValue(state, this.values(array), index + restIndex, element)) {
+              prior.add(item);
+            }
+            this.setMember(state, this.values(rest), String(restIndex), prior);
+          }
+        }
+        if (unresolved || lengths.size !== 1) {
+          this.setMember(state, this.values(rest), "@all", this.values(UNKNOWN_ATOM));
+        } else {
+          state.members.get(rest)?.set(`@array-length:${[...lengths][0]}`, new Set());
+        }
+        selected = this.values(rest);
+      } else selected = this.arrayElementValue(state, value, index, element);
+      if (element.initializer && (selected.has(UNDEFINED_ATOM) || selected.has(UNKNOWN_ATOM))) {
+        const fallback = this.evaluateExpression(element.initializer, this.cloneState(state))[0]?.value ??
+          this.values(UNKNOWN_ATOM);
+        selected = new Set([
+          ...[...selected].filter((atom) => atom !== UNDEFINED_ATOM),
+          ...fallback,
+        ]);
+      }
+      this.bindName(state, element.name, selected);
     }
   }
 
@@ -1190,20 +1272,32 @@ class LocalFlowEngine {
       }
       if (callee === "framework:spyOn" || callee === "framework:replaceProperty") {
         const target = new Set(args[0] ?? [UNKNOWN_ATOM]);
+        const member = this.staticKey(call.arguments[1]);
         for (const atom of target) {
           if (atom.startsWith("client:supabase:") || atom.startsWith("client:postgres:")) branch.dirty.add(atom);
         }
+        if (callee === "framework:replaceProperty" && member) {
+          const nativePromise = new Set([...target].filter((atom) => atom === NATIVE_PROMISE_ATOM));
+          if (nativePromise.size) {
+            this.setMember(branch, nativePromise, member, args[2] ?? this.values(UNKNOWN_ATOM));
+          }
+        }
         const control = this.atom("control", call);
         this.controlTargets.set(control, target);
+        if (member) this.memberTargets.set(control, { receiver: target, member });
         results.push({ state: branch, value: this.values(control) });
         continue;
       }
+      const memberTarget = this.memberTargets.get(callee);
       if (callee.startsWith("configure:")) {
-        for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) branch.dirty.add(target);
+        for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) {
+          if (target === NATIVE_PROMISE_ATOM && memberTarget?.member) {
+            this.setMember(branch, this.values(target), memberTarget.member, args[0] ?? this.values(UNKNOWN_ATOM));
+          } else branch.dirty.add(target);
+        }
         results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
         continue;
       }
-      const memberTarget = this.memberTargets.get(callee);
       if (memberTarget?.member === "from" || memberTarget?.member === "rpc") {
         const resourceName = this.literalText(call.arguments[0]);
         if (!resourceName || [...memberTarget.receiver].some((receiver) => branch.dirty.has(receiver))) {
@@ -1586,9 +1680,13 @@ class LocalFlowEngine {
     const previousFrame = this.allocationFrame;
     const previousLexicalFrame = this.lexicalFrame;
     const previousLocals = this.lexicalLocals;
+    const previousCapturedFrame = this.capturedFrame;
+    const previousLexicalThis = this.lexicalThis;
     this.allocationFrame = instance;
-    this.lexicalFrame = classEnvironment?.frame;
+    this.lexicalFrame = classEnvironment?.frame ?? instance;
     this.lexicalLocals = classEnvironment ? new Set(classEnvironment.cells.keys()) : undefined;
+    this.capturedFrame = classEnvironment?.frame;
+    this.lexicalThis = this.values(instance);
     try {
       for (const member of declaration.members) {
         const isStatic = ts.canHaveModifiers(member) &&
@@ -1611,6 +1709,8 @@ class LocalFlowEngine {
       this.allocationFrame = previousFrame;
       this.lexicalFrame = previousLexicalFrame;
       this.lexicalLocals = previousLocals;
+      this.capturedFrame = previousCapturedFrame;
+      this.lexicalThis = previousLexicalThis;
     }
   }
 
@@ -2158,9 +2258,13 @@ class LocalFlowEngine {
     const previousFrame = this.allocationFrame;
     const previousLexicalFrame = this.lexicalFrame;
     const previousLocals = this.lexicalLocals;
+    const previousCapturedFrame = this.capturedFrame;
+    const previousLexicalThis = this.lexicalThis;
     this.allocationFrame = invocation;
     this.lexicalFrame = invocation;
     this.lexicalLocals = this.localSymbols(fn);
+    this.capturedFrame = closureEnvironment?.frame;
+    this.lexicalThis = closureEnvironment?.lexicalThis;
     try {
       const entered = this.bindParameters(fn.parameters, args, invoked, active);
       let results: FlowEvaluation[];
@@ -2200,6 +2304,8 @@ class LocalFlowEngine {
       this.allocationFrame = previousFrame;
       this.lexicalFrame = previousLexicalFrame;
       this.lexicalLocals = previousLocals;
+      this.capturedFrame = previousCapturedFrame;
+      this.lexicalThis = previousLexicalThis;
     }
   }
 
@@ -2811,12 +2917,12 @@ class LocalFlowEngine {
   private bindingSources(identifier: ts.Identifier): Array<{ source: ts.Expression; path?: string[]; unsupported?: boolean } | undefined> {
     const symbol = this.symbol(identifier);
     if (!symbol) return [];
-    type Binding = { source: ts.Expression; path?: string[]; unsupported?: boolean } | undefined;
+    type Binding = { source: ts.Expression; path?: string[]; arrayOffset?: number; unsupported?: boolean } | undefined;
     type AliasState = { binding: Binding; outcome: FlowOutcome };
     type AliasEvaluation = { state: AliasState; value: Binding };
     const matches = (node: ts.Identifier) => this.symbol(node) === symbol;
     const bindingKey = (binding: Binding): string => binding
-      ? `${binding.source.pos}:${binding.source.end}:${binding.path?.join(".") ?? ""}:${binding.unsupported ? "unsupported" : ""}`
+      ? `${binding.source.pos}:${binding.source.end}:${binding.path?.join(".") ?? ""}:${binding.arrayOffset ?? ""}:${binding.unsupported ? "unsupported" : ""}`
       : "undefined";
     const uniqueBindings = (bindings: Binding[]): Binding[] => {
       const seen = new Set<string>();
@@ -2845,22 +2951,25 @@ class LocalFlowEngine {
       if (!binding) return undefined;
       if (binding.unsupported) return binding;
       const source = unwrapExpression(binding.source);
+      const selectedKey = binding.arrayOffset !== undefined && /^\d+$/.test(key)
+        ? String(binding.arrayOffset + Number(key))
+        : key;
       if (!binding.path?.length && ts.isObjectLiteralExpression(source)) {
         const property = source.properties.find((candidate) =>
           (ts.isPropertyAssignment(candidate) || ts.isMethodDeclaration(candidate)) &&
-          propertyName(candidate.name, "") === key,
+          propertyName(candidate.name, "") === selectedKey,
         );
         if (property && ts.isPropertyAssignment(property)) return { source: property.initializer };
         if (property && ts.isMethodDeclaration(property)) return { source: property as unknown as ts.Expression };
         if (source.properties.some(ts.isSpreadAssignment)) return { source: binding.source, unsupported: true };
         return undefined;
       }
-      if (!binding.path?.length && ts.isArrayLiteralExpression(source) && /^\d+$/.test(key)) {
-        const element = source.elements[Number(key)];
+      if (!binding.path?.length && ts.isArrayLiteralExpression(source) && /^\d+$/.test(selectedKey)) {
+        const element = source.elements[Number(selectedKey)];
         if (!element || ts.isOmittedExpression(element)) return undefined;
         return { source: ts.isSpreadElement(element) ? element.expression : element };
       }
-      return { ...binding, path: [...(binding.path ?? []), key] };
+      return { ...binding, arrayOffset: undefined, path: [...(binding.path ?? []), selectedKey] };
     };
     const containsTarget = (node: ts.Node): boolean => {
       let found = false;
@@ -2880,7 +2989,14 @@ class LocalFlowEngine {
         states = states.flatMap((candidate) => {
           if (element.dotDotDotToken) {
             return containsTarget(element.name)
-              ? [{ ...candidate, binding: value ? { ...value, unsupported: true } : undefined }]
+              ? [{
+                  ...candidate,
+                  binding: value
+                    ? ts.isArrayBindingPattern(name)
+                      ? { ...value, arrayOffset: (value.arrayOffset ?? 0) + index }
+                      : { ...value, unsupported: true }
+                    : undefined,
+                }]
               : [candidate];
           }
           const key = ts.isArrayBindingPattern(name)

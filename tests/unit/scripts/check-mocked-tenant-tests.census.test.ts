@@ -759,6 +759,72 @@ regress(
   supabaseLoader("function make(action: () => void) { return () => action(); } const first = make(() => {}); const second = make(() => { loader = fake; }); first(); void second;"),
 );
 regress(
+  "effects:live-sibling-closure",
+  "nested sibling closure observes live mutating binding",
+  "unsafe",
+  supabaseLoader("function make(action: () => void) { let current = () => {}; const run = () => current(); return () => { current = action; run(); }; } make(() => { loader = fake; })();"),
+);
+regress(
+  "effects:live-sibling-closure",
+  "nested sibling closure observes live no-op binding",
+  "safe",
+  supabaseLoader("function make(action: () => void) { let current = () => {}; const run = () => current(); return () => { current = action; run(); }; } make(() => {})();"),
+);
+regress(
+  "effects:array-binding-identity",
+  "sibling setter updates the destructured runner",
+  "unsafe",
+  supabaseLoader("function make() { let action = () => {}; return [() => action(), (next: () => void) => { action = next; }]; } const [run, set] = make(); set(() => { loader = fake; }); run();"),
+);
+regress(
+  "effects:array-binding-identity",
+  "omitted element selects only the second factory setter",
+  "safe",
+  supabaseLoader("function make() { let action = () => {}; return [() => action(), (next: () => void) => { action = next; }]; } const [firstRun] = make(); const [, secondSet] = make(); secondSet(() => { loader = fake; }); firstRun();"),
+);
+regress(
+  "effects:array-binding-identity",
+  "setter-only destructuring does not invoke its callback",
+  "safe",
+  supabaseLoader("function make() { let action = () => {}; return [() => action(), (next: () => void) => { action = next; }]; } const [, set] = make(); set(() => { loader = fake; });"),
+);
+regress(
+  "effects:array-binding-default",
+  "missing element selects mutating default",
+  "unsafe",
+  supabaseLoader("const [run = () => { loader = fake; }] = []; run();"),
+);
+regress(
+  "effects:array-binding-default",
+  "missing element selects no-op default",
+  "safe",
+  supabaseLoader("const [run = () => {}] = []; run();"),
+);
+regress(
+  "effects:array-binding-rest",
+  "rest element retains mutating callback identity",
+  "unsafe",
+  supabaseLoader("const [...actions] = [() => { loader = fake; }]; actions[0]();"),
+);
+regress(
+  "effects:array-binding-rest",
+  "rest element retains no-op callback identity",
+  "safe",
+  supabaseLoader("const [...actions] = [() => {}]; actions[0]();"),
+);
+regress(
+  "effects:array-binding-rest",
+  "rest array iteration invokes mutating callback",
+  "unsafe",
+  supabaseLoader("const [...actions] = [() => { loader = fake; }]; for (const action of actions) action();"),
+);
+regress(
+  "effects:array-binding-rest",
+  "rest array iteration invokes only no-op callback",
+  "safe",
+  supabaseLoader("const [...actions] = [() => {}]; for (const action of actions) action();"),
+);
+regress(
   "effects:class-instance-frame",
   "first returned instance retains mutating member",
   "unsafe",
@@ -831,6 +897,18 @@ regress(
   "safe",
   supabaseLoader("class C { constructor(public run: () => void) {} } function make(action: () => void) { return new C(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.run(); void second;"),
 );
+regress(
+  "effects:class-field-parameter-property",
+  "field closure invokes mutating parameter property through this",
+  "unsafe",
+  supabaseLoader("class C { run = () => this.action(); constructor(public action: () => void) {} } new C(() => { loader = fake; }).run();"),
+);
+regress(
+  "effects:class-field-parameter-property",
+  "field closure invokes no-op parameter property through this",
+  "safe",
+  supabaseLoader("class C { run = () => this.action(); constructor(public action: () => void) {} } new C(() => {}).run();"),
+);
 
 regress(
   "effects:promise-all-overwrite",
@@ -843,6 +921,42 @@ regress(
   "overwritten Promise.all returns no-op callback inverse",
   "safe",
   supabaseLoader("Promise.all = async () => [() => {}]; const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-overwrite",
+  "Object.assign Promise.all returns mutating callback",
+  "unsafe",
+  supabaseLoader("Object.assign(Promise, { all: async () => [() => { loader = fake; }] }); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-overwrite",
+  "Object.assign Promise.all returns no-op callback",
+  "safe",
+  supabaseLoader("Object.assign(Promise, { all: async () => [() => {}] }); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-framework-mutation",
+  "spied Promise.all replacement returns mutating callback",
+  "unsafe",
+  supabaseLoader("vi.spyOn(Promise, 'all').mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-framework-mutation",
+  "spied Promise.all replacement returns no-op callback",
+  "safe",
+  supabaseLoader("vi.spyOn(Promise, 'all').mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-framework-mutation",
+  "replaceProperty Promise.all returns mutating callback",
+  "unsafe",
+  supabaseLoader("vi.replaceProperty(Promise, 'all', async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-framework-mutation",
+  "replaceProperty Promise.all returns no-op callback",
+  "safe",
+  supabaseLoader("vi.replaceProperty(Promise, 'all', async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
 );
 
 regress(
