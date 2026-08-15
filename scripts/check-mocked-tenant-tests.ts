@@ -207,6 +207,14 @@ interface ClosureEnvironment {
   lexicalThis?: Set<FlowAtom>;
 }
 
+interface MockControlLifecycle {
+  attached: boolean;
+  kind: "spy" | "replace";
+  member?: string;
+  originals: Map<FlowAtom, Set<FlowAtom>>;
+  receivers: Set<FlowAtom>;
+}
+
 interface FlowState {
   cells: Map<ts.Symbol, Set<FlowAtom>>;
   members: Map<FlowAtom, Map<string, Set<FlowAtom>>>;
@@ -220,6 +228,7 @@ interface FlowState {
   generatorArguments: Map<FlowAtom, Set<FlowAtom>[]>;
   generatorLocals: Map<FlowAtom, Map<ts.Symbol, Set<FlowAtom>>>;
   closureEnvironments: Map<FlowAtom, ClosureEnvironment>;
+  mockControls: Map<FlowAtom, MockControlLifecycle>;
   allocationSerial: number;
   unsupportedReasons: Set<string>;
   unsupported: boolean;
@@ -250,6 +259,9 @@ const POSTGRES_FACTORY_ATOM = "factory:postgres";
 const WITNESS_ATOM = "witness:canonical";
 const NATIVE_PROMISE_ATOM = "native:Promise";
 const NATIVE_PROMISE_ALL_ATOM = "native:Promise.all";
+const NATIVE_PROMISE_REJECT_ATOM = "native:Promise.reject";
+const NATIVE_PROMISE_RESOLVE_ATOM = "native:Promise.resolve";
+const REJECTED_PROMISE_ATOM = "promise:rejected";
 
 class LocalFlowEngine {
   readonly checker: ts.TypeChecker;
@@ -266,6 +278,8 @@ class LocalFlowEngine {
   private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member?: string }>();
   private readonly controlOwners = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlMethods = new Map<FlowAtom, string>();
+  private readonly literalValues = new Map<FlowAtom, string>();
+  private readonly ambiguousLiteralAtoms = new Set<FlowAtom>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
   private readonly executedWitnessCalls = new Set<ts.CallExpression>();
   private allocationFrame: FlowAtom | undefined;
@@ -362,6 +376,20 @@ class LocalFlowEngine {
           },
         ]),
       ),
+      mockControls: new Map(
+        [...state.mockControls].map(([control, lifecycle]) => [
+          control,
+          {
+            attached: lifecycle.attached,
+            kind: lifecycle.kind,
+            member: lifecycle.member,
+            originals: new Map(
+              [...lifecycle.originals].map(([receiver, value]) => [receiver, new Set(value)]),
+            ),
+            receivers: new Set(lifecycle.receivers),
+          },
+        ]),
+      ),
       allocationSerial: state.allocationSerial,
       unsupportedReasons: new Set(state.unsupportedReasons),
       unsupported: state.unsupported,
@@ -382,6 +410,7 @@ class LocalFlowEngine {
       generatorArguments: new Map(),
       generatorLocals: new Map(),
       closureEnvironments: new Map(),
+      mockControls: new Map(),
       allocationSerial: 0,
       unsupportedReasons: new Set(),
       unsupported: false,
@@ -419,6 +448,13 @@ class LocalFlowEngine {
         (a.lexicalThis === undefined
           ? b.lexicalThis === undefined
           : b.lexicalThis !== undefined && sameSet(a.lexicalThis, b.lexicalThis)),
+      ) &&
+      sameMap(left.mockControls, right.mockControls, (a, b) =>
+        a.attached === b.attached &&
+        a.kind === b.kind &&
+        a.member === b.member &&
+        sameMap(a.originals, b.originals, sameSet) &&
+        sameSet(a.receivers, b.receivers)
       ) &&
       left.allocationSerial === right.allocationSerial &&
       sameSet(left.unsupportedReasons, right.unsupportedReasons) &&
@@ -506,6 +542,27 @@ class LocalFlowEngine {
     return undefined;
   }
 
+  private literalAtom(node: ts.Expression): FlowAtom {
+    const atom = this.atom("literal", node);
+    if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) this.literalValues.set(atom, node.text);
+    else if (node.kind === ts.SyntaxKind.TrueKeyword) this.literalValues.set(atom, "true");
+    else if (node.kind === ts.SyntaxKind.FalseKeyword) this.literalValues.set(atom, "false");
+    else if (node.kind === ts.SyntaxKind.NullKeyword) this.literalValues.set(atom, "null");
+    else if (ts.isNoSubstitutionTemplateLiteral(node)) this.literalValues.set(atom, node.text);
+    return atom;
+  }
+
+  private valueKey(value: FlowValue): string | undefined {
+    if ([...value].some((atom) => this.ambiguousLiteralAtoms.has(atom))) return undefined;
+    const keys = new Set([...value].map((atom) => this.literalValues.get(atom)));
+    return keys.size === 1 && !keys.has(undefined) ? [...keys][0] : undefined;
+  }
+
+  private memberKey(node: ts.Node | undefined, state: FlowState, value?: FlowValue): string | undefined {
+    return this.staticKey(node, true) ??
+      this.valueKey(value ?? (node && ts.isIdentifier(node) ? this.cellValue(state, node) : this.values(UNKNOWN_ATOM)));
+  }
+
   private setMember(state: FlowState, receivers: FlowValue, member: string | undefined, value: FlowValue): void {
     for (const receiver of receivers) {
       const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
@@ -533,52 +590,192 @@ class LocalFlowEngine {
       .sort((left, right) => Number(left.slice(prefix.length)) - Number(right.slice(prefix.length)));
   }
 
-  private assignTarget(state: FlowState, target: ts.Expression, value: FlowValue): void {
+  private promiseImplementation(state: FlowState, receiver: FlowAtom, member: string | undefined): Set<FlowAtom> {
+    const members = state.members.get(receiver);
+    const explicit = members?.get(member ?? "@unknown");
+    if (explicit) return new Set(explicit);
+    if (member === "all" && !members?.has("@all") && !members?.has("@unknown")) {
+      return this.values(NATIVE_PROMISE_ALL_ATOM);
+    }
+    return this.values(UNKNOWN_ATOM);
+  }
+
+  private restorePromiseImplementation(
+    state: FlowState,
+    receiver: FlowAtom,
+    member: string | undefined,
+    value: FlowValue,
+  ): void {
+    const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
+    const key = member ?? "@unknown";
+    if (member === "all" && value.size === 1 && value.has(NATIVE_PROMISE_ALL_ATOM)) members.delete(key);
+    else members.set(key, new Set(value));
+    for (const onceKey of this.onceImplementationKeys(members, key)) members.delete(onceKey);
+    state.members.set(receiver, members);
+  }
+
+  private replaceMember(
+    state: FlowState,
+    receivers: FlowValue,
+    member: string | undefined,
+    value: FlowValue,
+  ): void {
+    for (const receiver of receivers) {
+      if (receiver === NATIVE_PROMISE_ATOM) {
+        const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
+        const key = member ?? "@unknown";
+        for (const onceKey of this.onceImplementationKeys(members, key)) members.delete(onceKey);
+        if (member === undefined) {
+          for (const onceKey of [...members.keys()].filter((candidate) => candidate.startsWith("@once:"))) {
+            members.delete(onceKey);
+          }
+        }
+        state.members.set(receiver, members);
+        for (const lifecycle of state.mockControls.values()) {
+          if (
+            lifecycle.receivers.has(receiver) &&
+            (member === undefined || lifecycle.member === undefined || lifecycle.member === member)
+          ) lifecycle.attached = false;
+        }
+      }
+    }
+    this.setMember(state, receivers, member, value);
+  }
+
+  private restoreControl(state: FlowState, control: FlowAtom, detach: boolean): void {
+    const lifecycle = state.mockControls.get(control);
+    if (!lifecycle) return;
+    for (const receiver of lifecycle.receivers) {
+      if (receiver !== NATIVE_PROMISE_ATOM) continue;
+      this.restorePromiseImplementation(
+        state,
+        receiver,
+        lifecycle.member,
+        lifecycle.originals.get(receiver) ?? this.values(UNKNOWN_ATOM),
+      );
+    }
+    if (detach) lifecycle.attached = false;
+  }
+
+  private assignSelected(
+    state: FlowState,
+    target: ts.Expression,
+    selected: Set<FlowAtom>,
+    initializer: ts.Expression | undefined,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    if (!initializer || (!selected.has(UNDEFINED_ATOM) && !selected.has(UNKNOWN_ATOM))) {
+      return this.assignTarget(state, target, selected, active);
+    }
+    const alternatives = this.evaluateExpression(
+      initializer,
+      this.cloneState(state),
+      new Set(active),
+    ).flatMap((evaluated) => this.assignTarget(evaluated.state, target, evaluated.value, active));
+    const present = new Set([...selected].filter((atom) => atom !== UNDEFINED_ATOM));
+    if (present.size) alternatives.push(...this.assignTarget(this.cloneState(state), target, present, active));
+    return alternatives;
+  }
+
+  private assignTarget(
+    state: FlowState,
+    target: ts.Expression,
+    value: FlowValue,
+    active: ReadonlySet<ts.FunctionLikeDeclaration> = new Set(),
+  ): FlowState[] {
     const expression = unwrapExpression(target);
     if (ts.isIdentifier(expression)) {
       this.setCell(state, expression, value);
-      return;
+      return [state];
     }
     if (ts.isPropertyAccessExpression(expression)) {
-      const receiver = this.evaluateExpression(expression.expression, this.cloneState(state))[0];
-      if (receiver) {
-        state.cells = receiver.state.cells;
-        state.members = receiver.state.members;
-        state.dirty = receiver.state.dirty;
-        this.setMember(state, receiver.value, expression.name.text, value);
-      }
-      return;
+      return this.evaluateExpression(expression.expression, state, new Set(active)).map((receiver) => {
+        this.replaceMember(receiver.state, receiver.value, expression.name.text, value);
+        return receiver.state;
+      });
     }
     if (ts.isElementAccessExpression(expression)) {
-      const receiver = this.evaluateExpression(expression.expression, this.cloneState(state))[0];
-      if (receiver) {
-        state.cells = receiver.state.cells;
-        state.members = receiver.state.members;
-        state.dirty = receiver.state.dirty;
-        this.setMember(state, receiver.value, this.staticKey(expression.argumentExpression, true), value);
-      }
-      return;
+      return this.evaluateExpression(expression.expression, state, new Set(active)).flatMap((receiver) =>
+        expression.argumentExpression
+          ? this.evaluateExpression(expression.argumentExpression, receiver.state, new Set(active)).map((argument) => {
+              this.replaceMember(
+                argument.state,
+                receiver.value,
+                this.memberKey(expression.argumentExpression, argument.state, argument.value),
+                value,
+              );
+              return argument.state;
+            })
+          : [receiver.state]
+      );
     }
     if (ts.isArrayLiteralExpression(expression)) {
-      for (const element of expression.elements) {
+      let states = [state];
+      for (let index = 0; index < expression.elements.length; index += 1) {
+        const element = expression.elements[index]!;
         if (ts.isOmittedExpression(element)) continue;
-        const item = ts.isSpreadElement(element) ? element.expression : element;
-        if (ts.isBinaryExpression(item) && item.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-          const fallback = this.evaluateExpression(item.right, this.cloneState(state))[0]?.value ?? this.values(UNKNOWN_ATOM);
-          this.assignTarget(state, item.left, fallback);
-        } else {
-          this.assignTarget(state, item, this.values(UNKNOWN_ATOM));
-        }
+        states = states.flatMap((current) => {
+          if (ts.isSpreadElement(element)) {
+            return this.assignTarget(current, element.expression, this.values(UNKNOWN_ATOM), active);
+          }
+          const assignment = ts.isBinaryExpression(element) &&
+            element.operatorToken.kind === ts.SyntaxKind.EqualsToken
+            ? element
+            : undefined;
+          const selected = this.arrayElementValue(current, value, index, element);
+          return this.assignSelected(
+            current,
+            assignment?.left ?? element,
+            selected,
+            assignment?.right,
+            active,
+          );
+        });
       }
-      return;
+      return states;
     }
     if (ts.isObjectLiteralExpression(expression)) {
+      let states = [state];
       for (const property of expression.properties) {
-        if (ts.isShorthandPropertyAssignment(property)) this.setCell(state, property.name, this.values(UNKNOWN_ATOM));
-        else if (ts.isPropertyAssignment(property)) this.assignTarget(state, property.initializer, this.values(UNKNOWN_ATOM));
-        else if (ts.isSpreadAssignment(property)) this.assignTarget(state, property.expression, this.values(UNKNOWN_ATOM));
+        states = states.flatMap((current) => {
+          if (ts.isShorthandPropertyAssignment(property)) {
+            const selected = this.memberValue(current, value, property.name.text, property);
+            return this.assignSelected(
+              current,
+              property.name,
+              selected,
+              property.objectAssignmentInitializer,
+              active,
+            );
+          }
+          if (ts.isPropertyAssignment(property)) {
+            const key = this.staticKey(property.name);
+            const selected = key === undefined
+              ? this.values(UNKNOWN_ATOM)
+              : this.propertyFromValue(current, value, key);
+            const assignment = ts.isBinaryExpression(property.initializer) &&
+              property.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ? property.initializer
+              : undefined;
+            return this.assignSelected(
+              current,
+              assignment?.left ?? property.initializer,
+              selected,
+              assignment?.right,
+              active,
+            );
+          }
+          if (ts.isSpreadAssignment(property)) {
+            return this.assignTarget(current, property.expression, this.values(UNKNOWN_ATOM), active);
+          }
+          this.markUnsupported(current, "unsupported assignment property");
+          return [current];
+        });
       }
+      return states;
     }
+    this.markUnsupported(state, "unsupported assignment target");
+    return [state];
   }
 
   private seedImports(): FlowState {
@@ -617,7 +814,9 @@ class LocalFlowEngine {
     for (const receiver of receivers) {
       const members = state.members.get(receiver);
       if (receiver === NATIVE_PROMISE_ATOM) {
-        if (member === "all" && this.onceImplementationKeys(members, member).length) {
+        if (member === "reject") value.add(NATIVE_PROMISE_REJECT_ATOM);
+        else if (member === "resolve") value.add(NATIVE_PROMISE_RESOLVE_ATOM);
+        else if (member === "all" && this.onceImplementationKeys(members, member).length) {
           const call = this.atom("promise-member", node);
           this.memberTargets.set(call, { receiver: this.values(receiver), member });
           value.add(call);
@@ -637,7 +836,19 @@ class LocalFlowEngine {
         continue;
       }
       if (receiver === "framework:vi" || receiver === "framework:vitest" || receiver === "framework:jest") {
-        if (member && ["mock", "doMock", "mocked", "spyOn", "replaceProperty"].includes(member)) {
+        if (
+          member &&
+          [
+            "mock",
+            "doMock",
+            "mocked",
+            "spyOn",
+            "replaceProperty",
+            "restoreAllMocks",
+            "resetAllMocks",
+            "clearAllMocks",
+          ].includes(member)
+        ) {
           value.add(`framework:${member}`);
         }
         else value.add(UNKNOWN_ATOM);
@@ -727,7 +938,7 @@ class LocalFlowEngine {
         member &&
         (/^(?:mock|withImplementation)/.test(member) || member === "restore")
       ) {
-        const configure = this.atom("configure", node);
+        const configure = `${this.atom("configure", node)}:method:${member}`;
         this.controlTargets.set(configure, new Set(this.controlTargets.get(receiver) ?? [UNKNOWN_ATOM]));
         this.controlOwners.set(configure, this.values(receiver));
         this.controlMethods.set(configure, member);
@@ -756,6 +967,8 @@ class LocalFlowEngine {
       atom === SUPABASE_FACTORY_ATOM ||
       atom === POSTGRES_FACTORY_ATOM ||
       atom === WITNESS_ATOM ||
+      atom === NATIVE_PROMISE_REJECT_ATOM ||
+      atom === NATIVE_PROMISE_RESOLVE_ATOM ||
       atom.startsWith("function:") ||
       atom.startsWith("bound:") ||
       atom.startsWith("call:") ||
@@ -777,6 +990,7 @@ class LocalFlowEngine {
     const expression = unwrapExpression(input);
     if (ts.isAwaitExpression(expression)) {
       return this.evaluateExpression(expression.expression, state, active, true).map((evaluated) => {
+        if (evaluated.value.has(REJECTED_PROMISE_ATOM)) evaluated.state.outcome = "throw";
         if (evaluated.value.has(UNKNOWN_ATOM)) this.recordMayThrow(evaluated.state);
         return evaluated;
       });
@@ -801,7 +1015,7 @@ class LocalFlowEngine {
       expression.kind === ts.SyntaxKind.FalseKeyword ||
       expression.kind === ts.SyntaxKind.NullKeyword
     ) {
-      return [{ state, value: this.values(this.atom("literal", expression)) }];
+      return [{ state, value: this.values(this.literalAtom(expression)) }];
     }
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
       const atom = this.functionAtom(expression, state);
@@ -820,10 +1034,21 @@ class LocalFlowEngine {
     if (ts.isElementAccessExpression(expression)) {
       return this.evaluateExpression(expression.expression, state, active).flatMap((base) =>
         expression.argumentExpression
-          ? this.evaluateExpression(expression.argumentExpression, base.state, active).map((argument) => ({
-              state: argument.state,
-              value: this.memberValue(argument.state, base.value, this.staticKey(expression.argumentExpression, true), expression),
-            }))
+          ? this.evaluateExpression(expression.argumentExpression, base.state, active).map((argument) => {
+              const member = this.memberKey(expression.argumentExpression, argument.state, argument.value);
+              if (
+                member === undefined &&
+                [...base.value].some((receiver) =>
+                  receiver === NATIVE_PROMISE_ATOM || argument.state.mockControls.has(receiver)
+                )
+              ) {
+                this.markUnsupported(argument.state, "unresolved mock member alias");
+              }
+              return {
+                state: argument.state,
+                value: this.memberValue(argument.state, base.value, member, expression),
+              };
+            })
           : [{
               state: base.state,
               value: this.memberValue(base.state, base.value, undefined, expression),
@@ -836,10 +1061,21 @@ class LocalFlowEngine {
       return conditions.flatMap((after) => {
         if (condition === true) return this.evaluateExpression(expression.whenTrue, after.state, active, awaited);
         if (condition === false) return this.evaluateExpression(expression.whenFalse, after.state, active, awaited);
-        return [
+        const branches = [
           ...this.evaluateExpression(expression.whenTrue, this.cloneState(after.state), active, awaited),
           ...this.evaluateExpression(expression.whenFalse, this.cloneState(after.state), active, awaited),
         ];
+        const keys = new Set(
+          branches.flatMap((branch) => [...branch.value].map((atom) => this.literalValues.get(atom))),
+        );
+        if (keys.size !== 1 || keys.has(undefined)) {
+          for (const branch of branches) {
+            for (const atom of branch.value) {
+              if (this.literalValues.has(atom)) this.ambiguousLiteralAtoms.add(atom);
+            }
+          }
+        }
+        return branches;
       });
     }
     if (ts.isBinaryExpression(expression)) return this.evaluateBinary(expression, state, active, awaited);
@@ -877,10 +1113,11 @@ class LocalFlowEngine {
         (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
         ts.isExpression(expression.operand)
       ) {
-        return this.evaluateExpression(expression.operand, state, active).map((operand) => {
-          this.assignTarget(operand.state, expression.operand, this.values(UNKNOWN_ATOM));
-          return { state: operand.state, value: this.values(UNKNOWN_ATOM) };
-        });
+        return this.evaluateExpression(expression.operand, state, active).flatMap((operand) =>
+          this.assignTarget(operand.state, expression.operand, this.values(UNKNOWN_ATOM), active).map(
+            (assigned) => ({ state: assigned, value: this.values(UNKNOWN_ATOM) }),
+          )
+        );
       }
       return this.evaluateExpression(expression.operand, state, active).map((operand) => ({
         state: operand.state,
@@ -888,7 +1125,7 @@ class LocalFlowEngine {
       }));
     }
     if (ts.isTemplateExpression(expression)) {
-      let evaluations: FlowEvaluation[] = [{ state, value: this.values(this.atom("literal", expression)) }];
+      let evaluations: FlowEvaluation[] = [{ state, value: this.values(this.literalAtom(expression)) }];
       for (const span of expression.templateSpans) {
         evaluations = evaluations.flatMap((current) =>
           this.evaluateExpression(span.expression, current.state, active).map((evaluated) => ({
@@ -900,7 +1137,7 @@ class LocalFlowEngine {
       return evaluations;
     }
     if (ts.isNoSubstitutionTemplateLiteral(expression)) {
-      return [{ state, value: this.values(this.atom("literal", expression)) }];
+      return [{ state, value: this.values(this.literalAtom(expression)) }];
     }
     this.markUnsupported(state, `unsupported expression ${ts.SyntaxKind[expression.kind]}`);
     return [{ state, value: this.values(UNKNOWN_ATOM) }];
@@ -925,20 +1162,21 @@ class LocalFlowEngine {
         operator === ts.SyntaxKind.QuestionQuestionEqualsToken
       ) {
         const unchanged = this.cloneState(state);
-        const assigned = this.evaluateExpression(expression.right, this.cloneState(state), new Set(active)).map((right) => {
-          this.assignTarget(right.state, expression.left, right.value);
-          return { state: right.state, value: right.value };
-        });
+        const assigned = this.evaluateExpression(expression.right, this.cloneState(state), new Set(active)).flatMap(
+          (right) => this.assignTarget(right.state, expression.left, right.value, active).map(
+            (assignedState) => ({ state: assignedState, value: right.value }),
+          ),
+        );
         return [{ state: unchanged, value: this.values(UNKNOWN_ATOM) }, ...assigned];
       }
-      return this.evaluateExpression(expression.right, state, new Set(active)).map((right) => {
+      return this.evaluateExpression(expression.right, state, new Set(active)).flatMap((right) =>
         this.assignTarget(
           right.state,
           expression.left,
           operator === ts.SyntaxKind.EqualsToken ? right.value : this.values(UNKNOWN_ATOM),
-        );
-        return { state: right.state, value: right.value };
-      });
+          active,
+        ).map((assignedState) => ({ state: assignedState, value: right.value }))
+      );
     }
     if (
       operator === ts.SyntaxKind.AmpersandAmpersandToken ||
@@ -1296,6 +1534,14 @@ class LocalFlowEngine {
     const results: FlowEvaluation[] = [];
     for (const callee of callees) {
       const branch = this.cloneState(state);
+      if (callee === NATIVE_PROMISE_REJECT_ATOM) {
+        results.push({ state: branch, value: this.values(REJECTED_PROMISE_ATOM) });
+        continue;
+      }
+      if (callee === NATIVE_PROMISE_RESOLVE_ATOM) {
+        results.push({ state: branch, value: new Set(args[0] ?? [UNDEFINED_ATOM]) });
+        continue;
+      }
       if (callee.startsWith("promise-member:")) {
         const target = this.memberTargets.get(callee);
         const member = target?.member;
@@ -1367,21 +1613,49 @@ class LocalFlowEngine {
         results.push({ state: branch, value: this.values(UNDEFINED_ATOM) });
         continue;
       }
+      if (
+        callee === "framework:restoreAllMocks" ||
+        callee === "framework:resetAllMocks" ||
+        callee === "framework:clearAllMocks"
+      ) {
+        if (callee !== "framework:clearAllMocks") {
+          for (const [control, lifecycle] of branch.mockControls) {
+            if (lifecycle.kind !== "spy") continue;
+            if (callee === "framework:restoreAllMocks") this.restoreControl(branch, control, true);
+            else if (lifecycle.attached) this.restoreControl(branch, control, false);
+          }
+        }
+        results.push({ state: branch, value: this.values(UNDEFINED_ATOM) });
+        continue;
+      }
       if (callee === "framework:spyOn" || callee === "framework:replaceProperty") {
         const target = new Set(args[0] ?? [UNKNOWN_ATOM]);
-        const member = this.staticKey(call.arguments[1], true);
+        const member = this.memberKey(call.arguments[1], branch, args[1]);
         for (const atom of target) {
           if (atom.startsWith("client:supabase:") || atom.startsWith("client:postgres:")) branch.dirty.add(atom);
+        }
+        const originals = new Map<FlowAtom, Set<FlowAtom>>();
+        for (const receiver of target) {
+          if (receiver === NATIVE_PROMISE_ATOM) {
+            originals.set(receiver, this.promiseImplementation(branch, receiver, member));
+          }
         }
         if (callee === "framework:replaceProperty") {
           const nativePromise = new Set([...target].filter((atom) => atom === NATIVE_PROMISE_ATOM));
           if (nativePromise.size) {
-            this.setMember(branch, nativePromise, member, args[2] ?? this.values(UNKNOWN_ATOM));
+            this.replaceMember(branch, nativePromise, member, args[2] ?? this.values(UNKNOWN_ATOM));
           }
         }
         const control = this.atom("control", call);
         this.controlTargets.set(control, target);
         this.memberTargets.set(control, { receiver: target, member });
+        branch.mockControls.set(control, {
+          attached: true,
+          kind: callee === "framework:spyOn" ? "spy" : "replace",
+          member,
+          originals,
+          receivers: new Set(target),
+        });
         results.push({ state: branch, value: this.values(control) });
         continue;
       }
@@ -1389,54 +1663,88 @@ class LocalFlowEngine {
       if (callee.startsWith("configure:")) {
         const method = this.controlMethods.get(callee);
         const owners = this.controlOwners.get(callee) ?? this.values(UNKNOWN_ATOM);
-        if (method === "withImplementation" && memberTarget?.member) {
-          const nativeTargets = [...memberTarget.receiver].filter((target) => target === NATIVE_PROMISE_ATOM);
-          if (nativeTargets.length) {
-            const callback = args[1] ?? this.values(UNKNOWN_ATOM);
-            for (const target of nativeTargets) {
-              const members = branch.members.get(target) ?? new Map<string, Set<FlowAtom>>();
-              const memberKey = memberTarget.member;
-              const previous = members.get(memberKey) ? new Set(members.get(memberKey)!) : undefined;
-              const previousOnce = new Map(
-                this.onceImplementationKeys(members, memberKey).map((key) => [key, new Set(members.get(key)!)]),
-              );
-              members.set(memberKey, new Set(args[0] ?? [UNKNOWN_ATOM]));
-              for (const key of previousOnce.keys()) members.delete(key);
-              branch.members.set(target, members);
-              const callbacks = this.invokeAtoms(callback, [], branch, call, active, false, false);
-              for (const evaluated of callbacks) {
-                const restored = evaluated.state.members.get(target) ?? new Map<string, Set<FlowAtom>>();
-                if (previous) restored.set(memberKey, new Set(previous));
-                else restored.delete(memberKey);
-                for (const key of this.onceImplementationKeys(restored, memberKey)) restored.delete(key);
-                for (const [key, value] of previousOnce) restored.set(key, new Set(value));
-                evaluated.state.members.set(target, restored);
-                results.push({ state: evaluated.state, value: new Set(owners) });
+        if (method === "withImplementation") {
+          const callback = args[1] ?? this.values(UNKNOWN_ATOM);
+          for (const owner of owners) {
+            const lifecycle = branch.mockControls.get(owner);
+            const snapshots = new Map<FlowAtom, {
+              implementation: Set<FlowAtom>;
+              once: Map<string, Set<FlowAtom>>;
+            }>();
+            if (lifecycle?.attached) {
+              for (const target of lifecycle.receivers) {
+                if (target !== NATIVE_PROMISE_ATOM) continue;
+                const member = lifecycle.member ?? "@unknown";
+                const members = branch.members.get(target) ?? new Map<string, Set<FlowAtom>>();
+                snapshots.set(target, {
+                  implementation: this.promiseImplementation(branch, target, lifecycle.member),
+                  once: new Map(
+                    this.onceImplementationKeys(members, member).map((key) => [key, new Set(members.get(key)!)]),
+                  ),
+                });
+                members.set(member, new Set(args[0] ?? [UNKNOWN_ATOM]));
+                for (const key of this.onceImplementationKeys(members, member)) members.delete(key);
+                branch.members.set(target, members);
               }
             }
+            for (const evaluated of this.invokeAtoms(callback, [], branch, call, active, false, false)) {
+              const rejected = evaluated.state.outcome === "throw" || evaluated.value.has(REJECTED_PROMISE_ATOM);
+              if (!rejected) {
+                for (const [target, snapshot] of snapshots) {
+                  this.restorePromiseImplementation(
+                    evaluated.state,
+                    target,
+                    lifecycle?.member,
+                    snapshot.implementation,
+                  );
+                  const members = evaluated.state.members.get(target)!;
+                  for (const [key, value] of snapshot.once) members.set(key, new Set(value));
+                }
+              }
+              results.push({
+                state: evaluated.state,
+                value: rejected && evaluated.value.has(REJECTED_PROMISE_ATOM)
+                  ? this.values(REJECTED_PROMISE_ATOM)
+                  : this.values(owner),
+              });
+            }
+          }
+          continue;
+        }
+        for (const owner of owners) {
+          const lifecycle = branch.mockControls.get(owner);
+          if (!lifecycle) {
+            for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) branch.dirty.add(target);
             continue;
           }
-        }
-        for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) {
-          if (target === NATIVE_PROMISE_ATOM) {
-            const member = memberTarget?.member;
+          if (method === "mockRestore" || method === "restore") {
+            this.restoreControl(branch, owner, true);
+            continue;
+          }
+          if (method === "mockReset") {
+            if (lifecycle.attached) this.restoreControl(branch, owner, false);
+            continue;
+          }
+          if (!lifecycle.attached || method === "mockClear") continue;
+          for (const target of lifecycle.receivers) {
+            if (target !== NATIVE_PROMISE_ATOM) {
+              branch.dirty.add(target);
+              continue;
+            }
+            const member = lifecycle.member ?? "@unknown";
             const members = branch.members.get(target) ?? new Map<string, Set<FlowAtom>>();
-            const memberKey = member ?? "@unknown";
             if (method === "mockImplementationOnce") {
-              const queued = this.onceImplementationKeys(members, memberKey);
+              const queued = this.onceImplementationKeys(members, member);
               const lastKey = queued.at(-1);
               const nextIndex = lastKey === undefined
                 ? 0
-                : Number(lastKey.slice(`@once:${memberKey}:`.length)) + 1;
-              members.set(`@once:${memberKey}:${nextIndex}`, new Set(args[0] ?? [UNKNOWN_ATOM]));
-            } else if (method === "mockRestore" || method === "mockReset" || method === "restore") {
-              members.delete(memberKey);
-              for (const key of this.onceImplementationKeys(members, memberKey)) members.delete(key);
-            } else if (method !== "mockClear") {
-              members.set(memberKey, new Set(args[0] ?? [UNKNOWN_ATOM]));
+                : Number(lastKey.slice(`@once:${member}:`.length)) + 1;
+              members.set(`@once:${member}:${nextIndex}`, new Set(args[0] ?? [UNKNOWN_ATOM]));
+            } else {
+              members.set(member, new Set(args[0] ?? [UNKNOWN_ATOM]));
             }
             branch.members.set(target, members);
-          } else branch.dirty.add(target);
+          }
         }
         results.push({ state: branch, value: new Set(owners) });
         continue;
@@ -2062,15 +2370,19 @@ class LocalFlowEngine {
           for (const sourceAtom of source) {
             const sourceMembers = state.members.get(sourceAtom);
             if (!sourceMembers) {
-              if (target.startsWith("client:supabase:") || target.startsWith("client:postgres:")) state.dirty.add(target);
+              if (target === NATIVE_PROMISE_ATOM) {
+                this.replaceMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
+              } else if (target.startsWith("client:supabase:") || target.startsWith("client:postgres:")) {
+                state.dirty.add(target);
+              }
               continue;
             }
             for (const [name, value] of sourceMembers) {
               if (name.startsWith("@")) continue;
-              this.setMember(state, this.values(target), name, value);
+              this.replaceMember(state, this.values(target), name, value);
             }
             if (sourceMembers.has("@all") || sourceMembers.has("@unknown")) {
-              this.setMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
+              this.replaceMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
             }
           }
         }
@@ -2083,10 +2395,12 @@ class LocalFlowEngine {
       for (const target of targets) {
         for (const descriptor of descriptors) {
           const members = state.members.get(descriptor);
-          if (!members) this.setMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
+          if (!members) this.replaceMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
           else {
             for (const name of members.keys()) {
-              if (!name.startsWith("@")) this.setMember(state, this.values(target), name, this.values(UNKNOWN_ATOM));
+              if (!name.startsWith("@")) {
+                this.replaceMember(state, this.values(target), name, this.values(UNKNOWN_ATOM));
+              }
             }
           }
         }
@@ -2097,8 +2411,13 @@ class LocalFlowEngine {
       (owner === "Object" && method === "defineProperty") ||
       (owner === "Reflect" && ["defineProperty", "set"].includes(method))
     ) {
-      const key = this.literalText(call.arguments[1]);
-      this.setMember(state, args[0] ?? this.values(UNKNOWN_ATOM), key, this.values(UNKNOWN_ATOM));
+      const key = this.memberKey(call.arguments[1], state, args[1]);
+      this.replaceMember(
+        state,
+        args[0] ?? this.values(UNKNOWN_ATOM),
+        key,
+        owner === "Reflect" && method === "set" ? args[2] ?? this.values(UNKNOWN_ATOM) : this.values(UNKNOWN_ATOM),
+      );
       return true;
     }
     return false;
@@ -2820,8 +3139,7 @@ class LocalFlowEngine {
       }
       return states;
     }
-    this.assignTarget(state, statement.initializer, value);
-    return [state];
+    return this.assignTarget(state, statement.initializer, value, active);
   }
 
   private runArrayForEach(
@@ -2916,7 +3234,6 @@ class LocalFlowEngine {
     let states = tryStates.filter((candidate) => candidate.outcome !== "throw");
     if (statement.catchClause) {
       const caught = [
-        this.cloneState(state),
         ...localSnapshots,
         ...tryStates.filter((candidate) => candidate.outcome === "throw"),
       ];
@@ -3127,6 +3444,24 @@ class LocalFlowEngine {
       }
       return { ...binding, arrayOffset: undefined, path: [...(binding.path ?? []), selectedKey] };
     };
+    const bindingAvailability = (binding: Binding): "missing" | "present" | "unknown" => {
+      if (!binding) return "missing";
+      if (binding.unsupported || binding.path?.length || binding.arrayOffset !== undefined) return "unknown";
+      const source = unwrapExpression(binding.source);
+      if (ts.isIdentifier(source) && source.text === "undefined") return "missing";
+      if (
+        ts.isLiteralExpression(source) ||
+        ts.isArrowFunction(source) ||
+        ts.isFunctionExpression(source) ||
+        ts.isClassExpression(source) ||
+        ts.isObjectLiteralExpression(source) ||
+        ts.isArrayLiteralExpression(source) ||
+        source.kind === ts.SyntaxKind.TrueKeyword ||
+        source.kind === ts.SyntaxKind.FalseKeyword ||
+        source.kind === ts.SyntaxKind.NullKeyword
+      ) return "present";
+      return "unknown";
+    };
     const containsTarget = (node: ts.Node): boolean => {
       let found = false;
       const visit = (candidate: ts.Node): void => {
@@ -3161,9 +3496,9 @@ class LocalFlowEngine {
           const choice = key === undefined ? (value ? { ...value, unsupported: true } : undefined) : selected(value, key);
           const bound = bindName(element.name, choice, candidate);
           if (!element.initializer) return bound;
-          const definitelyMissing = choice === undefined;
           const fallback = bindName(element.name, { source: element.initializer }, candidate);
-          return definitelyMissing ? fallback : [...bound, ...fallback];
+          const availability = bindingAvailability(choice);
+          return availability === "missing" ? fallback : availability === "present" ? bound : [...bound, ...fallback];
         });
       });
       return uniqueStates(states);
@@ -3184,7 +3519,8 @@ class LocalFlowEngine {
             if (ts.isBinaryExpression(item) && item.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
               const direct = bindTarget(item.left, choice, candidate);
               const fallback = bindTarget(item.left, { source: item.right }, candidate);
-              return choice === undefined ? fallback : [...direct, ...fallback];
+              const availability = bindingAvailability(choice);
+              return availability === "missing" ? fallback : availability === "present" ? direct : [...direct, ...fallback];
             }
             return bindTarget(item, choice, candidate);
           });
@@ -3206,6 +3542,15 @@ class LocalFlowEngine {
             if (ts.isPropertyAssignment(property)) {
               const key = propertyName(property.name, "");
               const choice = key === undefined ? (value ? { ...value, unsupported: true } : undefined) : selected(value, key);
+              if (
+                ts.isBinaryExpression(property.initializer) &&
+                property.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ) {
+                const direct = bindTarget(property.initializer.left, choice, candidate);
+                const fallback = bindTarget(property.initializer.left, { source: property.initializer.right }, candidate);
+                const availability = bindingAvailability(choice);
+                return availability === "missing" ? fallback : availability === "present" ? direct : [...direct, ...fallback];
+              }
               return bindTarget(property.initializer, choice, candidate);
             }
             return containsTarget(property) && value

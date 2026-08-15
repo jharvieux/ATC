@@ -1067,6 +1067,199 @@ regress(
   supabaseLoader("vi.spyOn(Promise, 'a' + 'll').mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
 );
 regress(
+  "effects:promise-all-mutable-member",
+  "spyOn resolves reassigned let-bound member",
+  "unsafe",
+  supabaseLoader("let member = 'race'; member = 'all'; vi.spyOn(Promise, member).mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "spyOn reassigned let-bound member no-op inverse",
+  "safe",
+  supabaseLoader("let member = 'race'; member = 'all'; vi.spyOn(Promise, member).mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "replaceProperty resolves reassigned let-bound member",
+  "unsafe",
+  supabaseLoader("let member = 'race'; member = 'all'; vi.replaceProperty(Promise, member, async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "replaceProperty reassigned let-bound member no-op inverse",
+  "safe",
+  supabaseLoader("let member = 'race'; member = 'all'; vi.replaceProperty(Promise, member, async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "assignment resolves reassigned let-bound member",
+  "unsafe",
+  supabaseLoader("let member = 'race'; member = 'all'; Promise[member] = async () => [() => { loader = fake; }] as never; const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "assignment reassigned let-bound member no-op inverse",
+  "safe",
+  supabaseLoader("let member = 'race'; member = 'all'; Promise[member] = async () => [() => {}] as never; const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-computed-configure",
+  "definite let-bound configuration method applies",
+  "unsafe",
+  supabaseLoader("let configure = 'mockReset'; configure = 'mockImplementation'; const spy = vi.spyOn(Promise, 'all'); spy[configure](async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-computed-configure",
+  "definite let-bound configuration method no-op inverse",
+  "safe",
+  supabaseLoader("let configure = 'mockReset'; configure = 'mockImplementation'; const spy = vi.spyOn(Promise, 'all'); spy[configure](async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-computed-configure",
+  "unresolved configuration method fails closed",
+  "unsafe",
+  supabaseLoader("const configure = process.env.MOCK_METHOD; const spy = vi.spyOn(Promise, 'all'); spy[configure](async () => [() => {}] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-mutable-member",
+  "multi-valued conditional member fails closed",
+  "unsafe",
+  supabaseLoader("const member = unknownCondition ? 'all' : 'race'; vi.spyOn(Promise, member).mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+
+regress(
+  "effects:array-assignment-default",
+  "missing element retains mutating callback identity",
+  "unsafe",
+  supabaseLoader("let action; [action = () => { loader = fake; }] = []; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "missing element retains no-op callback identity",
+  "safe",
+  supabaseLoader("let action; [action = () => {}] = []; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "present element suppresses mutating default",
+  "safe",
+  supabaseLoader("let action; [action = () => { loader = fake; }] = [() => {}]; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "omitted offset selects missing second element",
+  "unsafe",
+  supabaseLoader("let action; [, action = () => { loader = fake; }] = [() => {}]; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "omitted offset preserves present second element",
+  "safe",
+  supabaseLoader("let action; [, action = () => { loader = fake; }] = [() => {}, () => {}]; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "conditional default retains mutating alternative",
+  "unsafe",
+  supabaseLoader("let action; [action = (unknownCondition ? () => { loader = fake; } : () => {})] = []; action();"),
+);
+regress(
+  "effects:array-assignment-default",
+  "conditional default with only no-op alternatives",
+  "safe",
+  supabaseLoader("let action; [action = (unknownCondition ? () => {} : () => {})] = []; action();"),
+);
+regress(
+  "effects:array-assignment-alternatives",
+  "conditional source retains mutating identity",
+  "unsafe",
+  supabaseLoader("let action; [action] = unknownCondition ? [() => { loader = fake; }] : [() => {}]; action();"),
+);
+regress(
+  "effects:array-assignment-alternatives",
+  "conditional source retains only no-op identities",
+  "safe",
+  supabaseLoader("let action; [action] = unknownCondition ? [() => {}] : [() => {}]; action();"),
+);
+regress(
+  "effects:array-assignment-default-effects",
+  "missing element executes mutating default",
+  "unsafe",
+  supabaseLoader("let value; [value = (loader = fake)] = []; void value;"),
+);
+regress(
+  "effects:array-assignment-default-effects",
+  "present element suppresses mutating default effect",
+  "safe",
+  supabaseLoader("let value; [value = (loader = fake)] = [loader]; void value;"),
+);
+regress(
+  "effects:object-assignment-default",
+  "missing property retains mutating callback identity",
+  "unsafe",
+  supabaseLoader("let action; ({ action = () => { loader = fake; } } = {}); action();"),
+);
+regress(
+  "effects:object-assignment-default",
+  "missing property retains no-op callback identity",
+  "safe",
+  supabaseLoader("let action; ({ action = () => {} } = {}); action();"),
+);
+regress(
+  "effects:object-assignment-default",
+  "present property suppresses mutating default",
+  "safe",
+  supabaseLoader("let action; ({ action = () => { loader = fake; } } = { action: () => {} }); action();"),
+);
+regress(
+  "effects:object-assignment-default",
+  "renamed property retains mutating default identity",
+  "unsafe",
+  supabaseLoader("let action; ({ run: action = () => { loader = fake; } } = {}); action();"),
+);
+regress(
+  "effects:object-assignment-default",
+  "renamed present property suppresses mutating default",
+  "safe",
+  supabaseLoader("let action; ({ run: action = () => { loader = fake; } } = { run: () => {} }); action();"),
+);
+regress(
+  "effects:object-assignment-rename",
+  "renamed property retains mutating callback identity",
+  "unsafe",
+  supabaseLoader("let action; ({ run: action } = { run: () => { loader = fake; } }); action();"),
+);
+regress(
+  "effects:object-assignment-rename",
+  "renamed property retains no-op callback identity",
+  "safe",
+  supabaseLoader("let action; ({ run: action } = { run: () => {} }); action();"),
+);
+regress(
+  "effects:object-assignment-alternatives",
+  "conditional source retains mutating identity",
+  "unsafe",
+  supabaseLoader("let action; ({ action } = unknownCondition ? { action: () => { loader = fake; } } : { action: () => {} }); action();"),
+);
+regress(
+  "effects:object-assignment-alternatives",
+  "conditional source retains only no-op identities",
+  "safe",
+  supabaseLoader("let action; ({ action } = unknownCondition ? { action: () => {} } : { action: () => {} }); action();"),
+);
+regress(
+  "effects:object-assignment-default-effects",
+  "missing property executes mutating default",
+  "unsafe",
+  supabaseLoader("let value; ({ value = (loader = fake) } = {}); void value;"),
+);
+regress(
+  "effects:object-assignment-default-effects",
+  "present property suppresses mutating default effect",
+  "safe",
+  supabaseLoader("let value; ({ value = (loader = fake) } = { value: loader }); void value;"),
+);
+regress(
   "effects:promise-all-with-implementation",
   "temporary implementation applies inside callback",
   "unsafe",
@@ -1089,6 +1282,42 @@ regress(
   "restored native implementation observes later mutator",
   "unsafe",
   supabaseLoader("const spy = vi.spyOn(Promise, 'all'); await spy.withImplementation(async () => [() => {}] as never, async () => {}); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "sync throw leaves temporary mutating implementation installed",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); try { spy.withImplementation(async () => [() => { loader = fake; }] as never, () => { throw 1; }); } catch {} const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "sync throw leaves temporary no-op implementation installed",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); try { spy.withImplementation(async () => [() => {}] as never, () => { throw 1; }); } catch {} const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "rejection leaves temporary mutating implementation installed",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); try { await spy.withImplementation(async () => [() => { loader = fake; }] as never, () => Promise.reject()); } catch {} const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "rejection leaves temporary no-op implementation installed",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); try { await spy.withImplementation(async () => [() => {}] as never, () => Promise.reject()); } catch {} const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "fulfilled thenable restores native implementation",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); await spy.withImplementation(async () => [() => {}] as never, () => Promise.resolve()); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-with-implementation-lifecycle",
+  "fulfilled thenable restores native safe input",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); await spy.withImplementation(async () => [() => { loader = fake; }] as never, () => Promise.resolve()); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
 );
 regress(
   "effects:promise-all-once",
@@ -1173,6 +1402,126 @@ regress(
   "replaceProperty restore returns to native mutating input",
   "unsafe",
   supabaseLoader("const replaced = vi.replaceProperty(Promise, 'all', async () => [() => {}] as never); replaced.restore(); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-control-ownership",
+  "mockRestore detaches control from later configuration",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockRestore(); spy.mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-control-ownership",
+  "mockRestore detached control cannot hide native mutating input",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockRestore(); spy.mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-control-ownership",
+  "mockReset keeps control attached for later configuration",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockReset(); spy.mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-control-ownership",
+  "mockReset attached control accepts later no-op configuration",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockReset(); spy.mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "restoreAllMocks restores and detaches spy",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => { loader = fake; }] as never); vi.restoreAllMocks(); spy.mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "restoreAllMocks exposes native mutating input",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => {}] as never); vi.restoreAllMocks(); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "resetAllMocks keeps spy attached for later configuration",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => {}] as never); vi.resetAllMocks(); spy.mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "resetAllMocks attached spy accepts later no-op configuration",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => { loader = fake; }] as never); vi.resetAllMocks(); spy.mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "clearAllMocks preserves mutating implementation",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => { loader = fake; }] as never); vi.clearAllMocks(); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-global-lifecycle",
+  "clearAllMocks preserves no-op implementation",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => {}] as never); vi.clearAllMocks(); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-captured-provenance",
+  "mockRestore returns to prior direct mutating implementation",
+  "unsafe",
+  supabaseLoader("Promise.all = async () => [() => { loader = fake; }] as never; const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => {}] as never); spy.mockRestore(); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-captured-provenance",
+  "mockRestore returns to prior direct no-op implementation",
+  "safe",
+  supabaseLoader("Promise.all = async () => [() => {}] as never; const spy = vi.spyOn(Promise, 'all'); spy.mockImplementation(async () => [() => { loader = fake; }] as never); spy.mockRestore(); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-captured-provenance",
+  "replace restore returns to prior direct mutating implementation",
+  "unsafe",
+  supabaseLoader("Promise.all = async () => [() => { loader = fake; }] as never; const replaced = vi.replaceProperty(Promise, 'all', async () => [() => {}] as never); replaced.restore(); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-captured-provenance",
+  "replace restore returns to prior direct no-op implementation",
+  "safe",
+  supabaseLoader("Promise.all = async () => [() => {}] as never; const replaced = vi.replaceProperty(Promise, 'all', async () => [() => { loader = fake; }] as never); replaced.restore(); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-replacement",
+  "direct assignment clears queued mutating implementation",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => { loader = fake; }] as never); Promise.all = async () => [() => {}] as never; const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-replacement",
+  "direct assignment clears queue and installs mutating implementation",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => {}] as never); Promise.all = async () => [() => { loader = fake; }] as never; const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-replacement",
+  "replaceProperty clears queued mutating implementation",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => { loader = fake; }] as never); vi.replaceProperty(Promise, 'all', async () => [() => {}] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-replacement",
+  "replaceProperty clears queue and installs mutating implementation",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => {}] as never); vi.replaceProperty(Promise, 'all', async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-preservation",
+  "mockImplementation preserves queued mutating implementation",
+  "unsafe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => { loader = fake; }] as never); spy.mockImplementation(async () => [() => {}] as never); const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-once-preservation",
+  "mockImplementation preserves queued no-op implementation",
+  "safe",
+  supabaseLoader("const spy = vi.spyOn(Promise, 'all'); spy.mockImplementationOnce(async () => [() => {}] as never); spy.mockImplementation(async () => [() => { loader = fake; }] as never); const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
 );
 
 regress(
