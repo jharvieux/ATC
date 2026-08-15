@@ -214,6 +214,8 @@ interface FlowState {
   awaitedWitnessCount: number;
   witnessResources: Set<string>;
   generatorSteps: Map<FlowAtom, number>;
+  generatorArguments: Map<FlowAtom, Set<FlowAtom>[]>;
+  allocationSerial: number;
   unsupported: boolean;
 }
 
@@ -247,7 +249,6 @@ class LocalFlowEngine {
   private readonly classes = new Map<FlowAtom, ts.ClassLikeDeclaration>();
   private readonly classBases = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly generatorTargets = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
-  private readonly generatorArguments = new Map<FlowAtom, readonly FlowValue[]>();
   private readonly generatorInstances = new Map<FlowAtom, FlowAtom>();
   private readonly boundTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlTargets = new Map<FlowAtom, Set<FlowAtom>>();
@@ -301,6 +302,10 @@ class LocalFlowEngine {
       awaitedWitnessCount: state.awaitedWitnessCount,
       witnessResources: new Set(state.witnessResources),
       generatorSteps: new Map(state.generatorSteps),
+      generatorArguments: new Map(
+        [...state.generatorArguments].map(([generator, args]) => [generator, args.map((value) => new Set(value))]),
+      ),
+      allocationSerial: state.allocationSerial,
       unsupported: state.unsupported,
     };
   }
@@ -316,6 +321,8 @@ class LocalFlowEngine {
       awaitedWitnessCount: 0,
       witnessResources: new Set(),
       generatorSteps: new Map(),
+      generatorArguments: new Map(),
+      allocationSerial: 0,
       unsupported: false,
     };
   }
@@ -341,6 +348,10 @@ class LocalFlowEngine {
       left.awaitedWitnessCount === right.awaitedWitnessCount &&
       sameSet(left.witnessResources, right.witnessResources) &&
       sameMap(left.generatorSteps, right.generatorSteps, (a, b) => a === b) &&
+      sameMap(left.generatorArguments, right.generatorArguments, (a, b) =>
+        a.length === b.length && a.every((value, index) => sameSet(value, b[index] ?? new Set())),
+      ) &&
+      left.allocationSerial === right.allocationSerial &&
       left.unsupported === right.unsupported
     );
   }
@@ -1072,9 +1083,10 @@ class LocalFlowEngine {
       const fn = this.functions.get(callee);
       if (fn) {
         if (fn.asteriskToken && !construct) {
-          const generator = this.atom("generator", call);
+          const generator = `${this.atom("generator", call)}:instance:${branch.allocationSerial}`;
+          branch.allocationSerial += 1;
           this.generatorTargets.set(generator, fn);
-          this.generatorArguments.set(generator, args.map((value) => new Set(value)));
+          branch.generatorArguments.set(generator, args.map((value) => new Set(value)));
           branch.generatorSteps.set(generator, 0);
           results.push({ state: branch, value: this.values(generator) });
         } else if (active.has(fn)) {
@@ -1172,7 +1184,7 @@ class LocalFlowEngine {
     if (step >= segments.length) return [{ state, value: this.values(UNKNOWN_ATOM) }];
     const entered = this.cloneState(state);
     if (step === 0) {
-      const args = this.generatorArguments.get(generator) ?? [];
+      const args = entered.generatorArguments.get(generator) ?? [];
       fn.parameters.forEach((parameter, index) => {
         this.bindName(entered, parameter.name, args[index] ?? this.values(UNKNOWN_ATOM));
       });
@@ -1252,34 +1264,102 @@ class LocalFlowEngine {
     }
     const constructor = declaration.members.find(ts.isConstructorDeclaration);
     const bases = this.classBases.get(classAtom) ?? new Set<FlowAtom>();
-    const hasSuper = !!constructor?.body && constructor.body.statements.some((statement) => {
-      let found = false;
-      const visit = (node: ts.Node) => {
-        if (found || (node !== statement && ts.isFunctionLike(node))) return;
-        if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword) found = true;
-        else ts.forEachChild(node, visit);
-      };
-      visit(statement);
-      return found;
-    });
-    if (constructor && bases.size > 0 && !hasSuper) {
-      state.unsupported = true;
-      return [{ state, value: this.values(UNKNOWN_ATOM) }];
-    }
-    let evaluations: FlowEvaluation[] = [{ state, value: this.values(UNDEFINED_ATOM) }];
-    if (bases.size > 0) {
-      evaluations = evaluations.flatMap((current) =>
-        [...bases].flatMap((base) =>
-          this.executeClassConstruction(base, args, this.cloneState(current.state), call, active, new Set(seen).add(classAtom)),
-        ),
-      );
-    }
-    if (constructor) {
+    let evaluations: FlowEvaluation[];
+    if (!constructor) {
+      evaluations = [{ state, value: this.values(UNDEFINED_ATOM) }];
+      if (bases.size > 0) {
+        evaluations = [...bases].flatMap((base) =>
+          this.executeClassConstruction(base, args, this.cloneState(state), call, active, new Set(seen).add(classAtom)),
+        );
+      }
+    } else if (bases.size === 0) {
       if (active.has(constructor)) {
-        for (const evaluation of evaluations) evaluation.state.unsupported = true;
+        state.unsupported = true;
+        evaluations = [{ state, value: this.values(UNKNOWN_ATOM) }];
       } else {
+        evaluations = this.executeFunction(constructor, args, state, new Set(active).add(constructor));
+      }
+    } else {
+      const superStatements = constructor.body?.statements.flatMap((statement, index) => {
+        const expression = ts.isExpressionStatement(statement) ? unwrapExpression(statement.expression) : undefined;
+        return expression && ts.isCallExpression(expression) && expression.expression.kind === ts.SyntaxKind.SuperKeyword
+          ? [{ index, call: expression }]
+          : [];
+      }) ?? [];
+      let nestedSuper = false;
+      if (constructor.body) {
+        const visit = (node: ts.Node) => {
+          if (node !== constructor.body && ts.isFunctionLike(node)) return;
+          if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword) {
+            const direct = superStatements.some((candidate) => candidate.call === node);
+            if (!direct) nestedSuper = true;
+            return;
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(constructor.body);
+      }
+      if (!constructor.body || superStatements.length !== 1 || nestedSuper || active.has(constructor)) {
+        state.unsupported = true;
+        evaluations = [{ state, value: this.values(UNKNOWN_ATOM) }];
+      } else {
+        const entered = this.cloneState(state);
+        constructor.parameters.forEach((parameter, index) => {
+          const supplied = args[index] ?? this.values(UNKNOWN_ATOM);
+          let value = supplied;
+          if (parameter.initializer && (supplied.has(UNDEFINED_ATOM) || supplied.has(UNKNOWN_ATOM))) {
+            value = this.evaluateExpression(parameter.initializer, this.cloneState(entered), new Set(active))[0]?.value ?? supplied;
+          }
+          this.bindName(entered, parameter.name, value);
+        });
+        this.initialiseHoisted(constructor.body.statements, entered);
+        const superStatement = superStatements[0]!;
+        const constructorActive = new Set(active).add(constructor);
+        const beforeSuper = this.evaluateStatements(
+          constructor.body.statements.slice(0, superStatement.index),
+          [entered],
+          constructorActive,
+        );
+        evaluations = beforeSuper.flatMap((before) => {
+          if (before.outcome !== "normal") return [{ state: before, value: this.values(UNKNOWN_ATOM) }];
+          let inputs: Array<{ state: FlowState; args: FlowValue[] }> = [{ state: before, args: [] }];
+          for (const argument of superStatement.call.arguments) {
+            if (ts.isSpreadElement(argument)) {
+              inputs = inputs.map((input) => {
+                input.state.unsupported = true;
+                return { state: input.state, args: [...input.args, this.values(UNKNOWN_ATOM)] };
+              });
+            } else {
+              inputs = inputs.flatMap((input) =>
+                this.evaluateExpression(argument, input.state, constructorActive).map((evaluated) => ({
+                  state: evaluated.state,
+                  args: [...input.args, evaluated.value],
+                })),
+              );
+            }
+          }
+          return inputs.flatMap((input) =>
+            [...bases].flatMap((base) =>
+              this.executeClassConstruction(
+                base,
+                input.args,
+                this.cloneState(input.state),
+                call,
+                constructorActive,
+                new Set(seen).add(classAtom),
+              ),
+            ),
+          );
+        });
         evaluations = evaluations.flatMap((current) =>
-          this.executeFunction(constructor, args, current.state, new Set(active).add(constructor)),
+          this.evaluateStatements(
+            constructor.body!.statements.slice(superStatement.index + 1),
+            [current.state],
+            constructorActive,
+          ).map((finished) => {
+            if (finished.outcome === "return") finished.outcome = "normal";
+            return { state: finished, value: this.values(UNDEFINED_ATOM) };
+          }),
         );
       }
     }
@@ -1490,6 +1570,7 @@ class LocalFlowEngine {
       "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
     ]);
     if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return [];
+    if (tokens.some((token) => token.toUpperCase() === "INTO")) return [];
     for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
       if (tokens[cursor]?.toUpperCase() !== "AS" || tokens[cursor + 1] !== "(") continue;
       const bodyHead = tokens.slice(cursor + 2).find((candidate) => !["(", ")", ",", ".", ";"].includes(candidate));
@@ -1973,6 +2054,13 @@ class LocalFlowEngine {
       left.size === right.size && [...left].every((value) => right.has(value));
     const sameSteps = (left: FlowState["generatorSteps"], right: FlowState["generatorSteps"]) =>
       left.size === right.size && [...left].every(([generator, step]) => right.get(generator) === step);
+    const sameGeneratorArguments = (
+      left: FlowState["generatorArguments"],
+      right: FlowState["generatorArguments"],
+    ) => left.size === right.size && [...left].every(([generator, args]) => {
+      const other = right.get(generator);
+      return !!other && args.length === other.length && args.every((value, index) => sameSet(value, other[index]!));
+    });
     const proofAtom = (atom: FlowAtom) =>
       atom === ORIGINAL_LOADER_ATOM ||
       atom === ORIGINAL_MODULE_ATOM ||
@@ -2014,7 +2102,9 @@ class LocalFlowEngine {
         candidate.witnessCount === state.witnessCount &&
         candidate.awaitedWitnessCount === state.awaitedWitnessCount &&
         sameSet(candidate.witnessResources, state.witnessResources) &&
-        sameSteps(candidate.generatorSteps, state.generatorSteps),
+        sameSteps(candidate.generatorSteps, state.generatorSteps) &&
+        sameGeneratorArguments(candidate.generatorArguments, state.generatorArguments) &&
+        candidate.allocationSerial === state.allocationSerial,
       );
       if (!merged) {
         widened.push(this.cloneState(state));
@@ -2234,6 +2324,77 @@ class LocalFlowEngine {
         if (node.elseStatement) visit(node.elseStatement);
         const whenFalse = [...current];
         current = unique([...whenTrue, ...whenFalse]);
+        return;
+      }
+      if (ts.isSwitchStatement(node) && node.end <= identifier.pos) {
+        visit(node.expression);
+        const before = [...current];
+        const clauses = node.caseBlock.clauses;
+        const executeFrom = (start: number): Binding[] => {
+          current = [...before];
+          let stopped = false;
+          for (let index = start; index < clauses.length && !stopped; index += 1) {
+            for (const statement of clauses[index]!.statements) {
+              if (ts.isBreakStatement(statement)) {
+                stopped = true;
+                break;
+              }
+              visit(statement);
+            }
+          }
+          return [...current];
+        };
+        const discriminant = this.literalPrimitive(node.expression);
+        if (discriminant !== undefined) {
+          const match = clauses.findIndex(
+            (clause) => ts.isCaseClause(clause) && this.literalPrimitive(clause.expression) === discriminant,
+          );
+          const fallback = clauses.findIndex(ts.isDefaultClause);
+          current = match >= 0 ? executeFrom(match) : fallback >= 0 ? executeFrom(fallback) : before;
+        } else {
+          const alternatives = clauses.flatMap((_, index) => executeFrom(index));
+          if (!clauses.some(ts.isDefaultClause)) alternatives.push(...before);
+          current = unique(alternatives);
+        }
+        return;
+      }
+      if (ts.isTryStatement(node) && node.end <= identifier.pos) {
+        const before = [...current];
+        visit(node.tryBlock);
+        const alternatives = [...current];
+        if (node.catchClause) {
+          current = [...before];
+          visit(node.catchClause.block);
+          alternatives.push(...current);
+        }
+        current = unique(alternatives);
+        if (node.finallyBlock) {
+          const afterFinally: Binding[] = [];
+          for (const binding of current) {
+            current = [binding];
+            visit(node.finallyBlock);
+            afterFinally.push(...current);
+          }
+          current = unique(afterFinally);
+        }
+        return;
+      }
+      if (
+        (ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isForStatement(node)) &&
+        node.end <= identifier.pos
+      ) {
+        if (ts.isForStatement(node) && node.initializer) visit(node.initializer);
+        const condition = ts.isForStatement(node) ? node.condition : node.expression;
+        if (condition) visit(condition);
+        const before = [...current];
+        const staticCondition = condition ? staticBoolean(condition) : true;
+        if (staticCondition === false && !ts.isDoStatement(node)) return;
+        visit(node.statement);
+        if (ts.isForStatement(node) && node.incrementor) visit(node.incrementor);
+        const afterIteration = [...current];
+        current = staticCondition === true || ts.isDoStatement(node)
+          ? unique(afterIteration)
+          : unique([...before, ...afterIteration]);
         return;
       }
       if (ts.isVariableDeclaration(node)) {

@@ -481,6 +481,37 @@ regress("effects:generator-yield", "second next reaches post-yield mutation", "u
 regress("effects:generator-yield", "first next includes pre-yield mutation", "unsafe", supabaseLoader("function* mutate() { loader = fake; yield 1; } mutate().next();"));
 regress("effects:generator-yield", "two no-op generator advances", "safe", supabaseLoader("function* noop() { yield 1; } const iterator = noop(); iterator.next(); iterator.next();"));
 
+regress("sql:read-only", "SELECT INTO creates a table", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id INTO public.bookings_copy FROM public.bookings`"));
+regress("sql:read-only", "ordinary SELECT without INTO", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings`"));
+regress("sql:read-only", "INTO text in a string remains read-only", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT 'INTO public.bookings_copy' AS note, id FROM public.bookings`"));
+
+regress("aliases:switch-mock", "switch joins framework and no-op", "unsafe", unit('let mock; switch (process.env.X) { case "yes": mock = vi.mock; break; default: mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-mock", "switch joins only no-ops", "safe", unit('let mock; switch (process.env.X) { case "yes": mock = () => {}; break; default: mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-registration", "switch joins it and test", "safe", pointerUnit, assignedRegistrationTarget('switch (process.env.X) { case "yes": register = it; break; default: register = test; }'));
+regress("aliases:switch-registration", "switch joins framework and no-op", "unsafe", pointerUnit, assignedRegistrationTarget('switch (process.env.X) { case "yes": register = it; break; default: register = () => {}; }'));
+
+regress("aliases:try-mock", "try catch joins framework and no-op", "unsafe", unit('let mock; try { mock = vi.mock; } catch { mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:try-mock", "try catch joins only no-ops", "safe", unit('let mock; try { mock = () => {}; } catch { mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:try-registration", "try catch joins it and test", "safe", pointerUnit, assignedRegistrationTarget("try { register = it; } catch { register = test; }"));
+regress("aliases:try-registration", "try catch joins framework and no-op", "unsafe", pointerUnit, assignedRegistrationTarget("try { register = it; } catch { register = () => {}; }"));
+
+regress("aliases:loop-mock", "zero-iteration path preserves framework", "unsafe", unit('let mock = vi.mock; while (process.env.X) { mock = () => {}; break; } mock("@supabase/supabase-js");'));
+regress("aliases:loop-mock", "zero-iteration path preserves no-op", "safe", unit('let mock = () => {}; while (process.env.X) { mock = () => {}; break; } mock("@supabase/supabase-js");'));
+regress("aliases:loop-registration", "zero or one iteration stays framework", "safe", pointerUnit, assignedRegistrationTarget("register = it; while (process.env.X) { register = test; break; }"));
+regress("aliases:loop-registration", "iteration may replace framework with no-op", "unsafe", pointerUnit, assignedRegistrationTarget("register = it; while (process.env.X) { register = () => {}; break; }"));
+
+regress("effects:class-super-order", "pre-super restore precedes mutating base", "unsafe", supabaseLoader("const real = loader; class Base { constructor() { loader = fake; } } class Child extends Base { constructor() { loader = real; super(); } } new Child();"));
+regress("effects:class-super-order", "post-super restore follows mutating base", "safe", supabaseLoader("const real = loader; class Base { constructor() { loader = fake; } } class Child extends Base { constructor() { super(); loader = real; } } new Child();"));
+regress("effects:class-super-order", "pre and post no-op constructor effects", "safe", supabaseLoader("class Base { constructor() {} } class Child extends Base { constructor() { const value = 1; super(); void value; } } new Child();"));
+
+regress("effects:class-super-args", "base invokes mutating super callback", "unsafe", supabaseLoader("class Base { constructor(run: () => void) { run(); } } class Child extends Base { constructor() { super(() => { loader = fake; }); } } new Child();"));
+regress("effects:class-super-args", "base invokes no-op super callback", "safe", supabaseLoader("class Base { constructor(run: () => void) { run(); } } class Child extends Base { constructor() { super(() => {}); } } new Child();"));
+regress("effects:class-super-args", "super argument expression mutates loader", "unsafe", supabaseLoader("class Base { constructor(_value: unknown) {} } class Child extends Base { constructor() { super((loader = fake, null)); } } new Child();"));
+
+regress("effects:generator-instance", "same call site keeps first mutating arguments", "unsafe", supabaseLoader("function* run(action: () => void) { action(); yield 1; } function make(action: () => void) { return run(action); } const first = make(() => { loader = fake; }); const second = make(() => {}); first.next(); void second;"));
+regress("effects:generator-instance", "unadvanced mutating iterator does not taint first", "safe", supabaseLoader("function* run(action: () => void) { action(); yield 1; } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.next(); void second;"));
+regress("effects:generator-instance", "both same-site iterators retain no-op arguments", "safe", supabaseLoader("function* run(action: () => void) { action(); yield 1; } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => {}); first.next(); second.next();"));
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);
