@@ -703,6 +703,170 @@ for (const lockingClause of ["FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FO
 }
 regress("sql:locking-clause", "plain balanced SELECT inverse", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings WHERE (id IS NOT NULL)`"));
 
+regress(
+  "effects:try-post-callback-throw",
+  "external runner may invoke mutator before throwing",
+  "unsafe",
+  supabaseLoader("const real = loader; try { runTask(() => { loader = fake; }); loader = real; } catch {}"),
+);
+regress(
+  "effects:try-post-callback-throw",
+  "external runner no-op callback inverse",
+  "safe",
+  supabaseLoader("const real = loader; try { runTask(() => {}); loader = real; } catch {}"),
+);
+regress(
+  "effects:try-post-callback-throw",
+  "proven local runner cannot throw after callback",
+  "safe",
+  supabaseLoader("const real = loader; const runTask = (callback: () => void) => callback(); try { runTask(() => { loader = fake; }); loader = real; } catch {}"),
+);
+
+regress(
+  "effects:invocation-object-frame",
+  "first returned object retains mutating member",
+  "unsafe",
+  supabaseLoader("function make(action: () => void) { return { action }; } const first = make(() => { loader = fake; }); const second = make(() => {}); first.action(); void second;"),
+);
+regress(
+  "effects:invocation-object-frame",
+  "first returned object does not borrow second mutator",
+  "safe",
+  supabaseLoader("function make(action: () => void) { return { action }; } const first = make(() => {}); const second = make(() => { loader = fake; }); first.action(); void second;"),
+);
+regress(
+  "effects:invocation-array-frame",
+  "first returned array retains mutating element",
+  "unsafe",
+  supabaseLoader("function make(action: () => void) { return [action]; } const first = make(() => { loader = fake; }); const second = make(() => {}); first[0](); void second;"),
+);
+regress(
+  "effects:invocation-array-frame",
+  "first returned array does not borrow second mutator",
+  "safe",
+  supabaseLoader("function make(action: () => void) { return [action]; } const first = make(() => {}); const second = make(() => { loader = fake; }); first[0](); void second;"),
+);
+regress(
+  "effects:invocation-closure-frame",
+  "first returned closure retains mutating parameter",
+  "unsafe",
+  supabaseLoader("function make(action: () => void) { return () => action(); } const first = make(() => { loader = fake; }); const second = make(() => {}); first(); void second;"),
+);
+regress(
+  "effects:invocation-closure-frame",
+  "first returned closure does not borrow second parameter",
+  "safe",
+  supabaseLoader("function make(action: () => void) { return () => action(); } const first = make(() => {}); const second = make(() => { loader = fake; }); first(); void second;"),
+);
+regress(
+  "effects:class-instance-frame",
+  "first returned instance retains mutating member",
+  "unsafe",
+  supabaseLoader("class Box {} function make(action: () => void) { const box = new Box(); box.action = action; return box; } const first = make(() => { loader = fake; }); const second = make(() => {}); first.action(); void second;"),
+);
+regress(
+  "effects:class-instance-frame",
+  "first returned instance does not borrow second mutator",
+  "safe",
+  supabaseLoader("class Box {} function make(action: () => void) { const box = new Box(); box.action = action; return box; } const first = make(() => {}); const second = make(() => { loader = fake; }); first.action(); void second;"),
+);
+
+regress(
+  "effects:class-definition-order",
+  "computed name restore precedes mutating static field",
+  "unsafe",
+  supabaseLoader("const real = loader; class C { static value = (loader = fake); [loader = real]() {} } void C;"),
+);
+regress(
+  "effects:class-definition-order",
+  "computed name mutation precedes restoring static field",
+  "safe",
+  supabaseLoader("const real = loader; class C { static value = (loader = real); [loader = fake]() {} } void C;"),
+);
+regress(
+  "effects:class-instance-field-member",
+  "invoked function-valued instance field mutates loader",
+  "unsafe",
+  supabaseLoader("class C { run = () => { loader = fake; }; } new C().run();"),
+);
+regress(
+  "effects:class-instance-field-member",
+  "invoked function-valued instance field no-op inverse",
+  "safe",
+  supabaseLoader("class C { run = () => {}; } new C().run();"),
+);
+regress(
+  "effects:class-instance-field-frame",
+  "first instance field closure retains mutating parameter",
+  "unsafe",
+  supabaseLoader("function make(action: () => void) { class C { run = () => action(); } return new C(); } const first = make(() => { loader = fake; }); const second = make(() => {}); first.run(); void second;"),
+);
+regress(
+  "effects:class-instance-field-frame",
+  "first instance field closure does not borrow second parameter",
+  "safe",
+  supabaseLoader("function make(action: () => void) { class C { run = () => action(); } return new C(); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.run(); void second;"),
+);
+regress(
+  "effects:class-parameter-property",
+  "invoked constructor parameter property mutates loader",
+  "unsafe",
+  supabaseLoader("class C { constructor(public run: () => void) {} } new C(() => { loader = fake; }).run();"),
+);
+regress(
+  "effects:class-parameter-property",
+  "invoked constructor parameter property no-op inverse",
+  "safe",
+  supabaseLoader("class C { constructor(public run: () => void) {} } new C(() => {}).run();"),
+);
+regress(
+  "effects:class-parameter-property-frame",
+  "first parameter-property instance retains mutating member",
+  "unsafe",
+  supabaseLoader("class C { constructor(public run: () => void) {} } function make(action: () => void) { return new C(action); } const first = make(() => { loader = fake; }); const second = make(() => {}); first.run(); void second;"),
+);
+regress(
+  "effects:class-parameter-property-frame",
+  "first parameter-property instance does not borrow second member",
+  "safe",
+  supabaseLoader("class C { constructor(public run: () => void) {} } function make(action: () => void) { return new C(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.run(); void second;"),
+);
+
+regress(
+  "effects:promise-all-overwrite",
+  "overwritten Promise.all returns mutating callback",
+  "unsafe",
+  supabaseLoader("Promise.all = async () => [() => { loader = fake; }]; const actions = await Promise.all([() => {}]); for (const action of actions) action();"),
+);
+regress(
+  "effects:promise-all-overwrite",
+  "overwritten Promise.all returns no-op callback inverse",
+  "safe",
+  supabaseLoader("Promise.all = async () => [() => {}]; const actions = await Promise.all([() => { loader = fake; }]); for (const action of actions) action();"),
+);
+
+regress(
+  "sql:nested-locking-clause",
+  "subquery FOR UPDATE is not read-only",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM (SELECT id FROM public.bookings FOR UPDATE) locked`"),
+);
+regress(
+  "sql:nested-locking-clause",
+  "CTE FOR SHARE is not read-only",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH locked AS (SELECT id FROM public.bookings FOR SHARE) SELECT id FROM locked`"),
+);
+regress(
+  "sql:nested-locking-clause",
+  "nested read-only SELECT inverse",
+  "safe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"),
+);
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);
