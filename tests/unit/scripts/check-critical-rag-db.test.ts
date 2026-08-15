@@ -120,6 +120,11 @@ describe("deploy workflow wiring", () => {
       workflow.indexOf("pnpm vitest run apps/main/test/integration/rls.test.ts"),
     );
     expect(workflow).toContain("if: steps.isolation-db-preflight.outputs.run_main_rls == 'true'");
+    const mainRlsStep = workflow.slice(
+      workflow.indexOf("      - name: Run main RLS integration suite"),
+      workflow.indexOf("      - name: Run Stripe-webhook integration suite"),
+    );
+    expect(mainRlsStep).toContain('MAIN_RLS_DB_REQUIRED: "true"');
   });
 
   it("retains the preflight output gate on the seeded RAG suite", () => {

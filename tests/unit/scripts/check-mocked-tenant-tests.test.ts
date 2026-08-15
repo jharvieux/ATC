@@ -1193,6 +1193,113 @@ describe("notes route", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.fullName).toMatch(/detail query/);
   });
+
+  it.each([
+    {
+      family: "protected loader",
+      shape: "definite restoration",
+      rejected: false,
+      run: () =>
+        findMockedTenantTests(
+          F,
+          claimTest(
+            'vi.mock("@supabase/supabase-js", async (loader) => { const real = loader; loader = async () => ({}); loader = real; return { ...(await loader()) }; });',
+          ),
+          EMPTY,
+        ).length > 0,
+    },
+    {
+      family: "protected loader",
+      shape: "destructuring default mutation",
+      rejected: true,
+      run: () =>
+        findMockedTenantTests(
+          F,
+          claimTest(
+            'vi.mock("@supabase/supabase-js", async (loader) => { const fake = async () => ({}); [loader = fake] = [undefined]; return { ...(await loader()) }; });',
+          ),
+          EMPTY,
+        ).length > 0,
+    },
+    {
+      family: "Supabase query",
+      shape: "computed real receiver",
+      rejected: false,
+      run: () =>
+        annotationErrorFor(REAL_DB_COVERAGE.replace('db.from("bookings")', 'db["from"]("bookings")')) !==
+        undefined,
+    },
+    {
+      family: "Supabase query",
+      shape: "conditional client restoration",
+      rejected: true,
+      run: () =>
+        annotationErrorFor(
+          REAL_DB_COVERAGE.replace(
+            'const db = createClient("https://db.example.test", "anon-key");',
+            'const real = createClient("https://db.example.test", "anon-key"); let db = {} as never; if (process.env.RESTORE) db = real;',
+          ),
+        ) !== undefined,
+    },
+    {
+      family: "Postgres query",
+      shape: "parenthesized real tag",
+      rejected: false,
+      run: () =>
+        annotationErrorFor(`
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    await assertIsolationQuery({ query: () => (sql)\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});`) !== undefined,
+    },
+    {
+      family: "Postgres query",
+      shape: "relation only in SQL comment",
+      rejected: true,
+      run: () =>
+        annotationErrorFor(`
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    await assertIsolationQuery({ query: () => sql\`SELECT 1 /* FROM public.bookings */\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});`) !== undefined,
+    },
+    {
+      family: "canonical witness",
+      shape: "immutable alias",
+      rejected: false,
+      run: () =>
+        annotationErrorFor(
+          REAL_DB_COVERAGE.replace(
+            '    const db = createClient("https://db.example.test", "anon-key");',
+            '    const db = createClient("https://db.example.test", "anon-key");\n    const witness = assertIsolationQuery;',
+          ).replace("await assertIsolationQuery(", "await witness("),
+        ) !== undefined,
+    },
+    {
+      family: "canonical witness",
+      shape: "early return through try/finally",
+      rejected: true,
+      run: () =>
+        annotationErrorFor(
+          REAL_DB_COVERAGE.replace(
+            "    await assertIsolationQuery({",
+            "    try { return; } finally {}\n    await assertIsolationQuery({",
+          ),
+        ) !== undefined,
+    },
+  ])("keeps $family parity for $shape", ({ rejected, run }) => {
+    expect(run()).toBe(rejected);
+  });
 });
 
 describe("loadBaseline", () => {

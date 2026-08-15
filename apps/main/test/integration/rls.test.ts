@@ -27,6 +27,9 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DB_URL = process.env.SUPABASE_DB_URL;
 
 const haveSupabase = Boolean(SUPABASE_URL && ANON_KEY && SERVICE_KEY && DB_URL);
+if (process.env.MAIN_RLS_DB_REQUIRED === "true" && !haveSupabase) {
+  throw new Error("MAIN_RLS_DB_REQUIRED=true but the live Supabase test credentials are incomplete");
+}
 
 // Random prefix scopes all fixtures to this test run; afterAll uses it to
 // clean up even if intermediate assertions fail.

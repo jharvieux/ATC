@@ -52,688 +52,64 @@ const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
 
+const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
+
 function parse(p: string, text: string): ts.SourceFile {
-  return ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true, /x$/.test(p) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-}
-
-function assignmentTargetIdentifiers(input: ts.Expression): ts.Identifier[] {
-  const expression = unwrapExpression(input);
-  if (ts.isIdentifier(expression)) return [expression];
-  if (ts.isArrayLiteralExpression(expression)) {
-    return expression.elements.flatMap((element) =>
-      ts.isOmittedExpression(element)
-        ? []
-        : assignmentTargetIdentifiers(ts.isSpreadElement(element) ? element.expression : element),
-    );
-  }
-  if (ts.isObjectLiteralExpression(expression)) {
-    return expression.properties.flatMap((property) => {
-      if (ts.isShorthandPropertyAssignment(property)) return [property.name];
-      if (ts.isPropertyAssignment(property)) return assignmentTargetIdentifiers(property.initializer);
-      if (ts.isSpreadAssignment(property)) return assignmentTargetIdentifiers(property.expression);
-      return [];
-    });
-  }
-  return [];
-}
-
-interface MockCall {
-  specifier: string;
-  partial: boolean; // importActual/requireActual/importOriginal factory — some real exports still run
-  replacesCreateClient: boolean;
-  replacesDefault: boolean;
-  replacesWitness: boolean;
-}
-
-interface LoaderBinding {
-  name: string;
-  declaration: ts.Identifier;
-  scope: ts.Node;
-  initializer?: ts.Expression;
-  localFunction?: ts.FunctionLikeDeclaration;
-  memberSource?: { object: ts.Expression; property: string };
-  parameter: boolean;
-}
-
-function originalLoaderCallProvenance(
-  factory: ts.ArrowFunction | ts.FunctionExpression,
-): (expression: ts.Expression) => boolean {
-  const loaderName = factory.parameters[0]?.name;
-  if (!loaderName || !ts.isIdentifier(loaderName)) return () => false;
-
-  const bindings: LoaderBinding[] = [
-    {
-      name: loaderName.text,
-      declaration: loaderName,
-      scope: factory,
-      parameter: true,
-    },
-  ];
-  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
-    if (ts.isIdentifier(name)) return [name];
-    return name.elements.flatMap((element) =>
-      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
-    );
+  const fileName = path.resolve(ROOT, p);
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.Latest,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    allowJs: true,
+    noLib: true,
+    noResolve: true,
+    types: [],
+    skipLibCheck: true,
   };
-  const bindingScope = (node: ts.Node): ts.Node => {
-    for (let current = node.parent; current && current !== factory; current = current.parent) {
-      if (ts.isBlock(current) || ts.isFunctionLike(current)) return current;
-    }
-    return factory;
-  };
-  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
-  const resolve = (identifier: ts.Identifier): LoaderBinding | undefined =>
-    bindings
-      .filter(
-        (binding) =>
-          binding.name === identifier.text &&
-          contains(binding.scope, identifier) &&
-          (binding.declaration.pos <= identifier.pos ||
-            (binding.localFunction !== undefined && ts.isFunctionDeclaration(binding.localFunction))),
-      )
-      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
-
-  const collectBindings = (node: ts.Node) => {
-    if (node !== factory && ts.isFunctionLike(node)) {
-      for (const parameter of node.parameters) {
-        for (const identifier of bindingIdentifiers(parameter.name)) {
-          bindings.push({
-            name: identifier.text,
-            declaration: identifier,
-            scope: node,
-            parameter: false,
-          });
-        }
-      }
-    }
-    if (ts.isVariableDeclaration(node)) {
-      for (const identifier of bindingIdentifiers(node.name)) {
-        const bindingElement = ts.isBindingElement(identifier.parent) ? identifier.parent : undefined;
-        const memberName =
-          bindingElement && ts.isObjectBindingPattern(bindingElement.parent)
-            ? bindingElement.propertyName &&
-              (ts.isIdentifier(bindingElement.propertyName) || ts.isStringLiteralLike(bindingElement.propertyName))
-              ? bindingElement.propertyName.text
-              : identifier.text
-            : undefined;
-        bindings.push({
-          name: identifier.text,
-          declaration: identifier,
-          scope: bindingScope(node),
-          ...(ts.isIdentifier(node.name) && node.initializer ? { initializer: node.initializer } : {}),
-          ...(ts.isIdentifier(node.name) &&
-          node.initializer &&
-          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
-            ? { localFunction: node.initializer }
-            : {}),
-          ...(memberName && node.initializer
-            ? { memberSource: { object: node.initializer, property: memberName } }
-            : {}),
-          parameter: false,
-        });
-      }
-    }
-    if (node !== factory && ts.isFunctionDeclaration(node) && node.name) {
-      bindings.push({
-        name: node.name.text,
-        declaration: node.name,
-        scope: bindingScope(node),
-        ...(node.body ? { localFunction: node } : {}),
-        parameter: false,
-      });
-    }
-    ts.forEachChild(node, collectBindings);
-  };
-  collectBindings(factory.body);
-
-  const callableWrites = new Map<LoaderBinding, { at: number; value?: ts.Expression }[]>();
-  const collectCallableWrites = (node: ts.Node) => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      const identifiers = assignmentTargetIdentifiers(node.left);
-      for (const identifier of identifiers) {
-        const binding = resolve(identifier);
-        if (!binding) continue;
-        const writes = callableWrites.get(binding) ?? [];
-        writes.push({
-          at: node.end,
-          ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
-            ? { value: node.right }
-            : {}),
-        });
-        callableWrites.set(binding, writes);
-      }
-    }
-    ts.forEachChild(node, collectCallableWrites);
-  };
-  collectCallableWrites(factory.body);
-
-  const objectLiteralFor = (
-    input: ts.Expression,
-    checking = new Set<LoaderBinding>(),
-  ): ts.ObjectLiteralExpression | undefined => {
-    const expression = unwrapExpression(input);
-    if (ts.isObjectLiteralExpression(expression)) return expression;
-    if (!ts.isIdentifier(expression)) return undefined;
-    const binding = resolve(expression);
-    if (!binding?.initializer || checking.has(binding)) return undefined;
-    checking.add(binding);
-    const object = objectLiteralFor(binding.initializer, checking);
-    checking.delete(binding);
-    return object;
-  };
-  const functionsFor = (
-    input: ts.Expression,
-    checking = new Set<LoaderBinding>(),
-  ): ts.FunctionLikeDeclaration[] => {
-    const expression = unwrapExpression(input);
-    if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return [expression];
-    if (ts.isIdentifier(expression)) {
-      const binding = resolve(expression);
-      if (!binding || checking.has(binding)) return [];
-      const latestWrite = callableWrites
-        .get(binding)
-        ?.filter((write) => write.at < expression.pos)
-        .sort((a, b) => b.at - a.at)[0];
-      if (latestWrite) return latestWrite.value ? functionsFor(latestWrite.value, checking) : [];
-      if (binding.localFunction) return [binding.localFunction];
-      if (binding.memberSource) {
-        const object = objectLiteralFor(binding.memberSource.object);
-        const property = object?.properties.find(
-          (candidate) =>
-            !ts.isSpreadAssignment(candidate) &&
-            (ts.isIdentifier(candidate.name) || ts.isStringLiteralLike(candidate.name)) &&
-            candidate.name.text === binding.memberSource!.property,
-        );
-        if (property && ts.isMethodDeclaration(property)) return [property];
-        if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
-        if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
-      }
-      if (!binding.initializer) return [];
-      checking.add(binding);
-      const functions = functionsFor(binding.initializer, checking);
-      checking.delete(binding);
-      return functions;
-    }
-    if (ts.isPropertyAccessExpression(expression)) {
-      if (expression.name.text === "call" || expression.name.text === "apply") {
-        return functionsFor(expression.expression, checking);
-      }
-      const object = objectLiteralFor(expression.expression);
-      const property = object?.properties.find(
-        (candidate) => {
-          if (ts.isSpreadAssignment(candidate)) return false;
-          const name = candidate.name;
-          const text =
-            ts.isIdentifier(name) || ts.isStringLiteralLike(name)
-              ? name.text
-              : ts.isComputedPropertyName(name) && ts.isStringLiteralLike(unwrapExpression(name.expression))
-                ? (unwrapExpression(name.expression) as ts.StringLiteralLike).text
-                : undefined;
-          return text === expression.name.text;
-        },
-      );
-      if (property && (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property))) return [property];
-      if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
-      if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
-    }
-    if (ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression)) {
-      const object = objectLiteralFor(expression.expression);
-      const property = object?.properties.find(
-        (candidate) => {
-          if (ts.isSpreadAssignment(candidate)) return false;
-          const name = candidate.name;
-          const text =
-            ts.isIdentifier(name) || ts.isStringLiteralLike(name)
-              ? name.text
-              : ts.isComputedPropertyName(name) && ts.isStringLiteralLike(unwrapExpression(name.expression))
-                ? (unwrapExpression(name.expression) as ts.StringLiteralLike).text
-                : undefined;
-          return text === expression.argumentExpression.text;
-        },
-      );
-      if (property && ts.isMethodDeclaration(property)) return [property];
-      if (property && ts.isPropertyAssignment(property)) return functionsFor(property.initializer, checking);
-      if (property && ts.isShorthandPropertyAssignment(property)) return functionsFor(property.name, checking);
-    }
-    return [];
-  };
-
-  type LoaderEnvironment = Map<LoaderBinding, boolean>;
-  interface Flow {
-    environment: LoaderEnvironment;
-    terminal: boolean;
-  }
-  const callProof = new Map<ts.CallExpression, boolean>();
-  const clone = (environment: LoaderEnvironment): LoaderEnvironment => new Map(environment);
-  const valueIsOriginal = (input: ts.Expression, environment: LoaderEnvironment): boolean => {
-    const expression = unwrapExpression(input);
-    return ts.isIdentifier(expression) && environment.get(resolve(expression)) === true;
-  };
-  const assign = (target: ts.Expression, original: boolean, environment: LoaderEnvironment): LoaderEnvironment => {
-    const next = clone(environment);
-    const identifiers = assignmentTargetIdentifiers(target);
-    for (const identifier of identifiers) {
-      const binding = resolve(identifier);
-      if (binding) next.set(binding, identifiers.length === 1 && original);
-    }
-    return next;
-  };
-
-  const evaluateFunction = (
-    fn: ts.FunctionLikeDeclaration,
-    environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
-  ): LoaderEnvironment[] => {
-    if (!fn.body) return [environment];
-    if (!ts.isBlock(fn.body)) return evaluateExpression(fn.body, environment, activeFunctions);
-    return evaluateStatements(fn.body.statements, [{ environment, terminal: false }], activeFunctions).map(
-      (flow) => flow.environment,
-    );
-  };
-  const evaluateExpression = (
-    input: ts.Expression,
-    environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
-  ): LoaderEnvironment[] => {
-    const expression = unwrapExpression(input);
-    if (ts.isAwaitExpression(expression)) return evaluateExpression(expression.expression, environment, activeFunctions);
-    if (ts.isConditionalExpression(expression)) {
-      return evaluateExpression(expression.condition, environment, activeFunctions).flatMap((afterCondition) => [
-        ...evaluateExpression(expression.whenTrue, clone(afterCondition), activeFunctions),
-        ...evaluateExpression(expression.whenFalse, clone(afterCondition), activeFunctions),
-      ]);
-    }
-    if (ts.isBinaryExpression(expression)) {
-      const operator = expression.operatorToken.kind;
-      if (operator === ts.SyntaxKind.EqualsToken) {
-        return evaluateExpression(expression.right, environment, activeFunctions).map((afterRight) =>
-          assign(expression.left, valueIsOriginal(expression.right, afterRight), afterRight),
-        );
-      }
-      if (
-        operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
-        operator === ts.SyntaxKind.BarBarEqualsToken ||
-        operator === ts.SyntaxKind.QuestionQuestionEqualsToken
-      ) {
-        return [
-          clone(environment),
-          ...evaluateExpression(expression.right, clone(environment), activeFunctions).map((afterRight) =>
-            assign(expression.left, valueIsOriginal(expression.right, afterRight), afterRight),
-          ),
-        ];
-      }
-      if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) {
-        return evaluateExpression(expression.right, environment, activeFunctions).map((afterRight) =>
-          assign(expression.left, false, afterRight),
-        );
-      }
-      if (
-        operator === ts.SyntaxKind.AmpersandAmpersandToken ||
-        operator === ts.SyntaxKind.BarBarToken ||
-        operator === ts.SyntaxKind.QuestionQuestionToken
-      ) {
-        return evaluateExpression(expression.left, environment, activeFunctions).flatMap((afterLeft) => [
-          clone(afterLeft),
-          ...evaluateExpression(expression.right, clone(afterLeft), activeFunctions),
-        ]);
-      }
-      return evaluateExpression(expression.left, environment, activeFunctions).flatMap((afterLeft) =>
-        evaluateExpression(expression.right, afterLeft, activeFunctions),
-      );
-    }
-    if (ts.isCallExpression(expression)) {
-      let environments = evaluateExpression(expression.expression, environment, activeFunctions);
-      for (const argument of expression.arguments) {
-        environments = environments.flatMap((current) => evaluateExpression(argument, current, activeFunctions));
-      }
-      const loaderCallee = ts.isIdentifier(expression.expression)
-        ? expression.expression
-        : ts.isPropertyAccessExpression(expression.expression) &&
-            (expression.expression.name.text === "call" || expression.expression.name.text === "apply") &&
-            ts.isIdentifier(expression.expression.expression)
-          ? expression.expression.expression
-          : undefined;
-      const loaderBinding = loaderCallee ? resolve(loaderCallee) : undefined;
-      const proven = !!loaderBinding && environments.every((current) => current.get(loaderBinding) === true);
-      callProof.set(expression, (callProof.get(expression) ?? true) && proven);
-
-      const callees = functionsFor(expression.expression).filter((fn) => !activeFunctions.has(fn));
-      if (callees.length > 0) {
-        return callees.flatMap((callee) => {
-          const nextActive = new Set(activeFunctions).add(callee);
-          return environments.flatMap((current) => evaluateFunction(callee, current, nextActive));
-        });
-      }
-      if (loaderBinding) return environments;
-
-      const callbacks = expression.arguments.flatMap((argument) => functionsFor(argument));
-      if (callbacks.length === 0) return environments;
-      return [
-        ...environments,
-        ...callbacks.flatMap((callback) => {
-          const nextActive = new Set(activeFunctions).add(callback);
-          return environments.flatMap((current) => evaluateFunction(callback, clone(current), nextActive));
-        }),
-      ];
-    }
-    if (ts.isObjectLiteralExpression(expression)) {
-      return expression.properties.reduce<LoaderEnvironment[]>((environments, property) => {
-        const value = ts.isSpreadAssignment(property)
-          ? property.expression
-          : ts.isPropertyAssignment(property)
-            ? property.initializer
-            : undefined;
-        return value
-          ? environments.flatMap((current) => evaluateExpression(value, current, activeFunctions))
-          : environments;
-      }, [environment]);
-    }
-    if (ts.isArrayLiteralExpression(expression)) {
-      return expression.elements.reduce<LoaderEnvironment[]>((environments, element) => {
-        if (ts.isOmittedExpression(element)) return environments;
-        const value = ts.isSpreadElement(element) ? element.expression : element;
-        return environments.flatMap((current) => evaluateExpression(value, current, activeFunctions));
-      }, [environment]);
-    }
-    if (
-      (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
-      (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(expression.operand)
-    ) {
-      return [assign(expression.operand, false, environment)];
-    }
-    return [environment];
-  };
-  const evaluateStatement = (
-    statement: ts.Statement,
-    environment: LoaderEnvironment,
-    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
-  ): Flow[] => {
-    if (ts.isExpressionStatement(statement)) {
-      return evaluateExpression(statement.expression, environment, activeFunctions).map((next) => ({
-        environment: next,
-        terminal: false,
-      }));
-    }
-    if (ts.isVariableStatement(statement)) {
-      let environments = [environment];
-      for (const declaration of statement.declarationList.declarations) {
-        environments = environments.flatMap((current) => {
-          if (!declaration.initializer) return [current];
-          return evaluateExpression(declaration.initializer, current, activeFunctions).map((afterInitializer) => {
-            if (!ts.isIdentifier(declaration.name)) {
-              const next = clone(afterInitializer);
-              for (const identifier of bindingIdentifiers(declaration.name)) {
-                const binding = resolve(identifier);
-                if (binding) next.set(binding, false);
-              }
-              return next;
-            }
-            const binding = resolve(declaration.name);
-            const next = clone(afterInitializer);
-            if (binding) next.set(binding, valueIsOriginal(declaration.initializer!, afterInitializer));
-            return next;
-          });
-        });
-      }
-      return environments.map((next) => ({ environment: next, terminal: false }));
-    }
-    if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) {
-      const expression = ts.isReturnStatement(statement) ? statement.expression : statement.expression;
-      const environments = expression
-        ? evaluateExpression(expression, environment, activeFunctions)
-        : [environment];
-      return environments.map((next) => ({ environment: next, terminal: true }));
-    }
-    if (ts.isBlock(statement)) {
-      return evaluateStatements(statement.statements, [{ environment, terminal: false }], activeFunctions);
-    }
-    if (ts.isIfStatement(statement)) {
-      return evaluateExpression(statement.expression, environment, activeFunctions).flatMap((afterCondition) => {
-        const whenTrue = evaluateStatement(statement.thenStatement, clone(afterCondition), activeFunctions);
-        const whenFalse = statement.elseStatement
-          ? evaluateStatement(statement.elseStatement, clone(afterCondition), activeFunctions)
-          : [{ environment: clone(afterCondition), terminal: false }];
-        return [...whenTrue, ...whenFalse];
-      });
-    }
-    if (ts.isFunctionDeclaration(statement)) return [{ environment, terminal: false }];
-    const next = clone(environment);
-    const invalidateWrites = (node: ts.Node) => {
-      if (node !== statement && ts.isFunctionLike(node)) return;
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ) {
-        for (const identifier of assignmentTargetIdentifiers(node.left)) {
-          const binding = resolve(identifier);
-          if (binding) next.set(binding, false);
-        }
-      }
-      if (
-        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-        ts.isIdentifier(node.operand)
-      ) {
-        const binding = resolve(node.operand);
-        if (binding) next.set(binding, false);
-      }
-      ts.forEachChild(node, invalidateWrites);
-    };
-    invalidateWrites(statement);
-    return [{ environment: next, terminal: false }];
-  };
-  const evaluateStatements = (
-    statements: ts.NodeArray<ts.Statement>,
-    initial: Flow[],
-    activeFunctions: ReadonlySet<ts.FunctionLikeDeclaration>,
-  ): Flow[] =>
-    statements.reduce<Flow[]>((flows, statement) =>
-      flows.flatMap((flow) =>
-        flow.terminal ? [flow] : evaluateStatement(statement, flow.environment, activeFunctions),
-      ), initial);
-
-  const initial = new Map<LoaderBinding, boolean>(bindings.map((binding) => [binding, binding === bindings[0]]));
-  if (ts.isBlock(factory.body)) {
-    evaluateStatements(factory.body.statements, [{ environment: initial, terminal: false }], new Set());
-  } else {
-    evaluateExpression(factory.body, initial, new Set());
-  }
-  return (input: ts.Expression): boolean => {
-    const expression = unwrapExpression(input);
-    return ts.isCallExpression(expression) && callProof.get(expression) === true;
-  };
-}
-
-function factoryReplacesExport(factory: ts.Expression | undefined, exportName: string, sf: ts.SourceFile): boolean {
-  if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
-  const isOriginalLoaderCall = originalLoaderCallProvenance(factory);
-
-  const declarations = new Map<string, ts.Expression[]>();
-  const collectDeclarations = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      const values = declarations.get(node.name.text) ?? [];
-      values.push(node.initializer);
-      declarations.set(node.name.text, values);
-    }
-    ts.forEachChild(node, collectDeclarations);
-  };
-  collectDeclarations(sf);
-
-  const staticPropertyName = (expression: ts.Expression): string | undefined => {
-    const unwrapped = unwrapExpression(expression);
-    if (ts.isStringLiteralLike(unwrapped) || ts.isNumericLiteral(unwrapped)) return unwrapped.text;
-    if (
-      ts.isBinaryExpression(unwrapped) &&
-      unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken
-    ) {
-      const left = staticPropertyName(unwrapped.left);
-      const right = staticPropertyName(unwrapped.right);
-      return left === undefined || right === undefined ? undefined : left + right;
-    }
-    return undefined;
-  };
-
-  const unwrapSpread = (input: ts.Expression): ts.Expression => {
-    let expression = unwrapExpression(input);
-    while (ts.isAwaitExpression(expression)) expression = unwrapExpression(expression.expression);
-    return expression;
-  };
-  const applyObject = (
-    object: ts.ObjectLiteralExpression,
-    incoming: boolean[],
-    checking: ReadonlySet<string>,
-  ): boolean[] => {
-    let states = incoming;
-    for (const property of object.properties) {
-      if (ts.isSpreadAssignment(property)) {
-        states = states.flatMap((state) => applySpread(property.expression, state, checking));
-        continue;
-      }
-      let propertyName: string | undefined;
-      if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
-        propertyName = property.name.text;
-      } else if (ts.isComputedPropertyName(property.name)) {
-        propertyName = staticPropertyName(property.name.expression);
-      }
-      if (propertyName === undefined || propertyName === exportName) states = [false];
-    }
-    return states;
-  };
-  const applySpread = (input: ts.Expression, incoming: boolean, checking: ReadonlySet<string>): boolean[] => {
-    const expression = unwrapSpread(input);
-    if (isOriginalLoaderCall(expression)) return [true];
-    if (ts.isConditionalExpression(expression)) {
-      return [
-        ...applySpread(expression.whenTrue, incoming, checking),
-        ...applySpread(expression.whenFalse, incoming, checking),
-      ];
-    }
-    if (ts.isObjectLiteralExpression(expression)) return applyObject(expression, [incoming], checking);
-    if (ts.isIdentifier(expression)) {
-      if (checking.has(expression.text)) return [false];
-      const values = declarations.get(expression.text);
-      if (!values?.length) return [false];
-      const nextChecking = new Set(checking).add(expression.text);
-      return values.flatMap((value) => applySpread(value, incoming, nextChecking));
-    }
-    return [false];
-  };
-  const returnedStates = (returned: ts.Expression): boolean[] => {
-    const expression = unwrapExpression(returned);
-    if (ts.isConditionalExpression(expression)) {
-      return [...returnedStates(expression.whenTrue), ...returnedStates(expression.whenFalse)];
-    }
-    return ts.isObjectLiteralExpression(expression) ? applyObject(expression, [false], new Set()) : [false];
-  };
-
-  const returns: ts.Expression[] = [];
-  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) returns.push(factory.body);
-  else if (factory.body) {
-    const collectReturns = (node: ts.Node) => {
-      if (node !== factory.body && ts.isFunctionLike(node)) return;
-      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
-      ts.forEachChild(node, collectReturns);
-    };
-    collectReturns(factory.body);
-  }
-  return returns.some((returned) => returnedStates(returned).some((preserved) => !preserved));
-}
-
-function factoryPreservesOriginal(factory: ts.Expression | undefined): boolean {
-  if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) return false;
-  const isOriginalLoaderCall = originalLoaderCallProvenance(factory);
-
-  const expressionPreservesOriginal = (returned: ts.Expression): boolean => {
-    const expression = unwrapExpression(returned);
-    if (ts.isConditionalExpression(expression)) {
-      return expressionPreservesOriginal(expression.whenTrue) && expressionPreservesOriginal(expression.whenFalse);
-    }
-    const object = unwrapExpression(returned);
-    return (
-      ts.isObjectLiteralExpression(object) &&
-      object.properties.some((property) => {
-        if (!ts.isSpreadAssignment(property)) return false;
-        let spread = unwrapExpression(property.expression);
-        if (ts.isAwaitExpression(spread)) spread = unwrapExpression(spread.expression);
-        return isOriginalLoaderCall(spread);
-      })
-    );
-  };
-
-  if (ts.isArrowFunction(factory) && !ts.isBlock(factory.body)) {
-    return expressionPreservesOriginal(factory.body);
-  }
-  if (!factory.body) return false;
-
-  type Outcome = "preserved" | "unsafe" | "continues";
-  const statementOutcomes = (statement: ts.Statement): Set<Outcome> => {
-    if (ts.isReturnStatement(statement)) {
-      return new Set([statement.expression && expressionPreservesOriginal(statement.expression) ? "preserved" : "unsafe"]);
-    }
-    if (ts.isThrowStatement(statement)) return new Set(["unsafe"]);
-    if (ts.isBlock(statement)) return statementsOutcomes(statement.statements);
-    if (ts.isIfStatement(statement)) {
-      return new Set([
-        ...statementOutcomes(statement.thenStatement),
-        ...(statement.elseStatement ? statementOutcomes(statement.elseStatement) : (["continues"] as Outcome[])),
-      ]);
-    }
-    if (
-      ts.isForStatement(statement) ||
-      ts.isForInStatement(statement) ||
-      ts.isForOfStatement(statement) ||
-      ts.isWhileStatement(statement) ||
-      ts.isDoStatement(statement) ||
-      ts.isSwitchStatement(statement) ||
-      ts.isTryStatement(statement)
-    ) {
-      return new Set(["unsafe"]);
-    }
-    return new Set(["continues"]);
-  };
-  const statementsOutcomes = (statements: ts.NodeArray<ts.Statement>): Set<Outcome> => {
-    let outcomes = new Set<Outcome>(["continues"]);
-    for (const statement of statements) {
-      const next = new Set<Outcome>();
-      for (const outcome of outcomes) {
-        if (outcome === "continues") {
-          for (const replacement of statementOutcomes(statement)) next.add(replacement);
-        } else {
-          next.add(outcome);
-        }
-      }
-      outcomes = next;
-    }
-    return outcomes;
-  };
-  const outcomes = statementsOutcomes(factory.body.statements);
-  return outcomes.size === 1 && outcomes.has("preserved");
+  const host = ts.createCompilerHost(options, true);
+  const originalGetSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (candidate, languageVersion, onError, shouldCreateNewSourceFile) =>
+    path.resolve(candidate) === fileName
+      ? ts.createSourceFile(fileName, text, languageVersion, true, /x$/.test(p) ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
+      : originalGetSourceFile(candidate, languageVersion, onError, shouldCreateNewSourceFile);
+  host.fileExists = (candidate) => path.resolve(candidate) === fileName || ts.sys.fileExists(candidate);
+  host.readFile = (candidate) => path.resolve(candidate) === fileName ? text : ts.sys.readFile(candidate);
+  const program = ts.createProgram([fileName], options, host);
+  const sourceFile = program.getSourceFile(fileName);
+  if (!sourceFile) throw new Error(`mocked-tenant-tests guard could not parse ${p}`);
+  CHECKERS.set(sourceFile, program.getTypeChecker());
+  return sourceFile;
 }
 
 function collectModuleMocks(sf: ts.SourceFile): MockCall[] {
   const out: MockCall[] = [];
+  const engine = new LocalFlowEngine(sf);
   const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const { expression: obj, name } = node.expression;
-      if (ts.isIdentifier(obj) && (obj.text === "vi" || obj.text === "jest") && (name.text === "mock" || name.text === "doMock")) {
-        const arg = node.arguments[0];
-        if (arg && ts.isStringLiteralLike(arg)) {
-          const factory = node.arguments[1];
-          out.push({
-            specifier: arg.text,
-            partial: factoryPreservesOriginal(factory),
-            replacesCreateClient: factoryReplacesExport(factory, "createClient", sf),
-            replacesDefault: factoryReplacesExport(factory, "default", sf),
-            replacesWitness: factoryReplacesExport(factory, "assertIsolationQuery", sf),
-          });
-        }
-      }
+    if (ts.isCallExpression(node) && engine.moduleMockKind(node)) {
+      const arg = node.arguments[0];
+      const importedSpecifier =
+        arg &&
+        ts.isCallExpression(unwrapExpression(arg)) &&
+        unwrapExpression(arg).expression.kind === ts.SyntaxKind.ImportKeyword
+          ? unwrapExpression(arg).arguments[0]
+          : undefined;
+      const specifier =
+        arg && ts.isStringLiteralLike(unwrapExpression(arg))
+          ? (unwrapExpression(arg) as ts.StringLiteralLike).text
+          : importedSpecifier && ts.isStringLiteralLike(unwrapExpression(importedSpecifier))
+            ? (unwrapExpression(importedSpecifier) as ts.StringLiteralLike).text
+            : "__dynamic_db_mock__";
+      const factory = node.arguments[1];
+      const createClient = engine.mockFactoryProof(factory, "createClient");
+      const defaultExport = engine.mockFactoryProof(factory, "default");
+      const witness = engine.mockFactoryProof(factory, "assertIsolationQuery");
+      out.push({
+        specifier,
+        partial: createClient.partial,
+        replacesCreateClient: createClient.replacesProtected,
+        replacesDefault: defaultExport.replacesProtected,
+        replacesWitness: witness.replacesProtected,
+      });
     }
     ts.forEachChild(node, visit);
   };
@@ -761,6 +137,7 @@ function resolveModule(fromPath: string, specifier: string, byPath: ReadonlyMap<
 
 function dbClientMockDescription(mock: MockCall, fromPath: string, byPath: ReadonlyMap<string, string>): string | undefined {
   const spec = mock.specifier;
+  if (spec === "__dynamic_db_mock__") return "an unresolved dynamic DB mock";
   if (spec === "postgres") return 'the Postgres client package "postgres"';
   if (spec.startsWith("@supabase/")) return `the Supabase client package "${spec}"`;
   if (/supabase/i.test(spec)) return `"${spec}" (a Supabase client module by name)`;
@@ -784,17 +161,6 @@ export interface MockedTenantTest {
 
 // Walk describe/it/test registrations recording the title stack; skip/todo
 // subtrees can't fail by design and are exempt (same allowlists as Harvey).
-const EXEMPT_MODS = new Set(["skip", "todo", "fixme"]);
-
-function callHead(node: ts.CallExpression): { base: string; mod?: string } | undefined {
-  const callee = node.expression;
-  if (ts.isIdentifier(callee)) return { base: callee.text };
-  if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
-    return { base: callee.expression.text, mod: callee.name.text };
-  }
-  if (ts.isCallExpression(callee)) return callHead(callee); // it.each(rows)("name", fn)
-  return undefined;
-}
 
 function unwrapExpression(input: ts.Expression): ts.Expression {
   let expression = input;
@@ -824,33 +190,1683 @@ function staticBoolean(input: ts.Expression | undefined): boolean | undefined {
   return undefined;
 }
 
-function registrationIsStaticallyDisabled(node: ts.CallExpression, sf: ts.SourceFile): boolean {
-  if (!ts.isCallExpression(node.expression) || !ts.isPropertyAccessExpression(node.expression.expression)) return false;
-  const modifier = node.expression.expression;
-  if (!ts.isIdentifier(modifier.expression) || !["describe", "it", "test"].includes(modifier.expression.text)) return false;
-  const argument = node.expression.arguments[0];
-  if (modifier.name.text === "skipIf") return staticBoolean(argument) === true;
-  if (modifier.name.text === "runIf") return staticBoolean(argument) === false;
-  if (modifier.name.text !== "each" || !argument) return false;
-  let rows = unwrapExpression(argument);
-  if (ts.isIdentifier(rows)) {
-    const declarations: ts.Expression[] = [];
-    const collect = (candidate: ts.Node) => {
-      if (
-        ts.isVariableDeclaration(candidate) &&
-        ts.isIdentifier(candidate.name) &&
-        candidate.name.text === rows.getText(sf) &&
-        candidate.initializer &&
-        candidate.pos < node.pos
-      ) {
-        declarations.push(candidate.initializer);
-      }
-      ts.forEachChild(candidate, collect);
-    };
-    collect(sf);
-    if (declarations.length === 1) rows = unwrapExpression(declarations[0]!);
+type FrameworkTag = "vi" | "jest" | "vitest" | "mock" | "doMock" | "mocked" | "spyOn" | "replaceProperty";
+type RegistrationKind = "suite" | "test";
+type RegistrationState = "enabled" | "disabled" | "unknown";
+
+interface RegistrationValue {
+  kind: RegistrationKind;
+  state: RegistrationState;
+  pending?: "skipIf" | "runIf" | "each" | "for";
+}
+
+type FlowAtom = string;
+type FlowValue = ReadonlySet<FlowAtom>;
+type FlowOutcome = "normal" | "return" | "throw" | "break" | "continue" | "nonterminating";
+
+interface FlowState {
+  cells: Map<ts.Symbol, Set<FlowAtom>>;
+  members: Map<FlowAtom, Map<string, Set<FlowAtom>>>;
+  dirty: Set<FlowAtom>;
+  outcome: FlowOutcome;
+  returned: Set<FlowAtom>;
+  witnessCount: number;
+  awaitedWitnessCount: number;
+  witnessResources: Set<string>;
+  unsupported: boolean;
+}
+
+interface FlowEvaluation {
+  state: FlowState;
+  value: Set<FlowAtom>;
+}
+
+interface TestFlowProof {
+  mockedReceiver?: DbReceiverKind;
+  mockedWitness: boolean;
+  witnessCount?: number;
+  awaitedWitnessCount?: number;
+  queryResources: string[];
+  unsupported: boolean;
+  normalPathWithoutWitness: boolean;
+  witnessCall?: ts.CallExpression;
+}
+
+const UNKNOWN_ATOM = "unknown";
+const UNDEFINED_ATOM = "undefined";
+const ORIGINAL_LOADER_ATOM = "loader:original";
+const ORIGINAL_MODULE_ATOM = "module:original";
+const SUPABASE_FACTORY_ATOM = "factory:supabase";
+const POSTGRES_FACTORY_ATOM = "factory:postgres";
+const WITNESS_ATOM = "witness:canonical";
+
+class LocalFlowEngine {
+  readonly checker: ts.TypeChecker;
+  private readonly functions = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
+  private readonly boundTargets = new Map<FlowAtom, Set<FlowAtom>>();
+  private readonly controlTargets = new Map<FlowAtom, Set<FlowAtom>>();
+  private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member: string }>();
+  private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  private readonly executedWitnessCalls = new Set<ts.CallExpression>();
+  private executeSuites = false;
+
+  constructor(readonly sourceFile: ts.SourceFile) {
+    const checker = CHECKERS.get(sourceFile);
+    if (!checker) throw new Error("mocked-tenant-tests guard missing TypeChecker analysis context");
+    this.checker = checker;
   }
-  return ts.isArrayLiteralExpression(rows) && rows.elements.length === 0;
+
+  private symbol(node: ts.Node): ts.Symbol | undefined {
+    if (ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)) {
+      return this.checker.getShorthandAssignmentValueSymbol(node.parent) ?? this.checker.getSymbolAtLocation(node);
+    }
+    return this.checker.getSymbolAtLocation(node);
+  }
+
+  private atom(prefix: string, node: ts.Node): FlowAtom {
+    return `${prefix}:${node.pos}:${node.end}`;
+  }
+
+  private functionAtom(fn: ts.FunctionLikeDeclaration): FlowAtom {
+    const atom = this.atom("function", fn);
+    this.functions.set(atom, fn);
+    return atom;
+  }
+
+  private cloneState(state: FlowState): FlowState {
+    return {
+      cells: new Map([...state.cells].map(([symbol, value]) => [symbol, new Set(value)])),
+      members: new Map(
+        [...state.members].map(([atom, members]) => [
+          atom,
+          new Map([...members].map(([name, value]) => [name, new Set(value)])),
+        ]),
+      ),
+      dirty: new Set(state.dirty),
+      outcome: state.outcome,
+      returned: new Set(state.returned),
+      witnessCount: state.witnessCount,
+      awaitedWitnessCount: state.awaitedWitnessCount,
+      witnessResources: new Set(state.witnessResources),
+      unsupported: state.unsupported,
+    };
+  }
+
+  private emptyState(): FlowState {
+    return {
+      cells: new Map(),
+      members: new Map(),
+      dirty: new Set(),
+      outcome: "normal",
+      returned: new Set(),
+      witnessCount: 0,
+      awaitedWitnessCount: 0,
+      witnessResources: new Set(),
+      unsupported: false,
+    };
+  }
+
+  private values(...atoms: FlowAtom[]): Set<FlowAtom> {
+    return new Set(atoms.length ? atoms : [UNKNOWN_ATOM]);
+  }
+
+  private cellValue(state: FlowState, node: ts.Identifier): Set<FlowAtom> {
+    const symbol = this.symbol(node);
+    if (symbol) return new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
+    if (node.text === "vi" || node.text === "jest") return this.values(`framework:${node.text}`);
+    return this.values(UNKNOWN_ATOM);
+  }
+
+  private setCell(state: FlowState, node: ts.Identifier, value: FlowValue): void {
+    const symbol = this.symbol(node);
+    if (symbol) state.cells.set(symbol, new Set(value));
+  }
+
+  private staticKey(node: ts.Node | undefined): string | undefined {
+    if (!node) return undefined;
+    const computed = ts.isComputedPropertyName(node);
+    const expression = computed ? unwrapExpression(node.expression) : unwrapExpression(node as ts.Expression);
+    if ((!computed && ts.isIdentifier(expression)) || ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
+      return expression.text;
+    }
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = this.staticKey(expression.left);
+      const right = this.staticKey(expression.right);
+      return left === undefined || right === undefined ? undefined : left + right;
+    }
+    return undefined;
+  }
+
+  private setMember(state: FlowState, receivers: FlowValue, member: string | undefined, value: FlowValue): void {
+    for (const receiver of receivers) {
+      const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
+      members.set(member ?? "@unknown", new Set(value));
+      state.members.set(receiver, members);
+      if (
+        receiver.startsWith("client:supabase:") &&
+        (member === undefined || member === "from" || member === "rpc")
+      ) {
+        state.dirty.add(receiver);
+      }
+      if (receiver.startsWith("client:postgres:") || receiver === ORIGINAL_LOADER_ATOM) {
+        state.dirty.add(receiver);
+      }
+    }
+  }
+
+  private assignTarget(state: FlowState, target: ts.Expression, value: FlowValue): void {
+    const expression = unwrapExpression(target);
+    if (ts.isIdentifier(expression)) {
+      this.setCell(state, expression, value);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      const receiver = this.evaluateExpression(expression.expression, this.cloneState(state))[0];
+      if (receiver) {
+        state.cells = receiver.state.cells;
+        state.members = receiver.state.members;
+        state.dirty = receiver.state.dirty;
+        this.setMember(state, receiver.value, expression.name.text, value);
+      }
+      return;
+    }
+    if (ts.isElementAccessExpression(expression)) {
+      const receiver = this.evaluateExpression(expression.expression, this.cloneState(state))[0];
+      if (receiver) {
+        state.cells = receiver.state.cells;
+        state.members = receiver.state.members;
+        state.dirty = receiver.state.dirty;
+        this.setMember(state, receiver.value, this.staticKey(expression.argumentExpression), value);
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(expression)) {
+      for (const element of expression.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        const item = ts.isSpreadElement(element) ? element.expression : element;
+        if (ts.isBinaryExpression(item) && item.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          const fallback = this.evaluateExpression(item.right, this.cloneState(state))[0]?.value ?? this.values(UNKNOWN_ATOM);
+          this.assignTarget(state, item.left, fallback);
+        } else {
+          this.assignTarget(state, item, this.values(UNKNOWN_ATOM));
+        }
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(expression)) {
+      for (const property of expression.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) this.setCell(state, property.name, this.values(UNKNOWN_ATOM));
+        else if (ts.isPropertyAssignment(property)) this.assignTarget(state, property.initializer, this.values(UNKNOWN_ATOM));
+        else if (ts.isSpreadAssignment(property)) this.assignTarget(state, property.expression, this.values(UNKNOWN_ATOM));
+      }
+    }
+  }
+
+  private seedImports(): FlowState {
+    const state = this.emptyState();
+    for (const statement of this.sourceFile.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+      const module = statement.moduleSpecifier.text;
+      if (statement.importClause?.name) {
+        const atom = module === "postgres" ? POSTGRES_FACTORY_ATOM : UNKNOWN_ATOM;
+        this.setCell(state, statement.importClause.name, this.values(atom));
+      }
+      const bindings = statement.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) continue;
+      for (const element of bindings.elements) {
+        const imported = element.propertyName?.text ?? element.name.text;
+        let atom = UNKNOWN_ATOM;
+        if (module === "@supabase/supabase-js" && imported === "createClient") atom = SUPABASE_FACTORY_ATOM;
+        else if (module === "vitest" && ["vi", "vitest"].includes(imported)) atom = `framework:${imported}`;
+        else if (module === "vitest" && ["beforeAll", "beforeEach", "afterAll", "afterEach"].includes(imported)) {
+          atom = `framework:${imported}`;
+        }
+        else if (module.endsWith("tests/helpers/isolation-witness") && imported === "assertIsolationQuery") atom = WITNESS_ATOM;
+        this.setCell(state, element.name, this.values(atom));
+      }
+    }
+    return state;
+  }
+
+  private memberValue(
+    state: FlowState,
+    receivers: FlowValue,
+    member: string | undefined,
+    node: ts.Node,
+  ): Set<FlowAtom> {
+    const value = new Set<FlowAtom>();
+    for (const receiver of receivers) {
+      const explicit = state.members.get(receiver)?.get(member ?? "@unknown");
+      if (explicit) {
+        for (const atom of explicit) value.add(atom);
+        continue;
+      }
+      if (receiver === "framework:vi" || receiver === "framework:vitest" || receiver === "framework:jest") {
+        if (member && ["mock", "doMock", "mocked", "spyOn", "replaceProperty"].includes(member)) {
+          value.add(`framework:${member}`);
+        }
+        else value.add(UNKNOWN_ATOM);
+        continue;
+      }
+      if (member && ["call", "apply", "bind"].includes(member) && this.isCallableAtom(receiver)) {
+        const wrapper = this.atom(member, node);
+        this.boundTargets.set(wrapper, new Set([receiver]));
+        value.add(wrapper);
+        continue;
+      }
+      if (receiver.startsWith("client:supabase:") && member && ["from", "rpc"].includes(member)) {
+        if (state.dirty.has(receiver)) value.add(UNKNOWN_ATOM);
+        else {
+          const method = this.atom(`supabase-${member}`, node);
+          this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+          value.add(method);
+        }
+        continue;
+      }
+      if (receiver.startsWith("query:supabase:") && member && ["select", "insert", "update", "delete", "upsert"].includes(member)) {
+        const method = this.atom("supabase-operation", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
+      if (
+        receiver.startsWith("result:query:") &&
+        member &&
+        [
+          "eq",
+          "neq",
+          "gt",
+          "gte",
+          "lt",
+          "lte",
+          "like",
+          "ilike",
+          "is",
+          "in",
+          "contains",
+          "containedBy",
+          "range",
+          "order",
+          "limit",
+          "single",
+          "maybeSingle",
+          "not",
+          "or",
+          "filter",
+          "match",
+          "textSearch",
+          "overlaps",
+        ].includes(member)
+      ) {
+        const method = this.atom("supabase-chain", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
+      if (receiver.startsWith("control:") && member && /^(?:mock|withImplementation)/.test(member)) {
+        const configure = this.atom("configure", node);
+        this.controlTargets.set(configure, new Set(this.controlTargets.get(receiver) ?? [UNKNOWN_ATOM]));
+        value.add(configure);
+        continue;
+      }
+      if (receiver.startsWith("result:query:") && member && ["then", "catch", "finally"].includes(member)) {
+        value.add(UNKNOWN_ATOM);
+        continue;
+      }
+      value.add(UNKNOWN_ATOM);
+    }
+    return value.size ? value : this.values(UNKNOWN_ATOM);
+  }
+
+  private isCallableAtom(atom: FlowAtom): boolean {
+    return (
+      atom === ORIGINAL_LOADER_ATOM ||
+      atom === SUPABASE_FACTORY_ATOM ||
+      atom === POSTGRES_FACTORY_ATOM ||
+      atom === WITNESS_ATOM ||
+      atom.startsWith("function:") ||
+      atom.startsWith("bound:") ||
+      atom.startsWith("call:") ||
+      atom.startsWith("apply:") ||
+      atom.startsWith("bind:") ||
+      atom.startsWith("supabase-") ||
+      atom.startsWith("configure:")
+    );
+  }
+
+  private evaluateExpression(
+    input: ts.Expression,
+    state: FlowState,
+    active = new Set<ts.FunctionLikeDeclaration>(),
+    awaited = false,
+  ): FlowEvaluation[] {
+    const expression = unwrapExpression(input);
+    if (ts.isAwaitExpression(expression)) {
+      return this.evaluateExpression(expression.expression, state, active, true);
+    }
+    if (ts.isIdentifier(expression)) return [{ state, value: this.cellValue(state, expression) }];
+    if (expression.kind === ts.SyntaxKind.UndefinedKeyword || expression.kind === ts.SyntaxKind.VoidExpression) {
+      return [{ state, value: this.values(UNDEFINED_ATOM) }];
+    }
+    if (
+      ts.isStringLiteralLike(expression) ||
+      ts.isNumericLiteral(expression) ||
+      expression.kind === ts.SyntaxKind.TrueKeyword ||
+      expression.kind === ts.SyntaxKind.FalseKeyword ||
+      expression.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      return [{ state, value: this.values(this.atom("literal", expression)) }];
+    }
+    if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
+      const atom = this.functionAtom(expression);
+      if (ts.isFunctionExpression(expression) && expression.name) this.setCell(state, expression.name, this.values(atom));
+      return [{ state, value: this.values(atom) }];
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      return this.evaluateExpression(expression.expression, state, active).map((base) => ({
+        state: base.state,
+        value: this.memberValue(base.state, base.value, expression.name.text, expression),
+      }));
+    }
+    if (ts.isElementAccessExpression(expression)) {
+      return this.evaluateExpression(expression.expression, state, active).map((base) => ({
+        state: base.state,
+        value: this.memberValue(base.state, base.value, this.staticKey(expression.argumentExpression), expression),
+      }));
+    }
+    if (ts.isConditionalExpression(expression)) {
+      const condition = staticBoolean(expression.condition);
+      const conditions = this.evaluateExpression(expression.condition, state, active);
+      return conditions.flatMap((after) => {
+        if (condition === true) return this.evaluateExpression(expression.whenTrue, after.state, active, awaited);
+        if (condition === false) return this.evaluateExpression(expression.whenFalse, after.state, active, awaited);
+        return [
+          ...this.evaluateExpression(expression.whenTrue, this.cloneState(after.state), active, awaited),
+          ...this.evaluateExpression(expression.whenFalse, this.cloneState(after.state), active, awaited),
+        ];
+      });
+    }
+    if (ts.isBinaryExpression(expression)) return this.evaluateBinary(expression, state, active, awaited);
+    if (ts.isObjectLiteralExpression(expression)) return this.evaluateObject(expression, state, active);
+    if (ts.isArrayLiteralExpression(expression)) {
+      let evaluations: FlowEvaluation[] = [{ state, value: this.values(this.atom("array", expression)) }];
+      for (const element of expression.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        const item = ts.isSpreadElement(element) ? element.expression : element;
+        evaluations = evaluations.flatMap((current) =>
+          this.evaluateExpression(item, current.state, active).map((evaluated) => ({
+            state: evaluated.state,
+            value: current.value,
+          })),
+        );
+      }
+      return evaluations;
+    }
+    if (ts.isCallExpression(expression)) return this.evaluateCall(expression, state, active, awaited, false);
+    if (ts.isNewExpression(expression)) return this.evaluateNew(expression, state, active);
+    if (ts.isTaggedTemplateExpression(expression)) return this.evaluateTaggedTemplate(expression, state, active);
+    if (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) {
+      if (
+        (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
+        ts.isExpression(expression.operand)
+      ) {
+        this.assignTarget(state, expression.operand, this.values(UNKNOWN_ATOM));
+      }
+      return [{ state, value: this.values(UNKNOWN_ATOM) }];
+    }
+    if (ts.isTemplateExpression(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      return [{ state, value: this.values(this.atom("literal", expression)) }];
+    }
+    state.unsupported = true;
+    return [{ state, value: this.values(UNKNOWN_ATOM) }];
+  }
+
+  private evaluateBinary(
+    expression: ts.BinaryExpression,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+    awaited: boolean,
+  ): FlowEvaluation[] {
+    const operator = expression.operatorToken.kind;
+    if (operator === ts.SyntaxKind.CommaToken) {
+      return this.evaluateExpression(expression.left, state, new Set(active)).flatMap((left) =>
+        this.evaluateExpression(expression.right, left.state, new Set(active), awaited),
+      );
+    }
+    if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) {
+      if (
+        operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+        operator === ts.SyntaxKind.BarBarEqualsToken ||
+        operator === ts.SyntaxKind.QuestionQuestionEqualsToken
+      ) {
+        const unchanged = this.cloneState(state);
+        const assigned = this.evaluateExpression(expression.right, this.cloneState(state), new Set(active)).map((right) => {
+          this.assignTarget(right.state, expression.left, right.value);
+          return { state: right.state, value: right.value };
+        });
+        return [{ state: unchanged, value: this.values(UNKNOWN_ATOM) }, ...assigned];
+      }
+      return this.evaluateExpression(expression.right, state, new Set(active)).map((right) => {
+        this.assignTarget(
+          right.state,
+          expression.left,
+          operator === ts.SyntaxKind.EqualsToken ? right.value : this.values(UNKNOWN_ATOM),
+        );
+        return { state: right.state, value: right.value };
+      });
+    }
+    if (
+      operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+      operator === ts.SyntaxKind.BarBarToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      const leftBoolean = staticBoolean(expression.left);
+      return this.evaluateExpression(expression.left, state, new Set(active)).flatMap((left) => {
+        const mustRight =
+          operator === ts.SyntaxKind.AmpersandAmpersandToken
+            ? leftBoolean === true
+            : operator === ts.SyntaxKind.BarBarToken
+              ? leftBoolean === false
+              : false;
+        const cannotRight =
+          operator === ts.SyntaxKind.AmpersandAmpersandToken
+            ? leftBoolean === false
+            : operator === ts.SyntaxKind.BarBarToken
+              ? leftBoolean === true
+              : false;
+        if (mustRight) return this.evaluateExpression(expression.right, left.state, new Set(active), awaited);
+        if (cannotRight) return [left];
+        return [
+          { state: this.cloneState(left.state), value: left.value },
+          ...this.evaluateExpression(expression.right, this.cloneState(left.state), new Set(active), awaited),
+        ];
+      });
+    }
+    return this.evaluateExpression(expression.left, state, new Set(active)).flatMap((left) =>
+      this.evaluateExpression(expression.right, left.state, new Set(active)).map((right) => ({
+        state: right.state,
+        value: this.values(UNKNOWN_ATOM),
+      })),
+    );
+  }
+
+  private evaluateObject(
+    object: ts.ObjectLiteralExpression,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowEvaluation[] {
+    const objectAtom = this.atom("object", object);
+    state.members.set(objectAtom, new Map());
+    let evaluations: FlowEvaluation[] = [{ state, value: this.values(objectAtom) }];
+    for (const property of object.properties) {
+      evaluations = evaluations.flatMap((current) => {
+        if (ts.isSpreadAssignment(property)) {
+          return this.evaluateExpression(property.expression, current.state, new Set(active)).map((spread) => {
+            const targetMembers = spread.state.members.get(objectAtom) ?? new Map<string, Set<FlowAtom>>();
+            for (const sourceAtom of spread.value) {
+              if (sourceAtom === ORIGINAL_MODULE_ATOM) {
+                targetMembers.clear();
+                targetMembers.set("@all", this.values(ORIGINAL_MODULE_ATOM));
+                targetMembers.set("@seenOriginal", this.values(ORIGINAL_MODULE_ATOM));
+                continue;
+              }
+              const sourceMembers = spread.state.members.get(sourceAtom);
+              if (!sourceMembers || sourceAtom === UNKNOWN_ATOM) {
+                targetMembers.clear();
+                targetMembers.set("@all", this.values(UNKNOWN_ATOM));
+                continue;
+              }
+              const sourceAll = sourceMembers.get("@all");
+              const sourceSeen = sourceMembers.get("@seenOriginal");
+              if (sourceAll) {
+                targetMembers.clear();
+                targetMembers.set("@all", new Set(sourceAll));
+              }
+              if (sourceSeen) targetMembers.set("@seenOriginal", new Set(sourceSeen));
+              for (const [name, value] of sourceMembers) {
+                if (name !== "@all" && name !== "@seenOriginal") targetMembers.set(name, new Set(value));
+              }
+            }
+            spread.state.members.set(objectAtom, targetMembers);
+            return { state: spread.state, value: this.values(objectAtom) };
+          });
+        }
+        if (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
+          const key = this.staticKey(property.name);
+          this.setMember(current.state, this.values(objectAtom), key, this.values(this.functionAtom(property)));
+          if (key === undefined) current.state.members.get(objectAtom)?.set("@all", this.values(UNKNOWN_ATOM));
+          return [current];
+        }
+        if (ts.isShorthandPropertyAssignment(property)) {
+          this.setMember(current.state, this.values(objectAtom), property.name.text, this.cellValue(current.state, property.name));
+          return [current];
+        }
+        if (ts.isPropertyAssignment(property)) {
+          return this.evaluateExpression(property.initializer, current.state, new Set(active)).map((value) => {
+            const key = this.staticKey(property.name);
+            this.setMember(value.state, this.values(objectAtom), key, value.value);
+            if (key === undefined) value.state.members.get(objectAtom)?.set("@all", this.values(UNKNOWN_ATOM));
+            return { state: value.state, value: this.values(objectAtom) };
+          });
+        }
+        current.state.unsupported = true;
+        return [current];
+      });
+    }
+    return evaluations;
+  }
+
+  private propertyFromValue(state: FlowState, value: FlowValue, property: string): Set<FlowAtom> {
+    const result = new Set<FlowAtom>();
+    for (const atom of value) {
+      const members = state.members.get(atom);
+      const explicit = members?.get(property);
+      const fallback = members?.get("@all");
+      for (const member of explicit ?? fallback ?? [UNKNOWN_ATOM]) result.add(member);
+    }
+    return result.size ? result : this.values(UNKNOWN_ATOM);
+  }
+
+  private bindName(state: FlowState, name: ts.BindingName, value: FlowValue): void {
+    if (ts.isIdentifier(name)) {
+      this.setCell(state, name, value);
+      return;
+    }
+    if (ts.isObjectBindingPattern(name)) {
+      for (const element of name.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        const key = this.staticKey(element.propertyName ?? (ts.isIdentifier(element.name) ? element.name : undefined));
+        let selected =
+          key === undefined
+            ? this.values(UNKNOWN_ATOM)
+            : this.memberValue(state, value, key, element);
+        if (element.initializer && (selected.has(UNDEFINED_ATOM) || selected.has(UNKNOWN_ATOM))) {
+          selected = this.evaluateExpression(element.initializer, this.cloneState(state))[0]?.value ?? this.values(UNKNOWN_ATOM);
+        }
+        this.bindName(state, element.name, selected);
+      }
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) this.bindName(state, element.name, this.values(UNKNOWN_ATOM));
+    }
+  }
+
+  private initialiseHoisted(statements: readonly ts.Statement[], state: FlowState): void {
+    const visitVar = (node: ts.Node) => {
+      if (node !== this.sourceFile && ts.isFunctionLike(node)) return;
+      if (ts.isVariableDeclarationList(node) && !(node.flags & ts.NodeFlags.BlockScoped)) {
+        for (const declaration of node.declarations) this.bindName(state, declaration.name, this.values(UNDEFINED_ATOM));
+      }
+      ts.forEachChild(node, visitVar);
+    };
+    for (const statement of statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name) {
+        this.setCell(state, statement.name, this.values(this.functionAtom(statement)));
+      }
+      visitVar(statement);
+    }
+  }
+
+  private evaluateCall(
+    call: ts.CallExpression,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+    awaited: boolean,
+    construct: boolean,
+  ): FlowEvaluation[] {
+    return this.evaluateExpression(call.expression, state, new Set(active)).flatMap((callee) => {
+      type CallInputs = { state: FlowState; args: Set<FlowAtom>[] };
+      let inputs: CallInputs[] = [{ state: callee.state, args: [] }];
+      for (const argument of call.arguments) {
+        if (ts.isSpreadElement(argument)) {
+          inputs = inputs.map((input) => {
+            input.state.unsupported = true;
+            return { state: input.state, args: [...input.args, this.values(UNKNOWN_ATOM)] };
+          });
+          continue;
+        }
+        inputs = inputs.flatMap((input) =>
+          this.evaluateExpression(argument, input.state, new Set(active)).map((evaluated) => ({
+            state: evaluated.state,
+            args: [...input.args, evaluated.value],
+          })),
+        );
+      }
+      return inputs.flatMap((input) =>
+        this.invokeAtoms(callee.value, input.args, input.state, call, active, awaited, construct),
+      );
+    });
+  }
+
+  private evaluateNew(
+    expression: ts.NewExpression,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowEvaluation[] {
+    const synthetic = expression as unknown as ts.CallExpression;
+    return this.evaluateExpression(expression.expression, state, new Set(active)).flatMap((callee) => {
+      let inputs: { state: FlowState; args: Set<FlowAtom>[] }[] = [{ state: callee.state, args: [] }];
+      for (const argument of expression.arguments ?? []) {
+        inputs = inputs.flatMap((input) =>
+          this.evaluateExpression(argument, input.state, new Set(active)).map((evaluated) => ({
+            state: evaluated.state,
+            args: [...input.args, evaluated.value],
+          })),
+        );
+      }
+      return inputs.flatMap((input) =>
+        this.invokeAtoms(callee.value, input.args, input.state, synthetic, active, false, true),
+      );
+    });
+  }
+
+  private invokeAtoms(
+    callees: FlowValue,
+    args: readonly FlowValue[],
+    state: FlowState,
+    call: ts.CallExpression,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+    awaited: boolean,
+    construct: boolean,
+  ): FlowEvaluation[] {
+    const results: FlowEvaluation[] = [];
+    for (const callee of callees) {
+      const branch = this.cloneState(state);
+      if (callee === SUPABASE_FACTORY_ATOM || callee === POSTGRES_FACTORY_ATOM) {
+        if (branch.dirty.has(callee)) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        else {
+          const kind = callee === SUPABASE_FACTORY_ATOM ? "supabase" : "postgres";
+          results.push({ state: branch, value: this.values(this.atom(`client:${kind}`, call)) });
+        }
+        continue;
+      }
+      if (callee === ORIGINAL_LOADER_ATOM) {
+        results.push({
+          state: branch,
+          value: branch.dirty.has(ORIGINAL_LOADER_ATOM) ? this.values(UNKNOWN_ATOM) : this.values(ORIGINAL_MODULE_ATOM),
+        });
+        continue;
+      }
+      if (callee === "framework:mocked") {
+        const control = this.atom("control", call);
+        this.controlTargets.set(control, new Set(args[0] ?? [UNKNOWN_ATOM]));
+        results.push({ state: branch, value: this.values(control) });
+        continue;
+      }
+      if (callee === "framework:mock" || callee === "framework:doMock") {
+        results.push({ state: branch, value: this.values(UNDEFINED_ATOM) });
+        continue;
+      }
+      if (callee === "framework:beforeAll" || callee === "framework:beforeEach") {
+        const callbacks = [...(args[0] ?? [])]
+          .map((atom) => this.functions.get(atom))
+          .filter((fn): fn is ts.FunctionLikeDeclaration => fn !== undefined && !active.has(fn));
+        if (!callbacks.length) {
+          branch.unsupported = true;
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        } else {
+          for (const callback of callbacks) {
+            results.push(
+              ...this.executeFunction(callback, [], branch, new Set(active).add(callback)).map((result) => ({
+                state: result.state,
+                value: this.values(UNDEFINED_ATOM),
+              })),
+            );
+          }
+        }
+        continue;
+      }
+      if (callee === "framework:afterAll" || callee === "framework:afterEach") {
+        results.push({ state: branch, value: this.values(UNDEFINED_ATOM) });
+        continue;
+      }
+      if (callee === "framework:spyOn" || callee === "framework:replaceProperty") {
+        const target = new Set(args[0] ?? [UNKNOWN_ATOM]);
+        for (const atom of target) {
+          if (atom.startsWith("client:supabase:") || atom.startsWith("client:postgres:")) branch.dirty.add(atom);
+        }
+        const control = this.atom("control", call);
+        this.controlTargets.set(control, target);
+        results.push({ state: branch, value: this.values(control) });
+        continue;
+      }
+      if (callee.startsWith("configure:")) {
+        for (const target of this.controlTargets.get(callee) ?? [UNKNOWN_ATOM]) branch.dirty.add(target);
+        results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        continue;
+      }
+      const memberTarget = this.memberTargets.get(callee);
+      if (memberTarget?.member === "from" || memberTarget?.member === "rpc") {
+        const resourceName = this.literalText(call.arguments[0]);
+        if (!resourceName || [...memberTarget.receiver].some((receiver) => branch.dirty.has(receiver))) {
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        } else if (memberTarget.member === "rpc") {
+          const result = this.atom("result:query", call);
+          this.queryResourcesByAtom.set(result, new Set([`rpc:public.${resourceName}`]));
+          results.push({ state: branch, value: this.values(result) });
+        } else {
+          const query = this.atom("query:supabase", call);
+          this.queryResourcesByAtom.set(query, new Set([`table:public.${resourceName}`]));
+          results.push({ state: branch, value: this.values(query) });
+        }
+        continue;
+      }
+      if (memberTarget && memberTarget.member && ["select", "insert", "update", "delete", "upsert"].includes(memberTarget.member)) {
+        const result = this.atom("result:query", call);
+        const resources = new Set<string>();
+        for (const query of memberTarget.receiver) {
+          for (const resource of this.queryResourcesByAtom.get(query) ?? []) resources.add(resource);
+        }
+        this.queryResourcesByAtom.set(result, resources);
+        results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });
+        continue;
+      }
+      if (callee.startsWith("supabase-chain:")) {
+        results.push({ state: branch, value: new Set(memberTarget?.receiver ?? [UNKNOWN_ATOM]) });
+        continue;
+      }
+      if (callee === WITNESS_ATOM) {
+        if (branch.dirty.has(WITNESS_ATOM)) {
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          continue;
+        }
+        branch.witnessCount = Math.min(2, branch.witnessCount + 1);
+        this.executedWitnessCalls.add(call);
+        if (awaited) branch.awaitedWitnessCount = Math.min(2, branch.awaitedWitnessCount + 1);
+        const queryValues = args[0]
+          ? this.propertyFromValue(branch, args[0], "query")
+          : this.values(UNKNOWN_ATOM);
+        const queryResults = this.invokeAtoms(queryValues, [], branch, call, active, true, false);
+        for (const queryResult of queryResults) {
+          for (const atom of queryResult.value) {
+            for (const resource of this.queryResourcesByAtom.get(atom) ?? []) {
+              queryResult.state.witnessResources.add(resource);
+            }
+          }
+          results.push({ state: queryResult.state, value: this.values(UNDEFINED_ATOM) });
+        }
+        continue;
+      }
+      if (callee.startsWith("bind:")) {
+        const bound = this.atom("bound", call);
+        this.boundTargets.set(bound, new Set(this.boundTargets.get(callee) ?? [UNKNOWN_ATOM]));
+        results.push({ state: branch, value: this.values(bound) });
+        continue;
+      }
+      if (callee.startsWith("call:") || callee.startsWith("apply:") || callee.startsWith("bound:")) {
+        const targets = this.boundTargets.get(callee) ?? this.values(UNKNOWN_ATOM);
+        const forwarded = callee.startsWith("bound:") ? args : callee.startsWith("call:") ? args.slice(1) : args.slice(1, 2);
+        results.push(...this.invokeAtoms(targets, forwarded, branch, call, active, awaited, construct));
+        continue;
+      }
+      const fn = this.functions.get(callee);
+      if (fn) {
+        if (fn.asteriskToken && !construct) {
+          results.push({ state: branch, value: this.values(this.atom("generator", call)) });
+        } else if (active.has(fn)) {
+          branch.unsupported = true;
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        } else {
+          const directArgs = args.map((value) =>
+            [...value].some((atom) => atom.startsWith("query:supabase:") || atom.startsWith("result:query:"))
+              ? this.values(UNKNOWN_ATOM)
+              : value,
+          );
+          results.push(...this.executeFunction(fn, directArgs, branch, new Set(active).add(fn)));
+        }
+        continue;
+      }
+      const registration = this.registration(call);
+      if (registration) {
+        if (this.executeSuites && registration.kind === "suite" && registration.state === "enabled") {
+          const callbacks = args
+            .flatMap((value) => [...value])
+            .map((atom) => this.functions.get(atom))
+            .filter((fn): fn is ts.FunctionLikeDeclaration => fn !== undefined && !active.has(fn));
+          for (const callback of callbacks) {
+            results.push(
+              ...this.executeFunction(callback, [], branch, new Set(active).add(callback)).map((result) => ({
+                state: result.state,
+                value: this.values(UNDEFINED_ATOM),
+              })),
+            );
+          }
+        }
+        if (!results.length) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        continue;
+      }
+      if (this.applyMutationCall(call, args, branch)) {
+        results.push({ state: branch, value: new Set(args[0] ?? [UNKNOWN_ATOM]) });
+        continue;
+      }
+      if (ts.isIdentifier(call.expression) && call.expression.text === "eval") branch.unsupported = true;
+      for (const value of args) {
+        for (const atom of value) {
+          const callback = this.functions.get(atom);
+          if (callback && !active.has(callback)) {
+            results.push(...this.executeFunction(callback, [], this.cloneState(branch), new Set(active).add(callback)));
+          }
+        }
+      }
+      results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+    }
+    return results.length ? results : [{ state, value: this.values(UNKNOWN_ATOM) }];
+  }
+
+  private literalText(input: ts.Expression | undefined): string | undefined {
+    if (!input) return undefined;
+    const expression = unwrapExpression(input);
+    return ts.isStringLiteralLike(expression) ? expression.text : undefined;
+  }
+
+  private applyMutationCall(call: ts.CallExpression, args: readonly FlowValue[], state: FlowState): boolean {
+    if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return false;
+    const owner = call.expression.expression.text;
+    const method = call.expression.name.text;
+    if (owner === "Object" && method === "assign") {
+      const targets = args[0] ?? this.values(UNKNOWN_ATOM);
+      for (const source of args.slice(1)) {
+        for (const target of targets) {
+          for (const sourceAtom of source) {
+            const sourceMembers = state.members.get(sourceAtom);
+            if (!sourceMembers) {
+              if (target.startsWith("client:supabase:") || target.startsWith("client:postgres:")) state.dirty.add(target);
+              continue;
+            }
+            for (const [name, value] of sourceMembers) {
+              if (name.startsWith("@")) continue;
+              this.setMember(state, this.values(target), name, value);
+            }
+            if (sourceMembers.has("@all") || sourceMembers.has("@unknown")) {
+              this.setMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
+            }
+          }
+        }
+      }
+      return true;
+    }
+    if (owner === "Object" && method === "defineProperties") {
+      const targets = args[0] ?? this.values(UNKNOWN_ATOM);
+      const descriptors = args[1] ?? this.values(UNKNOWN_ATOM);
+      for (const target of targets) {
+        for (const descriptor of descriptors) {
+          const members = state.members.get(descriptor);
+          if (!members) this.setMember(state, this.values(target), undefined, this.values(UNKNOWN_ATOM));
+          else {
+            for (const name of members.keys()) {
+              if (!name.startsWith("@")) this.setMember(state, this.values(target), name, this.values(UNKNOWN_ATOM));
+            }
+          }
+        }
+      }
+      return true;
+    }
+    if (
+      (owner === "Object" && method === "defineProperty") ||
+      (owner === "Reflect" && ["defineProperty", "set"].includes(method))
+    ) {
+      const key = this.literalText(call.arguments[1]);
+      this.setMember(state, args[0] ?? this.values(UNKNOWN_ATOM), key, this.values(UNKNOWN_ATOM));
+      return true;
+    }
+    return false;
+  }
+
+  private evaluateTaggedTemplate(
+    expression: ts.TaggedTemplateExpression,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowEvaluation[] {
+    return this.evaluateExpression(expression.tag, state, new Set(active)).map((tag) => {
+      const isRealPostgres = [...tag.value].some(
+        (atom) => atom.startsWith("client:postgres:") && !tag.state.dirty.has(atom),
+      );
+      if (!isRealPostgres) {
+        return { state: tag.state, value: this.values(UNKNOWN_ATOM) };
+      }
+      const sql = ts.isNoSubstitutionTemplateLiteral(expression.template)
+        ? expression.template.text
+        : [
+            expression.template.head.text,
+            ...expression.template.templateSpans.map((span) => ` ? ${span.literal.text}`),
+          ].join("");
+      const resources = this.sqlResources(sql);
+      if (!resources.length) return { state: tag.state, value: this.values(UNKNOWN_ATOM) };
+      const result = this.atom("result:query", expression);
+      this.queryResourcesByAtom.set(result, new Set(resources));
+      return { state: tag.state, value: this.values(result) };
+    });
+  }
+
+  private sqlResources(sql: string): string[] {
+    const tokens: string[] = [];
+    let index = 0;
+    while (index < sql.length) {
+      const char = sql[index]!;
+      const next = sql[index + 1];
+      if (/\s/.test(char)) {
+        index += 1;
+        continue;
+      }
+      if (char === "-" && next === "-") {
+        index += 2;
+        while (index < sql.length && sql[index] !== "\n") index += 1;
+        continue;
+      }
+      if (char === "/" && next === "*") {
+        index += 2;
+        let depth = 1;
+        while (index < sql.length && depth > 0) {
+          if (sql[index] === "/" && sql[index + 1] === "*") {
+            depth += 1;
+            index += 2;
+          } else if (sql[index] === "*" && sql[index + 1] === "/") {
+            depth -= 1;
+            index += 2;
+          } else index += 1;
+        }
+        continue;
+      }
+      if (char === "'") {
+        index += 1;
+        while (index < sql.length) {
+          if (sql[index] === "'" && sql[index + 1] === "'") index += 2;
+          else if (sql[index] === "'") {
+            index += 1;
+            break;
+          } else index += 1;
+        }
+        continue;
+      }
+      if (char === "$") {
+        const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
+        if (delimiter) {
+          const end = sql.indexOf(delimiter, index + delimiter.length);
+          index = end < 0 ? sql.length : end + delimiter.length;
+          continue;
+        }
+      }
+      if (char === '"') {
+        let identifier = "";
+        index += 1;
+        while (index < sql.length) {
+          if (sql[index] === '"' && sql[index + 1] === '"') {
+            identifier += '"';
+            index += 2;
+          } else if (sql[index] === '"') {
+            index += 1;
+            break;
+          } else identifier += sql[index++]!;
+        }
+        tokens.push(identifier);
+        continue;
+      }
+      const identifier = /^[a-zA-Z_][a-zA-Z0-9_$]*/.exec(sql.slice(index))?.[0];
+      if (identifier) {
+        tokens.push(identifier);
+        index += identifier.length;
+        continue;
+      }
+      if (char === "." || char === "(") tokens.push(char);
+      index += 1;
+    }
+    const resources = new Set<string>();
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      const keyword = tokens[cursor]?.toUpperCase();
+      if (keyword !== "FROM" && keyword !== "JOIN") continue;
+      cursor += 1;
+      if (tokens[cursor]?.toUpperCase() === "ONLY") cursor += 1;
+      const first = tokens[cursor];
+      if (!first || first === "(") continue;
+      let schema = "public";
+      let name = first;
+      if (tokens[cursor + 1] === "." && tokens[cursor + 2]) {
+        schema = first;
+        name = tokens[cursor + 2]!;
+        cursor += 2;
+      }
+      const kind = tokens[cursor + 1] === "(" ? "rpc" : "table";
+      resources.add(`${kind}:${schema.toLowerCase()}.${name.toLowerCase()}`);
+    }
+    return [...resources].sort();
+  }
+
+  private executeFunction(
+    fn: ts.FunctionLikeDeclaration,
+    args: readonly FlowValue[],
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowEvaluation[] {
+    const entered = this.cloneState(state);
+    fn.parameters.forEach((parameter, index) => {
+      const supplied = args[index] ?? this.values(UNKNOWN_ATOM);
+      let value = supplied;
+      if (parameter.initializer && (supplied.has(UNDEFINED_ATOM) || supplied.has(UNKNOWN_ATOM))) {
+        value = this.evaluateExpression(parameter.initializer, this.cloneState(entered), new Set(active))[0]?.value ?? supplied;
+      }
+      this.bindName(entered, parameter.name, value);
+    });
+    if (!fn.body) return [{ state: entered, value: this.values(UNKNOWN_ATOM) }];
+    if (!ts.isBlock(fn.body)) return this.evaluateExpression(fn.body, entered, new Set(active));
+    this.initialiseHoisted(fn.body.statements, entered);
+    return this.evaluateStatements(fn.body.statements, [entered], active).map((finished) => {
+      const value = finished.outcome === "return" ? new Set(finished.returned) : this.values(UNDEFINED_ATOM);
+      const returned = this.cloneState(finished);
+      if (returned.outcome === "return") returned.outcome = "normal";
+      return { state: returned, value };
+    });
+  }
+
+  private evaluateStatements(
+    statements: readonly ts.Statement[],
+    initial: readonly FlowState[],
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let states = [...initial];
+    for (const statement of statements) {
+      states = states.flatMap((state) =>
+        state.outcome === "normal" ? this.evaluateStatement(statement, state, active) : [state],
+      );
+      if (states.length > 96) states = this.widenStates(states);
+    }
+    return states;
+  }
+
+  private evaluateStatement(
+    statement: ts.Statement,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    if (
+      ts.isImportDeclaration(statement) ||
+      ts.isImportEqualsDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement) ||
+      ts.isClassDeclaration(statement)
+    ) {
+      return [state];
+    }
+    if (ts.isExpressionStatement(statement)) {
+      return this.evaluateExpression(statement.expression, state, new Set(active)).map((evaluation) => evaluation.state);
+    }
+    if (ts.isVariableStatement(statement)) {
+      let states = [state];
+      for (const declaration of statement.declarationList.declarations) {
+        states = states.flatMap((current) => {
+          if (!declaration.initializer) {
+            this.bindName(current, declaration.name, this.values(UNDEFINED_ATOM));
+            return [current];
+          }
+          return this.evaluateExpression(declaration.initializer, current, new Set(active)).map((evaluated) => {
+            this.bindName(evaluated.state, declaration.name, evaluated.value);
+            return evaluated.state;
+          });
+        });
+      }
+      return states;
+    }
+    if (ts.isFunctionDeclaration(statement)) return [state];
+    if (ts.isReturnStatement(statement)) {
+      const values = statement.expression
+        ? this.evaluateExpression(statement.expression, state, new Set(active))
+        : [{ state, value: this.values(UNDEFINED_ATOM) }];
+      return values.map((evaluation) => {
+        evaluation.state.outcome = "return";
+        evaluation.state.returned = new Set(evaluation.value);
+        return evaluation.state;
+      });
+    }
+    if (ts.isThrowStatement(statement)) {
+      const values = this.evaluateExpression(statement.expression, state, new Set(active));
+      return values.map((evaluation) => {
+        evaluation.state.outcome = "throw";
+        return evaluation.state;
+      });
+    }
+    if (ts.isBreakStatement(statement)) {
+      state.outcome = "break";
+      return [state];
+    }
+    if (ts.isContinueStatement(statement)) {
+      state.outcome = "continue";
+      return [state];
+    }
+    if (ts.isBlock(statement)) {
+      this.initialiseHoisted(statement.statements, state);
+      return this.evaluateStatements(statement.statements, [state], active);
+    }
+    if (ts.isIfStatement(statement)) {
+      const staticCondition = staticBoolean(statement.expression);
+      return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((condition) => {
+        if (staticCondition === true) return this.evaluateStatement(statement.thenStatement, condition.state, active);
+        if (staticCondition === false) {
+          return statement.elseStatement
+            ? this.evaluateStatement(statement.elseStatement, condition.state, active)
+            : [condition.state];
+        }
+        return [
+          ...this.evaluateStatement(statement.thenStatement, this.cloneState(condition.state), active),
+          ...(statement.elseStatement
+            ? this.evaluateStatement(statement.elseStatement, this.cloneState(condition.state), active)
+            : [this.cloneState(condition.state)]),
+        ];
+      });
+    }
+    if (ts.isSwitchStatement(statement)) return this.evaluateSwitch(statement, state, active);
+    if (ts.isWhileStatement(statement) || ts.isDoStatement(statement) || ts.isForStatement(statement)) {
+      return this.evaluateLoop(statement, state, active);
+    }
+    if (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) {
+      return this.evaluateForEach(statement, state, active);
+    }
+    if (ts.isTryStatement(statement)) return this.evaluateTry(statement, state, active);
+    if (ts.isEmptyStatement(statement) || ts.isDebuggerStatement(statement)) return [state];
+    state.unsupported = true;
+    return [state];
+  }
+
+  private evaluateSwitch(
+    statement: ts.SwitchStatement,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    const discriminant = this.literalPrimitive(statement.expression);
+    const possible: ts.CaseOrDefaultClause[] = [];
+    if (discriminant !== undefined) {
+      const matching = statement.caseBlock.clauses.find(
+        (clause) => ts.isCaseClause(clause) && this.literalPrimitive(clause.expression) === discriminant,
+      );
+      const fallback = statement.caseBlock.clauses.find(ts.isDefaultClause);
+      if (matching) possible.push(matching);
+      else if (fallback) possible.push(fallback);
+    } else {
+      possible.push(...statement.caseBlock.clauses);
+    }
+    if (!possible.length) return [state];
+    const results = possible.flatMap((clause) =>
+      this.evaluateStatements(clause.statements, [this.cloneState(state)], active).map((result) => {
+        if (result.outcome === "break") result.outcome = "normal";
+        return result;
+      }),
+    );
+    if (discriminant === undefined && !statement.caseBlock.clauses.some(ts.isDefaultClause)) {
+      results.push(this.cloneState(state));
+    }
+    return results;
+  }
+
+  private literalPrimitive(expression: ts.Expression): string | number | boolean | undefined {
+    const value = unwrapExpression(expression);
+    if (value.kind === ts.SyntaxKind.TrueKeyword) return true;
+    if (value.kind === ts.SyntaxKind.FalseKeyword) return false;
+    if (ts.isStringLiteralLike(value)) return value.text;
+    if (ts.isNumericLiteral(value)) return Number(value.text);
+    return undefined;
+  }
+
+  private evaluateLoop(
+    statement: ts.WhileStatement | ts.DoStatement | ts.ForStatement,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let before = state;
+    if (ts.isForStatement(statement) && statement.initializer) {
+      if (ts.isVariableDeclarationList(statement.initializer)) {
+        const synthetic = ts.factory.createVariableStatement(undefined, statement.initializer);
+        const initialized = this.evaluateStatement(synthetic, before, active);
+        before = initialized[0] ?? before;
+      } else {
+        before = this.evaluateExpression(statement.initializer, before, new Set(active))[0]?.state ?? before;
+      }
+    }
+    const condition = ts.isForStatement(statement) ? statement.condition : statement.expression;
+    const staticCondition = condition ? staticBoolean(condition) : true;
+    if (staticCondition === false && !ts.isDoStatement(statement)) return [before];
+    const bodyStates = this.evaluateStatement(statement.statement, this.cloneState(before), active);
+    const finished: FlowState[] = [];
+    for (const body of bodyStates) {
+      if (body.outcome === "break") {
+        body.outcome = "normal";
+        finished.push(body);
+      } else if (body.outcome === "return" || body.outcome === "throw") {
+        finished.push(body);
+      } else if (staticCondition === true) {
+        body.outcome = "nonterminating";
+        finished.push(body);
+      } else {
+        body.outcome = "normal";
+        finished.push(body);
+      }
+    }
+    if (staticCondition !== true && !ts.isDoStatement(statement)) finished.push(this.cloneState(before));
+    return finished;
+  }
+
+  private evaluateForEach(
+    statement: ts.ForOfStatement | ts.ForInStatement,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((iterable) => {
+      const one = this.cloneState(iterable.state);
+      const element =
+        ts.isArrayLiteralExpression(unwrapExpression(statement.expression)) &&
+        unwrapExpression(statement.expression).elements.length > 0
+          ? this.evaluateExpression(
+              (unwrapExpression(statement.expression) as ts.ArrayLiteralExpression).elements[0] as ts.Expression,
+              this.cloneState(one),
+              new Set(active),
+            )[0]?.value ?? this.values(UNKNOWN_ATOM)
+          : this.values(UNKNOWN_ATOM);
+      if (ts.isVariableDeclarationList(statement.initializer)) {
+        for (const declaration of statement.initializer.declarations) this.bindName(one, declaration.name, element);
+      } else {
+        this.assignTarget(one, statement.initializer, element);
+      }
+      const body = this.evaluateStatement(statement.statement, one, active).map((result) => {
+        if (result.outcome === "break" || result.outcome === "continue") result.outcome = "normal";
+        return result;
+      });
+      const definitelyNonempty =
+        ts.isArrayLiteralExpression(unwrapExpression(statement.expression)) &&
+        unwrapExpression(statement.expression).elements.length > 0;
+      return definitelyNonempty ? body : [this.cloneState(iterable.state), ...body];
+    });
+  }
+
+  private evaluateTry(
+    statement: ts.TryStatement,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    const tryStates = this.evaluateStatement(statement.tryBlock, this.cloneState(state), active);
+    let states = [...tryStates];
+    if (statement.catchClause) {
+      const caught = this.cloneState(state);
+      if (statement.catchClause.variableDeclaration) {
+        this.bindName(caught, statement.catchClause.variableDeclaration.name, this.values(UNKNOWN_ATOM));
+      }
+      states.push(...this.evaluateStatement(statement.catchClause.block, caught, active));
+      states = states.flatMap((candidate) => {
+        if (candidate.outcome !== "throw") return [candidate];
+        const handled = this.cloneState(candidate);
+        handled.outcome = "normal";
+        if (statement.catchClause?.variableDeclaration) {
+          this.bindName(handled, statement.catchClause.variableDeclaration.name, this.values(UNKNOWN_ATOM));
+        }
+        return this.evaluateStatement(statement.catchClause!.block, handled, active);
+      });
+    }
+    if (!statement.finallyBlock) return states;
+    return states.flatMap((candidate) => {
+      const prior = candidate.outcome;
+      const finalState = this.cloneState(candidate);
+      finalState.outcome = "normal";
+      return this.evaluateStatement(statement.finallyBlock!, finalState, active).map((finished) => {
+        if (finished.outcome === "normal") finished.outcome = prior;
+        return finished;
+      });
+    });
+  }
+
+  private widenStates(states: readonly FlowState[]): FlowState[] {
+    const byOutcome = new Map<FlowOutcome, FlowState>();
+    for (const state of states) {
+      const merged = byOutcome.get(state.outcome);
+      if (!merged) {
+        byOutcome.set(state.outcome, this.cloneState(state));
+        continue;
+      }
+      for (const [symbol, value] of state.cells) {
+        const target = merged.cells.get(symbol) ?? new Set<FlowAtom>();
+        for (const atom of value) target.add(atom);
+        merged.cells.set(symbol, target);
+      }
+      for (const dirty of state.dirty) merged.dirty.add(dirty);
+      merged.witnessCount = Math.max(merged.witnessCount, state.witnessCount);
+      merged.awaitedWitnessCount = Math.max(merged.awaitedWitnessCount, state.awaitedWitnessCount);
+      for (const resource of state.witnessResources) merged.witnessResources.add(resource);
+      merged.unsupported ||= state.unsupported;
+    }
+    return [...byOutcome.values()];
+  }
+
+  private globalStates(executeSuites: boolean): FlowState[] {
+    const previous = this.executeSuites;
+    this.executeSuites = executeSuites;
+    const state = this.seedImports();
+    this.initialiseHoisted(this.sourceFile.statements, state);
+    const states = this.evaluateStatements(this.sourceFile.statements, [state], new Set());
+    this.executeSuites = previous;
+    return states;
+  }
+
+  mockFactoryProof(
+    factory: ts.Expression | undefined,
+    protectedExport: string,
+  ): { partial: boolean; replacesProtected: boolean } {
+    if (!factory || (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory))) {
+      return { partial: false, replacesProtected: true };
+    }
+    const bases = this.globalStates(false);
+    const results = bases.flatMap((base) =>
+      this.executeFunction(factory, [this.values(ORIGINAL_LOADER_ATOM)], base, new Set([factory])),
+    );
+    const returnedObjects = results.map((result) => ({
+      state: result.state,
+      atom: [...result.value].find((atom) => atom.startsWith("object:")),
+      abrupt: result.state.outcome !== "normal",
+      unsupported: result.state.unsupported,
+    }));
+    const partial =
+      returnedObjects.length > 0 &&
+      returnedObjects.every(
+        ({ state, atom, abrupt, unsupported }) =>
+          !abrupt &&
+          !unsupported &&
+          !!atom &&
+          state.members.get(atom)?.get("@seenOriginal")?.has(ORIGINAL_MODULE_ATOM),
+      );
+    const protectedPreserved =
+      returnedObjects.length > 0 &&
+      returnedObjects.every(({ state, atom, abrupt, unsupported }) => {
+        if (abrupt || unsupported || !atom) return false;
+        const members = state.members.get(atom);
+        const value = members?.get(protectedExport) ?? members?.get("@all");
+        return value?.size === 1 && value.has(ORIGINAL_MODULE_ATOM);
+      });
+    return { partial, replacesProtected: !protectedPreserved };
+  }
+
+  testFlowProof(testCall: ts.CallExpression): TestFlowProof {
+    const callback = testCall.arguments.find(
+      (argument): argument is ts.ArrowFunction | ts.FunctionExpression =>
+        ts.isArrowFunction(argument) || ts.isFunctionExpression(argument),
+    );
+    if (!callback) {
+      return {
+        mockedWitness: false,
+        queryResources: [],
+        unsupported: true,
+        normalPathWithoutWitness: true,
+      };
+    }
+    const bases = this.globalStates(true);
+    const finished = bases.flatMap((base) => this.executeFunction(callback, [], base, new Set([callback])));
+    const normal = finished.filter(
+      (result) => result.state.outcome === "normal" || result.state.outcome === "return",
+    );
+    const allStates = finished.map((result) => result.state);
+    const dirtySupabase = allStates.some((state) =>
+      [...state.dirty].some((atom) => atom.startsWith("client:supabase:")),
+    );
+    const dirtyPostgres = allStates.some((state) =>
+      [...state.dirty].some((atom) => atom.startsWith("client:postgres:")),
+    );
+    const witnessCounts = normal.map((result) => result.state.witnessCount);
+    const awaitedCounts = normal.map((result) => result.state.awaitedWitnessCount);
+    const resourceSets = normal.map((result) => [...result.state.witnessResources].sort().join(","));
+    const queryResources =
+      resourceSets.length > 0 && new Set(resourceSets).size === 1 && resourceSets[0]
+        ? resourceSets[0].split(",")
+        : [];
+    return {
+      ...(dirtySupabase ? { mockedReceiver: "Supabase" as const } : dirtyPostgres ? { mockedReceiver: "Postgres" as const } : {}),
+      mockedWitness: allStates.some((state) => state.dirty.has(WITNESS_ATOM)),
+      ...(witnessCounts.length ? { witnessCount: Math.max(...witnessCounts) } : {}),
+      ...(awaitedCounts.length ? { awaitedWitnessCount: Math.max(...awaitedCounts) } : {}),
+      queryResources,
+      unsupported: allStates.some((state) => state.unsupported),
+      normalPathWithoutWitness:
+        normal.length === 0 ||
+        normal.some(
+          (result) => result.state.witnessCount !== 1 || result.state.awaitedWitnessCount !== 1,
+        ),
+      ...(this.executedWitnessCalls.size === 1 ? { witnessCall: [...this.executedWitnessCalls][0] } : {}),
+    };
+  }
+
+  private importName(symbol: ts.Symbol | undefined): { module: string; imported: string } | undefined {
+    const declaration = symbol?.declarations?.[0];
+    if (!declaration) return undefined;
+    if (ts.isImportSpecifier(declaration)) {
+      const importDeclaration = declaration.parent.parent.parent;
+      if (!ts.isStringLiteralLike(importDeclaration.moduleSpecifier)) return undefined;
+      return {
+        module: importDeclaration.moduleSpecifier.text,
+        imported: declaration.propertyName?.text ?? declaration.name.text,
+      };
+    }
+    if (ts.isNamespaceImport(declaration)) {
+      const importDeclaration = declaration.parent.parent;
+      if (!ts.isStringLiteralLike(importDeclaration.moduleSpecifier)) return undefined;
+      return { module: importDeclaration.moduleSpecifier.text, imported: "*" };
+    }
+    return undefined;
+  }
+
+  private bindingSource(identifier: ts.Identifier): { source: ts.Expression; property?: string } | undefined {
+    const symbol = this.symbol(identifier);
+    const declaration = symbol?.declarations?.find(
+      (candidate): candidate is ts.VariableDeclaration | ts.BindingElement =>
+        ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate),
+    );
+    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
+      return { source: declaration.initializer };
+    }
+    if (declaration && ts.isBindingElement(declaration)) {
+      let current: ts.Node = declaration.parent;
+      while (!ts.isVariableDeclaration(current) && current.parent) current = current.parent;
+      if (!ts.isVariableDeclaration(current) || !current.initializer) return undefined;
+      const property = declaration.propertyName;
+      return {
+        source: current.initializer,
+        property:
+          property && (ts.isIdentifier(property) || ts.isStringLiteralLike(property))
+            ? property.text
+            : declaration.name.getText(this.sourceFile),
+      };
+    }
+    return undefined;
+  }
+
+  frameworkTags(input: ts.Expression, checking = new Set<ts.Symbol>()): Set<FrameworkTag> {
+    const expression = unwrapExpression(input);
+    if (ts.isIdentifier(expression)) {
+      const symbol = this.symbol(expression);
+      const imported = this.importName(symbol);
+      if (imported?.module === "vitest") {
+        if (["vi", "vitest"].includes(imported.imported)) return new Set([imported.imported as FrameworkTag]);
+        if (["it", "test", "describe"].includes(imported.imported)) return new Set();
+      }
+      if (!symbol && (expression.text === "vi" || expression.text === "jest")) {
+        return new Set([expression.text as FrameworkTag]);
+      }
+      if (!symbol || checking.has(symbol)) return new Set();
+      const binding = this.bindingSource(expression);
+      if (!binding) return new Set();
+      checking.add(symbol);
+      const base = this.frameworkTags(binding.source, checking);
+      checking.delete(symbol);
+      return binding.property ? this.frameworkMemberTags(base, binding.property) : base;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      return this.frameworkMemberTags(this.frameworkTags(expression.expression, checking), expression.name.text);
+    }
+    if (ts.isElementAccessExpression(expression) && expression.argumentExpression) {
+      const key = unwrapExpression(expression.argumentExpression);
+      return ts.isStringLiteralLike(key)
+        ? this.frameworkMemberTags(this.frameworkTags(expression.expression, checking), key.text)
+        : new Set();
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return new Set([
+        ...this.frameworkTags(expression.whenTrue, checking),
+        ...this.frameworkTags(expression.whenFalse, checking),
+      ]);
+    }
+    return new Set();
+  }
+
+  private frameworkMemberTags(base: ReadonlySet<FrameworkTag>, member: string): Set<FrameworkTag> {
+    if ((base.has("vi") || base.has("jest")) && ["mock", "doMock", "mocked", "spyOn", "replaceProperty"].includes(member)) {
+      return new Set([member as FrameworkTag]);
+    }
+    return new Set();
+  }
+
+  moduleMockKind(call: ts.CallExpression): "mock" | "doMock" | undefined {
+    const tags = this.frameworkTags(call.expression);
+    return tags.has("mock") ? "mock" : tags.has("doMock") ? "doMock" : undefined;
+  }
+
+  private importedRegistration(identifier: ts.Identifier): RegistrationValue[] {
+    const imported = this.importName(this.symbol(identifier));
+    if (imported?.module !== "vitest") return [];
+    if (imported.imported === "describe") return [{ kind: "suite", state: "enabled" }];
+    if (imported.imported === "it" || imported.imported === "test") return [{ kind: "test", state: "enabled" }];
+    if (imported.imported === "vitest") return [];
+    return [];
+  }
+
+  registrationValues(input: ts.Expression, checking = new Set<ts.Symbol>()): RegistrationValue[] {
+    const expression = unwrapExpression(input);
+    if (ts.isIdentifier(expression)) {
+      const imported = this.importedRegistration(expression);
+      if (imported.length) return imported;
+      const symbol = this.symbol(expression);
+      if (!symbol && expression.text === "describe") return [{ kind: "suite", state: "enabled" }];
+      if (!symbol && (expression.text === "it" || expression.text === "test")) {
+        return [{ kind: "test", state: "enabled" }];
+      }
+      if (!symbol || checking.has(symbol)) return [];
+      const binding = this.bindingSource(expression);
+      if (!binding) return [];
+      checking.add(symbol);
+      const values =
+        binding.property && this.frameworkTags(binding.source, checking).has("vitest")
+          ? binding.property === "describe"
+            ? [{ kind: "suite", state: "enabled" } satisfies RegistrationValue]
+            : ["it", "test"].includes(binding.property)
+              ? [{ kind: "test", state: "enabled" } satisfies RegistrationValue]
+              : []
+          : this.registrationValues(binding.source, checking);
+      checking.delete(symbol);
+      return binding.property ? this.registrationMember(values, binding.property) : values;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      const baseTags = this.frameworkTags(expression.expression, checking);
+      if (baseTags.has("vitest") && expression.name.text === "describe") return [{ kind: "suite", state: "enabled" }];
+      if (baseTags.has("vitest") && ["it", "test"].includes(expression.name.text)) return [{ kind: "test", state: "enabled" }];
+      return this.registrationMember(this.registrationValues(expression.expression, checking), expression.name.text);
+    }
+    if (ts.isElementAccessExpression(expression) && expression.argumentExpression) {
+      const key = unwrapExpression(expression.argumentExpression);
+      if (!ts.isStringLiteralLike(key)) return [];
+      const baseTags = this.frameworkTags(expression.expression, checking);
+      if (baseTags.has("vitest") && key.text === "describe") return [{ kind: "suite", state: "enabled" }];
+      if (baseTags.has("vitest") && ["it", "test"].includes(key.text)) return [{ kind: "test", state: "enabled" }];
+      return this.registrationMember(this.registrationValues(expression.expression, checking), key.text);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return [
+        ...this.registrationValues(expression.whenTrue, checking),
+        ...this.registrationValues(expression.whenFalse, checking),
+      ];
+    }
+    if (ts.isCallExpression(expression)) {
+      const values = this.registrationValues(expression.expression, checking);
+      return values.map((value) => this.applyRegistrationCall(value, expression.arguments[0]));
+    }
+    return [];
+  }
+
+  private registrationMember(values: RegistrationValue[], member: string): RegistrationValue[] {
+    return values.map((value) => {
+      if (["skip", "todo", "fixme", "fails"].includes(member)) return { ...value, state: "disabled" };
+      if (["concurrent", "sequential", "only"].includes(member)) return value;
+      if (["skipIf", "runIf", "each", "for"].includes(member)) {
+        return { ...value, pending: member as RegistrationValue["pending"] };
+      }
+      return { ...value, state: "unknown" };
+    });
+  }
+
+  private applyRegistrationCall(value: RegistrationValue, argument: ts.Expression | undefined): RegistrationValue {
+    if (!value.pending) return value;
+    if (value.pending === "skipIf") {
+      const condition = staticBoolean(argument);
+      return {
+        kind: value.kind,
+        state:
+          condition === false || this.requiredRunGuardRejects(argument)
+            ? value.state
+            : "disabled",
+      };
+    }
+    if (value.pending === "runIf") {
+      const condition = staticBoolean(argument);
+      return { kind: value.kind, state: condition === true ? value.state : "disabled" };
+    }
+    const rows = argument && unwrapExpression(argument);
+    const nonempty = !!rows && ts.isArrayLiteralExpression(rows) && rows.elements.length > 0 && !rows.elements.some(ts.isSpreadElement);
+    return { kind: value.kind, state: nonempty ? value.state : "disabled" };
+  }
+
+  private requiredRunGuardRejects(condition: ts.Expression | undefined): boolean {
+    if (!condition) return false;
+    const conditionText = unwrapExpression(condition).getText(this.sourceFile).replace(/\s+/g, "");
+    return this.sourceFile.statements.some((statement) => {
+      if (!ts.isIfStatement(statement) || statement.pos >= condition.pos) return false;
+      const guard = unwrapExpression(statement.expression);
+      if (!ts.isBinaryExpression(guard) || guard.operatorToken.kind !== ts.SyntaxKind.AmpersandAmpersandToken) {
+        return false;
+      }
+      const required = unwrapExpression(guard.left).getText(this.sourceFile).replace(/\s+/g, "");
+      const rejected = unwrapExpression(guard.right).getText(this.sourceFile).replace(/\s+/g, "");
+      if (!/^process\.env\.[A-Z0-9_]+_REQUIRED===["']true["']$/.test(required) || rejected !== conditionText) {
+        return false;
+      }
+      const body = ts.isBlock(statement.thenStatement)
+        ? statement.thenStatement.statements
+        : [statement.thenStatement];
+      return body.some(ts.isThrowStatement);
+    });
+  }
+
+  private registrationOptionsEnabled(call: ts.CallExpression): boolean {
+    const options = call.arguments[1];
+    if (!options || !ts.isObjectLiteralExpression(unwrapExpression(options))) return true;
+    const object = unwrapExpression(options) as ts.ObjectLiteralExpression;
+    for (const property of object.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const name = ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) ? property.name.text : undefined;
+      if (!name || !["skip", "todo", "fails"].includes(name)) continue;
+      if (staticBoolean(property.initializer) !== false) return false;
+    }
+    return true;
+  }
+
+  registration(call: ts.CallExpression): { kind: RegistrationKind; state: RegistrationState } | undefined {
+    const values = this.registrationValues(call.expression);
+    if (!values.length) return undefined;
+    const kinds = new Set(values.map((value) => value.kind));
+    if (kinds.size !== 1) return undefined;
+    const states = values.map((value) =>
+      value.pending || !this.registrationOptionsEnabled(call) ? "disabled" : value.state,
+    );
+    return {
+      kind: values[0]!.kind,
+      state: states.every((state) => state === "enabled")
+        ? "enabled"
+        : states.every((state) => state === "disabled")
+          ? "disabled"
+          : "unknown",
+    };
+  }
 }
 
 interface RunnableTest {
@@ -861,19 +1877,20 @@ interface RunnableTest {
 function runnableTests(sf: ts.SourceFile): RunnableTest[] {
   const tests: RunnableTest[] = [];
   const describeStack: string[] = [];
+  const engine = new LocalFlowEngine(sf);
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
-      const head = callHead(node);
-      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node, sf))) return;
+      const registration = engine.registration(node);
+      if (registration && registration.state !== "enabled") return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
-      if (head?.base === "describe") {
+      if (registration?.kind === "suite") {
         describeStack.push(title);
         ts.forEachChild(node, visit);
         describeStack.pop();
         return;
       }
-      if (head && (head.base === "it" || head.base === "test")) {
+      if (registration?.kind === "test") {
         tests.push({ fullName: [...describeStack, title].filter(Boolean).join(" "), call: node });
         return;
       }
@@ -903,36 +1920,6 @@ function witnessBinding(sf: ts.SourceFile, targetPath: string): string | undefin
   return undefined;
 }
 
-function witnessBindingIsMocked(sf: ts.SourceFile, binding: string): boolean {
-  let mocked = false;
-  const visit = (node: ts.Node) => {
-    if (mocked) return;
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      /^(?:mock|withImplementation)/.test(node.expression.name.text)
-    ) {
-      const configured = node.expression.expression;
-      if (
-        ts.isCallExpression(configured) &&
-        ts.isPropertyAccessExpression(configured.expression) &&
-        ts.isIdentifier(configured.expression.expression) &&
-        ["vi", "jest"].includes(configured.expression.expression.text) &&
-        configured.expression.name.text === "mocked" &&
-        configured.arguments[0] &&
-        ts.isIdentifier(configured.arguments[0]) &&
-        configured.arguments[0].text === binding
-      ) {
-        mocked = true;
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return mocked;
-}
-
 function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
   const property = object.properties.find(
     (candidate): candidate is ts.PropertyAssignment =>
@@ -942,501 +1929,12 @@ function propertyInitializer(object: ts.ObjectLiteralExpression, name: string): 
   return property?.initializer;
 }
 
-interface PostgresBinding {
-  name: string;
-  declaration: ts.Identifier;
-  scope: ts.Node;
-  writes: { at: number; value?: ts.Expression }[];
-}
-
-function postgresProvenance(sf: ts.SourceFile): (identifier: ts.Identifier) => boolean {
-  const factories = new Set<string>();
-  for (const statement of sf.statements) {
-    if (
-      ts.isImportDeclaration(statement) &&
-      ts.isStringLiteralLike(statement.moduleSpecifier) &&
-      statement.moduleSpecifier.text === "postgres" &&
-      statement.importClause?.name
-    ) {
-      factories.add(statement.importClause.name.text);
-    }
-  }
-
-  const bindings: PostgresBinding[] = [];
-  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
-    if (ts.isIdentifier(name)) return [name];
-    return name.elements.flatMap((element) =>
-      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
-    );
-  };
-  const bindingScope = (node: ts.Node): ts.Node => {
-    for (let current = node.parent; current; current = current.parent) {
-      if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) return current;
-    }
-    return sf;
-  };
-  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
-  const resolve = (identifier: ts.Identifier): PostgresBinding | undefined =>
-    bindings
-      .filter(
-        (binding) =>
-          binding.name === identifier.text &&
-          contains(binding.scope, identifier) &&
-          binding.declaration.pos <= identifier.pos,
-      )
-      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
-
-  const collectDeclarations = (node: ts.Node) => {
-    if (ts.isFunctionLike(node)) {
-      for (const parameter of node.parameters) {
-        for (const identifier of bindingIdentifiers(parameter.name)) {
-          bindings.push({
-            name: identifier.text,
-            declaration: identifier,
-            scope: node,
-            writes: [],
-          });
-        }
-      }
-    }
-    if (ts.isVariableDeclaration(node)) {
-      for (const identifier of bindingIdentifiers(node.name)) {
-        bindings.push({
-          name: identifier.text,
-          declaration: identifier,
-          scope: bindingScope(node),
-          writes:
-            ts.isIdentifier(node.name) && node.initializer
-              ? [{ at: node.name.end, value: node.initializer }]
-              : [],
-        });
-      }
-    }
-    ts.forEachChild(node, collectDeclarations);
-  };
-  collectDeclarations(sf);
-
-  const collectAssignments = (node: ts.Node) => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      const identifiers = assignmentTargetIdentifiers(node.left);
-      for (const identifier of identifiers) {
-        const binding = resolve(identifier);
-        if (binding) {
-          binding.writes.push({
-            at: node.end,
-            ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
-              ? { value: node.right }
-              : {}),
-          });
-        }
-      }
-    }
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(node.operand)
-    ) {
-      resolve(node.operand)?.writes.push({ at: node.end });
-    }
-    ts.forEachChild(node, collectAssignments);
-  };
-  collectAssignments(sf);
-
-  const proven = (identifier: ts.Identifier, checking = new Set<string>()): boolean => {
-    const binding = resolve(identifier);
-    if (!binding) return false;
-    const write = binding.writes
-      .filter((candidate) => candidate.at < identifier.pos)
-      .sort((a, b) => b.at - a.at)[0];
-    if (!write?.value) return false;
-    const key = `${binding.declaration.pos}:${identifier.pos}`;
-    if (checking.has(key)) return false;
-    checking.add(key);
-    const expression = unwrapExpression(write.value);
-    const result = ts.isIdentifier(expression)
-      ? proven(expression, checking)
-      : ts.isCallExpression(expression) &&
-        ts.isIdentifier(expression.expression) &&
-        factories.has(expression.expression.text) &&
-        !resolve(expression.expression);
-    checking.delete(key);
-    return result;
-  };
-  return proven;
-}
-
-interface SupabaseBinding {
-  name: string;
-  declaration: ts.Identifier;
-  scope: ts.Node;
-  writes: { at: number; value?: ts.Expression }[];
-  factory: boolean;
-  helperReturns?: ts.Expression[];
-}
-
-function supabaseProvenance(sf: ts.SourceFile): (expression: ts.Expression) => boolean {
-  const bindings: SupabaseBinding[] = [];
-  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
-    if (ts.isIdentifier(name)) return [name];
-    return name.elements.flatMap((element) =>
-      ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
-    );
-  };
-  for (const statement of sf.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
-    if (statement.moduleSpecifier.text !== "@supabase/supabase-js") continue;
-    const imports = statement.importClause?.namedBindings;
-    if (!imports || !ts.isNamedImports(imports)) continue;
-    for (const element of imports.elements) {
-      if ((element.propertyName?.text ?? element.name.text) === "createClient") {
-        bindings.push({
-          name: element.name.text,
-          declaration: element.name,
-          scope: sf,
-          writes: [],
-          factory: true,
-        });
-      }
-    }
-  }
-
-  const returnedExpressions = (fn: ts.FunctionLikeDeclaration): ts.Expression[] => {
-    if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return [fn.body];
-    if (!fn.body) return [];
-    const returns: ts.Expression[] = [];
-    const collect = (node: ts.Node) => {
-      if (node !== fn.body && ts.isFunctionLike(node)) return;
-      if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
-      ts.forEachChild(node, collect);
-    };
-    collect(fn.body);
-    return returns;
-  };
-  const bindingScope = (node: ts.Node): ts.Node => {
-    for (let current = node.parent; current; current = current.parent) {
-      if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) return current;
-    }
-    return sf;
-  };
-  const contains = (scope: ts.Node, node: ts.Node) => scope.pos <= node.pos && node.end <= scope.end;
-  const resolve = (identifier: ts.Identifier): SupabaseBinding | undefined =>
-    bindings
-      .filter(
-        (binding) =>
-          binding.name === identifier.text &&
-          contains(binding.scope, identifier) &&
-          binding.declaration.pos <= identifier.pos,
-      )
-      .sort((a, b) => (a.scope.end - a.scope.pos) - (b.scope.end - b.scope.pos) || b.declaration.pos - a.declaration.pos)[0];
-
-  const collectDeclarations = (node: ts.Node) => {
-    if (ts.isFunctionLike(node)) {
-      for (const parameter of node.parameters) {
-        for (const identifier of bindingIdentifiers(parameter.name)) {
-          bindings.push({
-            name: identifier.text,
-            declaration: identifier,
-            scope: node,
-            writes: [],
-            factory: false,
-          });
-        }
-      }
-    }
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      bindings.push({
-        name: node.name.text,
-        declaration: node.name,
-        scope: bindingScope(node),
-        writes: [],
-        factory: false,
-        helperReturns: returnedExpressions(node),
-      });
-    } else if (ts.isVariableDeclaration(node)) {
-      for (const identifier of bindingIdentifiers(node.name)) {
-        const helper =
-          ts.isIdentifier(node.name) &&
-          node.initializer &&
-          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer));
-        bindings.push({
-          name: identifier.text,
-          declaration: identifier,
-          scope: bindingScope(node),
-          writes:
-            ts.isIdentifier(node.name) && node.initializer && !helper
-              ? [{ at: node.name.end, value: node.initializer }]
-              : [],
-          factory: false,
-          ...(helper ? { helperReturns: returnedExpressions(node.initializer as ts.ArrowFunction | ts.FunctionExpression) } : {}),
-        });
-      }
-    }
-    ts.forEachChild(node, collectDeclarations);
-  };
-  collectDeclarations(sf);
-
-  const collectAssignments = (node: ts.Node) => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      const identifiers = assignmentTargetIdentifiers(node.left);
-      for (const identifier of identifiers) {
-        const binding = resolve(identifier);
-        if (binding) {
-          binding.writes.push({
-            at: node.end,
-            ...(node.operatorToken.kind === ts.SyntaxKind.EqualsToken && identifiers.length === 1
-              ? { value: node.right }
-              : {}),
-          });
-        }
-      }
-    }
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(node.operand)
-    ) {
-      resolve(node.operand)?.writes.push({ at: node.end });
-    }
-    ts.forEachChild(node, collectAssignments);
-  };
-  collectAssignments(sf);
-
-  const expressionProven = (input: ts.Expression, checking = new Set<string>()): boolean => {
-    let expression = input;
-    while (
-      ts.isAwaitExpression(expression) ||
-      ts.isParenthesizedExpression(expression) ||
-      ts.isAsExpression(expression) ||
-      ts.isTypeAssertionExpression(expression) ||
-      ts.isNonNullExpression(expression)
-    ) {
-      expression = expression.expression;
-    }
-    const bindingFor = (identifier: ts.Identifier): SupabaseBinding | undefined => resolve(identifier);
-    const bindingProven = (binding: SupabaseBinding | undefined, before: number): boolean => {
-      if (!binding) return false;
-      if (binding.factory) return true;
-      const key = `${binding.declaration.pos}:${before}`;
-      if (checking.has(key)) return false;
-      checking.add(key);
-      const write = binding.writes
-        .filter((candidate) => candidate.at < before)
-        .sort((a, b) => b.at - a.at)[0];
-      const result = binding.helperReturns
-        ? binding.helperReturns.length > 0 && binding.helperReturns.every((value) => expressionProven(value, checking))
-        : !!write?.value && expressionProven(write.value, checking);
-      checking.delete(key);
-      return result;
-    };
-    if (ts.isIdentifier(expression)) return bindingProven(bindingFor(expression), expression.pos);
-    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return false;
-    const callee = bindingFor(expression.expression);
-    return !!callee && (callee.factory || (callee.helperReturns !== undefined && bindingProven(callee, expression.pos)));
-  };
-  return expressionProven;
-}
-
-type DbReceiverKind = "Supabase" | "Postgres";
-
-function dbReceiverMockDescription(sf: ts.SourceFile): string | undefined {
-  const isProvenSupabase = supabaseProvenance(sf);
-  const isProvenPostgres = postgresProvenance(sf);
-  const receiverKind = (input: ts.Expression): DbReceiverKind | undefined => {
-    const expression = unwrapExpression(input);
-    if (ts.isIdentifier(expression) && isProvenPostgres(expression)) return "Postgres";
-    if (isProvenSupabase(expression)) return "Supabase";
-    if (
-      ts.isPropertyAccessExpression(expression) &&
-      (expression.name.text === "from" || expression.name.text === "rpc") &&
-      isProvenSupabase(expression.expression)
-    ) {
-      return "Supabase";
-    }
-    return undefined;
-  };
-  const frameworkMethod = (call: ts.CallExpression): { owner: string; method: string } | undefined => {
-    if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return undefined;
-    return { owner: call.expression.expression.text, method: call.expression.name.text };
-  };
-  const propertyName = (expression: ts.Expression | undefined): string | undefined =>
-    expression && (ts.isStringLiteralLike(expression) || ts.isIdentifier(expression)) ? expression.text : undefined;
-
-  let mocked: DbReceiverKind | undefined;
-  const visit = (node: ts.Node) => {
-    if (mocked) return;
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const receiver = ts.isPropertyAccessExpression(node.left)
-        ? node.left.expression
-        : ts.isElementAccessExpression(node.left)
-          ? node.left.expression
-          : undefined;
-      const member = ts.isPropertyAccessExpression(node.left)
-        ? node.left.name.text
-        : ts.isElementAccessExpression(node.left)
-          ? propertyName(node.left.argumentExpression)
-          : undefined;
-      if (receiver && ["from", "rpc"].includes(member ?? "") && isProvenSupabase(receiver)) {
-        mocked = "Supabase";
-        return;
-      }
-    }
-    if (ts.isCallExpression(node)) {
-      const method = frameworkMethod(node);
-      if (method && ["vi", "jest"].includes(method.owner) && ["spyOn", "replaceProperty"].includes(method.method)) {
-        const kind = node.arguments[0] ? receiverKind(node.arguments[0]) : undefined;
-        const mockedProperty = propertyName(node.arguments[1]);
-        if (kind === "Postgres" || (kind === "Supabase" && ["from", "rpc"].includes(mockedProperty ?? ""))) {
-          mocked = kind;
-          return;
-        }
-      }
-      if (
-        method &&
-        ((method.owner === "Object" && ["defineProperty", "assign"].includes(method.method)) ||
-          (method.owner === "Reflect" && method.method === "set"))
-      ) {
-        const kind = node.arguments[0] ? receiverKind(node.arguments[0]) : undefined;
-        const replacesSupabaseMethod =
-          method.method === "assign"
-            ? !!node.arguments[1] &&
-              ts.isObjectLiteralExpression(node.arguments[1]) &&
-              node.arguments[1].properties.some(
-                (property) =>
-                  (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
-                  (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)) &&
-                  (property.name.text === "from" || property.name.text === "rpc"),
-              )
-            : ["from", "rpc"].includes(propertyName(node.arguments[1]) ?? "");
-        if (kind === "Postgres" || (kind === "Supabase" && replacesSupabaseMethod)) {
-          mocked = kind;
-          return;
-        }
-      }
-      if (ts.isPropertyAccessExpression(node.expression) && /^(?:mock|withImplementation)/.test(node.expression.name.text)) {
-        const configured = node.expression.expression;
-        if (ts.isCallExpression(configured)) {
-          const configuredMethod = frameworkMethod(configured);
-          if (configuredMethod && ["vi", "jest"].includes(configuredMethod.owner) && configuredMethod.method === "mocked") {
-            mocked = configured.arguments[0] ? receiverKind(configured.arguments[0]) : undefined;
-          }
-        } else {
-          mocked = receiverKind(configured);
-        }
-        if (mocked) return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return mocked ? `the ${mocked} client receiver at instance level` : undefined;
-}
-
-function queryResources(query: ts.ArrowFunction | ts.FunctionExpression, sf: ts.SourceFile): string[] {
-  const resources = new Set<string>();
-  const isProvenSupabase = supabaseProvenance(sf);
-  const isProvenPostgres = postgresProvenance(sf);
-  const returned: ts.Expression[] = [];
-  if (ts.isArrowFunction(query) && !ts.isBlock(query.body)) {
-    returned.push(query.body);
-  } else if (
-    ts.isBlock(query.body) &&
-    query.body.statements.length === 1 &&
-    ts.isReturnStatement(query.body.statements[0]) &&
-    query.body.statements[0].expression
-  ) {
-    returned.push(query.body.statements[0].expression);
-  }
-
-  const isSupabaseFromOperation = (fromCall: ts.CallExpression): boolean => {
-    const access = fromCall.parent;
-    return (
-      ts.isPropertyAccessExpression(access) &&
-      access.expression === fromCall &&
-      ["select", "insert", "update", "delete", "upsert"].includes(access.name.text) &&
-      ts.isCallExpression(access.parent) &&
-      access.parent.expression === access
-    );
-  };
-  const resultFlowsToReturn = (node: ts.Expression, returnedExpression: ts.Expression): boolean => {
-    let current: ts.Node = node;
-    while (current !== returnedExpression) {
-      const parent = current.parent;
-      if (
-        ts.isParenthesizedExpression(parent) ||
-        ts.isAsExpression(parent) ||
-        ts.isTypeAssertionExpression(parent) ||
-        ts.isNonNullExpression(parent) ||
-        ts.isAwaitExpression(parent)
-      ) {
-        current = parent;
-        continue;
-      }
-      if (ts.isPropertyAccessExpression(parent) && parent.expression === current) {
-        if (["then", "catch", "finally"].includes(parent.name.text)) return false;
-        current = parent;
-        continue;
-      }
-      if (ts.isCallExpression(parent) && parent.expression === current) {
-        current = parent;
-        continue;
-      }
-      return false;
-    }
-    return true;
-  };
-  const visit = (node: ts.Node, returnedExpression: ts.Expression) => {
-    if (ts.isFunctionLike(node)) return;
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      (node.expression.name.text === "from" || node.expression.name.text === "rpc")
-    ) {
-      const name = node.arguments[0];
-      if (
-        name &&
-        ts.isStringLiteralLike(name) &&
-        resultFlowsToReturn(node, returnedExpression) &&
-        isProvenSupabase(node.expression.expression) &&
-        (node.expression.name.text === "rpc" || isSupabaseFromOperation(node))
-      ) {
-        const kind = node.expression.name.text === "from" ? "table" : "rpc";
-        resources.add(`${kind}:public.${name.text}`);
-      }
-    }
-    if (
-      ts.isTaggedTemplateExpression(node) &&
-      ts.isIdentifier(node.tag) &&
-      resultFlowsToReturn(node, returnedExpression) &&
-      isProvenPostgres(node.tag)
-    ) {
-      const sql = node.template.getText(sf);
-      const relation = /\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:([a-z_][a-z0-9_]*)\.)?([a-z_][a-z0-9_]*)(\s*\()?/gi;
-      for (const match of sql.matchAll(relation)) {
-        const schema = match[1] ?? "public";
-        const name = match[2];
-        if (!name) continue;
-        resources.add(`${match[3] ? "rpc" : "table"}:${schema}.${name}`);
-      }
-    }
-    ts.forEachChild(node, (child) => visit(child, returnedExpression));
-  };
-  for (const expression of returned) visit(expression, expression);
-  return [...resources].sort();
-}
-
 function isolationWitnessError(
   testCall: ts.CallExpression,
   sf: ts.SourceFile,
   targetPath: string,
   expectedResources: string[],
+  proof: TestFlowProof,
 ): string | undefined {
   const statementAlwaysExits = (statement: ts.Statement): boolean => {
     if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
@@ -1458,10 +1956,17 @@ function isolationWitnessError(
   const binding = witnessBinding(sf, targetPath);
   if (!binding) return "coverage test does not import the canonical assertIsolationQuery witness";
 
-  const witnesses: ts.CallExpression[] = [];
+  const witnesses: ts.CallExpression[] = proof.witnessCall ? [proof.witnessCall] : [];
   const visit = (node: ts.Node) => {
     if (node !== callback && ts.isFunctionLike(node)) return;
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === binding) witnesses.push(node);
+    if (
+      witnesses.length === 0 &&
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === binding
+    ) {
+      witnesses.push(node);
+    }
     ts.forEachChild(node, visit);
   };
   visit(callback);
@@ -1576,7 +2081,8 @@ function isolationWitnessError(
   const witnessIndex = callback.body.statements.indexOf(executionNode);
   if (
     witnessIndex < 0 ||
-    callback.body.statements.slice(0, witnessIndex).some(statementAlwaysExits)
+    callback.body.statements.slice(0, witnessIndex).some(statementAlwaysExits) ||
+    proof.normalPathWithoutWitness
   ) {
     return "coverage test isolation witness is unreachable after an earlier return or throw";
   }
@@ -1598,7 +2104,8 @@ function isolationWitnessError(
     return "isolation witness deniedIds must be a non-empty array literal";
   }
 
-  const actualResources = queryResources(query, sf);
+  if (proof.unsupported) return "coverage test uses unsupported relevant flow or effect syntax";
+  const actualResources = proof.queryResources;
   if (actualResources.join(",") !== expectedResources.join(",")) {
     return `isolation witness resource mismatch (declared ${expectedResources.join(",")}; queried ${actualResources.join(",") || "none"})`;
   }
@@ -1645,6 +2152,7 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     return `coverage target is not a real-DB integration test: ${pointer.file}`;
   }
   const targetSf = parse(pointer.file, target);
+  const targetEngine = new LocalFlowEngine(targetSf);
   const targetMocks = collectModuleMocks(targetSf);
   const mockedDb = targetMocks
     .filter(
@@ -1656,8 +2164,6 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     .map((mock) => dbClientMockDescription(mock, pointer.file, byPath))
     .find((description): description is string => description !== undefined);
   if (mockedDb) return `coverage target mocks ${mockedDb}: ${pointer.file}`;
-  const mockedReceiver = dbReceiverMockDescription(targetSf);
-  if (mockedReceiver) return `coverage target mocks ${mockedReceiver}: ${pointer.file}`;
   const mockedWitness = targetMocks.find((mock) => {
     if (mock.partial && !mock.replacesWitness) return false;
     if (!mock.specifier.startsWith(".")) return false;
@@ -1667,10 +2173,6 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
     return resolved === ISOLATION_WITNESS_PATH;
   });
   if (mockedWitness) return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
-  const binding = witnessBinding(targetSf, pointer.file);
-  if (binding && witnessBindingIsMocked(targetSf, binding)) {
-    return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
-  }
   const targetTests = runnableTests(targetSf).filter((test) => test.fullName === pointer.testName);
   if (targetTests.length === 0) {
     return `coverage test not found in ${pointer.file}: "${pointer.testName}"`;
@@ -1678,7 +2180,20 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
   if (targetTests.length > 1) {
     return `coverage test title is ambiguous in ${pointer.file}: "${pointer.testName}" (${targetTests.length} matches)`;
   }
-  const witnessError = isolationWitnessError(targetTests[0]!.call, targetSf, pointer.file, pointer.resources);
+  const proof = targetEngine.testFlowProof(targetTests[0]!.call);
+  if (proof.mockedReceiver) {
+    return `coverage target mocks the ${proof.mockedReceiver} client receiver at instance level: ${pointer.file}`;
+  }
+  if (proof.mockedWitness) {
+    return `coverage target mocks the canonical isolation witness: ${pointer.file}`;
+  }
+  const witnessError = isolationWitnessError(
+    targetTests[0]!.call,
+    targetSf,
+    pointer.file,
+    pointer.resources,
+    proof,
+  );
   if (witnessError) {
     return `${witnessError} in ${pointer.file}: "${pointer.testName}"`;
   }
@@ -1687,7 +2202,6 @@ function coveragePointerError(pointer: CoveragePointer, byPath: ReadonlyMap<stri
 
 export function findMockedTenantTests(relPath: string, contents: string, byPath: ReadonlyMap<string, string>): MockedTenantTest[] {
   if (!/\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\//.test(relPath)) return [];
-  if (!/\b(vi|jest)\.(mock|doMock)\s*\(/.test(contents)) return [];
   const sf = parse(relPath, contents);
   const dbMock = collectModuleMocks(sf)
     .filter(
@@ -1702,19 +2216,20 @@ export function findMockedTenantTests(relPath: string, contents: string, byPath:
 
   const out: MockedTenantTest[] = [];
   const describeStack: string[] = [];
+  const engine = new LocalFlowEngine(sf);
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
-      const head = callHead(node);
-      if (head && (EXEMPT_MODS.has(head.mod ?? "") || registrationIsStaticallyDisabled(node, sf))) return;
+      const registration = engine.registration(node);
+      if (registration?.state === "disabled") return;
       const titleArg = node.arguments[0];
       const title = titleArg && ts.isStringLiteralLike(titleArg) ? titleArg.text : "";
-      if (head?.base === "describe") {
+      if (registration?.kind === "suite") {
         describeStack.push(title);
         ts.forEachChild(node, visit);
         describeStack.pop();
         return;
       }
-      if (head && (head.base === "it" || head.base === "test")) {
+      if (registration?.kind === "test") {
         const fullName = [...describeStack, title].filter(Boolean).join(" ");
         if (TENANT_CLAIM.test(fullName)) {
           const pointer = coveragePointer(node, sf);

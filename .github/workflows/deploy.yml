@@ -568,6 +568,8 @@ jobs:
 
       - name: Run main RLS integration suite
         if: steps.isolation-db-preflight.outputs.run_main_rls == 'true'
+        env:
+          MAIN_RLS_DB_REQUIRED: "true"
         run: pnpm vitest run apps/main/test/integration/rls.test.ts
 
       - name: Run Stripe-webhook integration suite
