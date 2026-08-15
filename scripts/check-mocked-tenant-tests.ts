@@ -836,6 +836,11 @@ class LocalFlowEngine {
         continue;
       }
       if (receiver === "framework:vi" || receiver === "framework:vitest" || receiver === "framework:jest") {
+        if (member === "replaceProperty" && receiver !== "framework:jest") {
+          this.markUnsupported(state, "Vitest does not provide replaceProperty");
+          value.add("framework:unsupportedReplaceProperty");
+          continue;
+        }
         if (
           member &&
           [
@@ -1589,6 +1594,16 @@ class LocalFlowEngine {
         results.push({ state: branch, value: this.values(UNDEFINED_ATOM) });
         continue;
       }
+      if (callee === "framework:unsupportedReplaceProperty") {
+        for (const target of args[0] ?? [UNKNOWN_ATOM]) {
+          if (target.startsWith("client:supabase:") || target.startsWith("client:postgres:")) {
+            branch.dirty.add(target);
+          }
+        }
+        this.markUnsupported(branch, "Vitest does not provide replaceProperty");
+        results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        continue;
+      }
       if (callee === "framework:beforeAll" || callee === "framework:beforeEach") {
         const callbacks = [...(args[0] ?? [])].flatMap((atom) => {
           const callback = this.functions.get(atom);
@@ -1644,6 +1659,19 @@ class LocalFlowEngine {
           const nativePromise = new Set([...target].filter((atom) => atom === NATIVE_PROMISE_ATOM));
           if (nativePromise.size) {
             this.replaceMember(branch, nativePromise, member, args[2] ?? this.values(UNKNOWN_ATOM));
+          }
+        }
+        if (callee === "framework:spyOn") {
+          const existing = [...branch.mockControls].find(([, lifecycle]) =>
+            lifecycle.kind === "spy" &&
+            lifecycle.attached &&
+            lifecycle.member === member &&
+            lifecycle.receivers.size === target.size &&
+            [...lifecycle.receivers].every((receiver) => target.has(receiver))
+          );
+          if (existing) {
+            results.push({ state: branch, value: this.values(existing[0]) });
+            continue;
           }
         }
         const control = this.atom("control", call);
@@ -3969,7 +3997,11 @@ class LocalFlowEngine {
 
   private frameworkMemberTags(base: ReadonlySet<FrameworkTag>, member: string): Set<FrameworkTag> {
     if (base.has("unknown")) return new Set(["unknown"]);
-    if ((base.has("vi") || base.has("jest")) && ["mock", "doMock", "mocked", "spyOn", "replaceProperty"].includes(member)) {
+    if (member === "replaceProperty") {
+      if (base.has("jest")) return new Set(["replaceProperty"]);
+      return new Set();
+    }
+    if ((base.has("vi") || base.has("vitest") || base.has("jest")) && ["mock", "doMock", "mocked", "spyOn"].includes(member)) {
       return new Set([member as FrameworkTag]);
     }
     return new Set();
