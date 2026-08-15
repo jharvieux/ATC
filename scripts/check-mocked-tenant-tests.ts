@@ -190,7 +190,7 @@ function staticBoolean(input: ts.Expression | undefined): boolean | undefined {
   return undefined;
 }
 
-type FrameworkTag = "vi" | "jest" | "vitest" | "mock" | "doMock" | "mocked" | "spyOn" | "replaceProperty";
+type FrameworkTag = "vi" | "jest" | "vitest" | "mock" | "doMock" | "mocked" | "spyOn" | "replaceProperty" | "unknown";
 type RegistrationKind = "suite" | "test";
 type RegistrationState = "enabled" | "disabled" | "unknown";
 
@@ -215,7 +215,9 @@ interface FlowState {
   witnessResources: Set<string>;
   generatorSteps: Map<FlowAtom, number>;
   generatorArguments: Map<FlowAtom, Set<FlowAtom>[]>;
+  generatorLocals: Map<FlowAtom, Map<ts.Symbol, Set<FlowAtom>>>;
   allocationSerial: number;
+  unsupportedReasons: Set<string>;
   unsupported: boolean;
 }
 
@@ -248,8 +250,10 @@ class LocalFlowEngine {
   private readonly functions = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
   private readonly classes = new Map<FlowAtom, ts.ClassLikeDeclaration>();
   private readonly classBases = new Map<FlowAtom, Set<FlowAtom>>();
+  private readonly instanceClasses = new Map<FlowAtom, FlowAtom>();
   private readonly generatorTargets = new Map<FlowAtom, ts.FunctionLikeDeclaration>();
   private readonly generatorInstances = new Map<FlowAtom, FlowAtom>();
+  private readonly functionLocals = new Map<ts.FunctionLikeDeclaration, Set<ts.Symbol>>();
   private readonly boundTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlTargets = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly memberTargets = new Map<FlowAtom, { receiver: Set<FlowAtom>; member: string }>();
@@ -305,7 +309,14 @@ class LocalFlowEngine {
       generatorArguments: new Map(
         [...state.generatorArguments].map(([generator, args]) => [generator, args.map((value) => new Set(value))]),
       ),
+      generatorLocals: new Map(
+        [...state.generatorLocals].map(([generator, locals]) => [
+          generator,
+          new Map([...locals].map(([symbol, value]) => [symbol, new Set(value)])),
+        ]),
+      ),
       allocationSerial: state.allocationSerial,
+      unsupportedReasons: new Set(state.unsupportedReasons),
       unsupported: state.unsupported,
     };
   }
@@ -322,7 +333,9 @@ class LocalFlowEngine {
       witnessResources: new Set(),
       generatorSteps: new Map(),
       generatorArguments: new Map(),
+      generatorLocals: new Map(),
       allocationSerial: 0,
+      unsupportedReasons: new Set(),
       unsupported: false,
     };
   }
@@ -351,13 +364,20 @@ class LocalFlowEngine {
       sameMap(left.generatorArguments, right.generatorArguments, (a, b) =>
         a.length === b.length && a.every((value, index) => sameSet(value, b[index] ?? new Set())),
       ) &&
+      sameMap(left.generatorLocals, right.generatorLocals, (a, b) => sameMap(a, b, sameSet)) &&
       left.allocationSerial === right.allocationSerial &&
+      sameSet(left.unsupportedReasons, right.unsupportedReasons) &&
       left.unsupported === right.unsupported
     );
   }
 
   private values(...atoms: FlowAtom[]): Set<FlowAtom> {
     return new Set(atoms.length ? atoms : [UNKNOWN_ATOM]);
+  }
+
+  private markUnsupported(state: FlowState, reason: string): void {
+    state.unsupported = true;
+    state.unsupportedReasons.add(reason);
   }
 
   private cellValue(state: FlowState, node: ts.Identifier): Set<FlowAtom> {
@@ -511,6 +531,23 @@ class LocalFlowEngine {
         value.add(target ? next : UNKNOWN_ATOM);
         continue;
       }
+      if (receiver.startsWith("generator:") && (member === "return" || member === "throw")) {
+        this.markUnsupported(state, `generator.${member}`);
+        value.add(UNKNOWN_ATOM);
+        continue;
+      }
+      const instanceClass = this.instanceClasses.get(receiver);
+      if (instanceClass && member) {
+        const declaration = this.classes.get(instanceClass);
+        const classMember = declaration?.members.find((candidate) =>
+          "name" in candidate && this.staticKey(candidate.name) === member,
+        );
+        if (classMember && (ts.isMethodDeclaration(classMember) || ts.isAccessor(classMember))) {
+          this.markUnsupported(state, "invoked class method or accessor");
+          value.add(UNKNOWN_ATOM);
+          continue;
+        }
+      }
       if (receiver.startsWith("client:supabase:") && member && ["from", "rpc"].includes(member)) {
         if (state.dirty.has(receiver)) value.add(UNKNOWN_ATOM);
         else {
@@ -636,10 +673,17 @@ class LocalFlowEngine {
       }));
     }
     if (ts.isElementAccessExpression(expression)) {
-      return this.evaluateExpression(expression.expression, state, active).map((base) => ({
-        state: base.state,
-        value: this.memberValue(base.state, base.value, this.staticKey(expression.argumentExpression), expression),
-      }));
+      return this.evaluateExpression(expression.expression, state, active).flatMap((base) =>
+        expression.argumentExpression
+          ? this.evaluateExpression(expression.argumentExpression, base.state, active).map((argument) => ({
+              state: argument.state,
+              value: this.memberValue(argument.state, base.value, this.staticKey(expression.argumentExpression), expression),
+            }))
+          : [{
+              state: base.state,
+              value: this.memberValue(base.state, base.value, undefined, expression),
+            }],
+      );
     }
     if (ts.isConditionalExpression(expression)) {
       const condition = staticBoolean(expression.condition);
@@ -661,10 +705,12 @@ class LocalFlowEngine {
         if (ts.isOmittedExpression(element)) continue;
         const item = ts.isSpreadElement(element) ? element.expression : element;
         evaluations = evaluations.flatMap((current) =>
-          this.evaluateExpression(item, current.state, active).map((evaluated) => ({
-            state: evaluated.state,
-            value: current.value,
-          })),
+          this.evaluateExpression(item, current.state, active).map((evaluated) => {
+            if (ts.isSpreadElement(element) && [...evaluated.value].some((atom) => atom.startsWith("generator:"))) {
+              this.markUnsupported(evaluated.state, "generator spread consumption");
+            }
+            return { state: evaluated.state, value: current.value };
+          }),
         );
       }
       return evaluations;
@@ -677,14 +723,32 @@ class LocalFlowEngine {
         (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
         ts.isExpression(expression.operand)
       ) {
-        this.assignTarget(state, expression.operand, this.values(UNKNOWN_ATOM));
+        return this.evaluateExpression(expression.operand, state, active).map((operand) => {
+          this.assignTarget(operand.state, expression.operand, this.values(UNKNOWN_ATOM));
+          return { state: operand.state, value: this.values(UNKNOWN_ATOM) };
+        });
       }
-      return [{ state, value: this.values(UNKNOWN_ATOM) }];
+      return this.evaluateExpression(expression.operand, state, active).map((operand) => ({
+        state: operand.state,
+        value: this.values(UNKNOWN_ATOM),
+      }));
     }
-    if (ts.isTemplateExpression(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    if (ts.isTemplateExpression(expression)) {
+      let evaluations: FlowEvaluation[] = [{ state, value: this.values(this.atom("literal", expression)) }];
+      for (const span of expression.templateSpans) {
+        evaluations = evaluations.flatMap((current) =>
+          this.evaluateExpression(span.expression, current.state, active).map((evaluated) => ({
+            state: evaluated.state,
+            value: current.value,
+          })),
+        );
+      }
+      return evaluations;
+    }
+    if (ts.isNoSubstitutionTemplateLiteral(expression)) {
       return [{ state, value: this.values(this.atom("literal", expression)) }];
     }
-    state.unsupported = true;
+    this.markUnsupported(state, `unsupported expression ${ts.SyntaxKind[expression.kind]}`);
     return [{ state, value: this.values(UNKNOWN_ATOM) }];
   }
 
@@ -767,8 +831,26 @@ class LocalFlowEngine {
     let evaluations: FlowEvaluation[] = [{ state, value: this.values(objectAtom) }];
     for (const property of object.properties) {
       evaluations = evaluations.flatMap((current) => {
+        if ("name" in property && ts.isComputedPropertyName(property.name)) {
+          return this.evaluateExpression(property.name.expression, current.state, new Set(active)).flatMap((computed) =>
+            this.evaluateObjectProperty(objectAtom, property, computed.state, active),
+          );
+        }
+        return this.evaluateObjectProperty(objectAtom, property, current.state, active);
+      });
+    }
+    return evaluations;
+  }
+
+  private evaluateObjectProperty(
+    objectAtom: FlowAtom,
+    property: ts.ObjectLiteralElementLike,
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowEvaluation[] {
+    const current: FlowEvaluation = { state, value: this.values(objectAtom) };
         if (ts.isSpreadAssignment(property)) {
-          return this.evaluateExpression(property.expression, current.state, new Set(active)).map((spread) => {
+          return this.evaluateExpression(property.expression, state, new Set(active)).map((spread) => {
             const targetMembers = spread.state.members.get(objectAtom) ?? new Map<string, Set<FlowAtom>>();
             for (const sourceAtom of spread.value) {
               if (sourceAtom === ORIGINAL_MODULE_ATOM) {
@@ -800,27 +882,24 @@ class LocalFlowEngine {
         }
         if (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
           const key = this.staticKey(property.name);
-          this.setMember(current.state, this.values(objectAtom), key, this.values(this.functionAtom(property)));
-          if (key === undefined) current.state.members.get(objectAtom)?.set("@all", this.values(UNKNOWN_ATOM));
+          this.setMember(state, this.values(objectAtom), key, this.values(this.functionAtom(property)));
+          if (key === undefined) state.members.get(objectAtom)?.set("@all", this.values(UNKNOWN_ATOM));
           return [current];
         }
         if (ts.isShorthandPropertyAssignment(property)) {
-          this.setMember(current.state, this.values(objectAtom), property.name.text, this.cellValue(current.state, property.name));
+          this.setMember(state, this.values(objectAtom), property.name.text, this.cellValue(state, property.name));
           return [current];
         }
         if (ts.isPropertyAssignment(property)) {
-          return this.evaluateExpression(property.initializer, current.state, new Set(active)).map((value) => {
+          return this.evaluateExpression(property.initializer, state, new Set(active)).map((value) => {
             const key = this.staticKey(property.name);
             this.setMember(value.state, this.values(objectAtom), key, value.value);
             if (key === undefined) value.state.members.get(objectAtom)?.set("@all", this.values(UNKNOWN_ATOM));
             return { state: value.state, value: this.values(objectAtom) };
           });
         }
-        current.state.unsupported = true;
+        this.markUnsupported(state, "unsupported object literal member");
         return [current];
-      });
-    }
-    return evaluations;
   }
 
   private propertyFromValue(state: FlowState, value: FlowValue, property: string): Set<FlowAtom> {
@@ -901,7 +980,7 @@ class LocalFlowEngine {
       for (const argument of call.arguments) {
         if (ts.isSpreadElement(argument)) {
           inputs = inputs.map((input) => {
-            input.state.unsupported = true;
+            this.markUnsupported(input.state, "spread call argument");
             return { state: input.state, args: [...input.args, this.values(UNKNOWN_ATOM)] };
           });
           continue;
@@ -983,7 +1062,7 @@ class LocalFlowEngine {
           .map((atom) => this.functions.get(atom))
           .filter((fn): fn is ts.FunctionLikeDeclaration => fn !== undefined && !active.has(fn));
         if (!callbacks.length) {
-          branch.unsupported = true;
+          this.markUnsupported(branch, "unresolved setup callback");
           results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
         } else {
           for (const callback of callbacks) {
@@ -1087,10 +1166,11 @@ class LocalFlowEngine {
           branch.allocationSerial += 1;
           this.generatorTargets.set(generator, fn);
           branch.generatorArguments.set(generator, args.map((value) => new Set(value)));
+          branch.generatorLocals.set(generator, new Map());
           branch.generatorSteps.set(generator, 0);
           results.push({ state: branch, value: this.values(generator) });
         } else if (active.has(fn)) {
-          branch.unsupported = true;
+          this.markUnsupported(branch, "recursive local call");
           results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
         } else {
           const directArgs = args.map((value) =>
@@ -1134,7 +1214,9 @@ class LocalFlowEngine {
         results.push({ state: branch, value: new Set(args[0] ?? [UNKNOWN_ATOM]) });
         continue;
       }
-      if (ts.isIdentifier(call.expression) && call.expression.text === "eval") branch.unsupported = true;
+      if (ts.isIdentifier(call.expression) && call.expression.text === "eval") {
+        this.markUnsupported(branch, "eval call");
+      }
       for (const callback of this.callbacksInValues(branch, args)) {
         if (!active.has(callback)) {
           results.push(...this.executeFunction(callback, [], this.cloneState(branch), new Set(active).add(callback)));
@@ -1152,7 +1234,7 @@ class LocalFlowEngine {
   ): FlowEvaluation[] {
     const fn = this.generatorTargets.get(generator);
     if (!fn || !fn.body || !ts.isBlock(fn.body) || active.has(fn)) {
-      state.unsupported = true;
+      this.markUnsupported(state, "invalid or recursive generator frame");
       return [{ state, value: this.values(UNKNOWN_ATOM) }];
     }
     const segments: Array<{ statements: ts.Statement[]; yielded?: ts.Expression }> = [{ statements: [] }];
@@ -1160,7 +1242,7 @@ class LocalFlowEngine {
       const expression = ts.isExpressionStatement(statement) ? unwrapExpression(statement.expression) : undefined;
       if (expression && ts.isYieldExpression(expression)) {
         if (expression.asteriskToken) {
-          state.unsupported = true;
+          this.markUnsupported(state, "delegating generator yield");
           return [{ state, value: this.values(UNKNOWN_ATOM) }];
         }
         segments[segments.length - 1]!.yielded = expression.expression;
@@ -1175,7 +1257,7 @@ class LocalFlowEngine {
       };
       visit(statement);
       if (nestedYield) {
-        state.unsupported = true;
+        this.markUnsupported(state, "nested generator yield");
         return [{ state, value: this.values(UNKNOWN_ATOM) }];
       }
       segments[segments.length - 1]!.statements.push(statement);
@@ -1183,12 +1265,17 @@ class LocalFlowEngine {
     const step = state.generatorSteps.get(generator) ?? 0;
     if (step >= segments.length) return [{ state, value: this.values(UNKNOWN_ATOM) }];
     const entered = this.cloneState(state);
+    const localSymbols = this.localSymbols(fn);
     if (step === 0) {
       const args = entered.generatorArguments.get(generator) ?? [];
       fn.parameters.forEach((parameter, index) => {
         this.bindName(entered, parameter.name, args[index] ?? this.values(UNKNOWN_ATOM));
       });
       if (fn.body && ts.isBlock(fn.body)) this.initialiseHoisted(fn.body.statements, entered);
+    } else {
+      for (const [symbol, value] of entered.generatorLocals.get(generator) ?? []) {
+        entered.cells.set(symbol, new Set(value));
+      }
     }
     const segment = segments[step]!;
     let states = this.evaluateStatements(segment.statements, [entered], new Set(active).add(fn));
@@ -1202,8 +1289,42 @@ class LocalFlowEngine {
     return states.map((finished) => {
       if (finished.outcome === "return") finished.outcome = "normal";
       finished.generatorSteps.set(generator, step + 1);
+      finished.generatorLocals.set(
+        generator,
+        new Map(
+          [...localSymbols].map((symbol) => [symbol, new Set(finished.cells.get(symbol) ?? [UNDEFINED_ATOM])]),
+        ),
+      );
       return { state: finished, value: this.values(UNKNOWN_ATOM) };
     });
+  }
+
+  private localSymbols(fn: ts.FunctionLikeDeclaration): Set<ts.Symbol> {
+    const cached = this.functionLocals.get(fn);
+    if (cached) return cached;
+    const symbols = new Set<ts.Symbol>();
+    const addName = (name: ts.BindingName): void => {
+      if (ts.isIdentifier(name)) {
+        const symbol = this.symbol(name);
+        if (symbol) symbols.add(symbol);
+      } else {
+        for (const element of name.elements) if (!ts.isOmittedExpression(element)) addName(element.name);
+      }
+    };
+    for (const parameter of fn.parameters) addName(parameter.name);
+    if (fn.body) {
+      const visit = (node: ts.Node): void => {
+        if (node !== fn.body && ts.isFunctionLike(node)) return;
+        if (ts.isVariableDeclaration(node)) addName(node.name);
+        else if (ts.isFunctionDeclaration(node) && node.name) addName(node.name);
+        else if (ts.isClassDeclaration(node) && node.name) addName(node.name);
+        else if (ts.isCatchClause(node) && node.variableDeclaration) addName(node.variableDeclaration.name);
+        ts.forEachChild(node, visit);
+      };
+      visit(fn.body);
+    }
+    this.functionLocals.set(fn, symbols);
+    return symbols;
   }
 
   private evaluateClass(
@@ -1214,6 +1335,9 @@ class LocalFlowEngine {
     const atom = this.classAtom(declaration);
     if (declaration.name) this.setCell(state, declaration.name, this.values(atom));
     let evaluations: FlowEvaluation[] = [{ state, value: this.values(atom) }];
+    if (ts.canHaveDecorators(declaration) && ts.getDecorators(declaration)?.length) {
+      this.markUnsupported(state, "class decorator");
+    }
     const base = declaration.heritageClauses
       ?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)
       ?.types[0]?.expression;
@@ -1228,6 +1352,22 @@ class LocalFlowEngine {
       );
     }
     for (const member of declaration.members) {
+      evaluations = evaluations.flatMap((current) => {
+        if (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length) {
+          this.markUnsupported(current.state, "class member decorator");
+        }
+        if ("name" in member && ts.isPrivateIdentifier(member.name)) {
+          this.markUnsupported(current.state, "private class member");
+        }
+        if (ts.isAccessor(member)) this.markUnsupported(current.state, "class accessor");
+        if ("name" in member && ts.isComputedPropertyName(member.name)) {
+          return this.evaluateExpression(member.name.expression, current.state, new Set(active)).map((evaluated) => ({
+            state: evaluated.state,
+            value: this.values(atom),
+          }));
+        }
+        return [current];
+      });
       const isStatic = ts.canHaveModifiers(member) &&
         !!ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
       if (ts.isClassStaticBlockDeclaration(member)) {
@@ -1249,6 +1389,24 @@ class LocalFlowEngine {
     return evaluations;
   }
 
+  private evaluateInstanceFields(
+    declaration: ts.ClassLikeDeclaration,
+    states: readonly FlowState[],
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let evaluations = [...states];
+    for (const member of declaration.members) {
+      const isStatic = ts.canHaveModifiers(member) &&
+        !!ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+      if (!isStatic && ts.isPropertyDeclaration(member) && member.initializer) {
+        evaluations = evaluations.flatMap((candidate) =>
+          this.evaluateExpression(member.initializer!, candidate, new Set(active)).map((evaluated) => evaluated.state),
+        );
+      }
+    }
+    return evaluations;
+  }
+
   private executeClassConstruction(
     classAtom: FlowAtom,
     args: readonly FlowValue[],
@@ -1259,7 +1417,7 @@ class LocalFlowEngine {
   ): FlowEvaluation[] {
     const declaration = this.classes.get(classAtom);
     if (!declaration || seen.has(classAtom)) {
-      state.unsupported = true;
+      this.markUnsupported(state, "unknown or recursive class construction");
       return [{ state, value: this.values(UNKNOWN_ATOM) }];
     }
     const constructor = declaration.members.find(ts.isConstructorDeclaration);
@@ -1272,12 +1430,20 @@ class LocalFlowEngine {
           this.executeClassConstruction(base, args, this.cloneState(state), call, active, new Set(seen).add(classAtom)),
         );
       }
+      evaluations = this.evaluateInstanceFields(
+        declaration,
+        evaluations.map((evaluation) => evaluation.state),
+        active,
+      ).map((candidate) => ({ state: candidate, value: this.values(UNDEFINED_ATOM) }));
     } else if (bases.size === 0) {
       if (active.has(constructor)) {
-        state.unsupported = true;
+        this.markUnsupported(state, "recursive base constructor");
         evaluations = [{ state, value: this.values(UNKNOWN_ATOM) }];
       } else {
-        evaluations = this.executeFunction(constructor, args, state, new Set(active).add(constructor));
+        const withFields = this.evaluateInstanceFields(declaration, [state], active);
+        evaluations = withFields.flatMap((candidate) =>
+          this.executeFunction(constructor, args, candidate, new Set(active).add(constructor)),
+        );
       }
     } else {
       const superStatements = constructor.body?.statements.flatMap((statement, index) => {
@@ -1300,24 +1466,16 @@ class LocalFlowEngine {
         visit(constructor.body);
       }
       if (!constructor.body || superStatements.length !== 1 || nestedSuper || active.has(constructor)) {
-        state.unsupported = true;
+        this.markUnsupported(state, "unsupported super form");
         evaluations = [{ state, value: this.values(UNKNOWN_ATOM) }];
       } else {
-        const entered = this.cloneState(state);
-        constructor.parameters.forEach((parameter, index) => {
-          const supplied = args[index] ?? this.values(UNKNOWN_ATOM);
-          let value = supplied;
-          if (parameter.initializer && (supplied.has(UNDEFINED_ATOM) || supplied.has(UNKNOWN_ATOM))) {
-            value = this.evaluateExpression(parameter.initializer, this.cloneState(entered), new Set(active))[0]?.value ?? supplied;
-          }
-          this.bindName(entered, parameter.name, value);
-        });
-        this.initialiseHoisted(constructor.body.statements, entered);
         const superStatement = superStatements[0]!;
         const constructorActive = new Set(active).add(constructor);
+        const entered = this.bindParameters(constructor.parameters, args, state, constructorActive);
+        for (const candidate of entered) this.initialiseHoisted(constructor.body.statements, candidate);
         const beforeSuper = this.evaluateStatements(
           constructor.body.statements.slice(0, superStatement.index),
-          [entered],
+          entered,
           constructorActive,
         );
         evaluations = beforeSuper.flatMap((before) => {
@@ -1326,7 +1484,7 @@ class LocalFlowEngine {
           for (const argument of superStatement.call.arguments) {
             if (ts.isSpreadElement(argument)) {
               inputs = inputs.map((input) => {
-                input.state.unsupported = true;
+                this.markUnsupported(input.state, "spread super argument");
                 return { state: input.state, args: [...input.args, this.values(UNKNOWN_ATOM)] };
               });
             } else {
@@ -1351,6 +1509,11 @@ class LocalFlowEngine {
             ),
           );
         });
+        evaluations = this.evaluateInstanceFields(
+          declaration,
+          evaluations.map((evaluation) => evaluation.state),
+          constructorActive,
+        ).map((candidate) => ({ state: candidate, value: this.values(UNDEFINED_ATOM) }));
         evaluations = evaluations.flatMap((current) =>
           this.evaluateStatements(
             constructor.body!.statements.slice(superStatement.index + 1),
@@ -1363,10 +1526,11 @@ class LocalFlowEngine {
         );
       }
     }
-    return evaluations.map((result) => ({
-      state: result.state,
-      value: this.values(this.atom("instance", call)),
-    }));
+    return evaluations.map((result) => {
+      const instance = this.atom("instance", call);
+      this.instanceClasses.set(instance, classAtom);
+      return { state: result.state, value: this.values(instance) };
+    });
   }
 
   private callbacksInValues(state: FlowState, values: readonly FlowValue[]): Set<ts.FunctionLikeDeclaration> {
@@ -1491,7 +1655,13 @@ class LocalFlowEngine {
   }
 
   private sqlResources(sql: string): string[] {
-    const tokens: string[] = [];
+    type SqlToken = { kind: "word" | "quotedIdentifier" | "punctuation"; text: string };
+    const tokens: SqlToken[] = [];
+    const punctuation = (text: string) => ({ kind: "punctuation" as const, text });
+    const isKeyword = (token: SqlToken | undefined, keyword: string) =>
+      token?.kind === "word" && token.text.toUpperCase() === keyword;
+    const isName = (token: SqlToken | undefined): token is SqlToken =>
+      token?.kind === "word" || token?.kind === "quotedIdentifier";
     let index = 0;
     while (index < sql.length) {
       const char = sql[index]!;
@@ -1517,82 +1687,120 @@ class LocalFlowEngine {
             index += 2;
           } else index += 1;
         }
+        if (depth !== 0) return [];
         continue;
       }
-      if (char === "'") {
-        index += 1;
+      const escapeString = (char === "E" || char === "e") && next === "'";
+      if (char === "'" || escapeString) {
+        index += escapeString ? 2 : 1;
+        let terminated = false;
         while (index < sql.length) {
           if (sql[index] === "'" && sql[index + 1] === "'") index += 2;
+          else if (escapeString && sql[index] === "\\" && index + 1 < sql.length) index += 2;
           else if (sql[index] === "'") {
             index += 1;
+            terminated = true;
             break;
           } else index += 1;
         }
+        if (!terminated) return [];
         continue;
       }
       if (char === "$") {
         const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
         if (delimiter) {
           const end = sql.indexOf(delimiter, index + delimiter.length);
-          index = end < 0 ? sql.length : end + delimiter.length;
+          if (end < 0) return [];
+          index = end + delimiter.length;
           continue;
         }
       }
       if (char === '"') {
         let identifier = "";
         index += 1;
+        let terminated = false;
         while (index < sql.length) {
           if (sql[index] === '"' && sql[index + 1] === '"') {
             identifier += '"';
             index += 2;
           } else if (sql[index] === '"') {
             index += 1;
+            terminated = true;
             break;
           } else identifier += sql[index++]!;
         }
-        tokens.push(identifier);
+        if (!terminated) return [];
+        tokens.push({ kind: "quotedIdentifier", text: identifier });
         continue;
       }
       const identifier = /^[a-zA-Z_][a-zA-Z0-9_$]*/.exec(sql.slice(index))?.[0];
       if (identifier) {
-        tokens.push(identifier);
+        tokens.push({ kind: "word", text: identifier });
         index += identifier.length;
         continue;
       }
-      if (char === "." || char === "(" || char === ")" || char === "," || char === ";") tokens.push(char);
+      if (char === "." || char === "(" || char === ")" || char === "," || char === ";") {
+        tokens.push(punctuation(char));
+      }
       index += 1;
     }
-    const firstSemicolon = tokens.indexOf(";");
-    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token !== ";")) return [];
-    const statementKeywords = tokens.filter((token) => !["(", ")", ",", ".", ";"].includes(token));
-    const firstKeyword = statementKeywords[0]?.toUpperCase();
+    const firstSemicolon = tokens.findIndex((token) => token.kind === "punctuation" && token.text === ";");
+    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return [];
+    const firstKeyword = tokens.find((token) => token.kind === "word")?.text.toUpperCase();
     const mutating = new Set([
       "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
     ]);
     if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return [];
-    if (tokens.some((token) => token.toUpperCase() === "INTO")) return [];
+    let depth = 0;
+    const topLevelFrom: number[] = [];
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      if (tokens[cursor]!.text === "(") depth += 1;
+      else if (tokens[cursor]!.text === ")") depth = Math.max(0, depth - 1);
+      else if (depth === 0 && isKeyword(tokens[cursor], "FROM")) topLevelFrom.push(cursor);
+    }
+    depth = 0;
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      const token = tokens[cursor]!;
+      if (token.text === "(") {
+        depth += 1;
+        continue;
+      }
+      if (token.text === ")") {
+        depth = Math.max(0, depth - 1);
+        continue;
+      }
+      if (
+        depth === 0 &&
+        isKeyword(token, "INTO") &&
+        !isKeyword(tokens[cursor - 1], "AS") &&
+        tokens[cursor - 1]?.text !== "." &&
+        isName(tokens[cursor + 1]) &&
+        topLevelFrom.some((from) => from > cursor + 1)
+      ) return [];
+    }
     for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
-      if (tokens[cursor]?.toUpperCase() !== "AS" || tokens[cursor + 1] !== "(") continue;
-      const bodyHead = tokens.slice(cursor + 2).find((candidate) => !["(", ")", ",", ".", ";"].includes(candidate));
-      if (bodyHead && mutating.has(bodyHead.toUpperCase())) return [];
+      if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") continue;
+      const bodyHead = tokens.slice(cursor + 2).find((candidate) => candidate.kind === "word");
+      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
     }
     if (firstKeyword === "WITH") {
-      let depth = 0;
+      depth = 0;
       let mainSelect = false;
       for (let cursor = 1; cursor < tokens.length; cursor += 1) {
         const token = tokens[cursor]!;
-        if (token === "(") {
+        if (token.text === "(") {
           depth += 1;
-          const bodyHead = tokens.slice(cursor + 1).find((candidate) => !["(", ")", ",", "."].includes(candidate));
-          if (bodyHead && mutating.has(bodyHead.toUpperCase())) return [];
+          const bodyHead = tokens.slice(cursor + 1).find((candidate) => candidate.kind === "word");
+          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
           continue;
         }
-        if (token === ")") {
+        if (token.text === ")") {
           depth = Math.max(0, depth - 1);
           continue;
         }
         if (depth !== 0) continue;
-        const keyword = token.toUpperCase();
+        if (token.kind !== "word") continue;
+        const keyword = token.text.toUpperCase();
         if (mutating.has(keyword)) return [];
         if (keyword === "SELECT") {
           mainSelect = true;
@@ -1603,53 +1811,52 @@ class LocalFlowEngine {
     }
     const cteNames = new Set<string>();
     for (let start = 0; start < tokens.length; start += 1) {
-      if (tokens[start]?.toUpperCase() !== "WITH") continue;
+      if (!isKeyword(tokens[start], "WITH")) continue;
       let cursor = start + 1;
-      if (tokens[cursor]?.toUpperCase() === "RECURSIVE") cursor += 1;
+      if (isKeyword(tokens[cursor], "RECURSIVE")) cursor += 1;
       while (cursor < tokens.length) {
         const name = tokens[cursor];
-        if (!name || ["(", ")", ",", "."].includes(name)) break;
-        cteNames.add(name.toLowerCase());
+        if (!isName(name)) break;
+        cteNames.add(name.text.toLowerCase());
         cursor += 1;
-        if (tokens[cursor] === "(") {
-          let depth = 1;
+        if (tokens[cursor]?.text === "(") {
+          depth = 1;
           cursor += 1;
           while (cursor < tokens.length && depth > 0) {
-            if (tokens[cursor] === "(") depth += 1;
-            else if (tokens[cursor] === ")") depth -= 1;
+            if (tokens[cursor]?.text === "(") depth += 1;
+            else if (tokens[cursor]?.text === ")") depth -= 1;
             cursor += 1;
           }
         }
-        if (tokens[cursor]?.toUpperCase() !== "AS" || tokens[cursor + 1] !== "(") break;
+        if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") break;
         cursor += 2;
-        let depth = 1;
+        depth = 1;
         while (cursor < tokens.length && depth > 0) {
-          if (tokens[cursor] === "(") depth += 1;
-          else if (tokens[cursor] === ")") depth -= 1;
+          if (tokens[cursor]?.text === "(") depth += 1;
+          else if (tokens[cursor]?.text === ")") depth -= 1;
           cursor += 1;
         }
-        if (tokens[cursor] !== ",") break;
+        if (tokens[cursor]?.text !== ",") break;
         cursor += 1;
       }
     }
     const resources = new Set<string>();
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      const keyword = tokens[cursor]?.toUpperCase();
-      if (keyword !== "FROM" && keyword !== "JOIN") continue;
+      if (!isKeyword(tokens[cursor], "FROM") && !isKeyword(tokens[cursor], "JOIN")) continue;
       cursor += 1;
-      if (tokens[cursor]?.toUpperCase() === "ONLY") cursor += 1;
+      while (isKeyword(tokens[cursor], "ONLY") || isKeyword(tokens[cursor], "LATERAL")) cursor += 1;
       const first = tokens[cursor];
-      if (!first || first === "(") continue;
+      if (!isName(first)) continue;
       let schema = "public";
-      let name = first;
-      const qualified = tokens[cursor + 1] === "." && !!tokens[cursor + 2];
+      let name = first.text;
+      const qualified = tokens[cursor + 1]?.text === "." && isName(tokens[cursor + 2]);
       if (qualified) {
-        schema = first;
-        name = tokens[cursor + 2]!;
+        schema = first.text;
+        name = tokens[cursor + 2]!.text;
         cursor += 2;
       }
       if (!qualified && cteNames.has(name.toLowerCase())) continue;
-      const kind = tokens[cursor + 1] === "(" ? "rpc" : "table";
+      const kind = tokens[cursor + 1]?.text === "(" ? "rpc" : "table";
       resources.add(`${kind}:${schema.toLowerCase()}.${name.toLowerCase()}`);
     }
     return [...resources].sort();
@@ -1661,24 +1868,52 @@ class LocalFlowEngine {
     state: FlowState,
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowEvaluation[] {
-    const entered = this.cloneState(state);
-    fn.parameters.forEach((parameter, index) => {
+    const entered = this.bindParameters(fn.parameters, args, state, active);
+    if (!fn.body) return entered.map((candidate) => ({ state: candidate, value: this.values(UNKNOWN_ATOM) }));
+    if (!ts.isBlock(fn.body)) {
+      return entered.flatMap((candidate) => this.evaluateExpression(fn.body as ts.Expression, candidate, new Set(active)));
+    }
+    return entered.flatMap((candidate) => {
+      this.initialiseHoisted(fn.body!.statements, candidate);
+      return this.evaluateStatements(fn.body!.statements, [candidate], active).map((finished) => {
+        const value = finished.outcome === "return" ? new Set(finished.returned) : this.values(UNDEFINED_ATOM);
+        const returned = this.cloneState(finished);
+        if (returned.outcome === "return") returned.outcome = "normal";
+        return { state: returned, value };
+      });
+    });
+  }
+
+  private bindParameters(
+    parameters: readonly ts.ParameterDeclaration[],
+    args: readonly FlowValue[],
+    state: FlowState,
+    active: ReadonlySet<ts.FunctionLikeDeclaration>,
+  ): FlowState[] {
+    let states = [this.cloneState(state)];
+    parameters.forEach((parameter, index) => {
       const supplied = args[index] ?? this.values(UNKNOWN_ATOM);
-      let value = supplied;
-      if (parameter.initializer && (supplied.has(UNDEFINED_ATOM) || supplied.has(UNKNOWN_ATOM))) {
-        value = this.evaluateExpression(parameter.initializer, this.cloneState(entered), new Set(active))[0]?.value ?? supplied;
-      }
-      this.bindName(entered, parameter.name, value);
+      states = states.flatMap((candidate) => {
+        if (!parameter.initializer || (!supplied.has(UNDEFINED_ATOM) && !supplied.has(UNKNOWN_ATOM))) {
+          this.bindName(candidate, parameter.name, supplied);
+          return [candidate];
+        }
+        const alternatives = this.evaluateExpression(parameter.initializer, this.cloneState(candidate), new Set(active)).map(
+          (evaluated) => {
+            this.bindName(evaluated.state, parameter.name, evaluated.value);
+            return evaluated.state;
+          },
+        );
+        const direct = new Set([...supplied].filter((atom) => atom !== UNDEFINED_ATOM));
+        if (direct.size > 0) {
+          const directState = this.cloneState(candidate);
+          this.bindName(directState, parameter.name, direct);
+          alternatives.push(directState);
+        }
+        return alternatives;
+      });
     });
-    if (!fn.body) return [{ state: entered, value: this.values(UNKNOWN_ATOM) }];
-    if (!ts.isBlock(fn.body)) return this.evaluateExpression(fn.body, entered, new Set(active));
-    this.initialiseHoisted(fn.body.statements, entered);
-    return this.evaluateStatements(fn.body.statements, [entered], active).map((finished) => {
-      const value = finished.outcome === "return" ? new Set(finished.returned) : this.values(UNDEFINED_ATOM);
-      const returned = this.cloneState(finished);
-      if (returned.outcome === "return") returned.outcome = "normal";
-      return { state: returned, value };
-    });
+    return states;
   }
 
   private evaluateStatements(
@@ -1789,7 +2024,7 @@ class LocalFlowEngine {
     }
     if (ts.isTryStatement(statement)) return this.evaluateTry(statement, state, active);
     if (ts.isEmptyStatement(statement) || ts.isDebuggerStatement(statement)) return [state];
-    state.unsupported = true;
+    this.markUnsupported(state, `unsupported statement ${ts.SyntaxKind[statement.kind]}`);
     return [state];
   }
 
@@ -1799,28 +2034,47 @@ class LocalFlowEngine {
     active: ReadonlySet<ts.FunctionLikeDeclaration>,
   ): FlowState[] {
     const discriminant = this.literalPrimitive(statement.expression);
-    const possible: ts.CaseOrDefaultClause[] = [];
-    if (discriminant !== undefined) {
-      const matching = statement.caseBlock.clauses.find(
-        (clause) => ts.isCaseClause(clause) && this.literalPrimitive(clause.expression) === discriminant,
-      );
-      const fallback = statement.caseBlock.clauses.find(ts.isDefaultClause);
-      if (matching) possible.push(matching);
-      else if (fallback) possible.push(fallback);
-    } else {
-      possible.push(...statement.caseBlock.clauses);
-    }
-    if (!possible.length) return [state];
-    const results = possible.flatMap((clause) =>
-      this.evaluateStatements(clause.statements, [this.cloneState(state)], active).map((result) => {
-        if (result.outcome === "break") result.outcome = "normal";
-        return result;
-      }),
-    );
-    if (discriminant === undefined && !statement.caseBlock.clauses.some(ts.isDefaultClause)) {
-      results.push(this.cloneState(state));
-    }
-    return results;
+    const clauses = statement.caseBlock.clauses;
+    const runFrom = (start: number, initial: FlowState): FlowState[] => {
+      let continuing = [initial];
+      const exits: FlowState[] = [];
+      for (let index = start; index < clauses.length && continuing.length; index += 1) {
+        const evaluated = this.evaluateStatements(clauses[index]!.statements, continuing, active);
+        continuing = [];
+        for (const candidate of evaluated) {
+          if (candidate.outcome === "break") {
+            candidate.outcome = "normal";
+            exits.push(candidate);
+          } else if (candidate.outcome === "normal") continuing.push(candidate);
+          else exits.push(candidate);
+        }
+      }
+      return [...exits, ...continuing];
+    };
+    return this.evaluateExpression(statement.expression, state, new Set(active)).flatMap((evaluated) => {
+      let labelStates = [evaluated.state];
+      const starts: Array<{ index: number; state: FlowState }> = [];
+      for (let index = 0; index < clauses.length; index += 1) {
+        const clause = clauses[index]!;
+        if (!ts.isCaseClause(clause)) continue;
+        labelStates = labelStates.flatMap((candidate) =>
+          this.evaluateExpression(clause.expression, candidate, new Set(active)).map((result) => result.state),
+        );
+        if (discriminant === undefined || this.literalPrimitive(clause.expression) === discriminant) {
+          starts.push(...labelStates.map((candidate) => ({ index, state: this.cloneState(candidate) })));
+          if (discriminant !== undefined) break;
+        }
+      }
+      if (discriminant !== undefined && starts.length === 0) {
+        const fallback = clauses.findIndex(ts.isDefaultClause);
+        if (fallback >= 0) starts.push(...labelStates.map((candidate) => ({ index: fallback, state: candidate })));
+      } else if (discriminant === undefined) {
+        const fallback = clauses.findIndex(ts.isDefaultClause);
+        if (fallback >= 0) starts.push(...labelStates.map((candidate) => ({ index: fallback, state: this.cloneState(candidate) })));
+        else starts.push(...labelStates.map((candidate) => ({ index: -1, state: candidate })));
+      }
+      return starts.flatMap((entry) => entry.index < 0 ? [entry.state] : runFrom(entry.index, entry.state));
+    });
   }
 
   private literalPrimitive(expression: ts.Expression): string | number | boolean | undefined {
@@ -1882,7 +2136,7 @@ class LocalFlowEngine {
         if (converged || frontier.length === 0) break;
       }
       if (!converged && frontier.length > 0) {
-        for (const candidate of [...frontier, ...exits]) candidate.unsupported = true;
+        for (const candidate of [...frontier, ...exits]) this.markUnsupported(candidate, "non-convergent do-while loop");
       }
       exits.push(...frontier.map((candidate) => this.cloneState(candidate)));
       return exits.length > 96 ? this.widenStates(exits) : exits;
@@ -1923,7 +2177,7 @@ class LocalFlowEngine {
         if (converged || frontier.length === 0) break;
       }
       if (!converged && frontier.length > 0) {
-        for (const candidate of [...frontier, ...exits]) candidate.unsupported = true;
+        for (const candidate of [...frontier, ...exits]) this.markUnsupported(candidate, "non-convergent loop");
       }
       exits.push(...frontier.map((candidate) => this.cloneState(candidate)));
       return exits.length > 96 ? this.widenStates(exits) : exits;
@@ -2050,76 +2304,9 @@ class LocalFlowEngine {
   }
 
   private widenStates(states: readonly FlowState[]): FlowState[] {
-    const sameSet = <T>(left: ReadonlySet<T>, right: ReadonlySet<T>) =>
-      left.size === right.size && [...left].every((value) => right.has(value));
-    const sameSteps = (left: FlowState["generatorSteps"], right: FlowState["generatorSteps"]) =>
-      left.size === right.size && [...left].every(([generator, step]) => right.get(generator) === step);
-    const sameGeneratorArguments = (
-      left: FlowState["generatorArguments"],
-      right: FlowState["generatorArguments"],
-    ) => left.size === right.size && [...left].every(([generator, args]) => {
-      const other = right.get(generator);
-      return !!other && args.length === other.length && args.every((value, index) => sameSet(value, other[index]!));
-    });
-    const proofAtom = (atom: FlowAtom) =>
-      atom === ORIGINAL_LOADER_ATOM ||
-      atom === ORIGINAL_MODULE_ATOM ||
-      atom === SUPABASE_FACTORY_ATOM ||
-      atom === POSTGRES_FACTORY_ATOM ||
-      atom === WITNESS_ATOM ||
-      /^(?:client|query|result:query):/.test(atom);
-    const sameProofCells = (left: FlowState["cells"], right: FlowState["cells"]) => {
-      const symbols = new Set([...left.keys(), ...right.keys()]);
-      return [...symbols].every((symbol) => {
-        const leftValue = left.get(symbol) ?? new Set<FlowAtom>();
-        const rightValue = right.get(symbol) ?? new Set<FlowAtom>();
-        return ![...leftValue, ...rightValue].some(proofAtom) || sameSet(leftValue, rightValue);
-      });
-    };
-    const sameProofMembers = (left: FlowState["members"], right: FlowState["members"]) => {
-      const atoms = new Set([...left.keys(), ...right.keys()]);
-      return [...atoms].every((atom) => {
-        const leftMembers = left.get(atom) ?? new Map<string, Set<FlowAtom>>();
-        const rightMembers = right.get(atom) ?? new Map<string, Set<FlowAtom>>();
-        const names = new Set([...leftMembers.keys(), ...rightMembers.keys()]);
-        return [...names].every((name) => {
-          const leftValue = leftMembers.get(name) ?? new Set<FlowAtom>();
-          const rightValue = rightMembers.get(name) ?? new Set<FlowAtom>();
-          return name !== "@seenOriginal" && ![...leftValue, ...rightValue].some(proofAtom)
-            ? true
-            : sameSet(leftValue, rightValue);
-        });
-      });
-    };
     const widened: FlowState[] = [];
     for (const state of states) {
-      const merged = widened.find((candidate) =>
-        candidate.outcome === state.outcome &&
-        sameProofCells(candidate.cells, state.cells) &&
-        sameProofMembers(candidate.members, state.members) &&
-        sameSet(candidate.dirty, state.dirty) &&
-        (state.outcome !== "return" || sameSet(candidate.returned, state.returned)) &&
-        candidate.witnessCount === state.witnessCount &&
-        candidate.awaitedWitnessCount === state.awaitedWitnessCount &&
-        sameSet(candidate.witnessResources, state.witnessResources) &&
-        sameSteps(candidate.generatorSteps, state.generatorSteps) &&
-        sameGeneratorArguments(candidate.generatorArguments, state.generatorArguments) &&
-        candidate.allocationSerial === state.allocationSerial,
-      );
-      if (!merged) {
-        widened.push(this.cloneState(state));
-        continue;
-      }
-      for (const [symbol, value] of state.cells) {
-        const target = merged.cells.get(symbol) ?? new Set<FlowAtom>();
-        for (const atom of value) target.add(atom);
-        merged.cells.set(symbol, target);
-      }
-      for (const dirty of state.dirty) merged.dirty.add(dirty);
-      merged.witnessCount = Math.max(merged.witnessCount, state.witnessCount);
-      merged.awaitedWitnessCount = Math.max(merged.awaitedWitnessCount, state.awaitedWitnessCount);
-      for (const resource of state.witnessResources) merged.witnessResources.add(resource);
-      merged.unsupported ||= state.unsupported;
+      if (!widened.some((candidate) => this.statesEqual(candidate, state))) widened.push(this.cloneState(state));
     }
     return widened;
   }
@@ -2238,183 +2425,494 @@ class LocalFlowEngine {
     return undefined;
   }
 
-  private bindingSources(identifier: ts.Identifier): Array<{ source: ts.Expression; property?: string } | undefined> {
+  private bindingSources(identifier: ts.Identifier): Array<{ source: ts.Expression; path?: string[]; unsupported?: boolean } | undefined> {
     const symbol = this.symbol(identifier);
     if (!symbol) return [];
-    const root: ts.Node = this.sourceFile;
-    type Binding = { source: ts.Expression; property?: string } | undefined;
-    let current: Binding[] = [undefined];
-
-    const unique = (bindings: Binding[]): Binding[] => {
+    type Binding = { source: ts.Expression; path?: string[]; unsupported?: boolean } | undefined;
+    type AliasState = { binding: Binding; outcome: FlowOutcome };
+    type AliasEvaluation = { state: AliasState; value: Binding };
+    const matches = (node: ts.Identifier) => this.symbol(node) === symbol;
+    const bindingKey = (binding: Binding): string => binding
+      ? `${binding.source.pos}:${binding.source.end}:${binding.path?.join(".") ?? ""}:${binding.unsupported ? "unsupported" : ""}`
+      : "undefined";
+    const uniqueBindings = (bindings: Binding[]): Binding[] => {
       const seen = new Set<string>();
       return bindings.filter((binding) => {
-        const key = binding ? `${binding.source.pos}:${binding.source.end}:${binding.property ?? ""}` : "undefined";
+        const key = bindingKey(binding);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
       });
     };
-    const replace = (binding: Binding) => {
-      current = current.map(() => binding);
+    const uniqueStates = (states: AliasState[]): AliasState[] => {
+      const seen = new Set<string>();
+      return states.filter((state) => {
+        const key = `${state.outcome}:${bindingKey(state.binding)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     };
-
-    const matches = (node: ts.Identifier) => this.symbol(node) === symbol;
     const propertyName = (node: ts.PropertyName | undefined, fallback: string): string | undefined => {
       if (!node) return fallback;
       if (ts.isIdentifier(node) || ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return node.text;
       return this.staticKey(node);
     };
-    const bindDeclaration = (name: ts.BindingName, source: ts.Expression | undefined) => {
-      if (ts.isIdentifier(name)) {
-        if (matches(name)) replace(source ? { source } : undefined);
-        return;
+    const selected = (binding: Binding, key: string): Binding => {
+      if (!binding) return undefined;
+      if (binding.unsupported) return binding;
+      const source = unwrapExpression(binding.source);
+      if (!binding.path?.length && ts.isObjectLiteralExpression(source)) {
+        const property = source.properties.find((candidate) =>
+          (ts.isPropertyAssignment(candidate) || ts.isMethodDeclaration(candidate)) &&
+          propertyName(candidate.name, "") === key,
+        );
+        if (property && ts.isPropertyAssignment(property)) return { source: property.initializer };
+        if (property && ts.isMethodDeclaration(property)) return { source: property as unknown as ts.Expression };
+        if (source.properties.some(ts.isSpreadAssignment)) return { source: binding.source, unsupported: true };
+        return undefined;
       }
-      if (!source) {
-        for (const element of name.elements) {
-          if (!ts.isOmittedExpression(element)) bindDeclaration(element.name, undefined);
-        }
-        return;
+      if (!binding.path?.length && ts.isArrayLiteralExpression(source) && /^\d+$/.test(key)) {
+        const element = source.elements[Number(key)];
+        if (!element || ts.isOmittedExpression(element)) return undefined;
+        return { source: ts.isSpreadElement(element) ? element.expression : element };
       }
-      for (const element of name.elements) {
-        if (ts.isOmittedExpression(element)) continue;
-        if (ts.isIdentifier(element.name) && matches(element.name)) {
-          replace({ source, property: propertyName(element.propertyName, element.name.text) });
-        } else bindDeclaration(element.name, source);
-      }
+      return { ...binding, path: [...(binding.path ?? []), key] };
     };
-    const bindAssignment = (target: ts.Expression, source: ts.Expression) => {
+    const containsTarget = (node: ts.Node): boolean => {
+      let found = false;
+      const visit = (candidate: ts.Node): void => {
+        if (found || (candidate !== node && ts.isFunctionLike(candidate))) return;
+        if (ts.isIdentifier(candidate) && matches(candidate)) found = true;
+        else ts.forEachChild(candidate, visit);
+      };
+      visit(node);
+      return found;
+    };
+    const bindName = (name: ts.BindingName, value: Binding, state: AliasState): AliasState[] => {
+      if (ts.isIdentifier(name)) return matches(name) ? [{ ...state, binding: value }] : [state];
+      let states = [state];
+      name.elements.forEach((element, index) => {
+        if (ts.isOmittedExpression(element)) return;
+        states = states.flatMap((candidate) => {
+          if (element.dotDotDotToken) {
+            return containsTarget(element.name)
+              ? [{ ...candidate, binding: value ? { ...value, unsupported: true } : undefined }]
+              : [candidate];
+          }
+          const key = ts.isArrayBindingPattern(name)
+            ? String(index)
+            : propertyName(element.propertyName, ts.isIdentifier(element.name) ? element.name.text : "");
+          const choice = key === undefined ? (value ? { ...value, unsupported: true } : undefined) : selected(value, key);
+          const bound = bindName(element.name, choice, candidate);
+          if (!element.initializer) return bound;
+          const definitelyMissing = choice === undefined;
+          const fallback = bindName(element.name, { source: element.initializer }, candidate);
+          return definitelyMissing ? fallback : [...bound, ...fallback];
+        });
+      });
+      return uniqueStates(states);
+    };
+    const bindTarget = (target: ts.Expression, value: Binding, state: AliasState): AliasState[] => {
       const unwrapped = unwrapExpression(target);
-      if (ts.isIdentifier(unwrapped)) {
-        if (matches(unwrapped)) replace({ source });
-        return;
+      if (ts.isIdentifier(unwrapped)) return matches(unwrapped) ? [{ ...state, binding: value }] : [state];
+      if (ts.isArrayLiteralExpression(unwrapped)) {
+        let states = [state];
+        unwrapped.elements.forEach((element, index) => {
+          if (ts.isOmittedExpression(element)) return;
+          states = states.flatMap((candidate) => {
+            const item = ts.isSpreadElement(element) ? element.expression : element;
+            if (ts.isSpreadElement(element) && containsTarget(item)) {
+              return [{ ...candidate, binding: value ? { ...value, unsupported: true } : undefined }];
+            }
+            const choice = selected(value, String(index));
+            if (ts.isBinaryExpression(item) && item.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+              const direct = bindTarget(item.left, choice, candidate);
+              const fallback = bindTarget(item.left, { source: item.right }, candidate);
+              return choice === undefined ? fallback : [...direct, ...fallback];
+            }
+            return bindTarget(item, choice, candidate);
+          });
+        });
+        return uniqueStates(states);
       }
       if (ts.isObjectLiteralExpression(unwrapped)) {
+        let states = [state];
         for (const property of unwrapped.properties) {
-          if (ts.isShorthandPropertyAssignment(property) && matches(property.name)) {
-            replace({ source, property: property.name.text });
-          } else if (ts.isPropertyAssignment(property) && ts.isIdentifier(unwrapExpression(property.initializer))) {
-            const targetIdentifier = unwrapExpression(property.initializer) as ts.Identifier;
-            if (matches(targetIdentifier)) replace({ source, property: propertyName(property.name, targetIdentifier.text) });
-          }
+          states = states.flatMap((candidate) => {
+            if (ts.isSpreadAssignment(property)) {
+              return containsTarget(property.expression)
+                ? [{ ...candidate, binding: value ? { ...value, unsupported: true } : undefined }]
+                : [candidate];
+            }
+            if (ts.isShorthandPropertyAssignment(property)) {
+              return bindTarget(property.name, selected(value, property.name.text), candidate);
+            }
+            if (ts.isPropertyAssignment(property)) {
+              const key = propertyName(property.name, "");
+              const choice = key === undefined ? (value ? { ...value, unsupported: true } : undefined) : selected(value, key);
+              return bindTarget(property.initializer, choice, candidate);
+            }
+            return containsTarget(property) && value
+              ? [{ ...candidate, binding: { ...value, unsupported: true } }]
+              : [candidate];
+          });
         }
+        return uniqueStates(states);
       }
+      return containsTarget(unwrapped) && value
+        ? [{ ...state, binding: { ...value, unsupported: true } }]
+        : [state];
     };
-    const visit = (node: ts.Node): void => {
-      if (
-        node !== root &&
-        ts.isFunctionLike(node) &&
-        !(node.pos <= identifier.pos && node.end >= identifier.end)
-      ) return;
-      if (node.pos >= identifier.pos) return;
-      if (ts.isIfStatement(node) && node.end <= identifier.pos) {
-        visit(node.expression);
-        const condition = staticBoolean(node.expression);
-        if (condition === true) {
-          visit(node.thenStatement);
-          return;
-        }
-        if (condition === false) {
-          if (node.elseStatement) visit(node.elseStatement);
-          return;
-        }
-        const before = [...current];
-        visit(node.thenStatement);
-        const whenTrue = [...current];
-        current = [...before];
-        if (node.elseStatement) visit(node.elseStatement);
-        const whenFalse = [...current];
-        current = unique([...whenTrue, ...whenFalse]);
-        return;
+    const evaluateExpression = (
+      input: ts.Expression,
+      states: AliasState[],
+      mayThrow = false,
+    ): AliasEvaluation[] => {
+      const expression = unwrapExpression(input);
+      const normalStates = states.filter((state) => state.outcome === "normal");
+      const abrupt = states.filter((state) => state.outcome !== "normal").map((state) => ({ state, value: undefined }));
+      if (!normalStates.length) return abrupt;
+      if (ts.isConditionalExpression(expression)) {
+        const conditions = evaluateExpression(expression.condition, normalStates, mayThrow);
+        const condition = staticBoolean(expression.condition);
+        const branches = conditions.flatMap(({ state }) => {
+          if (state.outcome !== "normal") return [{ state, value: undefined }];
+          if (condition === true) return evaluateExpression(expression.whenTrue, [state], mayThrow);
+          if (condition === false) return evaluateExpression(expression.whenFalse, [state], mayThrow);
+          return [
+            ...evaluateExpression(expression.whenTrue, [{ ...state }], mayThrow),
+            ...evaluateExpression(expression.whenFalse, [{ ...state }], mayThrow),
+          ];
+        });
+        return [...abrupt, ...branches];
       }
-      if (ts.isSwitchStatement(node) && node.end <= identifier.pos) {
-        visit(node.expression);
-        const before = [...current];
-        const clauses = node.caseBlock.clauses;
-        const executeFrom = (start: number): Binding[] => {
-          current = [...before];
-          let stopped = false;
-          for (let index = start; index < clauses.length && !stopped; index += 1) {
-            for (const statement of clauses[index]!.statements) {
-              if (ts.isBreakStatement(statement)) {
-                stopped = true;
-                break;
-              }
-              visit(statement);
+      if (ts.isBinaryExpression(expression)) {
+        const operator = expression.operatorToken.kind;
+        if (operator === ts.SyntaxKind.CommaToken) {
+          const left = evaluateExpression(expression.left, normalStates, mayThrow);
+          return [...abrupt, ...left.flatMap(({ state }) => evaluateExpression(expression.right, [state], mayThrow))];
+        }
+        if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) {
+          const logical = operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+            operator === ts.SyntaxKind.BarBarEqualsToken ||
+            operator === ts.SyntaxKind.QuestionQuestionEqualsToken;
+          const right = evaluateExpression(expression.right, normalStates.map((state) => ({ ...state })), mayThrow);
+          const assigned = right.flatMap(({ state, value }) =>
+            state.outcome === "normal"
+              ? bindTarget(expression.left, value ?? { source: expression.right }, state).map((bound) => ({ state: bound, value }))
+              : [{ state, value }],
+          );
+          return [...abrupt, ...(logical ? normalStates.map((state) => ({ state, value: { source: expression.left } })) : []), ...assigned];
+        }
+        if (
+          operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+          operator === ts.SyntaxKind.BarBarToken ||
+          operator === ts.SyntaxKind.QuestionQuestionToken
+        ) {
+          const left = evaluateExpression(expression.left, normalStates, mayThrow);
+          const right = left.flatMap(({ state }) => evaluateExpression(expression.right, [{ ...state }], mayThrow));
+          return [...abrupt, ...left, ...right];
+        }
+        const left = evaluateExpression(expression.left, normalStates, mayThrow);
+        const right = left.flatMap(({ state }) => evaluateExpression(expression.right, [state], mayThrow));
+        return [...abrupt, ...right.map(({ state }) => ({ state, value: { source: expression } }))];
+      }
+      if (ts.isCallExpression(expression) || ts.isNewExpression(expression)) {
+        let evaluated = evaluateExpression(expression.expression, normalStates, mayThrow);
+        for (const argument of expression.arguments ?? []) {
+          evaluated = evaluated.flatMap(({ state }) =>
+            evaluateExpression(ts.isSpreadElement(argument) ? argument.expression : argument, [state], mayThrow),
+          );
+        }
+        const completed = evaluated.map(({ state }) => ({ state, value: { source: expression } as Binding }));
+        if (mayThrow) {
+          completed.push(...evaluated.filter(({ state }) => state.outcome === "normal").map(({ state }) => ({
+            state: { ...state, outcome: "throw" as const },
+            value: undefined,
+          })));
+        }
+        return [...abrupt, ...completed];
+      }
+      if (ts.isPropertyAccessExpression(expression)) {
+        return [...abrupt, ...evaluateExpression(expression.expression, normalStates, mayThrow).map(({ state }) => ({
+          state,
+          value: { source: expression },
+        }))];
+      }
+      if (ts.isElementAccessExpression(expression)) {
+        let evaluated = evaluateExpression(expression.expression, normalStates, mayThrow);
+        if (expression.argumentExpression) {
+          evaluated = evaluated.flatMap(({ state }) => evaluateExpression(expression.argumentExpression!, [state], mayThrow));
+        }
+        return [...abrupt, ...evaluated.map(({ state }) => ({
+          state,
+          value: { source: expression, ...(this.staticKey(expression.argumentExpression) === undefined ? { unsupported: true } : {}) },
+        }))];
+      }
+      if (ts.isArrayLiteralExpression(expression)) {
+        let evaluated: AliasEvaluation[] = normalStates.map((state) => ({ state, value: { source: expression } }));
+        for (const element of expression.elements) {
+          if (ts.isOmittedExpression(element)) continue;
+          evaluated = evaluated.flatMap(({ state }) =>
+            evaluateExpression(ts.isSpreadElement(element) ? element.expression : element, [state], mayThrow)
+              .map((result) => ({ state: result.state, value: { source: expression } })),
+          );
+        }
+        return [...abrupt, ...evaluated];
+      }
+      if (ts.isObjectLiteralExpression(expression)) {
+        let evaluated: AliasEvaluation[] = normalStates.map((state) => ({ state, value: { source: expression } }));
+        for (const property of expression.properties) {
+          const children: ts.Expression[] = [];
+          if ("name" in property && ts.isComputedPropertyName(property.name)) children.push(property.name.expression);
+          if (ts.isPropertyAssignment(property)) children.push(property.initializer);
+          else if (ts.isSpreadAssignment(property)) children.push(property.expression);
+          evaluated = children.reduce(
+            (current, child) => current.flatMap(({ state }) => evaluateExpression(child, [state], mayThrow)
+              .map((result) => ({ state: result.state, value: { source: expression } }))),
+            evaluated,
+          );
+        }
+        return [...abrupt, ...evaluated];
+      }
+      if (ts.isTemplateExpression(expression)) {
+        let evaluated: AliasEvaluation[] = normalStates.map((state) => ({ state, value: { source: expression } }));
+        for (const span of expression.templateSpans) {
+          evaluated = evaluated.flatMap(({ state }) => evaluateExpression(span.expression, [state], mayThrow)
+            .map((result) => ({ state: result.state, value: { source: expression } })));
+        }
+        return [...abrupt, ...evaluated];
+      }
+      if (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression) || ts.isAwaitExpression(expression)) {
+        const operand = ts.isAwaitExpression(expression) ? expression.expression : expression.operand;
+        return [...abrupt, ...evaluateExpression(operand, normalStates, mayThrow).map(({ state }) => ({
+          state,
+          value: { source: expression },
+        }))];
+      }
+      return [...abrupt, ...normalStates.map((state) => ({ state, value: { source: expression } }))];
+    };
+    const evaluateStatements = (
+      statements: readonly ts.Statement[],
+      initial: AliasState[],
+      mayThrow = false,
+    ): AliasState[] => {
+      let states = initial;
+      for (const statement of statements) {
+        states = transferStatement(statement, states, mayThrow);
+        states = uniqueStates(states);
+      }
+      return states;
+    };
+    const transferStatement = (statement: ts.Statement, states: AliasState[], mayThrow = false): AliasState[] => {
+      const normal = states.filter((state) => state.outcome === "normal");
+      const abrupt = states.filter((state) => state.outcome !== "normal");
+      if (!normal.length) return states;
+      if (ts.isBlock(statement)) return [...abrupt, ...evaluateStatements(statement.statements, normal, mayThrow)];
+      if (ts.isExpressionStatement(statement)) {
+        return [...abrupt, ...evaluateExpression(statement.expression, normal, mayThrow).map(({ state }) => state)];
+      }
+      if (ts.isVariableStatement(statement)) {
+        let current = normal;
+        for (const declaration of statement.declarationList.declarations) {
+          const evaluated = declaration.initializer
+            ? evaluateExpression(declaration.initializer, current, mayThrow)
+            : current.map((state) => ({ state, value: undefined }));
+          current = evaluated.flatMap(({ state, value }) =>
+            state.outcome === "normal" ? bindName(declaration.name, value, state) : [state],
+          );
+        }
+        return [...abrupt, ...current];
+      }
+      if (ts.isIfStatement(statement)) {
+        const conditions = evaluateExpression(statement.expression, normal, mayThrow);
+        const condition = staticBoolean(statement.expression);
+        const branches = conditions.flatMap(({ state }) => {
+          if (state.outcome !== "normal") return [state];
+          if (condition === true) return transferStatement(statement.thenStatement, [state], mayThrow);
+          if (condition === false) return statement.elseStatement
+            ? transferStatement(statement.elseStatement, [state], mayThrow)
+            : [state];
+          return [
+            ...transferStatement(statement.thenStatement, [{ ...state }], mayThrow),
+            ...(statement.elseStatement ? transferStatement(statement.elseStatement, [{ ...state }], mayThrow) : [{ ...state }]),
+          ];
+        });
+        return [...abrupt, ...branches];
+      }
+      if (ts.isSwitchStatement(statement)) {
+        const discriminants = evaluateExpression(statement.expression, normal, mayThrow);
+        const clauses = statement.caseBlock.clauses;
+        const runFrom = (start: number, entry: AliasState): AliasState[] => {
+          let current = [entry];
+          for (let index = start; index < clauses.length; index += 1) {
+            current = evaluateStatements(clauses[index]!.statements, current, mayThrow);
+            const breaks = current.filter((candidate) => candidate.outcome === "break").map((candidate) => ({
+              ...candidate,
+              outcome: "normal" as const,
+            }));
+            const continuing = current.filter((candidate) => candidate.outcome === "normal");
+            const other = current.filter((candidate) => candidate.outcome !== "normal" && candidate.outcome !== "break");
+            if (breaks.length || other.length) {
+              const rest = continuing.length && index + 1 < clauses.length
+                ? continuing.flatMap((candidate) => runFrom(index + 1, candidate))
+                : continuing;
+              return [...breaks, ...other, ...rest];
+            }
+            if (!continuing.length) return current;
+          }
+          return current;
+        };
+        const alternatives = discriminants.flatMap(({ state }) => {
+          if (state.outcome !== "normal") return [state];
+          let labelStates = [state];
+          const starts: Array<{ index: number; state: AliasState }> = [];
+          for (let index = 0; index < clauses.length; index += 1) {
+            const clause = clauses[index]!;
+            if (ts.isCaseClause(clause)) {
+              labelStates = evaluateExpression(clause.expression, labelStates, mayThrow).map(({ state: candidate }) => candidate);
+              starts.push(...labelStates.filter((candidate) => candidate.outcome === "normal").map((candidate) => ({ index, state: { ...candidate } })));
             }
           }
-          return [...current];
-        };
-        const discriminant = this.literalPrimitive(node.expression);
-        if (discriminant !== undefined) {
-          const match = clauses.findIndex(
-            (clause) => ts.isCaseClause(clause) && this.literalPrimitive(clause.expression) === discriminant,
-          );
           const fallback = clauses.findIndex(ts.isDefaultClause);
-          current = match >= 0 ? executeFrom(match) : fallback >= 0 ? executeFrom(fallback) : before;
-        } else {
-          const alternatives = clauses.flatMap((_, index) => executeFrom(index));
-          if (!clauses.some(ts.isDefaultClause)) alternatives.push(...before);
-          current = unique(alternatives);
-        }
-        return;
+          if (fallback >= 0) starts.push(...labelStates.map((candidate) => ({ index: fallback, state: { ...candidate } })));
+          else starts.push(...labelStates.map((candidate) => ({ index: -1, state: candidate })));
+          return starts.flatMap((start) => start.index < 0 ? [start.state] : runFrom(start.index, start.state));
+        });
+        return [...abrupt, ...alternatives];
       }
-      if (ts.isTryStatement(node) && node.end <= identifier.pos) {
-        const before = [...current];
-        visit(node.tryBlock);
-        const alternatives = [...current];
-        if (node.catchClause) {
-          current = [...before];
-          visit(node.catchClause.block);
-          alternatives.push(...current);
+      if (ts.isTryStatement(statement)) {
+        const tried = transferStatement(statement.tryBlock, normal, true);
+        let completed = tried.filter((candidate) => candidate.outcome !== "throw");
+        if (statement.catchClause) {
+          const caught = [
+            ...normal.map((candidate) => ({ ...candidate })),
+            ...tried.filter((candidate) => candidate.outcome === "throw").map((candidate) => ({
+              ...candidate,
+              outcome: "normal" as const,
+            })),
+          ];
+          completed.push(...transferStatement(statement.catchClause.block, uniqueStates(caught), mayThrow));
+        } else completed.push(...tried.filter((candidate) => candidate.outcome === "throw"));
+        if (statement.finallyBlock) {
+          completed = completed.flatMap((candidate) => {
+            const prior = candidate.outcome;
+            return transferStatement(statement.finallyBlock!, [{ ...candidate, outcome: "normal" }], mayThrow).map((finished) =>
+              finished.outcome === "normal" ? { ...finished, outcome: prior } : finished,
+            );
+          });
         }
-        current = unique(alternatives);
-        if (node.finallyBlock) {
-          const afterFinally: Binding[] = [];
-          for (const binding of current) {
-            current = [binding];
-            visit(node.finallyBlock);
-            afterFinally.push(...current);
-          }
-          current = unique(afterFinally);
-        }
-        return;
+        return [...abrupt, ...completed];
       }
-      if (
-        (ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isForStatement(node)) &&
-        node.end <= identifier.pos
-      ) {
-        if (ts.isForStatement(node) && node.initializer) visit(node.initializer);
-        const condition = ts.isForStatement(node) ? node.condition : node.expression;
-        if (condition) visit(condition);
-        const before = [...current];
+      if (ts.isWhileStatement(statement) || ts.isDoStatement(statement) || ts.isForStatement(statement)) {
+        let entered = normal;
+        if (ts.isForStatement(statement) && statement.initializer) {
+          entered = ts.isVariableDeclarationList(statement.initializer)
+            ? transferStatement(ts.factory.createVariableStatement(undefined, statement.initializer), entered, mayThrow)
+            : evaluateExpression(statement.initializer, entered, mayThrow).map(({ state }) => state);
+        }
+        const condition = ts.isForStatement(statement) ? statement.condition : statement.expression;
         const staticCondition = condition ? staticBoolean(condition) : true;
-        if (staticCondition === false && !ts.isDoStatement(node)) return;
-        visit(node.statement);
-        if (ts.isForStatement(node) && node.incrementor) visit(node.incrementor);
-        const afterIteration = [...current];
-        current = staticCondition === true || ts.isDoStatement(node)
-          ? unique(afterIteration)
-          : unique([...before, ...afterIteration]);
-        return;
+        const exits = staticCondition === true || ts.isDoStatement(statement) ? [] : entered.map((candidate) => ({ ...candidate }));
+        let frontier = entered.map((candidate) => ({ ...candidate }));
+        for (let iteration = 0; iteration < 8 && frontier.length; iteration += 1) {
+          const checked = condition && !ts.isDoStatement(statement)
+            ? evaluateExpression(condition, frontier, mayThrow).map(({ state }) => state)
+            : frontier;
+          const body = transferStatement(statement.statement, checked, mayThrow);
+          exits.push(...body.filter((candidate) => candidate.outcome === "break").map((candidate) => ({ ...candidate, outcome: "normal" as const })));
+          exits.push(...body.filter((candidate) => candidate.outcome === "return" || candidate.outcome === "throw"));
+          let next = body.filter((candidate) => candidate.outcome === "normal" || candidate.outcome === "continue")
+            .map((candidate) => ({ ...candidate, outcome: "normal" as const }));
+          if (ts.isForStatement(statement) && statement.incrementor) {
+            next = evaluateExpression(statement.incrementor, next, mayThrow).map(({ state }) => state);
+          }
+          if (condition && ts.isDoStatement(statement)) {
+            next = evaluateExpression(condition, next, mayThrow).map(({ state }) => state);
+          }
+          if (staticCondition !== true) exits.push(...next.map((candidate) => ({ ...candidate })));
+          const widened = uniqueStates(next);
+          if (widened.every((candidate) => frontier.some((prior) =>
+            prior.outcome === candidate.outcome && bindingKey(prior.binding) === bindingKey(candidate.binding),
+          ))) break;
+          frontier = widened;
+        }
+        return [...abrupt, ...uniqueStates(exits.length ? exits : frontier)];
       }
-      if (ts.isVariableDeclaration(node)) {
-        if (node.initializer) visit(node.initializer);
-        bindDeclaration(node.name, node.initializer);
-        return;
+      if (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) {
+        const iterables = evaluateExpression(statement.expression, normal, mayThrow);
+        const expression = unwrapExpression(statement.expression);
+        const elements = ts.isForOfStatement(statement) && ts.isArrayLiteralExpression(expression)
+          ? expression.elements.filter((element): element is ts.Expression => !ts.isOmittedExpression(element))
+          : [];
+        const definitelyNonempty = elements.length > 0;
+        const exits: AliasState[] = definitelyNonempty ? [] : iterables.map(({ state }) => ({ ...state }));
+        let frontier = iterables.map(({ state }) => state);
+        const values = elements.length ? elements : [undefined];
+        for (const element of values) {
+          const next: AliasState[] = [];
+          for (const candidate of frontier) {
+            const value = element
+              ? evaluateExpression(ts.isSpreadElement(element) ? element.expression : element, [candidate], mayThrow)[0]?.value
+              : { source: statement.expression, unsupported: true };
+            let bound: AliasState[];
+            if (ts.isVariableDeclarationList(statement.initializer)) {
+              bound = [candidate];
+              for (const declaration of statement.initializer.declarations) {
+                bound = bound.flatMap((state) => bindName(declaration.name, value, state));
+              }
+            } else bound = bindTarget(statement.initializer, value, candidate);
+            const body = transferStatement(statement.statement, bound, mayThrow);
+            exits.push(...body.filter((state) => state.outcome === "break").map((state) => ({ ...state, outcome: "normal" as const })));
+            exits.push(...body.filter((state) => state.outcome === "return" || state.outcome === "throw"));
+            next.push(...body.filter((state) => state.outcome === "normal" || state.outcome === "continue")
+              .map((state) => ({ ...state, outcome: "normal" as const })));
+          }
+          frontier = uniqueStates(next);
+        }
+        return [...abrupt, ...uniqueStates([...exits, ...frontier])];
       }
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        node.end <= identifier.pos
-      ) {
-        visit(node.right);
-        bindAssignment(node.left, node.right);
-        return;
+      if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) {
+        const expression = statement.expression;
+        const evaluated = expression ? evaluateExpression(expression, normal, mayThrow).map(({ state }) => state) : normal;
+        const outcome = ts.isReturnStatement(statement) ? "return" : "throw";
+        return [...abrupt, ...evaluated.map((state) => ({ ...state, outcome }))];
       }
-      ts.forEachChild(node, visit);
+      if (ts.isBreakStatement(statement) || ts.isContinueStatement(statement)) {
+        const outcome = ts.isBreakStatement(statement) ? "break" : "continue";
+        return [...abrupt, ...normal.map((state) => ({ ...state, outcome }))];
+      }
+      return states;
     };
-    visit(root);
-    return unique(current);
+    const scanContaining = (node: ts.Node, states: AliasState[]): AliasState[] => {
+      if (ts.isSourceFile(node) || ts.isBlock(node)) {
+        const statements = node.statements;
+        let current = states;
+        for (const statement of statements) {
+          if (statement.end <= identifier.pos) current = transferStatement(statement, current);
+          else if (statement.pos <= identifier.pos && identifier.pos < statement.end) return scanContaining(statement, current);
+          else break;
+        }
+        return current;
+      }
+      if (ts.isFunctionLike(node) && node.body && node.pos <= identifier.pos && identifier.pos < node.end) {
+        return scanContaining(node.body, states);
+      }
+      let current = states;
+      const children: ts.Node[] = [];
+      ts.forEachChild(node, (child) => { children.push(child); });
+      for (const child of children) {
+        if (child.end <= identifier.pos && ts.isExpression(child)) {
+          current = evaluateExpression(child, current).map(({ state }) => state);
+        } else if (child.pos <= identifier.pos && identifier.pos < child.end) {
+          return scanContaining(child, current);
+        }
+      }
+      return current;
+    };
+    const finished = scanContaining(this.sourceFile, [{ binding: undefined, outcome: "normal" }]);
+    return uniqueBindings(finished.filter((state) => state.outcome === "normal").map((state) => state.binding));
   }
 
   frameworkTags(input: ts.Expression, checking = new Set<ts.Symbol>()): Set<FrameworkTag> {
@@ -2436,8 +2934,10 @@ class LocalFlowEngine {
       const tags = new Set<FrameworkTag>();
       for (const binding of bindings) {
         if (!binding) continue;
-        const base = this.frameworkTags(binding.source, checking);
-        const resolved = binding.property ? this.frameworkMemberTags(base, binding.property) : base;
+        let resolved = binding.unsupported
+          ? new Set<FrameworkTag>(["unknown"])
+          : this.frameworkTags(binding.source, checking);
+        for (const property of binding.path ?? []) resolved = this.frameworkMemberTags(resolved, property);
         for (const tag of resolved) tags.add(tag);
       }
       checking.delete(symbol);
@@ -2448,6 +2948,12 @@ class LocalFlowEngine {
     }
     if (ts.isElementAccessExpression(expression) && expression.argumentExpression) {
       const key = unwrapExpression(expression.argumentExpression);
+      if (!ts.isStringLiteralLike(key)) {
+        const base = this.frameworkTags(expression.expression, checking);
+        return base.has("vi") || base.has("vitest") || base.has("jest") || base.has("unknown")
+          ? new Set(["unknown"])
+          : new Set();
+      }
       return ts.isStringLiteralLike(key)
         ? this.frameworkMemberTags(this.frameworkTags(expression.expression, checking), key.text)
         : new Set();
@@ -2462,15 +2968,16 @@ class LocalFlowEngine {
   }
 
   private frameworkMemberTags(base: ReadonlySet<FrameworkTag>, member: string): Set<FrameworkTag> {
+    if (base.has("unknown")) return new Set(["unknown"]);
     if ((base.has("vi") || base.has("jest")) && ["mock", "doMock", "mocked", "spyOn", "replaceProperty"].includes(member)) {
       return new Set([member as FrameworkTag]);
     }
     return new Set();
   }
 
-  moduleMockKind(call: ts.CallExpression): "mock" | "doMock" | undefined {
+  moduleMockKind(call: ts.CallExpression): "mock" | "doMock" | "unknown" | undefined {
     const tags = this.frameworkTags(call.expression);
-    return tags.has("mock") ? "mock" : tags.has("doMock") ? "doMock" : undefined;
+    return tags.has("mock") ? "mock" : tags.has("doMock") ? "doMock" : tags.has("unknown") ? "unknown" : undefined;
   }
 
   private importedRegistration(identifier: ts.Identifier): RegistrationValue[] {
@@ -2499,17 +3006,17 @@ class LocalFlowEngine {
       const alternatives: RegistrationValue[] = [];
       for (const binding of bindings) {
         if (!binding) continue;
-        const frameworkProperty = binding.property && this.frameworkTags(binding.source, checking).has("vitest");
-        const values = frameworkProperty
-          ? binding.property === "describe"
-            ? [{ kind: "suite", state: "enabled" } satisfies RegistrationValue]
-            : binding.property && ["it", "test"].includes(binding.property)
-              ? [{ kind: "test", state: "enabled" } satisfies RegistrationValue]
-              : []
-          : this.registrationValues(binding.source, checking);
-        const resolved = binding.property && !frameworkProperty
-          ? this.registrationMember(values, binding.property)
-          : values;
+        if (binding.unsupported) {
+          alternatives.push({ kind: "test", state: "unknown" }, { kind: "suite", state: "unknown" });
+          continue;
+        }
+        let resolved = this.registrationValues(binding.source, checking);
+        for (const property of binding.path ?? []) {
+          const frameworkProperty = this.frameworkTags(binding.source, checking).has("vitest");
+          if (frameworkProperty && property === "describe") resolved = [{ kind: "suite", state: "enabled" }];
+          else if (frameworkProperty && ["it", "test"].includes(property)) resolved = [{ kind: "test", state: "enabled" }];
+          else resolved = this.registrationMember(resolved, property);
+        }
         if (!resolved.length) {
           checking.delete(symbol);
           return [];

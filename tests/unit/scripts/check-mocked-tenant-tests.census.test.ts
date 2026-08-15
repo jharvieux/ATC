@@ -512,6 +512,80 @@ regress("effects:generator-instance", "same call site keeps first mutating argum
 regress("effects:generator-instance", "unadvanced mutating iterator does not taint first", "safe", supabaseLoader("function* run(action: () => void) { action(); yield 1; } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.next(); void second;"));
 regress("effects:generator-instance", "both same-site iterators retain no-op arguments", "safe", supabaseLoader("function* run(action: () => void) { action(); yield 1; } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => {}); first.next(); second.next();"));
 
+regress("aliases:path-conditional", "conditional arm installs framework mock", "unsafe", unit('let mock = () => {}; process.env.X ? mock = vi.mock : mock = () => {}; mock("@supabase/supabase-js");'));
+regress("aliases:path-conditional", "conditional arms install no-ops", "safe", unit('let mock = () => {}; process.env.X ? mock = () => {} : mock = () => {}; mock("@supabase/supabase-js");'));
+regress("aliases:path-logical", "logical assignment may install framework mock", "unsafe", unit('let mock = () => {}; mock ||= vi.mock; mock("@supabase/supabase-js");'));
+regress("aliases:path-logical", "logical assignment retains no-op", "safe", unit('let mock = () => {}; mock ||= () => {}; mock("@supabase/supabase-js");'));
+regress("aliases:path-nested", "nested object assignment installs framework mock", "unsafe", unit('let mock; ({ nested: { mock } } = { nested: { mock: vi.mock } }); mock("@supabase/supabase-js");'));
+regress("aliases:path-nested", "nested object assignment installs no-op", "safe", unit('let mock; ({ nested: { mock } } = { nested: { mock: () => {} } }); mock("@supabase/supabase-js");'));
+regress("aliases:path-default", "array default installs framework mock", "unsafe", unit('let mock; [mock = vi.mock] = []; mock("@supabase/supabase-js");'));
+regress("aliases:path-default", "array default installs no-op", "safe", unit('let mock; [mock = () => {}] = []; mock("@supabase/supabase-js");'));
+regress("aliases:path-rest", "object rest resolver is explicitly unsupported", "unsafe", unit('let namespace; ({ ...namespace } = vi); namespace.mock("@supabase/supabase-js");'));
+
+regress("aliases:switch-path", "case label installs framework mock", "unsafe", unit('let mock = () => {}; switch (process.env.X) { case (mock = vi.mock, "yes"): break; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "case label installs no-op", "safe", unit('let mock = () => {}; switch (process.env.X) { case (mock = () => {}, "yes"): break; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "fallthrough installs framework mock", "unsafe", unit('let mock = () => {}; switch (process.env.X) { case "yes": mock = vi.mock; default: break; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "fallthrough keeps no-op", "safe", unit('let mock = () => {}; switch (process.env.X) { case "yes": mock = () => {}; default: break; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "conditional break preserves framework alternative", "unsafe", unit('let mock = vi.mock; switch (process.env.X) { case "yes": if (process.env.Y) break; mock = () => {}; break; default: mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "conditional break preserves only no-ops", "safe", unit('let mock = () => {}; switch (process.env.X) { case "yes": if (process.env.Y) break; mock = () => {}; break; default: mock = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:switch-path", "conditional break retains every fallthrough alternative", "unsafe", unit('let mock = () => {}; switch (process.env.X) { case "yes": if (process.env.Y) break; if (process.env.Z) mock = () => {}; else mock = vi.mock; default: } mock("@supabase/supabase-js");'));
+
+regress("aliases:try-path", "may-throw continuation preserves framework assignment", "unsafe", unit('let mock = () => {}; try { mock = vi.mock; unknownCall(); mock = () => {}; } catch {} mock("@supabase/supabase-js");'));
+regress("aliases:try-path", "may-throw continuation preserves only no-op", "safe", unit('let mock = () => {}; try { mock = () => {}; unknownCall(); mock = () => {}; } catch {} mock("@supabase/supabase-js");'));
+regress("aliases:try-path", "finally overwrites every path with no-op", "safe", unit('let mock = vi.mock; try { unknownCall(); } catch {} finally { mock = () => {}; } mock("@supabase/supabase-js");'));
+
+regress("aliases:for-each-path", "for-of target installs framework mock", "unsafe", unit('let mock = () => {}; for (mock of [vi.mock]) {} mock("@supabase/supabase-js");'));
+regress("aliases:for-each-path", "for-of target installs no-op", "safe", unit('let mock = () => {}; for (mock of [() => {}]) {} mock("@supabase/supabase-js");'));
+regress("aliases:for-each-path", "for-of destructuring installs framework mock", "unsafe", unit('let mock = () => {}; for ({ mock } of [vi]) {} mock("@supabase/supabase-js");'));
+regress("aliases:for-each-path", "for-of destructuring installs no-op", "safe", unit('let mock = () => {}; for ({ mock } of [{ mock: () => {} }]) {} mock("@supabase/supabase-js");'));
+regress("aliases:for-each-path", "for-of array hole target installs framework mock", "unsafe", unit('let mock = () => {}; for ([, mock] of [[0, vi.mock]]) {} mock("@supabase/supabase-js");'));
+regress("aliases:for-each-path", "for-of array hole target installs no-op", "safe", unit('let mock = () => {}; for ([, mock] of [[0, () => {}]]) {} mock("@supabase/supabase-js");'));
+regress("aliases:loop-fixed-point", "later loop iteration retains framework alternative", "unsafe", unit('let mock = () => {}; let next = vi.mock; while (process.env.X) { mock = next; next = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:loop-fixed-point", "fixed-point loop retains only no-ops", "safe", unit('let mock = () => {}; let next = () => {}; while (process.env.X) { mock = next; next = () => {}; } mock("@supabase/supabase-js");'));
+regress("aliases:resolver-unsupported", "dynamic framework member is explicitly unsupported", "unsafe", unit('const name = process.env.X; const mock = vi[name!]; mock("@supabase/supabase-js");'));
+
+regress("effects:generator-frame", "suspended iterator retains first mutating argument", "unsafe", supabaseLoader("function* run(action: () => void) { yield 1; action(); } function make(action: () => void) { return run(action); } const first = make(() => { loader = fake; }); const second = make(() => {}); first.next(); second.next(); first.next();"));
+regress("effects:generator-frame", "suspended iterator safe inverse keeps first no-op", "safe", supabaseLoader("function* run(action: () => void) { yield 1; action(); } function make(action: () => void) { return run(action); } const first = make(() => {}); const second = make(() => { loader = fake; }); first.next(); second.next(); first.next();"));
+regress("effects:generator-control", "generator return is explicitly unsupported", "unsafe", supabaseLoader("function* mutate() { yield 1; loader = fake; } const iterator = mutate(); iterator.next(); iterator.return();"));
+regress("effects:generator-control", "generator throw is explicitly unsupported", "unsafe", supabaseLoader("function* mutate() { yield 1; loader = fake; } const iterator = mutate(); iterator.next(); iterator.throw(new Error());"));
+regress("effects:generator-control", "generator spread consumption is explicitly unsupported", "unsafe", supabaseLoader("function* mutate() { loader = fake; yield 1; } [...mutate()];"));
+
+regress("effects:class-field", "instance field initializer mutates loader", "unsafe", supabaseLoader("class Mutator { value = (loader = fake); } new Mutator();"));
+regress("effects:class-field", "instance field no-op control", "safe", supabaseLoader("class Noop { value = 1; } new Noop();"));
+regress("effects:class-field-order", "base field mutation precedes constructor restore", "safe", supabaseLoader("const real = loader; class Base { value = (loader = fake); constructor() { loader = real; } } new Base();"));
+regress("effects:class-field-order", "base constructor mutation follows field no-op", "unsafe", supabaseLoader("class Base { value = 1; constructor() { loader = fake; } } new Base();"));
+regress("effects:class-field-order", "derived field restores base mutation after super", "safe", supabaseLoader("const real = loader; class Base { constructor() { loader = fake; } } class Child extends Base { value = (loader = real); constructor() { super(); } } new Child();"));
+regress("effects:class-field-order", "derived field mutates after no-op super", "unsafe", supabaseLoader("class Base { constructor() {} } class Child extends Base { value = (loader = fake); constructor() { super(); } } new Child();"));
+regress("effects:class-default", "constructor default parameter mutates loader", "unsafe", supabaseLoader("class Mutator { constructor(_value = (loader = fake)) {} } new Mutator(undefined);"));
+regress("effects:class-default", "constructor default parameter no-op", "safe", supabaseLoader("class Noop { constructor(_value = 1) {} } new Noop(undefined);"));
+regress("effects:class-definition", "computed member name mutates loader", "unsafe", supabaseLoader("class Mutator { [loader = fake]() {} } void Mutator;"));
+regress("effects:class-definition", "computed member name no-op", "safe", supabaseLoader("class Noop { [\"value\"]() {} } void Noop;"));
+regress("effects:class-unsupported", "decorated class is explicitly unsupported", "unsafe", supabaseLoader("function decorate(value: unknown) { return value; } @decorate class Mutator {} void Mutator;"));
+regress("effects:class-unsupported", "private class field is explicitly unsupported", "unsafe", supabaseLoader("class Mutator { #value = 1; } new Mutator();"));
+regress("effects:class-unsupported", "class accessor is explicitly unsupported", "unsafe", supabaseLoader("class Mutator { get value() { return 1; } } new Mutator();"));
+regress("effects:class-unsupported", "invoked class method is explicitly unsupported", "unsafe", supabaseLoader("class Mutator { run() { loader = fake; } } new Mutator().run();"));
+regress("effects:class-unsupported", "uninvoked class method remains safe", "safe", supabaseLoader("class Noop { run() {} } new Noop();"));
+regress("effects:class-unsupported", "conditional super is explicitly unsupported", "unsafe", supabaseLoader("class Base {} class Child extends Base { constructor() { if (process.env.X) super(); else super(); } } new Child();"));
+
+regress("effects:recursive-child", "computed element key mutates loader", "unsafe", supabaseLoader("const object = { value: 1 }; void object[(loader = fake, \"value\")];"));
+regress("effects:recursive-child", "computed element key no-op", "safe", supabaseLoader("const object = { value: 1 }; void object[(1, \"value\")];"));
+regress("effects:recursive-child", "template substitution mutates loader", "unsafe", supabaseLoader("void `${(loader = fake, \"x\")}`;"));
+regress("effects:recursive-child", "template substitution no-op", "safe", supabaseLoader("void `${\"x\"}`;"));
+regress("effects:recursive-child", "unary operand invokes mutator", "unsafe", supabaseLoader("const mutate = () => { loader = fake; return 1; }; void +mutate();"));
+regress("effects:recursive-child", "unary operand invokes no-op", "safe", supabaseLoader("const noop = () => 1; void +noop();"));
+regress("effects:recursive-child", "object computed name mutates loader", "unsafe", supabaseLoader("void { [(loader = fake, \"value\")]: 1 };"));
+regress("effects:recursive-child", "object computed name no-op", "safe", supabaseLoader("void { [\"value\"]: 1 };"));
+
+regress("sql:typed-token", "quoted INTO identifier remains read-only", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT \"into\", id FROM public.bookings`"));
+regress("sql:typed-token", "unquoted INTO clause remains mutating", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id INTO public.bookings_copy FROM public.bookings`"));
+regress("sql:typed-token", "INTO alias remains contextual", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id AS into FROM public.bookings`"));
+regress("sql:typed-token", "Postgres E-string hides mutation words", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT E'quote\\\\' INTO public.copy' AS note, id FROM public.bookings`"));
+regress("sql:typed-token", "unterminated E-string fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT E'unterminated FROM public.bookings`"));
+regress("sql:typed-token", "unterminated quoted identifier fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM \"public.bookings`"));
+regress("sql:typed-token", "quoted relation identifiers retain resource", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM \"public\".\"bookings\"`"));
+regress("sql:typed-token", "ONLY relation modifier retains resource", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM ONLY public.bookings`"));
+regress("sql:typed-token", "LATERAL relation modifier retains nested resource", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT visible.id FROM LATERAL (SELECT id FROM public.bookings) visible`"));
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);
