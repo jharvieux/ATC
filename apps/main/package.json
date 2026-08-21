@@ -56,16 +56,16 @@
   },
   "devDependencies": {
     "@atc/config": "workspace:*",
-    "@tailwindcss/postcss": "^4.3.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/big.js": "^7.0.0",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.2.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.11",
+    "eslint-config-next": "^16.3.1",
     "eslint-plugin-atc": "workspace:*",
     "postcss": "^8.5.1",
-    "tailwindcss": "^4.3.1",
-    "typescript": "^6.0.3"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }
