@@ -1,11 +1,3 @@
-// §23.4 — T-1 day pre-cruise email template (Tomorrow!).
-// #975 — marketing-grade layout: countdown badge, eyebrow section headings,
-// tenant-accent CTA.
-//
-// CRITICAL: The carry-on essentials callout is hardcoded and MUST NOT be
-// removed or AI-generated. It prevents the most common avoidable trip-ruining
-// mistakes (passport / medications in checked luggage).
-
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { CruiseForecastChart } from "./CruiseForecastChart";
@@ -29,12 +21,8 @@ export interface PreCruiseT1Props {
   ship_name: string;
   departure_port: PortInfo | null;
   destination_image?: DestinationImage | null;
-  // AI-generated sections
   first_port_preview: string;
   day_of_expectations: string;
-  // Multi-day forecast for the cruise. Falls back to weather_summary
-  // when null (e.g., sailings outside Open-Meteo's 16-day horizon at
-  // send time).
   cruise_forecast?: DailyForecast[] | null;
   weather_summary?: string | null;
   companion_page_url?: string;
@@ -48,47 +36,56 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
     <BrandedLayout {...props.layout}>
       <CountdownBadge accent={accent}>Departing tomorrow</CountdownBadge>
 
-      <h2 style={{ color: primary, margin: "0 0 16px 0", fontSize: 24, textAlign: "center" }}>
-        Tomorrow is the day, {props.customer_name}! 🚢
+      <p style={{ margin: "0 0 8px 0", color: accent, fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textAlign: "center", textTransform: "uppercase" }}>
+        Your embarkation briefing
+      </p>
+      <h2 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
+        Tomorrow, you&rsquo;re at sea.
       </h2>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 
-      <p style={{ lineHeight: 1.7 }}>
-        Your voyage on the <strong>{props.ship_name}</strong> sets sail tomorrow. Here&rsquo;s
-        everything you need for a smooth embarkation.
-      </p>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "0 0 20px 0", borderLeft: `4px solid ${accent}` }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: "4px 0 4px 16px", color: "#425466", fontSize: 15, lineHeight: 1.7 }}>
+              Hi {props.customer_name}, <strong style={{ color: primary }}>{props.ship_name}</strong> sets sail tomorrow. Keep this note handy for a smooth, unhurried embarkation.
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-      {/* ── CARRY-ON ESSENTIALS CALLOUT — HARDCODED, DO NOT AI-GENERATE ── */}
       <table
         role="presentation"
         width="100%"
         cellSpacing={0}
         cellPadding={0}
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 10, backgroundColor: "#fffbeb", border: "2px solid #b45309" }}
       >
         <tbody>
           <tr>
-            <td
-              style={{
-                background: "#fef3c7",
-                border: "2px solid #f59e0b",
-                borderRadius: 8,
-                padding: "20px 24px",
-              }}
-            >
-              <p style={{ margin: "0 0 8px 0", fontWeight: 700, fontSize: 16, color: "#92400e" }}>
-                ⚠ CARRY-ON ESSENTIALS
+            <td style={{ padding: "20px 22px" }}>
+              <p style={{ margin: "0 0 8px 0", color: "#92400e", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
+                CARRY-ON ESSENTIALS
               </p>
-              <p style={{ margin: "0 0 12px 0", color: "#78350f", fontWeight: 600 }}>
+              <h3 style={{ margin: "0 0 10px 0", color: "#78350f", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 22, lineHeight: 1.25 }}>
                 Pack these in your CARRY-ON, not your checked luggage:
-              </p>
-              <ul style={{ margin: 0, paddingLeft: 20, color: "#78350f" }}>
-                <li style={{ marginBottom: 4 }}>Passport and travel documents</li>
-                <li style={{ marginBottom: 4 }}>Cruise paperwork (boarding pass, vaccination records)</li>
-                <li style={{ marginBottom: 4 }}>Medications you take regularly</li>
-              </ul>
-              <p style={{ margin: "12px 0 0 0", fontSize: 13, color: "#92400e", fontStyle: "italic" }}>
+              </h3>
+              <table role="presentation" width="100%" cellSpacing={0} cellPadding={0}>
+                <tbody>
+                  {[
+                    "Passport and travel documents",
+                    "Cruise paperwork (boarding pass, vaccination records)",
+                    "Medications you take regularly",
+                  ].map((item) => (
+                    <tr key={item}>
+                      <td width={26} style={{ color: "#92400e", fontSize: 16, fontWeight: 700, lineHeight: 1.6, verticalAlign: "top" }}>•</td>
+                      <td style={{ color: "#78350f", fontSize: 14, lineHeight: 1.6, verticalAlign: "top" }}>{item}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ margin: "14px 0 0 0", color: "#92400e", fontSize: 13, fontStyle: "italic", lineHeight: 1.55 }}>
                 Checked luggage doesn&rsquo;t arrive at your cabin until hours later.
                 Bring your essentials with you to board.
               </p>
@@ -96,8 +93,6 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
           </tr>
         </tbody>
       </table>
-      {/* ── END CARRY-ON ESSENTIALS CALLOUT ── */}
-
       {props.departure_port && <DeparturePortSection port={props.departure_port} accent={accent} />}
 
       {props.cruise_forecast && props.cruise_forecast.length > 0 ? (
@@ -107,8 +102,8 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         </>
       ) : props.weather_summary ? (
         <>
-          <SectionHeading accent={accent}>Weather Overview</SectionHeading>
-          <p style={{ lineHeight: 1.7 }}>{props.weather_summary}</p>
+          <SectionHeading accent={accent}>Weather overview</SectionHeading>
+          <p style={{ margin: 0, color: "#425466", lineHeight: 1.7 }}>{props.weather_summary}</p>
           <p style={{ fontSize: 11, color: "#9ca3af", margin: "0 0 16px 0" }}>
             Weather data by{" "}
             <a href="https://open-meteo.com/" style={{ color: "#9ca3af" }}>
@@ -119,11 +114,24 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         </>
       ) : null}
 
-      <SectionHeading accent={accent}>First Port Preview</SectionHeading>
-      <p style={{ lineHeight: 1.7 }}>{props.first_port_preview}</p>
+      <SectionHeading accent={accent}>First port preview</SectionHeading>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#f8f6f1", borderTop: `3px solid ${accent}` }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: "18px 20px", color: "#425466", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 16, lineHeight: 1.65 }}>{props.first_port_preview}</td>
+          </tr>
+        </tbody>
+      </table>
 
-      <SectionHeading accent={accent}>What to Expect Tomorrow</SectionHeading>
-      <p style={{ lineHeight: 1.7 }}>{props.day_of_expectations}</p>
+      <SectionHeading accent={accent}>What to expect tomorrow</SectionHeading>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#f7fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+        <tbody>
+          <tr>
+            <td width={6} style={{ backgroundColor: accent, fontSize: 1, lineHeight: "1px" }}>&nbsp;</td>
+            <td style={{ padding: "16px 18px", color: "#425466", fontSize: 14, lineHeight: 1.6 }}>{props.day_of_expectations}</td>
+          </tr>
+        </tbody>
+      </table>
 
       {props.companion_page_url && (
         <CtaButton href={props.companion_page_url} accent={accent}>
@@ -137,8 +145,8 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         </p>
       )}
 
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "24px 0" }} />
-      <p style={{ textAlign: "center", fontSize: 15, fontWeight: 600, color: "#1f2937" }}>
+      <hr style={{ border: "none", borderTop: "1px solid #dce5ea", margin: "30px 0 18px 0" }} />
+      <p style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 18, fontWeight: 700, lineHeight: 1.4, margin: 0, textAlign: "center" }}>
         Bon voyage! Smooth seas await. 🌊
       </p>
     </BrandedLayout>
@@ -173,7 +181,7 @@ function DeparturePortSection(props: { port: PortInfo; accent: string }): React.
                     padding: "8px 12px",
                     fontWeight: 600,
                     color: "#374151",
-                    background: "#f3f4f6",
+                    backgroundColor: "#f3f4f6",
                     borderTopLeftRadius: 6,
                     borderBottomLeftRadius: 6,
                     whiteSpace: "nowrap",
@@ -185,7 +193,7 @@ function DeparturePortSection(props: { port: PortInfo; accent: string }): React.
                   style={{
                     padding: "8px 12px",
                     color: "#374151",
-                    background: "#f9fafb",
+                    backgroundColor: "#f9fafb",
                     borderTopRightRadius: 6,
                     borderBottomRightRadius: 6,
                   }}

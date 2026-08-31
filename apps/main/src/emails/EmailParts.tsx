@@ -1,31 +1,26 @@
-// #975 — Shared building blocks for the marketing-grade default templates.
-// Email-client-safe by construction: tables + inline styles only (matches
-// BrandedLayout). Every part takes the tenant accent/primary colors as props
-// so branded tenants get branded sections, not hardcoded platform blue.
-
 import * as React from "react";
 
 export const DEFAULT_PRIMARY = "#1f2937";
 export const DEFAULT_ACCENT = "#3b82f6";
 
-/** Eyebrow-style section heading: small-caps label over an accent rule. */
 export function SectionHeading(props: { accent: string; children: React.ReactNode }): React.ReactElement {
   return (
-    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "28px 0 12px 0" }}>
+    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "32px 0 12px 0" }}>
       <tbody>
         <tr>
-          <td
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              letterSpacing: 1.5,
-              textTransform: "uppercase",
-              color: props.accent,
-              paddingBottom: 6,
-              borderBottom: "2px solid #e5e7eb",
-            }}
-          >
-            {props.children}
+          <td width={30} style={{ padding: "0 10px 0 0", verticalAlign: "middle" }}>
+            <table role="presentation" width="100%" cellSpacing={0} cellPadding={0}>
+              <tbody>
+                <tr>
+                  <td style={{ height: 3, backgroundColor: props.accent, fontSize: 1, lineHeight: "1px" }}>&nbsp;</td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+          <td style={{ verticalAlign: "middle" }}>
+            <h3 style={{ margin: 0, color: "#243447", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 20, fontWeight: 700, lineHeight: 1.25 }}>
+              {props.children}
+            </h3>
           </td>
         </tr>
       </tbody>
@@ -33,26 +28,26 @@ export function SectionHeading(props: { accent: string; children: React.ReactNod
   );
 }
 
-/** Centered table-based CTA button (anchor-styled <td> for client safety). */
 export function CtaButton(props: { href: string; accent: string; children: React.ReactNode }): React.ReactElement {
   return (
-    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "28px 0" }}>
+    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "30px 0 8px 0" }}>
       <tbody>
         <tr>
           <td align="center">
             <table role="presentation" cellSpacing={0} cellPadding={0}>
               <tbody>
                 <tr>
-                  <td style={{ borderRadius: 8, backgroundColor: props.accent }}>
+                  <td style={{ backgroundColor: props.accent, borderRadius: 4 }}>
                     <a
                       href={props.href}
                       style={{
                         display: "inline-block",
-                        padding: "14px 32px",
+                        padding: "14px 26px",
                         color: "#ffffff",
                         textDecoration: "none",
                         fontWeight: 700,
-                        fontSize: 15,
+                        fontSize: 14,
+                        letterSpacing: 0.2,
                       }}
                     >
                       {props.children}
@@ -68,29 +63,21 @@ export function CtaButton(props: { href: string; accent: string; children: React
   );
 }
 
-/** Countdown pill shown at the top of the pre-cruise sequence. */
 export function CountdownBadge(props: { accent: string; children: React.ReactNode }): React.ReactElement {
   return (
-    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ marginBottom: 16 }}>
+    <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "0 0 14px 0" }}>
       <tbody>
         <tr>
           <td align="center">
-            <span
-              style={{
-                display: "inline-block",
-                padding: "6px 18px",
-                borderRadius: 999,
-                backgroundColor: "#eff6ff",
-                border: `1px solid ${props.accent}`,
-                color: props.accent,
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: 2,
-                textTransform: "uppercase",
-              }}
-            >
-              {props.children}
-            </span>
+            <table role="presentation" cellSpacing={0} cellPadding={0}>
+              <tbody>
+                <tr>
+                  <td style={{ padding: "6px 12px", backgroundColor: "#f7fafc", border: `1px solid ${props.accent}`, borderRadius: 3, color: props.accent, fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
+                    {props.children}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </td>
         </tr>
       </tbody>
@@ -98,7 +85,6 @@ export function CountdownBadge(props: { accent: string; children: React.ReactNod
   );
 }
 
-/** Checklist-style item rows inside a soft card — replaces bare <ul>. */
 export function ChecklistCard(props: { items: string[]; accent: string }): React.ReactElement | null {
   if (props.items.length === 0) return null;
   return (
@@ -107,27 +93,33 @@ export function ChecklistCard(props: { items: string[]; accent: string }): React
       width="100%"
       cellSpacing={0}
       cellPadding={0}
-      style={{ backgroundColor: "#f9fafb", borderRadius: 8, margin: "4px 0 8px 0" }}
+      style={{ backgroundColor: "#f7fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}
     >
       <tbody>
-        {props.items.map((item, i) => (
-          <tr key={i}>
+        {props.items.map((item, index) => (
+          <tr key={`${item}-${index}`}>
             <td
-              width={32}
+              width={42}
               style={{
-                padding: i === 0 ? "14px 0 6px 16px" : i === props.items.length - 1 ? "6px 0 14px 16px" : "6px 0 6px 16px",
+                padding: index === 0 ? "15px 0 9px 16px" : "9px 0 9px 16px",
                 color: props.accent,
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontSize: 18,
                 fontWeight: 700,
+                lineHeight: 1.4,
                 verticalAlign: "top",
               }}
             >
-              ✓
+              {String(index + 1).padStart(2, "0")}
             </td>
             <td
               style={{
-                padding: i === 0 ? "14px 16px 6px 0" : i === props.items.length - 1 ? "6px 16px 14px 0" : "6px 16px 6px 0",
-                color: "#374151",
-                lineHeight: 1.6,
+                padding: index === 0 ? "15px 16px 9px 0" : "9px 16px 9px 0",
+                borderTop: index === 0 ? "none" : "1px solid #e2e8f0",
+                color: "#425466",
+                fontSize: 14,
+                lineHeight: 1.55,
+                verticalAlign: "top",
               }}
             >
               {item}

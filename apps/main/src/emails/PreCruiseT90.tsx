@@ -1,7 +1,3 @@
-// §23.4 — T-90 day pre-cruise email template (Anticipation begins).
-// #975 — marketing-grade layout: countdown badge, eyebrow section headings,
-// checklist cards, and a companion-page CTA, all tenant-accent aware.
-
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { DestinationHero } from "./DestinationHero";
@@ -33,20 +29,34 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
     <BrandedLayout {...props.layout}>
       <CountdownBadge accent={accent}>90 days to go</CountdownBadge>
 
-      <h2 style={{ color: primary, margin: "0 0 16px 0", fontSize: 24, textAlign: "center" }}>
-        Your {props.cruise_line} cruise is 90 days away! 🌊
+      <p style={{ margin: "0 0 8px 0", color: accent, fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textAlign: "center", textTransform: "uppercase" }}>
+        Your voyage briefing
+      </p>
+      <h2 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
+        The horizon is getting closer.
       </h2>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 
-      <p style={{ lineHeight: 1.7 }}>
-        Hi {props.customer_name}, we&rsquo;re so excited for your upcoming voyage on the{" "}
-        <strong>{props.ship_name}</strong>, departing <strong>{props.sailing_date}</strong>.
-        Here&rsquo;s what to start thinking about — and dreaming about.
-      </p>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ margin: "0 0 6px 0", borderLeft: `4px solid ${accent}` }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: "4px 0 4px 16px", color: "#425466", fontSize: 15, lineHeight: 1.7 }}>
+              Hi {props.customer_name}, your <strong style={{ color: primary }}>{props.cruise_line}</strong> voyage on <strong style={{ color: primary }}>{props.ship_name}</strong> departs <strong style={{ color: primary }}>{props.sailing_date}</strong>. A little preparation now leaves more room for anticipation later.
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-      <SectionHeading accent={accent}>Documentation Reminder</SectionHeading>
-      <p style={{ lineHeight: 1.7 }}>{props.documentation_reminder}</p>
+      <SectionHeading accent={accent}>Start with the essentials</SectionHeading>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#f7fafc", border: "1px solid #e2e8f0", borderRadius: 4 }}>
+        <tbody>
+          <tr>
+            <td width={6} style={{ backgroundColor: accent, fontSize: 1, lineHeight: "1px" }}>&nbsp;</td>
+            <td style={{ padding: "16px 18px", color: "#425466", fontSize: 14, lineHeight: 1.6 }}>{props.documentation_reminder}</td>
+          </tr>
+        </tbody>
+      </table>
 
       {props.ports.length > 0 && (
         <>
@@ -55,8 +65,8 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
         </>
       )}
 
-      <SectionHeading accent={accent}>What Awaits You</SectionHeading>
-      <p style={{ lineHeight: 1.7 }}>{props.destination_teaser}</p>
+      <SectionHeading accent={accent}>A glimpse of what awaits</SectionHeading>
+      <p style={{ margin: 0, color: "#425466", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 17, lineHeight: 1.65 }}>{props.destination_teaser}</p>
 
       {props.must_do_experiences.length > 0 && (
         <>
@@ -65,10 +75,16 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
         </>
       )}
 
-      <SectionHeading accent={accent}>Did You Know?</SectionHeading>
-      <p style={{ fontStyle: "italic", lineHeight: 1.7, color: "#4b5563" }}>
-        {props.did_you_know}
-      </p>
+      <SectionHeading accent={accent}>A little local knowledge</SectionHeading>
+      <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#f8f6f1", borderTop: `3px solid ${accent}` }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: "18px 20px", color: "#425466", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 16, fontStyle: "italic", lineHeight: 1.65 }}>
+              “{props.did_you_know}”
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
       {props.suggested_reads && props.suggested_reads.length > 0 && (
         <>
@@ -89,8 +105,8 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
         </p>
       )}
 
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "24px 0" }} />
-      <p style={{ fontSize: 13, color: "#6b7280", textAlign: "center" }}>
+      <hr style={{ border: "none", borderTop: "1px solid #dce5ea", margin: "30px 0 18px 0" }} />
+      <p style={{ fontSize: 13, color: "#64748b", lineHeight: 1.6, margin: 0, textAlign: "center" }}>
         Questions? Your travel concierge is just a message away. Reply to this email or use the
         chat on your booking portal.
       </p>
