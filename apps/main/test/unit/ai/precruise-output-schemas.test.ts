@@ -90,6 +90,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 data: {
                   id: "b1",
                   tenant_id: "t1",
+                  status: "confirmed",
                   group_booking_id: "g1",
                   user_id: "u1",
                   primary_contact_id: "contact-1",
