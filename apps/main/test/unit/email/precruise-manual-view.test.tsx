@@ -127,11 +127,15 @@ describe("PreCruiseEmailsView", () => {
     const staleSearch = new Promise<Response>((resolve) => {
       resolveStaleSearch = resolve;
     });
+    let resolveCurrentSearch!: (response: Response) => void;
+    const currentSearch = new Promise<Response>((resolve) => {
+      resolveCurrentSearch = resolve;
+    });
     const fetchMock = installFetch({
       bookingResponses: [
         jsonResponse({ bookings: [BOOKING] }),
         staleSearch,
-        jsonResponse({ bookings: [] }),
+        currentSearch,
       ],
     });
     const { container } = render(<PreCruiseEmailsView />);
@@ -155,5 +159,8 @@ describe("PreCruiseEmailsView", () => {
     expect(sendButton.disabled).toBe(true);
     fireEvent.click(sendButton);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+
+    resolveCurrentSearch(jsonResponse({ bookings: [] }));
+    await screen.findByRole("option", { name: "No eligible bookings found" });
   });
 });
