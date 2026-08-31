@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
     id: string;
     sent_at: null;
     generated_content: Record<string, unknown>;
-    content_context_fingerprint: string | null;
+    content_context_hash: string | null;
   } | null,
   updatePayloads: [] as Array<Record<string, unknown>>,
 }));
@@ -227,7 +227,7 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       id: "content-1",
       sent_at: null,
       generated_content: { documentation_reminder: "old copy" },
-      content_context_fingerprint: "stale",
+      content_context_hash: "stale",
     };
 
     await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
@@ -238,7 +238,7 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     const regeneration = mocks.updatePayloads.find((payload) => "generated_content" in payload);
     expect(regeneration).toMatchObject({
       contact_id: "contact-1",
-      content_context_fingerprint: expect.not.stringMatching(/^stale$/),
+      content_context_hash: expect.not.stringMatching(/^stale$/),
       generated_content: expect.objectContaining({
         documentation_reminder: expect.not.stringMatching(/^old copy$/),
       }),

@@ -185,7 +185,7 @@ type BatchResultEvent = {
         phase: string;
         email_ctx_id: string | null;
         companion_page_url: string;
-        content_context_fingerprint?: string;
+        content_context_hash?: string;
       } | null;
     };
   };
@@ -220,7 +220,7 @@ function makeEvent(): BatchResultEvent {
           phase: "t_90",
           email_ctx_id: null,
           companion_page_url: "https://example.com/companion/abc",
-          content_context_fingerprint: contentContextFingerprint,
+          content_context_hash: contentContextFingerprint,
         },
       },
     },
@@ -266,7 +266,7 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
 
   it("re-enqueues generation instead of sending content built from stale booking context", async () => {
     const event = makeEvent();
-    event.event.data.caller_metadata!.content_context_fingerprint = "stale";
+    event.event.data.caller_metadata!.content_context_hash = "stale";
 
     await runHandler(event);
 
@@ -274,7 +274,7 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.batchEnqueueCalls).toHaveLength(1);
     expect(mocks.batchEnqueueCalls[0]?.caller_metadata).toMatchObject({
       booking_id: "b1",
-      content_context_fingerprint: expect.not.stringMatching(/^stale$/),
+      content_context_hash: expect.not.stringMatching(/^stale$/),
     });
   });
 });

@@ -11,5 +11,5 @@
 -- Resend's deterministic idempotency key remains the delivery backstop.
 
 ALTER TABLE public.pre_cruise_email_content
-  ADD COLUMN content_context_fingerprint TEXT,
+  ADD COLUMN content_context_hash TEXT,
   ADD COLUMN send_claimed_at TIMESTAMPTZ;

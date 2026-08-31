@@ -71,7 +71,7 @@ const PrecruiseBatchResultPayloadSchema = z.object({
     phase: PhaseEnum,
     email_ctx_id: z.string().nullable(),
     companion_page_url: z.string(),
-    content_context_fingerprint: z.string().optional(),
+    content_context_hash: z.string().optional(),
   }).nullable(),
 });
 
@@ -126,7 +126,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     // Idempotency: if already sent, skip (both paths).
     const { data: existingRaw } = await svc
       .from("pre_cruise_email_content")
-      .select("id, sent_at, generated_content, content_context_fingerprint")
+      .select("id, sent_at, generated_content, content_context_hash")
       .eq("booking_id", booking_id)
       .eq("tenant_id", tenant_id)
       .eq("email_phase", phase)
@@ -135,7 +135,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       id: string;
       sent_at?: string | null;
       generated_content?: Record<string, unknown>;
-      content_context_fingerprint?: string | null;
+      content_context_hash?: string | null;
     } | null;
     if (existing?.sent_at) {
       console.info(`[precruise] already sent: booking=${booking_id} phase=${phase}`);
@@ -176,7 +176,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     let contentId: string | undefined;
     if (
       existing?.generated_content &&
-      existing.content_context_fingerprint === contentContextFingerprint
+      existing.content_context_hash === contentContextFingerprint
     ) {
       generatedContent = existing.generated_content;
       contentId = existing.id;
@@ -189,7 +189,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
             .update({
               contact_id: emailCtx.booking.primary_contact_id!,
               generated_content: generatedContent,
-              content_context_fingerprint: contentContextFingerprint,
+              content_context_hash: contentContextFingerprint,
               companion_page_url: emailCtx.companionPageUrl,
               generated_at: new Date().toISOString(),
             })
@@ -207,7 +207,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
             contact_id: emailCtx.booking.primary_contact_id!,
             email_phase: phase,
             generated_content: generatedContent,
-            content_context_fingerprint: contentContextFingerprint,
+            content_context_hash: contentContextFingerprint,
             companion_page_url: emailCtx.companionPageUrl,
           })
           .select("id")
@@ -288,7 +288,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
     if (!emailCtx) return;
     const contentContextFingerprint = fingerprintEmailContext(emailCtx);
-    if (caller_metadata.content_context_fingerprint !== contentContextFingerprint) {
+    if (caller_metadata.content_context_hash !== contentContextFingerprint) {
       await enqueuePrecruiseBatchGeneration({
         svc,
         booking_id,
@@ -314,7 +314,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
           contact_id: emailCtx.booking.primary_contact_id!,
           email_phase: phase,
           generated_content: generatedContent,
-          content_context_fingerprint: contentContextFingerprint,
+          content_context_hash: contentContextFingerprint,
           companion_page_url: caller_metadata.companion_page_url,
         })
         .select("id")
@@ -334,7 +334,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
           .update({
             contact_id: emailCtx.booking.primary_contact_id!,
             generated_content: generatedContent,
-            content_context_fingerprint: contentContextFingerprint,
+            content_context_hash: contentContextFingerprint,
             companion_page_url: emailCtx.companionPageUrl,
             generated_at: new Date().toISOString(),
           })
@@ -456,7 +456,7 @@ async function enqueuePrecruiseBatchGeneration(args: {
       phase: args.phase,
       email_ctx_id: args.emailCtxId,
       companion_page_url: args.emailCtx.companionPageUrl,
-      content_context_fingerprint: args.contentContextFingerprint,
+      content_context_hash: args.contentContextFingerprint,
     },
     db: args.svc,
   });
