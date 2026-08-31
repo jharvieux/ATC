@@ -42,6 +42,7 @@ export const CONSOLE_API_PREFIXES: readonly string[] = [
   "/api/bookings",
   "/api/quotes",
   "/api/groups",
+  "/api/precruise-emails",
   "/api/price-watches",
   "/api/tenant",
 ];
