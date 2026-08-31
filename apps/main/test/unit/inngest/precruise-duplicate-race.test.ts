@@ -20,6 +20,13 @@ const mocks = vi.hoisted(() => ({
   insertPayloads: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
   revalidateCalls: [] as Array<[string, string]>,
+  existingContent: null as {
+    id: string;
+    sent_at: null;
+    generated_content: Record<string, unknown>;
+    content_context_fingerprint: string | null;
+  } | null,
+  updatePayloads: [] as Array<Record<string, unknown>>,
 }));
 
 // #1953 — the content insert now purges the companion page's cache tag.
@@ -70,7 +77,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           select() {
             const chain = {
               eq: () => chain,
-              maybeSingle: async () => ({ data: null, error: null }), // not yet sent
+              maybeSingle: async () => ({ data: mocks.existingContent, error: null }),
             };
             return chain;
           },
@@ -78,9 +85,26 @@ vi.mock("@/lib/db/service-role-client", () => ({
             mocks.insertPayloads.push(payload);
             return {
               select: () => ({
-                single: async () => ({ data: null, error: mocks.insertError }),
+                single: async () => ({ data: { id: "content-1" }, error: mocks.insertError }),
               }),
             };
+          },
+          update(payload: Record<string, unknown>) {
+            mocks.updatePayloads.push(payload);
+            const chain = {
+              eq: () => chain,
+              is: () => chain,
+              or: () => chain,
+              select: async () => ({
+                data: "send_claimed_at" in payload
+                  ? payload.send_claimed_at
+                    ? [{ send_claimed_at: payload.send_claimed_at }]
+                    : [{ id: "content-1" }]
+                  : [{ id: "content-1" }],
+                error: null,
+              }),
+            };
+            return chain;
           },
         };
       }
@@ -154,6 +178,8 @@ beforeEach(() => {
   mocks.insertPayloads = [];
   mocks.sendEmailCalls = 0;
   mocks.revalidateCalls = [];
+  mocks.existingContent = null;
+  mocks.updatePayloads = [];
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
@@ -194,6 +220,48 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.insertPayloads[0]?.generated_content).toMatchObject({
       specialty_experiences: ["unused"],
     });
+  });
+
+  it("regenerates unsent cached content when the booking/contact context fingerprint is stale", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      generated_content: { documentation_reminder: "old copy" },
+      content_context_fingerprint: "stale",
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.insertPayloads).toHaveLength(0);
+    const regeneration = mocks.updatePayloads.find((payload) => "generated_content" in payload);
+    expect(regeneration).toMatchObject({
+      contact_id: "contact-1",
+      content_context_fingerprint: expect.not.stringMatching(/^stale$/),
+      generated_content: expect.objectContaining({
+        documentation_reminder: expect.not.stringMatching(/^old copy$/),
+      }),
+    });
+    expect(mocks.sendEmailCalls).toBe(1);
+  });
+
+  it("does not retarget a scheduled manual send after the reviewed contact changes", async () => {
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: {
+        data: {
+          booking_id: "b1",
+          tenant_id: "t1",
+          phase: "t_30",
+          via: "direct",
+          expected_contact_id: "contact-2",
+          expected_contact_email: "jordan@example.com",
+        },
+      },
+    });
+
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.sendEmailCalls).toBe(0);
   });
 
   it("throws (not swallows) on a non-23505 insert error", async () => {

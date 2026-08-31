@@ -8,6 +8,7 @@
 // it reintroduces the double-send / silent-loss bug.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
@@ -20,6 +21,13 @@ const mocks = vi.hoisted(() => ({
   insertPayloads: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
   revalidateCalls: [] as Array<[string, string]>,
+  batchEnqueueCalls: [] as Array<Record<string, unknown>>,
+}));
+
+vi.mock("@/lib/ai/batch/enqueue", () => ({
+  enqueueBatchRequest: async (args: Record<string, unknown>) => {
+    mocks.batchEnqueueCalls.push(args);
+  },
 }));
 
 // #1953 — the content insert/update now purges the companion page's cache tag.
@@ -78,9 +86,25 @@ vi.mock("@/lib/db/service-role-client", () => ({
             mocks.insertPayloads.push(payload);
             return {
               select: () => ({
-                single: async () => ({ data: null, error: mocks.insertError }),
+                single: async () => ({ data: { id: "content-1" }, error: mocks.insertError }),
               }),
             };
+          },
+          update(payload: Record<string, unknown>) {
+            const chain = {
+              eq: () => chain,
+              is: () => chain,
+              or: () => chain,
+              select: async () => ({
+                data: "send_claimed_at" in payload
+                  ? payload.send_claimed_at
+                    ? [{ send_claimed_at: payload.send_claimed_at }]
+                    : [{ id: "content-1" }]
+                  : [{ id: "content-1" }],
+                error: null,
+              }),
+            };
+            return chain;
           },
         };
       }
@@ -161,6 +185,7 @@ type BatchResultEvent = {
         phase: string;
         email_ctx_id: string | null;
         companion_page_url: string;
+        content_context_fingerprint?: string;
       } | null;
     };
   };
@@ -171,6 +196,18 @@ function runHandler(event: BatchResultEvent): Promise<void> {
 }
 
 function makeEvent(): BatchResultEvent {
+  const contentContextFingerprint = createHash("sha256")
+    .update(JSON.stringify({
+      contact_id: "contact-1",
+      recipient_email: "jordan@example.com",
+      customer_name: "Jordan",
+      cruise_line: "Norwegian",
+      ship_name: "Bliss",
+      sailing_date: "2026-09-01",
+      departure_port: "Miami, FL",
+      ports: [],
+    }))
+    .digest("hex");
   return {
     event: {
       data: {
@@ -183,6 +220,7 @@ function makeEvent(): BatchResultEvent {
           phase: "t_90",
           email_ctx_id: null,
           companion_page_url: "https://example.com/companion/abc",
+          content_context_fingerprint: contentContextFingerprint,
         },
       },
     },
@@ -194,6 +232,7 @@ beforeEach(() => {
   mocks.insertPayloads = [];
   mocks.sendEmailCalls = 0;
   mocks.revalidateCalls = [];
+  mocks.batchEnqueueCalls = [];
 });
 
 describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (batched-path twin)", () => {
@@ -223,5 +262,19 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     mocks.insertError = { code: "42501", message: "permission denied" };
     await expect(runHandler(makeEvent())).rejects.toThrow();
     expect(mocks.sendEmailCalls).toBe(0);
+  });
+
+  it("re-enqueues generation instead of sending content built from stale booking context", async () => {
+    const event = makeEvent();
+    event.event.data.caller_metadata!.content_context_fingerprint = "stale";
+
+    await runHandler(event);
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.batchEnqueueCalls).toHaveLength(1);
+    expect(mocks.batchEnqueueCalls[0]?.caller_metadata).toMatchObject({
+      booking_id: "b1",
+      content_context_fingerprint: expect.not.stringMatching(/^stale$/),
+    });
   });
 });

@@ -16,6 +16,7 @@
 // content.
 
 import * as React from "react";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -32,7 +33,7 @@ import { PreCruiseT30, type PreCruiseT30Props } from "@/emails/PreCruiseT30";
 import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
-import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
+import { safeAwait, safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { revalidateCompanionContent } from "@/lib/precruise/companion-content";
 import { getSailingItinerary } from "@/lib/sailings/sailing-itinerary";
 import { resolveDestinationRegion } from "@/lib/cruise-regions/classify";
@@ -53,7 +54,12 @@ const PrecruiseEmailDuePayloadSchema = z.object({
   tenant_id: z.string(),
   phase: PhaseEnum,
   via: z.enum(["direct", "batched"]).optional(),
-});
+  expected_contact_id: z.string().optional(),
+  expected_contact_email: z.string().email().optional(),
+}).refine(
+  (value) => Boolean(value.expected_contact_id) === Boolean(value.expected_contact_email),
+  { message: "expected contact id and email must be provided together" },
+);
 
 const PrecruiseBatchResultPayloadSchema = z.object({
   request_id: z.string(),
@@ -65,8 +71,11 @@ const PrecruiseBatchResultPayloadSchema = z.object({
     phase: PhaseEnum,
     email_ctx_id: z.string().nullable(),
     companion_page_url: z.string(),
+    content_context_fingerprint: z.string().optional(),
   }).nullable(),
 });
+
+const SEND_CLAIM_TTL_MS = 30 * 60_000;
 
 async function haikuGenerate(
   tenant_id: string,
@@ -100,7 +109,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       console.error("[precruise-generate-and-send] invalid event payload: %s", parsed.error.message);
       return;
     }
-    const { booking_id, tenant_id, phase, via } = parsed.data;
+    const { booking_id, tenant_id, phase, via, expected_contact_id, expected_contact_email } = parsed.data;
 
     const svc = createServiceRoleClient();
 
@@ -117,11 +126,17 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     // Idempotency: if already sent, skip (both paths).
     const { data: existingRaw } = await svc
       .from("pre_cruise_email_content")
-      .select("id, sent_at, generated_content")
+      .select("id, sent_at, generated_content, content_context_fingerprint")
       .eq("booking_id", booking_id)
+      .eq("tenant_id", tenant_id)
       .eq("email_phase", phase)
       .maybeSingle();
-    const existing = existingRaw as { id: string; sent_at?: string | null; generated_content?: Record<string, unknown> } | null;
+    const existing = existingRaw as {
+      id: string;
+      sent_at?: string | null;
+      generated_content?: Record<string, unknown>;
+      content_context_fingerprint?: string | null;
+    } | null;
     if (existing?.sent_at) {
       console.info(`[precruise] already sent: booking=${booking_id} phase=${phase}`);
       return;
@@ -130,33 +145,27 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     // Resolve the full email context (shared by both paths).
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
     if (!emailCtx) return; // already logged
+    if (
+      expected_contact_id && expected_contact_email &&
+      (emailCtx.booking.primary_contact_id !== expected_contact_id ||
+        normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
+    ) {
+      console.info(`[precruise] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
+      return;
+    }
+    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
 
     if (via === "batched") {
       // ── Batched path: enqueue ONE structured-JSON Haiku request and
       // hand off to precruiseSendFromBatchResult on completion.
-      const prompt = buildBatchedPrompt(phase, emailCtx);
-      await enqueueBatchRequest({
+      await enqueuePrecruiseBatchGeneration({
+        svc,
+        booking_id,
         tenant_id,
-        purpose: "precruise_generation",
-        request_params: {
-          model: HAIKU_MODEL,
-          max_tokens: 2048, // wider than direct since it returns combined JSON
-          system: prompt.system,
-          messages: [{ role: "user", content: prompt.user }],
-          // #2009 — constrain the output to the phase schema so the
-          // consumer can JSON.parse without heuristics.
-          output_config: { format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS[phase] } },
-        },
-        caller_metadata: {
-          booking_id,
-          tenant_id,
-          phase,
-          email_ctx_id: existing?.id ?? null,
-          // Re-encode the parts of the email context the consumer needs
-          // without re-querying. Avoids a second round trip + races.
-          companion_page_url: emailCtx.companionPageUrl,
-        },
-        db: svc,
+        phase,
+        emailCtx,
+        emailCtxId: existing?.id ?? null,
+        contentContextFingerprint,
       });
       console.info(`[precruise:batched] enqueued booking=${booking_id} phase=${phase}`);
       return;
@@ -165,42 +174,65 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     // ── Direct path: existing multi-call generation, render, send.
     let generatedContent: Record<string, unknown>;
     let contentId: string | undefined;
-    if (existing?.generated_content) {
+    if (
+      existing?.generated_content &&
+      existing.content_context_fingerprint === contentContextFingerprint
+    ) {
       generatedContent = existing.generated_content;
       contentId = existing.id;
     } else {
       generatedContent = await generateContent(phase, emailCtx);
-      const { data: inserted, error: insertError } = await svc
-        .from("pre_cruise_email_content")
-        .insert({
-          tenant_id,
-          booking_id,
-          contact_id: emailCtx.booking.primary_contact_id!,
-          email_phase: phase,
-          generated_content: generatedContent,
-          companion_page_url: emailCtx.companionPageUrl,
-        })
-        .select("id")
-        .single();
-      if (insertError?.code === "23505") {
-        // #1582: duplicate-event race — another run already claimed
-        // (booking_id, email_phase). Let that run own the send.
-        console.info(`[precruise] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
-        return;
+      if (existing) {
+        await safeAwait(
+          svc
+            .from("pre_cruise_email_content")
+            .update({
+              contact_id: emailCtx.booking.primary_contact_id!,
+              generated_content: generatedContent,
+              content_context_fingerprint: contentContextFingerprint,
+              companion_page_url: emailCtx.companionPageUrl,
+              generated_at: new Date().toISOString(),
+            })
+            .eq("id", existing.id)
+            .eq("tenant_id", tenant_id),
+          "pre_cruise_email_content.update.regenerated",
+        );
+        contentId = existing.id;
+      } else {
+        const { data: inserted, error: insertError } = await svc
+          .from("pre_cruise_email_content")
+          .insert({
+            tenant_id,
+            booking_id,
+            contact_id: emailCtx.booking.primary_contact_id!,
+            email_phase: phase,
+            generated_content: generatedContent,
+            content_context_fingerprint: contentContextFingerprint,
+            companion_page_url: emailCtx.companionPageUrl,
+          })
+          .select("id")
+          .single();
+        if (insertError?.code === "23505") {
+          // #1582: duplicate-event race — another run already claimed
+          // (booking_id, email_phase). Let that run own the send.
+          console.info(`[precruise] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
+          return;
+        }
+        if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
+        contentId = (inserted as { id: string } | null)?.id;
       }
-      if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
-      contentId = (inserted as { id: string } | null)?.id;
       // #1953 — the companion page caches this row by (booking_id, phase);
       // purge so a previously-cached "no content yet" render can't persist.
       revalidateCompanionContent(booking_id, phase);
     }
 
+    if (!contentId) throw new Error("pre-cruise content row did not return an id");
     await buildAndSend({
       svc,
       phase,
       emailCtx,
       generatedContent,
-      ...(contentId ? { contentId } : {}),
+      contentId,
     });
   },
 );
@@ -244,6 +276,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       .from("pre_cruise_email_content")
       .select("id, sent_at")
       .eq("booking_id", booking_id)
+      .eq("tenant_id", tenant_id)
       .eq("email_phase", phase)
       .maybeSingle();
     const existing = existingRaw as { id: string; sent_at?: string | null } | null;
@@ -254,6 +287,20 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
 
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
     if (!emailCtx) return;
+    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
+    if (caller_metadata.content_context_fingerprint !== contentContextFingerprint) {
+      await enqueuePrecruiseBatchGeneration({
+        svc,
+        booking_id,
+        tenant_id,
+        phase,
+        emailCtx,
+        emailCtxId: existing?.id ?? null,
+        contentContextFingerprint,
+      });
+      console.info(`[precruise:batch-result] context changed; regenerated booking=${booking_id} phase=${phase}`);
+      return;
+    }
 
     // Insert the generated_content row (or update if already exists from
     // a partial prior run).
@@ -267,6 +314,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
           contact_id: emailCtx.booking.primary_contact_id!,
           email_phase: phase,
           generated_content: generatedContent,
+          content_context_fingerprint: contentContextFingerprint,
           companion_page_url: caller_metadata.companion_page_url,
         })
         .select("id")
@@ -283,8 +331,15 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       await safeAwait(
         svc
           .from("pre_cruise_email_content")
-          .update({ generated_content: generatedContent })
-          .eq("id", contentId),
+          .update({
+            contact_id: emailCtx.booking.primary_contact_id!,
+            generated_content: generatedContent,
+            content_context_fingerprint: contentContextFingerprint,
+            companion_page_url: emailCtx.companionPageUrl,
+            generated_at: new Date().toISOString(),
+          })
+          .eq("id", contentId)
+          .eq("tenant_id", tenant_id),
         "pre_cruise_email_content.update.generated",
       );
     }
@@ -293,7 +348,14 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     // placeholder-phase render is never served after content lands.
     revalidateCompanionContent(booking_id, phase);
 
-    await buildAndSend({ svc, phase, emailCtx, generatedContent, ...(contentId ? { contentId } : {}) });
+    if (!contentId) throw new Error("pre-cruise content row did not return an id");
+    await buildAndSend({
+      svc,
+      phase,
+      emailCtx,
+      generatedContent,
+      contentId,
+    });
   },
 );
 
@@ -345,6 +407,59 @@ interface EmailCtx {
   companionPageUrl: string;
   unsubscribeUrl: string;
   layoutProps: Omit<BrandedLayoutProps, "children">;
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function fingerprintEmailContext(ctx: EmailCtx): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      contact_id: ctx.booking.primary_contact_id,
+      recipient_email: normalizeEmail(ctx.toEmail),
+      customer_name: ctx.customerName,
+      cruise_line: ctx.cruiseLine,
+      ship_name: ctx.shipName,
+      sailing_date: ctx.sailingDate,
+      departure_port: ctx.departurePort ?? null,
+      ports: ctx.ports,
+    }))
+    .digest("hex");
+}
+
+async function enqueuePrecruiseBatchGeneration(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  booking_id: string;
+  tenant_id: string;
+  phase: Phase;
+  emailCtx: EmailCtx;
+  emailCtxId: string | null;
+  contentContextFingerprint: string;
+}): Promise<void> {
+  const prompt = buildBatchedPrompt(args.phase, args.emailCtx);
+  await enqueueBatchRequest({
+    tenant_id: args.tenant_id,
+    purpose: "precruise_generation",
+    request_params: {
+      model: HAIKU_MODEL,
+      max_tokens: 2048,
+      system: prompt.system,
+      messages: [{ role: "user", content: prompt.user }],
+      output_config: {
+        format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS[args.phase] },
+      },
+    },
+    caller_metadata: {
+      booking_id: args.booking_id,
+      tenant_id: args.tenant_id,
+      phase: args.phase,
+      email_ctx_id: args.emailCtxId,
+      companion_page_url: args.emailCtx.companionPageUrl,
+      content_context_fingerprint: args.contentContextFingerprint,
+    },
+    db: args.svc,
+  });
 }
 
 // Exported for unit testing the data-access shape (the bookings→groups
@@ -467,12 +582,121 @@ export async function loadEmailContext(args: {
   };
 }
 
+async function emailContextStillCurrent(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  emailCtx: EmailCtx;
+}): Promise<boolean> {
+  const { svc, emailCtx } = args;
+  const { data: bookingData, error: bookingError } = await svc
+    .from("bookings")
+    .select(
+      "status, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port)",
+    )
+    .eq("id", emailCtx.booking.id)
+    .eq("tenant_id", emailCtx.tenant.id)
+    .maybeSingle();
+  if (bookingError) {
+    throw new SupabaseMutationError("precruise.final_state.booking_read", bookingError);
+  }
+  const booking = bookingData as {
+    status: string;
+    primary_contact_id: string | null;
+    cruise_line: string | null;
+    ship_name: string | null;
+    sailing_date: string | null;
+    departure_port: string | null;
+    groups: Array<{
+      cruise_line: string | null;
+      ship_name: string | null;
+      sailing_date: string | null;
+      departure_port: string | null;
+    }> | {
+      cruise_line: string | null;
+      ship_name: string | null;
+      sailing_date: string | null;
+      departure_port: string | null;
+    } | null;
+  } | null;
+  if (
+    booking?.status !== "confirmed" ||
+    booking.primary_contact_id !== emailCtx.booking.primary_contact_id
+  ) {
+    console.info(`[precruise] final booking state changed: booking=${emailCtx.booking.id}`);
+    return false;
+  }
+
+  const { data: contactData, error: contactError } = await svc
+    .from("contacts")
+    .select("first_name, email")
+    .eq("id", booking.primary_contact_id)
+    .eq("tenant_id", emailCtx.tenant.id)
+    .maybeSingle();
+  if (contactError) {
+    throw new SupabaseMutationError("precruise.final_state.contact_read", contactError);
+  }
+  const contact = contactData as { first_name: string | null; email: string | null } | null;
+  const groups = Array.isArray(booking.groups) ? booking.groups[0] : booking.groups;
+  if (
+    !contact?.email ||
+    normalizeEmail(contact.email) !== normalizeEmail(emailCtx.toEmail) ||
+    (contact.first_name ?? "Traveler") !== emailCtx.customerName ||
+    (booking.cruise_line ?? groups?.cruise_line ?? "") !== emailCtx.cruiseLine ||
+    (booking.ship_name ?? groups?.ship_name ?? "your ship") !== emailCtx.shipName ||
+    (booking.sailing_date ?? groups?.sailing_date ?? "") !== emailCtx.sailingDate ||
+    (booking.departure_port ?? groups?.departure_port ?? undefined) !== emailCtx.departurePort
+  ) {
+    console.info(`[precruise] final email context changed: booking=${emailCtx.booking.id}`);
+    return false;
+  }
+  return true;
+}
+
+async function claimContentForSend(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  contentId: string;
+  tenantId: string;
+}): Promise<string | null> {
+  const claimedAt = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - SEND_CLAIM_TTL_MS).toISOString();
+  const rows = await safeAwait(
+    args.svc
+      .from("pre_cruise_email_content")
+      .update({ send_claimed_at: claimedAt })
+      .eq("id", args.contentId)
+      .eq("tenant_id", args.tenantId)
+      .is("sent_at", null)
+      .or(`send_claimed_at.is.null,send_claimed_at.lt.${staleBefore}`)
+      .select("send_claimed_at"),
+    "pre_cruise_email_content.claim.send",
+  );
+  return (rows as Array<{ send_claimed_at: string }> | null)?.[0]?.send_claimed_at ?? null;
+}
+
+async function releaseContentClaim(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  contentId: string;
+  tenantId: string;
+  claimedAt: string;
+}): Promise<void> {
+  await safeAwaitRowCount(
+    args.svc
+      .from("pre_cruise_email_content")
+      .update({ send_claimed_at: null })
+      .eq("id", args.contentId)
+      .eq("tenant_id", args.tenantId)
+      .eq("send_claimed_at", args.claimedAt)
+      .select("id"),
+    "pre_cruise_email_content.release.send_claim",
+    1,
+  );
+}
+
 async function buildAndSend(args: {
   svc: ReturnType<typeof createServiceRoleClient>;
   phase: Phase;
   emailCtx: EmailCtx;
   generatedContent: Record<string, unknown>;
-  contentId?: string;
+  contentId: string;
 }): Promise<void> {
   const { svc, phase, emailCtx, generatedContent, contentId } = args;
 
@@ -583,29 +807,52 @@ async function buildAndSend(args: {
     email_from_domain_verified_at: emailCtx.branding.email_from_domain_verified_at ?? null,
   };
 
-  const result = await sendEmail({
-    db: svc,
-    tenant: tenantInput,
-    to: emailCtx.toEmail,
-    subject,
-    template_id: `pre_cruise_${phase}`,
-    category: "pre_cruise",
-    html,
-    idempotencyKey: `pre_cruise:${emailCtx.booking.id}:${phase}`,
-    contact_id: emailCtx.booking.primary_contact_id!,
-    related_booking_id: emailCtx.booking.id,
-    ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
-    ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
+  if (!(await emailContextStillCurrent({ svc, emailCtx }))) return;
+  const claimedAt = await claimContentForSend({
+    svc,
+    contentId,
+    tenantId: emailCtx.tenant.id,
   });
+  if (!claimedAt) {
+    console.info(`[precruise] send already claimed: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
 
-  if (result.status === "sent" && contentId) {
-    await safeAwait(
+  let result;
+  try {
+    result = await sendEmail({
+      db: svc,
+      tenant: tenantInput,
+      to: emailCtx.toEmail,
+      subject,
+      template_id: `pre_cruise_${phase}`,
+      category: "pre_cruise",
+      html,
+      idempotencyKey: `pre_cruise:${emailCtx.booking.id}:${phase}`,
+      contact_id: emailCtx.booking.primary_contact_id!,
+      related_booking_id: emailCtx.booking.id,
+      ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
+      ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
+    });
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
+
+  if (result.status === "sent") {
+    await safeAwaitRowCount(
       svc
         .from("pre_cruise_email_content")
-        .update({ sent_at: new Date().toISOString() })
-        .eq("id", contentId),
+        .update({ sent_at: new Date().toISOString(), send_claimed_at: null })
+        .eq("id", contentId)
+        .eq("tenant_id", emailCtx.tenant.id)
+        .eq("send_claimed_at", claimedAt)
+        .select("id"),
       "pre_cruise_email_content.update.sent_at",
+      1,
     );
+  } else {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
   }
 
   console.info(

@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
   sendEmailResult: { status: "sent" as string, reason: null as string | null },
   sendEmailArgs: [] as Array<Record<string, unknown>>,
   updateCalls: [] as Array<{ table: string; payload: unknown }>,
+  bookingStatus: "confirmed",
+  bookingContactId: "contact-1",
+  contactEmail: "traveler@example.com",
+  sailingDate: "2026-09-01",
+  claimed: false,
 }));
 
 vi.mock("@/lib/sailings/sailing-itinerary", () => ({
@@ -47,10 +52,48 @@ import { buildAndSend } from "@/inngest/precruise-generate-and-send";
 function makeSvc() {
   return {
     from(table: string) {
+      if (table === "bookings" || table === "contacts") {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              maybeSingle: async () => ({
+                data: table === "bookings"
+                  ? {
+                      status: mocks.bookingStatus,
+                      primary_contact_id: mocks.bookingContactId,
+                      cruise_line: "Test Cruise Line",
+                      ship_name: "Test Ship",
+                      sailing_date: mocks.sailingDate,
+                      departure_port: null,
+                      groups: null,
+                    }
+                  : { first_name: "Jordan", email: mocks.contactEmail },
+                error: null,
+              }),
+            };
+            return chain;
+          },
+        };
+      }
       return {
-        update(payload: unknown) {
+        update(payload: Record<string, unknown>) {
           mocks.updateCalls.push({ table, payload });
-          return { eq: async () => ({ data: null, error: null }) };
+          const chain = {
+            eq: () => chain,
+            is: () => chain,
+            or: () => chain,
+            select: async () => {
+              if (payload.send_claimed_at) {
+                if (mocks.claimed) return { data: [], error: null };
+                mocks.claimed = true;
+                return { data: [{ send_claimed_at: payload.send_claimed_at }], error: null };
+              }
+              mocks.claimed = false;
+              return { data: [{ id: "content-1" }], error: null };
+            },
+          };
+          return chain;
         },
       };
     },
@@ -81,6 +124,11 @@ beforeEach(() => {
   mocks.sendEmailResult = { status: "sent", reason: null };
   mocks.sendEmailArgs = [];
   mocks.updateCalls = [];
+  mocks.bookingStatus = "confirmed";
+  mocks.bookingContactId = "contact-1";
+  mocks.contactEmail = "traveler@example.com";
+  mocks.sailingDate = "2026-09-01";
+  mocks.claimed = false;
 });
 
 describe("buildAndSend — #1582 transient-failure retry semantics", () => {
@@ -96,7 +144,7 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       }),
     ).rejects.toThrow(/send failed/);
     // A failed send must never mark sent_at — the row stays retryable.
-    expect(mocks.updateCalls).toHaveLength(0);
+    expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
   });
 
   it("does not throw and persists sent_at when sendEmail succeeds", async () => {
@@ -110,9 +158,9 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         contentId: "content-1",
       }),
     ).resolves.toBeUndefined();
-    expect(mocks.updateCalls).toHaveLength(1);
-    expect(mocks.updateCalls[0]?.table).toBe("pre_cruise_email_content");
-    expect(mocks.updateCalls[0]?.payload).toHaveProperty("sent_at");
+    const sentUpdate = mocks.updateCalls.find((call) => "sent_at" in (call.payload as object));
+    expect(sentUpdate?.table).toBe("pre_cruise_email_content");
+    expect(sentUpdate?.payload).toHaveProperty("sent_at");
     expect(mocks.sendEmailArgs[0]).toMatchObject({
       contact_id: "contact-1",
       related_booking_id: "booking-1",
@@ -134,7 +182,60 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         }),
       ).resolves.toBeUndefined();
       // Not sent — sent_at must not be written either.
-      expect(mocks.updateCalls).toHaveLength(0);
+      expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
     },
   );
+
+  it("rechecks cancellation immediately before dispatch", async () => {
+    mocks.bookingStatus = "cancelled";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      generatedContent: {},
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("rechecks the primary contact address immediately before dispatch", async () => {
+    mocks.contactEmail = "new-recipient@example.com";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      generatedContent: {},
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("does not send rendered content after material trip details change", async () => {
+    mocks.sailingDate = "2026-09-08";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_30",
+      emailCtx: EMAIL_CTX,
+      generatedContent: {},
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("allows only one concurrent consumer to invoke sendEmail for an existing row", async () => {
+    const svc = makeSvc();
+
+    await Promise.all([
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, generatedContent: {}, contentId: "content-1" }),
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, generatedContent: {}, contentId: "content-1" }),
+    ]);
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+  });
 });
