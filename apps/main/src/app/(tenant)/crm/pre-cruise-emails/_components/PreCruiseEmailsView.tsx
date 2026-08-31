@@ -139,7 +139,11 @@ export function PreCruiseEmailsView() {
   const selectedBooking = bookings.find((booking) => booking.id === bookingId) ?? null;
 
   async function submit() {
-    if (!bookingId || (delivery === "schedule" && !scheduleAt)) return;
+    if (loading || !selectedBooking || (delivery === "schedule" && !scheduleAt)) return;
+    const submittedBookingId = selectedBooking.id;
+    const submittedPhase = phase;
+    const submittedDelivery = delivery;
+    const submittedScheduleAt = scheduleAt;
     setSubmitting(true);
     setError(null);
     setSuccess(null);
@@ -148,10 +152,10 @@ export function PreCruiseEmailsView() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: delivery,
-          booking_id: bookingId,
-          phase,
-          ...(delivery === "schedule" ? { scheduled_for: new Date(scheduleAt).toISOString() } : {}),
+          action: submittedDelivery,
+          booking_id: submittedBookingId,
+          phase: submittedPhase,
+          ...(submittedDelivery === "schedule" ? { scheduled_for: new Date(submittedScheduleAt).toISOString() } : {}),
         }),
       });
       const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -159,11 +163,11 @@ export function PreCruiseEmailsView() {
         setError(ERROR_MESSAGES[body.error ?? ""] ?? "The email could not be queued. Please try again.");
         return;
       }
-      const timing = PHASES.find((item) => item.value === phase)?.timing ?? phase;
+      const timing = PHASES.find((item) => item.value === submittedPhase)?.timing ?? submittedPhase;
       setSuccess(
-        delivery === "send_now"
+        submittedDelivery === "send_now"
           ? `The ${timing} email is queued to send now.`
-          : `The ${timing} email is scheduled for ${new Date(scheduleAt).toLocaleString()}.`,
+          : `The ${timing} email is scheduled for ${new Date(submittedScheduleAt).toLocaleString()}.`,
       );
     } catch {
       setError("The email could not be queued. Please check your connection and try again.");
@@ -204,7 +208,15 @@ export function PreCruiseEmailsView() {
               <input
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                disabled={submitting}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setBookings([]);
+                  setBookingId("");
+                  setLoading(true);
+                  setError(null);
+                  setSuccess(null);
+                }}
                 placeholder="Name or email"
                 className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
@@ -214,7 +226,7 @@ export function PreCruiseEmailsView() {
               <select
                 value={bookingId}
                 onChange={(event) => setBookingId(event.target.value)}
-                disabled={loading || bookings.length === 0}
+                disabled={loading || submitting || bookings.length === 0}
                 className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-gray-50"
               >
                 {bookings.length === 0 ? (
@@ -246,6 +258,7 @@ export function PreCruiseEmailsView() {
                       name="phase"
                       value={item.value}
                       checked={selected}
+                      disabled={submitting}
                       onChange={() => setPhase(item.value)}
                       className="sr-only"
                     />
@@ -274,6 +287,7 @@ export function PreCruiseEmailsView() {
                     name="delivery"
                     value={option}
                     checked={delivery === option}
+                    disabled={submitting}
                     onChange={() => setDelivery(option)}
                     className="mr-2"
                   />
@@ -288,6 +302,7 @@ export function PreCruiseEmailsView() {
                   type="datetime-local"
                   min={minScheduleValue}
                   value={scheduleAt}
+                  disabled={submitting}
                   onChange={(event) => setScheduleAt(event.target.value)}
                   className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
@@ -321,7 +336,7 @@ export function PreCruiseEmailsView() {
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={!bookingId || submitting || (delivery === "schedule" && !scheduleAt)}
+            disabled={loading || !selectedBooking || submitting || (delivery === "schedule" && !scheduleAt)}
             className="mt-6 w-full rounded-lg bg-blue-500 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Queuing…" : delivery === "send_now" ? "Send email now" : "Schedule email"}

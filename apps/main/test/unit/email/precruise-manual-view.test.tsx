@@ -28,10 +28,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
-function installFetch(options: { failBookingRefresh?: boolean } = {}) {
+function installFetch(options: { failBookingRefresh?: boolean; dispatchResponse?: Promise<Response> } = {}) {
   let bookingLoads = 0;
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === "POST") return jsonResponse({ ok: true }, 202);
+    if (init?.method === "POST") return options.dispatchResponse ?? jsonResponse({ ok: true }, 202);
     bookingLoads += 1;
     if (options.failBookingRefresh && bookingLoads > 1) throw new Error("network down");
     return jsonResponse({ bookings: [BOOKING], total: 1, page: 1, page_size: 100 });
@@ -78,17 +78,41 @@ describe("PreCruiseEmailsView", () => {
     expect((await screen.findByRole("status")).textContent).toContain("7 days email is scheduled");
   });
 
-  it("clears the selected traveler when a booking refresh fails", async () => {
-    installFetch({ failBookingRefresh: true });
+  it("invalidates the selected traveler before a failing refresh can dispatch", async () => {
+    const fetchMock = installFetch({ failBookingRefresh: true });
     render(<PreCruiseEmailsView />);
 
     await screen.findByRole("option", { name: /Avery Quinn/ });
     expect((screen.getByRole("button", { name: "Send email now" }) as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.change(screen.getByLabelText("Search traveler"), { target: { value: "missing" } });
+    const sendButton = screen.getByRole("button", { name: "Send email now" }) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(true);
+    fireEvent.click(sendButton);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+
     expect((await screen.findByRole("alert")).textContent).toContain("Could not load confirmed bookings");
 
     expect(screen.queryByRole("option", { name: /Avery Quinn/ })).toBeNull();
-    expect((screen.getByRole("button", { name: "Send email now" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(sendButton.disabled).toBe(true);
+  });
+
+  it("locks mutable form state while a dispatch is pending", async () => {
+    let resolveDispatch!: (response: Response) => void;
+    const dispatchResponse = new Promise<Response>((resolve) => {
+      resolveDispatch = resolve;
+    });
+    installFetch({ dispatchResponse });
+    render(<PreCruiseEmailsView />);
+
+    await screen.findByRole("option", { name: /Avery Quinn/ });
+    fireEvent.click(screen.getByRole("button", { name: "Send email now" }));
+
+    expect((screen.getByLabelText("Search traveler") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("radio", { name: /T−1 day/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("radio", { name: "Schedule" }) as HTMLInputElement).disabled).toBe(true);
+
+    resolveDispatch(jsonResponse({ ok: true }, 202));
+    expect((await screen.findByRole("status")).textContent).toContain("90 days email is queued to send now");
   });
 });
