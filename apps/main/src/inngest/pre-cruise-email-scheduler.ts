@@ -111,6 +111,7 @@ async function scanAndEmit(args: {
         .from("pre_cruise_email_content")
         .select("id, sent_at")
         .eq("booking_id", booking.id)
+        .eq("tenant_id", booking.tenant_id)
         .eq("email_phase", phase)
         .maybeSingle();
       const existing = existingRaw as { id: string; sent_at?: string | null } | null;

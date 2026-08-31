@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
     groups: { sailing_date: string };
   }>> | null,
   order: vi.fn(),
+  contentEqCalls: [] as Array<[string, unknown]>,
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -101,7 +102,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return {
           select() {
             const chain = {
-              eq: () => chain,
+              eq: (column: string, value: unknown) => {
+                mocks.contentEqCalls.push([column, value]);
+                return chain;
+              },
               maybeSingle: async () => ({ data: mocks.contentRow, error: null }),
             };
             return chain;
@@ -122,6 +126,7 @@ beforeEach(() => {
   mocks.sentEvents = [];
   mocks.sailingHoursFromNow = 168;
   mocks.bookingPages = null;
+  mocks.contentEqCalls = [];
 });
 
 describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
@@ -142,6 +147,14 @@ describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
     mocks.contentRow = null;
     await (preCruiseEmailSchedulerMultiphase as unknown as () => Promise<unknown>)();
     expect(mocks.sentEvents).toHaveLength(1);
+  });
+
+  it("passes the booking owner to the service-role content dedup lookup", async () => {
+    await (preCruiseEmailSchedulerMultiphase as unknown as () => Promise<unknown>)();
+
+    expect(mocks.contentEqCalls).toContainEqual(["booking_id", "booking-1"]);
+    expect(mocks.contentEqCalls).toContainEqual(["tenant_id", "t1"]);
+    expect(mocks.contentEqCalls).toContainEqual(["email_phase", "t_7"]);
   });
 });
 

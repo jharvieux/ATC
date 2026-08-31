@@ -22,6 +22,15 @@ const mocks = vi.hoisted(() => ({
   sendEmailCalls: 0,
   revalidateCalls: [] as Array<[string, string]>,
   batchEnqueueCalls: [] as Array<Record<string, unknown>>,
+  existingContent: null as {
+    id: string;
+    sent_at: string | null;
+    send_claimed_at: string | null;
+    generated_content: Record<string, unknown>;
+  } | null,
+  regenerationRace: null as "sent" | null,
+  regenerationUpdateError: null as { code: string; message: string } | null,
+  tenantPaying: true,
 }));
 
 vi.mock("@/lib/ai/batch/enqueue", () => ({
@@ -38,7 +47,10 @@ vi.mock("@/lib/precruise/companion-content", () => ({
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
-  assertTenantStillPayingById: async () => ({ ok: true }),
+  assertTenantStillPayingById: async () => ({
+    ok: mocks.tenantPaying,
+    ...(mocks.tenantPaying ? {} : { reason: "past_grace", days_since_non_paying: 31 }),
+  }),
 }));
 
 vi.mock("@/lib/ai/call-wrapper", () => ({
@@ -78,7 +90,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           select() {
             const chain = {
               eq: () => chain,
-              maybeSingle: async () => ({ data: null, error: null }), // not yet sent
+              maybeSingle: async () => ({ data: mocks.existingContent, error: null }),
             };
             return chain;
           },
@@ -91,18 +103,35 @@ vi.mock("@/lib/db/service-role-client", () => ({
             };
           },
           update(payload: Record<string, unknown>) {
+            const nullFilters = new Set<string>();
             const chain = {
               eq: () => chain,
-              is: () => chain,
+              is: (column: string, value: unknown) => {
+                if (value === null) nullFilters.add(column);
+                return chain;
+              },
               or: () => chain,
-              select: async () => ({
-                data: "send_claimed_at" in payload
-                  ? payload.send_claimed_at
-                    ? [{ send_claimed_at: payload.send_claimed_at }]
-                    : [{ id: "content-1" }]
-                  : [{ id: "content-1" }],
-                error: null,
-              }),
+              select: async () => {
+                if ("generated_content" in payload && mocks.regenerationUpdateError) {
+                  return { data: null, error: mocks.regenerationUpdateError };
+                }
+                if ("generated_content" in payload && mocks.regenerationRace && mocks.existingContent) {
+                  mocks.existingContent.sent_at = "2026-08-31T22:00:00.000Z";
+                  mocks.existingContent.generated_content = { summary: "winning prose" };
+                  if (nullFilters.has("sent_at") && nullFilters.has("send_claimed_at")) {
+                    return { data: [], error: null };
+                  }
+                  mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
+                }
+                return {
+                  data: "send_claimed_at" in payload
+                    ? payload.send_claimed_at
+                      ? [{ send_claimed_at: payload.send_claimed_at }]
+                      : [{ id: "content-1" }]
+                    : [{ id: "content-1" }],
+                  error: null,
+                };
+              },
             };
             return chain;
           },
@@ -126,6 +155,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
                     ship_name: "Bliss",
                     sailing_date: "2026-09-01",
                     departure_port: "Miami, FL",
+                  },
+                  contacts: {
+                    tenant_id: "t1",
+                    first_name: "Jordan",
+                    email: "jordan@example.com",
                   },
                 },
                 error: null,
@@ -233,6 +267,10 @@ beforeEach(() => {
   mocks.sendEmailCalls = 0;
   mocks.revalidateCalls = [];
   mocks.batchEnqueueCalls = [];
+  mocks.existingContent = null;
+  mocks.regenerationRace = null;
+  mocks.regenerationUpdateError = null;
+  mocks.tenantPaying = true;
 });
 
 describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (batched-path twin)", () => {
@@ -276,5 +314,43 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
       booking_id: "b1",
       content_context_hash: expect.not.stringMatching(/^stale$/),
     });
+  });
+
+  it("does not let a slow batch result overwrite prose already sent by the winner", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { summary: "old prose" },
+    };
+    mocks.regenerationRace = "sent";
+
+    await runHandler(makeEvent());
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.existingContent.sent_at).not.toBeNull();
+    expect(mocks.existingContent.generated_content).toEqual({ summary: "winning prose" });
+  });
+
+  it("fails loudly when the guarded batch regeneration update fails", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { summary: "old prose" },
+    };
+    mocks.regenerationUpdateError = { code: "40001", message: "serialization failure" };
+
+    await expect(runHandler(makeEvent())).rejects.toThrow();
+    expect(mocks.sendEmailCalls).toBe(0);
+  });
+
+  it("does not send a completed batch result after the tenant becomes ineligible", async () => {
+    mocks.tenantPaying = false;
+
+    await runHandler(makeEvent());
+
+    expect(mocks.insertPayloads).toHaveLength(1);
+    expect(mocks.sendEmailCalls).toBe(0);
   });
 });

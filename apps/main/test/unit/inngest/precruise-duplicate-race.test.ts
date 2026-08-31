@@ -22,11 +22,15 @@ const mocks = vi.hoisted(() => ({
   revalidateCalls: [] as Array<[string, string]>,
   existingContent: null as {
     id: string;
-    sent_at: null;
+    sent_at: string | null;
+    send_claimed_at: string | null;
     generated_content: Record<string, unknown>;
     content_context_hash: string | null;
   } | null,
   updatePayloads: [] as Array<Record<string, unknown>>,
+  regenerationRace: null as "claimed" | "sent" | null,
+  regenerationUpdateError: null as { code: string; message: string } | null,
+  paymentResults: [] as boolean[],
 }));
 
 // #1953 — the content insert now purges the companion page's cache tag.
@@ -37,7 +41,10 @@ vi.mock("@/lib/precruise/companion-content", () => ({
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
-  assertTenantStillPayingById: async () => ({ ok: true }),
+  assertTenantStillPayingById: async () => {
+    const ok = mocks.paymentResults.shift() ?? true;
+    return { ok, ...(ok ? {} : { reason: "past_grace", days_since_non_paying: 31 }) };
+  },
 }));
 
 vi.mock("@/lib/ai/call-wrapper", () => ({
@@ -91,18 +98,39 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
           update(payload: Record<string, unknown>) {
             mocks.updatePayloads.push(payload);
+            const nullFilters = new Set<string>();
             const chain = {
               eq: () => chain,
-              is: () => chain,
+              is: (column: string, value: unknown) => {
+                if (value === null) nullFilters.add(column);
+                return chain;
+              },
               or: () => chain,
-              select: async () => ({
-                data: "send_claimed_at" in payload
-                  ? payload.send_claimed_at
-                    ? [{ send_claimed_at: payload.send_claimed_at }]
-                    : [{ id: "content-1" }]
-                  : [{ id: "content-1" }],
-                error: null,
-              }),
+              select: async () => {
+                if ("generated_content" in payload && mocks.regenerationUpdateError) {
+                  return { data: null, error: mocks.regenerationUpdateError };
+                }
+                if ("generated_content" in payload && mocks.regenerationRace && mocks.existingContent) {
+                  mocks.existingContent.generated_content = { documentation_reminder: "winning prose" };
+                  if (mocks.regenerationRace === "claimed") {
+                    mocks.existingContent.send_claimed_at = "2026-08-31T22:00:00.000Z";
+                  } else {
+                    mocks.existingContent.sent_at = "2026-08-31T22:00:00.000Z";
+                  }
+                  if (nullFilters.has("sent_at") && nullFilters.has("send_claimed_at")) {
+                    return { data: [], error: null };
+                  }
+                  mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
+                }
+                return {
+                  data: "send_claimed_at" in payload
+                    ? payload.send_claimed_at
+                      ? [{ send_claimed_at: payload.send_claimed_at }]
+                      : [{ id: "content-1" }]
+                    : [{ id: "content-1" }],
+                  error: null,
+                };
+              },
             };
             return chain;
           },
@@ -126,6 +154,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
                     ship_name: "Bliss",
                     sailing_date: "2026-09-01",
                     departure_port: "Miami, FL",
+                  },
+                  contacts: {
+                    tenant_id: "t1",
+                    first_name: "Jordan",
+                    email: "jordan@example.com",
                   },
                 },
                 error: null,
@@ -180,6 +213,9 @@ beforeEach(() => {
   mocks.revalidateCalls = [];
   mocks.existingContent = null;
   mocks.updatePayloads = [];
+  mocks.regenerationRace = null;
+  mocks.regenerationUpdateError = null;
+  mocks.paymentResults = [];
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
@@ -226,6 +262,7 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     mocks.existingContent = {
       id: "content-1",
       sent_at: null,
+      send_claimed_at: null,
       generated_content: { documentation_reminder: "old copy" },
       content_context_hash: "stale",
     };
@@ -246,6 +283,43 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.sendEmailCalls).toBe(1);
   });
 
+  it("does not let a slow direct regeneration overwrite content claimed by the winner", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "old copy" },
+      content_context_hash: "stale",
+    };
+    mocks.regenerationRace = "claimed";
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.existingContent.generated_content).toEqual({ documentation_reminder: "winning prose" });
+    expect(mocks.existingContent.send_claimed_at).not.toBeNull();
+  });
+
+  it("fails loudly when the guarded direct regeneration update fails", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "old copy" },
+      content_context_hash: "stale",
+    };
+    mocks.regenerationUpdateError = { code: "40001", message: "serialization failure" };
+
+    await expect(
+      (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+        event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+      }),
+    ).rejects.toThrow();
+    expect(mocks.sendEmailCalls).toBe(0);
+  });
+
   it("does not retarget a scheduled manual send after the reviewed contact changes", async () => {
     await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
       event: {
@@ -261,6 +335,17 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     });
 
     expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.sendEmailCalls).toBe(0);
+  });
+
+  it("does not send direct content when the tenant becomes ineligible after generation", async () => {
+    mocks.paymentResults = [true, false];
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.insertPayloads).toHaveLength(1);
     expect(mocks.sendEmailCalls).toBe(0);
   });
 

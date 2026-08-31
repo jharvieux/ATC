@@ -183,7 +183,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     } else {
       generatedContent = await generateContent(phase, emailCtx);
       if (existing) {
-        await safeAwait(
+        const updated = await safeAwait(
           svc
             .from("pre_cruise_email_content")
             .update({
@@ -194,9 +194,16 @@ export const precruiseGenerateAndSend = inngest.createFunction(
               generated_at: new Date().toISOString(),
             })
             .eq("id", existing.id)
-            .eq("tenant_id", tenant_id),
+            .eq("tenant_id", tenant_id)
+            .is("sent_at", null)
+            .is("send_claimed_at", null)
+            .select("id"),
           "pre_cruise_email_content.update.regenerated",
         );
+        if ((updated as Array<{ id: string }> | null)?.length !== 1) {
+          console.info(`[precruise] content changed while regenerating, skipping: booking=${booking_id} phase=${phase}`);
+          return;
+        }
         contentId = existing.id;
       } else {
         const { data: inserted, error: insertError } = await svc
@@ -328,7 +335,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
       contentId = (inserted as { id: string } | null)?.id;
     } else {
-      await safeAwait(
+      const updated = await safeAwait(
         svc
           .from("pre_cruise_email_content")
           .update({
@@ -339,9 +346,16 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
             generated_at: new Date().toISOString(),
           })
           .eq("id", contentId)
-          .eq("tenant_id", tenant_id),
+          .eq("tenant_id", tenant_id)
+          .is("sent_at", null)
+          .is("send_claimed_at", null)
+          .select("id"),
         "pre_cruise_email_content.update.generated",
       );
+      if ((updated as Array<{ id: string }> | null)?.length !== 1) {
+        console.info(`[precruise:batch-result] content changed while regenerating, skipping: booking=${booking_id} phase=${phase}`);
+        return;
+      }
     }
     // #1953 — both branches above wrote generated_content; purge the
     // companion page's (booking_id, phase) cache entry so a
@@ -590,7 +604,7 @@ async function emailContextStillCurrent(args: {
   const { data: bookingData, error: bookingError } = await svc
     .from("bookings")
     .select(
-      "status, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port)",
+      "status, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port), contacts!primary_contact_id(tenant_id, first_name, email)",
     )
     .eq("id", emailCtx.booking.id)
     .eq("tenant_id", emailCtx.tenant.id)
@@ -605,6 +619,15 @@ async function emailContextStillCurrent(args: {
     ship_name: string | null;
     sailing_date: string | null;
     departure_port: string | null;
+    contacts: Array<{
+      tenant_id: string;
+      first_name: string | null;
+      email: string | null;
+    }> | {
+      tenant_id: string;
+      first_name: string | null;
+      email: string | null;
+    } | null;
     groups: Array<{
       cruise_line: string | null;
       ship_name: string | null;
@@ -625,18 +648,10 @@ async function emailContextStillCurrent(args: {
     return false;
   }
 
-  const { data: contactData, error: contactError } = await svc
-    .from("contacts")
-    .select("first_name, email")
-    .eq("id", booking.primary_contact_id)
-    .eq("tenant_id", emailCtx.tenant.id)
-    .maybeSingle();
-  if (contactError) {
-    throw new SupabaseMutationError("precruise.final_state.contact_read", contactError);
-  }
-  const contact = contactData as { first_name: string | null; email: string | null } | null;
+  const contact = Array.isArray(booking.contacts) ? booking.contacts[0] : booking.contacts;
   const groups = Array.isArray(booking.groups) ? booking.groups[0] : booking.groups;
   if (
+    contact?.tenant_id !== emailCtx.tenant.id ||
     !contact?.email ||
     normalizeEmail(contact.email) !== normalizeEmail(emailCtx.toEmail) ||
     (contact.first_name ?? "Traveler") !== emailCtx.customerName ||
@@ -807,7 +822,6 @@ async function buildAndSend(args: {
     email_from_domain_verified_at: emailCtx.branding.email_from_domain_verified_at ?? null,
   };
 
-  if (!(await emailContextStillCurrent({ svc, emailCtx }))) return;
   const claimedAt = await claimContentForSend({
     svc,
     contentId,
@@ -815,6 +829,31 @@ async function buildAndSend(args: {
   });
   if (!claimedAt) {
     console.info(`[precruise] send already claimed: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
+
+  let paymentCheck: Awaited<ReturnType<typeof assertTenantStillPayingById>>;
+  try {
+    paymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
+  if (!paymentCheck.ok) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    console.info(`[precruise] tenant became ineligible before send: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
+
+  let contextIsCurrent: boolean;
+  try {
+    contextIsCurrent = await emailContextStillCurrent({ svc, emailCtx });
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
+  if (!contextIsCurrent) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
     return;
   }
 

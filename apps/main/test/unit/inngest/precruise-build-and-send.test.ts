@@ -25,6 +25,16 @@ const mocks = vi.hoisted(() => ({
   contactEmail: "traveler@example.com",
   sailingDate: "2026-09-01",
   claimed: false,
+  afterClaim: null as (() => void) | null,
+  operations: [] as string[],
+  tenantPaying: true,
+}));
+
+vi.mock("@/lib/billing/exclude-non-paying", () => ({
+  assertTenantStillPayingById: async () => ({
+    ok: mocks.tenantPaying,
+    ...(mocks.tenantPaying ? {} : { reason: "past_grace", days_since_non_paying: 31 }),
+  }),
 }));
 
 vi.mock("@/lib/sailings/sailing-itinerary", () => ({
@@ -38,6 +48,7 @@ vi.mock("@/lib/email/template-resolve", () => ({
 
 vi.mock("@/lib/email/send", () => ({
   sendEmail: async (args: Record<string, unknown>) => {
+    mocks.operations.push("sendEmail");
     mocks.sendEmailArgs.push(args);
     return mocks.sendEmailResult;
   },
@@ -52,26 +63,30 @@ import { buildAndSend } from "@/inngest/precruise-generate-and-send";
 function makeSvc() {
   return {
     from(table: string) {
-      if (table === "bookings" || table === "contacts") {
+      if (table === "bookings") {
         return {
           select() {
             const chain = {
               eq: () => chain,
               maybeSingle: async () => ({
-                data: table === "bookings"
-                  ? {
-                      status: mocks.bookingStatus,
-                      primary_contact_id: mocks.bookingContactId,
-                      cruise_line: "Test Cruise Line",
-                      ship_name: "Test Ship",
-                      sailing_date: mocks.sailingDate,
-                      departure_port: null,
-                      groups: null,
-                    }
-                  : { first_name: "Jordan", email: mocks.contactEmail },
+                data: {
+                  status: mocks.bookingStatus,
+                  primary_contact_id: mocks.bookingContactId,
+                  cruise_line: "Test Cruise Line",
+                  ship_name: "Test Ship",
+                  sailing_date: mocks.sailingDate,
+                  departure_port: null,
+                  groups: null,
+                  contacts: {
+                    tenant_id: "tenant-1",
+                    first_name: "Jordan",
+                    email: mocks.contactEmail,
+                  },
+                },
                 error: null,
               }),
             };
+            mocks.operations.push("final-read");
             return chain;
           },
         };
@@ -87,9 +102,12 @@ function makeSvc() {
               if (payload.send_claimed_at) {
                 if (mocks.claimed) return { data: [], error: null };
                 mocks.claimed = true;
+                mocks.operations.push("claim");
+                mocks.afterClaim?.();
                 return { data: [{ send_claimed_at: payload.send_claimed_at }], error: null };
               }
               mocks.claimed = false;
+              mocks.operations.push("release-or-finalize");
               return { data: [{ id: "content-1" }], error: null };
             },
           };
@@ -129,6 +147,9 @@ beforeEach(() => {
   mocks.contactEmail = "traveler@example.com";
   mocks.sailingDate = "2026-09-01";
   mocks.claimed = false;
+  mocks.afterClaim = null;
+  mocks.operations = [];
+  mocks.tenantPaying = true;
 });
 
 describe("buildAndSend — #1582 transient-failure retry semantics", () => {
@@ -198,6 +219,39 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
     });
 
     expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("releases the claim when the tenant becomes ineligible before dispatch", async () => {
+    mocks.tenantPaying = false;
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      generatedContent: {},
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+    expect(mocks.operations).toEqual(["claim", "release-or-finalize"]);
+  });
+
+  it("claims first, then catches a booking/contact mutation in the one final read", async () => {
+    mocks.afterClaim = () => {
+      mocks.bookingContactId = "contact-2";
+      mocks.contactEmail = "new-recipient@example.com";
+    };
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      generatedContent: {},
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+    expect(mocks.operations).toEqual(["claim", "final-read", "release-or-finalize"]);
   });
 
   it("rechecks the primary contact address immediately before dispatch", async () => {
