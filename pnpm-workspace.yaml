@@ -34,6 +34,9 @@ overrides:
   pdfjs-dist: "6.2.108"
   protobufjs: ">=7.6.5 <8"
   sharp: ">=0.35.0 <0.36"
+  # #2109 — extract-zip has no patched release for GHSA-jmr9-qjv8-65gv.
+  # Puppeteer 25 removes @puppeteer/browsers' vulnerable extract-zip path.
+  "lighthouse@12.6.1>puppeteer-core": "25.1.0"
 allowBuilds:
   '@sentry/cli': false
   esbuild: true
