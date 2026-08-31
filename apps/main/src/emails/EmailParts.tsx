@@ -18,9 +18,9 @@ export function SectionHeading(props: { accent: string; children: React.ReactNod
             </table>
           </td>
           <td style={{ verticalAlign: "middle" }}>
-            <h3 style={{ margin: 0, color: "#243447", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 20, fontWeight: 700, lineHeight: 1.25 }}>
+            <h2 style={{ margin: 0, color: "#243447", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 20, fontWeight: 700, lineHeight: 1.25 }}>
               {props.children}
-            </h3>
+            </h2>
           </td>
         </tr>
       </tbody>

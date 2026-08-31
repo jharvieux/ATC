@@ -31,9 +31,9 @@ export function PreCruiseT30(props: PreCruiseT30Props): React.ReactElement {
       <p style={{ margin: "0 0 8px 0", color: accent, fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textAlign: "center", textTransform: "uppercase" }}>
         Your departure edit
       </p>
-      <h2 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
+      <h1 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
         Thirty days to sail-away.
-      </h2>
+      </h1>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 

@@ -64,6 +64,7 @@ const SIDEBAR_NAV_SECTIONS: readonly TenantNavSection[] = [
       { href: "/crm/contacts", label: "Contacts" },
       { href: "/crm/quotes", label: "Quotes" },
       { href: "/crm/bookings", label: "Bookings" },
+      { href: "/crm/pre-cruise-emails", label: "Pre-cruise emails" },
       { href: "/groups", label: "Group Bookings" },
       { href: "/crm/imports", label: "Imports" },
       { href: "/crm/reports", label: "Reports" },

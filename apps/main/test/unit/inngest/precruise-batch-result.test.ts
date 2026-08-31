@@ -17,6 +17,7 @@ vi.mock("@/inngest/client", () => ({
 
 const mocks = vi.hoisted(() => ({
   insertError: null as { code: string; message: string } | null,
+  insertPayloads: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
   revalidateCalls: [] as Array<[string, string]>,
 }));
@@ -73,7 +74,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
             };
             return chain;
           },
-          insert() {
+          insert(payload: Record<string, unknown>) {
+            mocks.insertPayloads.push(payload);
             return {
               select: () => ({
                 single: async () => ({ data: null, error: mocks.insertError }),
@@ -188,6 +190,7 @@ function makeEvent(): BatchResultEvent {
 
 beforeEach(() => {
   mocks.insertError = null;
+  mocks.insertPayloads = [];
   mocks.sendEmailCalls = 0;
   mocks.revalidateCalls = [];
 });
@@ -206,6 +209,10 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     mocks.insertError = null;
     await runHandler(makeEvent());
     expect(mocks.sendEmailCalls).toBe(1);
+    expect(mocks.insertPayloads[0]).toMatchObject({
+      booking_id: "b1",
+      contact_id: "contact-1",
+    });
     // #1953 — content landed, so the companion page's (booking_id, phase)
     // cache entry must be purged or a placeholder-phase render stays pinned.
     expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);

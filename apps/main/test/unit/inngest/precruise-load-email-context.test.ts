@@ -13,6 +13,12 @@ const mocks = vi.hoisted(() => ({
   selectArgs: [] as string[],
   eqArgs: [] as Array<[string, unknown]>,
   bookingPrimaryContactId: "contact-1" as string | null,
+  bookingTrip: {
+    cruise_line: null,
+    ship_name: null,
+    sailing_date: null,
+    departure_port: null,
+  } as Record<string, string | null>,
   groupsRow: {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -38,6 +44,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   group_booking_id: "g1",
                   user_id: "u1",
                   primary_contact_id: mocks.bookingPrimaryContactId,
+                  ...mocks.bookingTrip,
                   groups: mocks.groupsRow,
                 },
                 error: null,
@@ -89,6 +96,12 @@ beforeEach(() => {
   mocks.selectArgs = [];
   mocks.eqArgs = [];
   mocks.bookingPrimaryContactId = "contact-1";
+  mocks.bookingTrip = {
+    cruise_line: null,
+    ship_name: null,
+    sailing_date: null,
+    departure_port: null,
+  };
   mocks.groupsRow = {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -108,6 +121,7 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
     const bookingsSelect = mocks.selectArgs.find((s) => s.includes("primary_contact_id"));
     expect(bookingsSelect).toBeDefined();
     expect(bookingsSelect).toContain("departure_port)");
+    expect(bookingsSelect).toContain("cruise_line, ship_name, sailing_date, departure_port, groups(");
     expect(bookingsSelect).toContain("group_booking_id");
     // The bug — these never existed on bookings and must never come back:
     expect(bookingsSelect).not.toContain("customer_name");
@@ -152,6 +166,28 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
       phase: "t_1",
     });
     expect(ctx?.departurePort).toBe("Miami, FL");
+  });
+
+  it("uses booking trip fields when no group booking is linked", async () => {
+    mocks.groupsRow = null;
+    mocks.bookingTrip = {
+      cruise_line: "Royal Caribbean",
+      ship_name: "Icon of the Seas",
+      sailing_date: "2027-01-16",
+      departure_port: "Miami, FL",
+    };
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_30",
+    });
+    expect(ctx).toMatchObject({
+      cruiseLine: "Royal Caribbean",
+      shipName: "Icon of the Seas",
+      sailingDate: "2027-01-16",
+      departurePort: "Miami, FL",
+    });
   });
 
   it("leaves ports empty until #485 captures per-stop itinerary", async () => {

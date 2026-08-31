@@ -113,8 +113,8 @@ describe("PreCruiseT90 — §23.4", () => {
     expect(html).toContain("Nassau awaits!");
     expect(html).toContain("Your voyage briefing");
     expect(html).toContain("The horizon is getting closer.");
+    expect(html).toContain("<h1");
     expect(html).toContain("<h2");
-    expect(html).toContain("<h3");
   });
 
   // #975 — T-90 gained the companion-page CTA in the marketing-grade redesign.

@@ -39,9 +39,9 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
       <p style={{ margin: "0 0 8px 0", color: accent, fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textAlign: "center", textTransform: "uppercase" }}>
         Your embarkation briefing
       </p>
-      <h2 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
+      <h1 style={{ color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 30, fontWeight: 700, lineHeight: 1.15, margin: "0 0 20px 0", textAlign: "center" }}>
         Tomorrow, you&rsquo;re at sea.
-      </h2>
+      </h1>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 
@@ -55,6 +55,8 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         </tbody>
       </table>
 
+      {/* This warning stays hardcoded so AI generation can never omit the
+          passport, paperwork, or medication guidance required by §23.4. */}
       <table
         role="presentation"
         width="100%"
@@ -68,9 +70,9 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
               <p style={{ margin: "0 0 8px 0", color: "#92400e", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
                 CARRY-ON ESSENTIALS
               </p>
-              <h3 style={{ margin: "0 0 10px 0", color: "#78350f", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 22, lineHeight: 1.25 }}>
+              <h2 style={{ margin: "0 0 10px 0", color: "#78350f", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 22, lineHeight: 1.25 }}>
                 Pack these in your CARRY-ON, not your checked luggage:
-              </h3>
+              </h2>
               <table role="presentation" width="100%" cellSpacing={0} cellPadding={0}>
                 <tbody>
                   {[

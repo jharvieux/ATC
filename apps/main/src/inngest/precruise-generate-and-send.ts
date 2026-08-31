@@ -40,6 +40,7 @@ import { getDestinationImage, type DestinationImage } from "@/lib/cruise-regions
 import { getCruiseForecast, type DailyForecast } from "@/lib/weather/cruise-forecast";
 import { interpolateSeaDays, type ItineraryDay } from "@/lib/weather/sea-day-interpolation";
 import { lookupPortByName } from "@/lib/ports/lookup-by-name";
+import { validateInngestEvent } from "@/lib/inngest/event-registry";
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
@@ -93,6 +94,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
   // Inngest retries the whole run with backoff instead of silently losing it.
   { id: "precruise-generate-and-send", retries: 3, triggers: [{ event: "precruise/email.due" }] },
   async ({ event }) => {
+    validateInngestEvent("precruise/email.due", event.data);
     const parsed = PrecruiseEmailDuePayloadSchema.safeParse(event.data);
     if (!parsed.success) {
       console.error("[precruise-generate-and-send] invalid event payload: %s", parsed.error.message);
@@ -173,7 +175,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
         .insert({
           tenant_id,
           booking_id,
-          contact_id: emailCtx.booking.user_id ?? booking_id,
+          contact_id: emailCtx.booking.primary_contact_id!,
           email_phase: phase,
           generated_content: generatedContent,
           companion_page_url: emailCtx.companionPageUrl,
@@ -214,6 +216,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.completed.precruise_generation" }],
   },
   async ({ event }) => {
+    validateInngestEvent("ai.batch_request.completed.precruise_generation", event.data);
     const parsed = PrecruiseBatchResultPayloadSchema.safeParse(event.data);
     if (!parsed.success) {
       console.error("[precruise:batch-result] invalid event payload: %s", parsed.error.message);
@@ -249,6 +252,9 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       return;
     }
 
+    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
+    if (!emailCtx) return;
+
     // Insert the generated_content row (or update if already exists from
     // a partial prior run).
     let contentId: string | undefined = existing?.id;
@@ -258,7 +264,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
         .insert({
           tenant_id,
           booking_id,
-          contact_id: booking_id, // bare UUID until contacts table lands
+          contact_id: emailCtx.booking.primary_contact_id!,
           email_phase: phase,
           generated_content: generatedContent,
           companion_page_url: caller_metadata.companion_page_url,
@@ -287,8 +293,6 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     // placeholder-phase render is never served after content lands.
     revalidateCompanionContent(booking_id, phase);
 
-    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
-    if (!emailCtx) return;
     await buildAndSend({ svc, phase, emailCtx, generatedContent, ...(contentId ? { contentId } : {}) });
   },
 );
@@ -301,6 +305,10 @@ interface EmailCtx {
     user_id?: string;
     primary_contact_id?: string | null;
     group_booking_id?: string;
+    cruise_line?: string | null;
+    ship_name?: string | null;
+    sailing_date?: string | null;
+    departure_port?: string | null;
     groups?: {
       cruise_line?: string;
       ship_name?: string;
@@ -353,7 +361,7 @@ export async function loadEmailContext(args: {
     // #1190: bookings has no customer_name/passenger_contact_email/group_id —
     // the recipient comes from the linked contact, and the FK is group_booking_id.
     .select(
-      "id, tenant_id, group_booking_id, user_id, primary_contact_id, groups(cruise_line, ship_name, sailing_date, departure_port)",
+      "id, tenant_id, group_booking_id, user_id, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port)",
     )
     .eq("id", booking_id)
     .eq("tenant_id", tenant_id)
@@ -405,15 +413,15 @@ export async function loadEmailContext(args: {
 
   // #1190: first name only (per product decision) from the booking's contact.
   const customerName = contact?.first_name ?? "Traveler";
-  const shipName = booking.groups?.ship_name ?? "your ship";
-  const cruiseLine = booking.groups?.cruise_line ?? "";
-  const sailingDate = booking.groups?.sailing_date ?? "";
+  const shipName = booking.ship_name ?? booking.groups?.ship_name ?? "your ship";
+  const cruiseLine = booking.cruise_line ?? booking.groups?.cruise_line ?? "";
+  const sailingDate = booking.sailing_date ?? booking.groups?.sailing_date ?? "";
   // Per-stop itinerary (ports of call) isn't captured yet — the DIY
   // CruiseMapper scraper has no sailing parser (#485). Until that lands,
   // the ports list is empty and the destination-image / multi-day-forecast
   // wiring (#487) stays inert. The departure port DOES exist on groups.
   const ports: string[] = [];
-  const departurePort = booking.groups?.departure_port;
+  const departurePort = booking.departure_port ?? booking.groups?.departure_port;
 
   const companionToken = await signCompanionToken({ booking_id, phase });
   const baseUrl = process.env.PLATFORM_PRIMARY_DOMAIN
@@ -579,6 +587,8 @@ async function buildAndSend(args: {
     category: "pre_cruise",
     html,
     idempotencyKey: `pre_cruise:${emailCtx.booking.id}:${phase}`,
+    contact_id: emailCtx.booking.primary_contact_id!,
+    related_booking_id: emailCtx.booking.id,
     ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
     ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
   });

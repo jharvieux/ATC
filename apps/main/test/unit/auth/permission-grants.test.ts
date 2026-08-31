@@ -206,6 +206,9 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["bookings.resources", "read"],
   ["bookings.resources", "create"],
   ["bookings.resources", "update"],
+  // §23.4 — manual pre-cruise delivery (staff-only menu).
+  ["precruise_emails", "send"],
+  ["precruise_emails", "schedule"],
   // #1173 — Reports (CRM nav, STAFF)
   ["reports.bookings_by_source", "read"],
   ["reports.campaigns", "read"],

@@ -1,3 +1,5 @@
+// Email clients require raw HTML elements and inline styles; Next's Head/Image
+// abstractions would produce markup that many inboxes cannot render reliably.
 /* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
 
 import * as React from "react";
