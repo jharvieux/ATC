@@ -302,6 +302,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
 interface EmailCtx {
   booking: {
     id: string;
+    status: string;
     user_id?: string;
     primary_contact_id?: string | null;
     group_booking_id?: string;
@@ -361,7 +362,7 @@ export async function loadEmailContext(args: {
     // #1190: bookings has no customer_name/passenger_contact_email/group_id —
     // the recipient comes from the linked contact, and the FK is group_booking_id.
     .select(
-      "id, tenant_id, group_booking_id, user_id, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port)",
+      "id, tenant_id, status, group_booking_id, user_id, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port)",
     )
     .eq("id", booking_id)
     .eq("tenant_id", tenant_id)
@@ -371,6 +372,10 @@ export async function loadEmailContext(args: {
     return null;
   }
   const booking = bookingRaw as EmailCtx["booking"];
+  if (booking.status !== "confirmed") {
+    console.info(`[precruise] booking is no longer confirmed: ${booking_id}`);
+    return null;
+  }
 
   // #1190: recipient name + email come from the booking's primary contact.
   if (!booking.primary_contact_id) {

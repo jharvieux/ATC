@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   selectArgs: [] as string[],
   eqArgs: [] as Array<[string, unknown]>,
+  bookingStatus: "confirmed",
   bookingPrimaryContactId: "contact-1" as string | null,
   bookingTrip: {
     cruise_line: null,
@@ -41,6 +42,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 data: {
                   id: "b1",
                   tenant_id: "t1",
+                  status: mocks.bookingStatus,
                   group_booking_id: "g1",
                   user_id: "u1",
                   primary_contact_id: mocks.bookingPrimaryContactId,
@@ -95,6 +97,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 beforeEach(() => {
   mocks.selectArgs = [];
   mocks.eqArgs = [];
+  mocks.bookingStatus = "confirmed";
   mocks.bookingPrimaryContactId = "contact-1";
   mocks.bookingTrip = {
     cruise_line: null,
@@ -123,6 +126,7 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
     expect(bookingsSelect).toContain("departure_port)");
     expect(bookingsSelect).toContain("cruise_line, ship_name, sailing_date, departure_port, groups(");
     expect(bookingsSelect).toContain("group_booking_id");
+    expect(bookingsSelect).toContain("status");
     // The bug — these never existed on bookings and must never come back:
     expect(bookingsSelect).not.toContain("customer_name");
     expect(bookingsSelect).not.toContain("passenger_contact_email");
@@ -155,6 +159,19 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
     });
     expect(ctx).toBeNull();
     // No contact id → the contacts query must not run.
+    expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(false);
+  });
+
+  it("skips delivery when a previously scheduled booking is no longer confirmed", async () => {
+    mocks.bookingStatus = "cancelled";
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_7",
+    });
+
+    expect(ctx).toBeNull();
     expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(false);
   });
 
