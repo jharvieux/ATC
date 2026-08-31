@@ -28,11 +28,17 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
-function installFetch(options: { failBookingRefresh?: boolean; dispatchResponse?: Promise<Response> } = {}) {
+function installFetch(options: {
+  failBookingRefresh?: boolean;
+  dispatchResponse?: Promise<Response>;
+  bookingResponses?: Array<Response | Promise<Response>>;
+} = {}) {
   let bookingLoads = 0;
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return options.dispatchResponse ?? jsonResponse({ ok: true }, 202);
     bookingLoads += 1;
+    const configuredResponse = options.bookingResponses?.[bookingLoads - 1];
+    if (configuredResponse) return configuredResponse;
     if (options.failBookingRefresh && bookingLoads > 1) throw new Error("network down");
     return jsonResponse({ bookings: [BOOKING], total: 1, page: 1, page_size: 100 });
   });
@@ -114,5 +120,40 @@ describe("PreCruiseEmailsView", () => {
 
     resolveDispatch(jsonResponse({ ok: true }, 202));
     expect((await screen.findByRole("status")).textContent).toContain("90 days email is queued to send now");
+  });
+
+  it("ignores an older search response after a newer query invalidates it", async () => {
+    let resolveStaleSearch!: (response: Response) => void;
+    const staleSearch = new Promise<Response>((resolve) => {
+      resolveStaleSearch = resolve;
+    });
+    const fetchMock = installFetch({
+      bookingResponses: [
+        jsonResponse({ bookings: [BOOKING] }),
+        staleSearch,
+        jsonResponse({ bookings: [] }),
+      ],
+    });
+    const { container } = render(<PreCruiseEmailsView />);
+
+    await screen.findByRole("option", { name: /Avery Quinn/ });
+    fireEvent.change(screen.getByLabelText("Search traveler"), { target: { value: "av" } });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST")).toHaveLength(2);
+    });
+
+    container.addEventListener("change", () => {
+      resolveStaleSearch(jsonResponse({ bookings: [BOOKING] }));
+    }, { once: true });
+    fireEvent.change(screen.getByLabelText("Search traveler"), { target: { value: "avery" } });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST")).toHaveLength(3);
+    });
+    expect(screen.queryByRole("option", { name: /Avery Quinn/ })).toBeNull();
+    const sendButton = screen.getByRole("button", { name: "Send email now" }) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(true);
+    fireEvent.click(sendButton);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Contact {
   id: string;
@@ -73,6 +73,7 @@ function bookingLabel(booking: Booking): string {
 }
 
 export function PreCruiseEmailsView() {
+  const bookingLoadGeneration = useRef(0);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [query, setQuery] = useState("");
   const [bookingId, setBookingId] = useState("");
@@ -95,6 +96,7 @@ export function PreCruiseEmailsView() {
 
   useEffect(() => {
     let cancelled = false;
+    const generation = bookingLoadGeneration.current;
     const timeout = window.setTimeout(() => {
       void (async () => {
         setLoading(true);
@@ -110,7 +112,7 @@ export function PreCruiseEmailsView() {
             error?: string;
           };
           if (!response.ok) throw new Error(body.error ?? "booking_load_failed");
-          if (!cancelled) {
+          if (!cancelled && generation === bookingLoadGeneration.current) {
             const eligible = (body.bookings ?? []).filter(
               (booking) => booking.primary_contact?.email,
             );
@@ -120,13 +122,13 @@ export function PreCruiseEmailsView() {
             );
           }
         } catch {
-          if (!cancelled) {
+          if (!cancelled && generation === bookingLoadGeneration.current) {
             setBookings([]);
             setBookingId("");
             setError("Could not load confirmed bookings. Please try again.");
           }
         } finally {
-          if (!cancelled) setLoading(false);
+          if (!cancelled && generation === bookingLoadGeneration.current) setLoading(false);
         }
       })();
     }, 250);
@@ -210,6 +212,7 @@ export function PreCruiseEmailsView() {
                 value={query}
                 disabled={submitting}
                 onChange={(event) => {
+                  bookingLoadGeneration.current += 1;
                   setQuery(event.target.value);
                   setBookings([]);
                   setBookingId("");
