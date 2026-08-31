@@ -123,6 +123,9 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "phase_already_sent" }, { status: 409 });
   }
 
+  // Automatic T-90/T-30/T-7 delivery remains batched for daily cost and rate
+  // isolation. Manual delivery is deliberately direct because "send now" and
+  // a chosen schedule time promise prompt delivery; provider batches do not.
   const eventData = {
     booking_id: booking.id,
     tenant_id: auth.ctx.tenant_id,

@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-371 — 2026-08-31 — Manual pre-cruise delivery stays direct
+
+**Decision.** Agent-triggered pre-cruise emails use direct generation for every phase, whether sent immediately or scheduled for a chosen time. The automatic cadence keeps the existing split: T-90/T-30/T-7 use the cost-optimized batch path and T-1 remains direct; every delivery rechecks that the booking is still confirmed at execution time.
+
+**Why.**
+- “Send now” and an agent-selected delivery time promise prompt execution, which an asynchronous provider batch cannot guarantee.
+- Manual sends are low-volume staff actions, so their incremental model cost and rate-limit load are acceptable in exchange for predictable timing.
+- Reusing the existing direct event consumer preserves suppression, deterministic idempotency, retries, branding, and email logging without a second delivery system.
+
+**Rejected.**
+- *Batch manual T-90/T-30/T-7 deliveries.* Rejected because provider batch completion can lag behind the agent’s requested delivery time.
+- *Create a separate database-backed manual scheduler and sender.* Rejected because it would duplicate established reliability and compliance behavior.
+
+**Related artifacts.** PR #2107, `apps/main/src/app/api/precruise-emails/dispatch/route.ts`, `apps/main/src/inngest/precruise-generate-and-send.ts`, [[D-107]], [[D-118]], spec §23.4.
+
+---
+
 ## D-370 — 2026-07-31 — Seam-secret rotation sets final for #2002; CRON_SECRET is a Vercel contract
 
 **Decision.** Sweep #8 (Fable executors) resolved the three seam secrets per D-091 #28 with `_CURRENT`/`_PREVIOUS` rotation sets, env-schema registration, and constant-time comparison via the shared `apps/main/src/lib/auth/rotating-secret.ts` — and the operator ruled this strategy FINAL for #2002, superseding the earlier logged plan to replace `MAIN_APP_ADMIN_API_KEY` with a service-JWT. `CRON_SECRET` stays boot-required (`z.string().min(1)`) forever: Vercel builds the cron Bearer from that exact variable, so a `_CURRENT`-only config boots green while all nine cron routes 401 silently — the Opus d091 audit caught this pre-merge after the first pass made it optional. `MAIN_APP_ADMIN_API_KEY` is now boot-required on main (at-least-one superRefine); atc-main's Preview env carries a random placeholder value for it (replace with the real bearer if preview seam auth is ever needed).

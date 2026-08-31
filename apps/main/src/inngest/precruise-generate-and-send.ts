@@ -668,7 +668,9 @@ export const PRECRUISE_OUTPUT_SCHEMAS: Record<Phase, Record<string, unknown>> = 
     personalized_recommendations: strListField(
       "Exactly 3 personalized recommendations (specialty dining, excursions, spa)",
     ),
-    specialty_experiences: strListField("Always an empty array"),
+    specialty_experiences: strListField(
+      "Exactly 3 distinctive onboard or port experiences worth reserving, without duplicating the personalized recommendations",
+    ),
     pack_inspiration: strField("2-3 sentences — packing inspiration / style tips for this cruise"),
   }),
   t_7: objectSchema({
@@ -738,6 +740,7 @@ export function precruiseAiContentText(
         str(c.checkin_window),
         str(c.final_payment_note),
         list(c.personalized_recommendations),
+        list(c.specialty_experiences),
         str(c.pack_inspiration),
       ];
       break;
@@ -805,18 +808,20 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
       };
     }
     case "t_30": {
-      // #1792 — all three prompts are independent Haiku calls (none reads
+      // #1792 — all four prompts are independent Haiku calls (none reads
       // another's output); fan out together instead of a trailing solo await.
-      const [checkin, packInspiration, recs] = await Promise.all([
+      const [checkin, packInspiration, recs, experiences] = await Promise.all([
         haikuGenerate(tenant_id, sys, "Explain the online check-in window and why to do it early, in 2 sentences."),
         haikuGenerate(tenant_id, sys, "Give packing inspiration / style tips for this cruise, in 2-3 sentences."),
         haikuGenerate(tenant_id, sys, "List 3 personalized recommendations (specialty dining, excursions, spa) one per line, no bullet points."),
+        haikuGenerate(tenant_id, sys, "List 3 distinctive onboard or port experiences worth reserving, one per line, no bullet points. Do not repeat the personalized dining, excursion, or spa recommendations."),
       ]);
       return {
         reservation_reminders: ["Specialty dining reservations", "Shore excursions", "Spa appointments"],
         checkin_window: checkin,
         final_payment_note: null,
         personalized_recommendations: recs.split("\n").filter(Boolean).slice(0, 3),
+        specialty_experiences: experiences.split("\n").filter(Boolean).slice(0, 3),
         pack_inspiration: packInspiration,
       };
     }
@@ -899,7 +904,7 @@ async function buildEmail(
         checkin_window: (c.checkin_window as string) ?? "",
         final_payment_note: (c.final_payment_note as string | null | undefined) ?? null,
         personalized_recommendations: (c.personalized_recommendations as string[]) ?? [],
-        specialty_experiences: [],
+        specialty_experiences: (c.specialty_experiences as string[]) ?? [],
         pack_inspiration: (c.pack_inspiration as string) ?? "",
         companion_page_url: companionPageUrl,
         destination_image: destinationImage,

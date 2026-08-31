@@ -120,7 +120,11 @@ export function PreCruiseEmailsView() {
             );
           }
         } catch {
-          if (!cancelled) setError("Could not load confirmed bookings. Please try again.");
+          if (!cancelled) {
+            setBookings([]);
+            setBookingId("");
+            setError("Could not load confirmed bookings. Please try again.");
+          }
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -233,7 +237,7 @@ export function PreCruiseEmailsView() {
                 return (
                   <label
                     key={item.value}
-                    className={`cursor-pointer rounded-xl border p-4 transition ${
+                    className={`cursor-pointer rounded-xl border p-4 transition focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-200 ${
                       selected ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100" : "border-gray-200 hover:border-gray-300"
                     }`}
                   >

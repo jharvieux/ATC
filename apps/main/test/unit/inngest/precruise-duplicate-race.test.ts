@@ -181,6 +181,21 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
   });
 
+  it("makes the T-30 specialty experiences section reachable in direct sends", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    try {
+      await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+        event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_30", via: "direct" } },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(mocks.insertPayloads[0]?.generated_content).toMatchObject({
+      specialty_experiences: ["unused"],
+    });
+  });
+
   it("throws (not swallows) on a non-23505 insert error", async () => {
     mocks.insertError = { code: "42501", message: "permission denied" };
     await expect(
