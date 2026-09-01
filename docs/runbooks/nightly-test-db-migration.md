@@ -53,7 +53,7 @@ Use this procedure only when recreating the dedicated project or rotating its cr
 ### 1. Stand up a dedicated test Supabase project
 
 - Region **us-east-1** (matches the existing project; keeps GitHub Actions runner latency low).
-- Apply the full schema to the new project (migrations under `db/` — run the same migration path used to recreate `atc-main`). The schema must match prod so RLS and the proxy suite exercise the real policies.
+- Apply the full schema from `apps/main/supabase/migrations/` using the same reset/apply path as the shared test database. The schema must match production so RLS and the proxy suite exercise the real policies.
 - Do **not** load any customer or production data. This project exists solely to be repeatedly mutated and purged by the nightly.
 
 ### 2. Repoint the four GitHub Actions secrets
