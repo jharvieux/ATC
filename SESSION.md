@@ -1,4 +1,4 @@
-# Session state — last updated 2026-09-01 07:19 CDT
+# Session state — last updated 2026-09-01 07:32 CDT
 
 ## Just completed
 - Kept the application, development, CI, and Vercel runtime contract on Node 24.x; Vercel does not yet list Node 26 for Builds or Functions.
@@ -9,12 +9,13 @@
 - Proved forced Homebrew Node 26 verification, secondary-script, and install entrypoints exit at the pnpmfile runtime guard before substantive work begins.
 - Added append-only decisions D-376 and D-377 with their MEMORY index mirrors; D-377 supersedes D-376's initial narrower enforcement mechanism.
 - Full `pnpm verify` passed under Node 24.19.0: 631 main files / 7,258 tests and 30 RAG files / 201 tests passed; main/RAG schema drift was explicitly skipped because database URLs are unset.
+- Merged PR #2124 into `dev` at `637c069d`; exact-head acceptance, both independent audit markers, and all required hosted checks passed.
 
 ## In flight
-- Nothing in flight — clean verified checkpoint on `feature/enforce-node-24`.
+- Nothing in flight — clean checkpoint on `dev`.
 
 ## Next step
-- Wait for the user's next request after the Node 24 enforcement PR is finalized. Do not resume the paused issue sweep without an explicit instruction.
+- Wait for the user's next request. Do not resume the paused issue sweep without an explicit instruction.
 
 ## Blocked on user
 - The issue sweep remains intentionally paused. Do not resume it unless the user explicitly asks.
