@@ -44,7 +44,7 @@ pnpm rls:check:main         # main only
 pnpm rls:check:rag          # rag only
 ```
 
-A target whose env var is unset is **skipped with a warning** by these local commands. The primary CI holder has a stricter contract: human PRs, release branches, merge-group runs, and manual dispatches must establish live main, RAG, and cross-tenant modes before they can publish revision provenance. Dependabot PRs are the only explicit secret-less exemption, and their receipts state that no live acceptance is claimed.
+A target whose env var is unset is **skipped with a warning** by these local commands. The primary CI holder has a stricter contract: human PRs, dev and release pushes, merge-group runs, and manual dispatches must establish live main, RAG, and cross-tenant modes before they can publish revision provenance. Dependabot PRs are the only explicit secret-less exemption, and their receipts state that no live acceptance is claimed.
 
 ## Handling drift on dev
 
@@ -59,7 +59,7 @@ Live `rls-snapshot-diff` acceptance requires:
 
 - `SUPABASE_TEST_DB_URL` — direct Postgres URL for the main test/dev DB.
 - `SUPABASE_RAG_TEST_DB_URL` — direct Postgres URL for the rag test/dev DB.
-- `SUPABASE_TEST_URL` and `SUPABASE_TEST_SERVICE_KEY` — fixture creation and tenant-B authentication for the cross-tenant probe.
+- `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, and `SUPABASE_TEST_SERVICE_KEY` — main RLS live mode, fixture creation, and tenant-B authentication for the cross-tenant probe.
 - `APP_STAGING_URL` — deployed application host exercised by the probe.
 
 For non-release events, the exact event SHA binds the checked-out probe code and

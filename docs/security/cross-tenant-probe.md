@@ -6,7 +6,8 @@ The cross-tenant probe enumerates the deployed `/api/**` paths backed by every r
 
 For seeded dynamic route families, the request targets the matching tenant-A booking, conversation, or contact ID; any 2xx is a leak. Other dynamic routes use a non-existent sentinel, and collection/static-route 2xx JSON bodies are recursively inspected for every known tenant-A tenant, public-user, auth-user, booking, conversation, and contact identifier. A matching identifier is a leak, unreadable or non-JSON 2xx evidence fails closed, and 5xx responses fail. Expected 401/403/404 denials are intentional. Public routes such as `/api/health` must be explicitly documented in the allowlist.
 
-The test runs on every PR as part of CI.
+The test runs on every applicable code PR/event as part of CI; documentation-only
+and other non-code changes intentionally skip the database holder and receipt.
 
 ## How new routes are picked up
 
@@ -50,6 +51,7 @@ npm run test:cross-tenant
 # Full probe with live fixtures:
 NEXT_PUBLIC_SUPABASE_URL=https://xyz.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<key> \
+APP_BASE_URL=https://staging.example.com \
 CROSS_TENANT_FIXTURES=true \
 npm run test:cross-tenant
 ```
