@@ -215,6 +215,23 @@ interface MockControlLifecycle {
   receivers: Set<FlowAtom>;
 }
 
+type MutationKind = "insert" | "update" | "delete" | "upsert";
+
+interface MutationAttempt {
+  kind: MutationKind;
+  operation: FlowAtom;
+  resources: Set<string>;
+  attemptedIds?: Set<string>;
+  intentInvalid: boolean;
+}
+
+interface MutationWitnessEvidence {
+  kind: MutationKind;
+  mode: "combined" | "split";
+  allowedAttemptIds: string[];
+  deniedAttemptIds: string[];
+}
+
 interface FlowState {
   cells: Map<ts.Symbol, Set<FlowAtom>>;
   members: Map<FlowAtom, Map<string, Set<FlowAtom>>>;
@@ -232,6 +249,9 @@ interface FlowState {
   allocationSerial: number;
   unsupportedReasons: Set<string>;
   unsupported: boolean;
+  mutationAttempts: Map<FlowAtom, MutationAttempt>;
+  observedDeniedMutationOperations: Set<FlowAtom>;
+  witnessMutationSignatures: Set<string>;
 }
 
 interface FlowEvaluation {
@@ -248,6 +268,8 @@ interface TestFlowProof {
   unsupported: boolean;
   normalPathWithoutWitness: boolean;
   witnessCall?: ts.CallExpression;
+  mutationEvidence?: MutationWitnessEvidence;
+  mutationEvidenceInvalid: boolean;
 }
 
 const UNKNOWN_ATOM = "unknown";
@@ -279,8 +301,12 @@ class LocalFlowEngine {
   private readonly controlOwners = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlMethods = new Map<FlowAtom, string>();
   private readonly literalValues = new Map<FlowAtom, string>();
+  private readonly stringLiteralAtoms = new Set<FlowAtom>();
   private readonly ambiguousLiteralAtoms = new Set<FlowAtom>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  // Keep attempted mutation IDs separate from returned rows: both are required to prove tenant isolation.
+  private readonly mutationResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  private readonly mutationErrorTargets = new Map<FlowAtom, FlowAtom>();
   private readonly executedWitnessCalls = new Set<ts.CallExpression>();
   private allocationFrame: FlowAtom | undefined;
   private lexicalFrame: FlowAtom | undefined;
@@ -393,6 +419,18 @@ class LocalFlowEngine {
       allocationSerial: state.allocationSerial,
       unsupportedReasons: new Set(state.unsupportedReasons),
       unsupported: state.unsupported,
+      mutationAttempts: new Map(
+        [...state.mutationAttempts].map(([atom, attempt]) => [
+          atom,
+          {
+            ...attempt,
+            resources: new Set(attempt.resources),
+            ...(attempt.attemptedIds ? { attemptedIds: new Set(attempt.attemptedIds) } : {}),
+          },
+        ]),
+      ),
+      observedDeniedMutationOperations: new Set(state.observedDeniedMutationOperations),
+      witnessMutationSignatures: new Set(state.witnessMutationSignatures),
     };
   }
 
@@ -414,6 +452,9 @@ class LocalFlowEngine {
       allocationSerial: 0,
       unsupportedReasons: new Set(),
       unsupported: false,
+      mutationAttempts: new Map(),
+      observedDeniedMutationOperations: new Set(),
+      witnessMutationSignatures: new Set(),
     };
   }
 
@@ -458,7 +499,18 @@ class LocalFlowEngine {
       ) &&
       left.allocationSerial === right.allocationSerial &&
       sameSet(left.unsupportedReasons, right.unsupportedReasons) &&
-      left.unsupported === right.unsupported
+      left.unsupported === right.unsupported &&
+      sameMap(left.mutationAttempts, right.mutationAttempts, (a, b) =>
+        a.kind === b.kind &&
+        a.operation === b.operation &&
+        a.intentInvalid === b.intentInvalid &&
+        sameSet(a.resources, b.resources) &&
+        (a.attemptedIds === undefined
+          ? b.attemptedIds === undefined
+          : b.attemptedIds !== undefined && sameSet(a.attemptedIds, b.attemptedIds))
+      ) &&
+      sameSet(left.observedDeniedMutationOperations, right.observedDeniedMutationOperations) &&
+      sameSet(left.witnessMutationSignatures, right.witnessMutationSignatures)
     );
   }
 
@@ -544,7 +596,10 @@ class LocalFlowEngine {
 
   private literalAtom(node: ts.Expression): FlowAtom {
     const atom = this.atom("literal", node);
-    if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) this.literalValues.set(atom, node.text);
+    if (ts.isStringLiteralLike(node)) {
+      this.literalValues.set(atom, node.text);
+      this.stringLiteralAtoms.add(atom);
+    } else if (ts.isNumericLiteral(node)) this.literalValues.set(atom, node.text);
     else if (node.kind === ts.SyntaxKind.TrueKeyword) this.literalValues.set(atom, "true");
     else if (node.kind === ts.SyntaxKind.FalseKeyword) this.literalValues.set(atom, "false");
     else if (node.kind === ts.SyntaxKind.NullKeyword) this.literalValues.set(atom, "null");
@@ -556,6 +611,99 @@ class LocalFlowEngine {
     if ([...value].some((atom) => this.ambiguousLiteralAtoms.has(atom))) return undefined;
     const keys = new Set([...value].map((atom) => this.literalValues.get(atom)));
     return keys.size === 1 && !keys.has(undefined) ? [...keys][0] : undefined;
+  }
+
+  private stringValues(value: FlowValue): Set<string> | undefined {
+    if (!value.size || [...value].some((atom) => !this.stringLiteralAtoms.has(atom) || this.ambiguousLiteralAtoms.has(atom))) {
+      return undefined;
+    }
+    return new Set([...value].map((atom) => this.literalValues.get(atom)!));
+  }
+
+  private arrayStringValues(state: FlowState, value: FlowValue): Set<string> | undefined {
+    const strings = new Set<string>();
+    for (const array of value) {
+      const length = this.arrayLength(state, array);
+      if (length === undefined) return undefined;
+      for (let index = 0; index < length; index += 1) {
+        const item = state.members.get(array)?.get(String(index));
+        const literals = item && this.stringValues(item);
+        if (!literals) return undefined;
+        for (const literal of literals) strings.add(literal);
+      }
+    }
+    return strings;
+  }
+
+  private mutationRowIds(state: FlowState, value: FlowValue): Set<string> | undefined {
+    const rows: FlowAtom[] = [];
+    for (const atom of value) {
+      const length = this.arrayLength(state, atom);
+      if (length === undefined) rows.push(atom);
+      else {
+        for (let index = 0; index < length; index += 1) {
+          const item = state.members.get(atom)?.get(String(index));
+          if (!item || item.size !== 1) return undefined;
+          rows.push(...item);
+        }
+      }
+    }
+    if (!rows.length) return undefined;
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const id = state.members.get(row)?.get("id");
+      const literals = id && this.stringValues(id);
+      if (!literals) return undefined;
+      for (const literal of literals) ids.add(literal);
+    }
+    return ids;
+  }
+
+  private constrainMutationIds(attempt: MutationAttempt, ids: ReadonlySet<string>): void {
+    attempt.attemptedIds = attempt.attemptedIds === undefined
+      ? new Set(ids)
+      : new Set([...attempt.attemptedIds].filter((id) => ids.has(id)));
+  }
+
+  private applyMutationFilter(
+    state: FlowState,
+    attempt: MutationAttempt,
+    member: string,
+    args: readonly FlowValue[],
+  ): void {
+    if (attempt.kind === "insert" || attempt.kind === "upsert") {
+      attempt.intentInvalid = true;
+      return;
+    }
+    if (member === "eq" || member === "in") {
+      const columns = this.stringValues(args[0] ?? this.values(UNKNOWN_ATOM));
+      if (!columns || columns.size !== 1 || !columns.has("id")) {
+        attempt.intentInvalid = true;
+        return;
+      }
+      const ids = member === "eq"
+        ? this.stringValues(args[1] ?? this.values(UNKNOWN_ATOM))
+        : this.arrayStringValues(state, args[1] ?? this.values(UNKNOWN_ATOM));
+      if (!ids || !ids.size) attempt.intentInvalid = true;
+      else this.constrainMutationIds(attempt, ids);
+      return;
+    }
+    if (member === "match") {
+      const objects = args[0] ?? this.values(UNKNOWN_ATOM);
+      for (const object of objects) {
+        const members = state.members.get(object);
+        if (!members || members.size !== 1 || !members.has("id")) {
+          attempt.intentInvalid = true;
+          continue;
+        }
+        const id = state.members.get(object)?.get("id");
+        const ids = this.stringValues(id);
+        if (!ids || !ids.size) attempt.intentInvalid = true;
+        else this.constrainMutationIds(attempt, ids);
+      }
+      return;
+    }
+    attempt.intentInvalid = true;
   }
 
   private memberKey(node: ts.Node | undefined, state: FlowState, value?: FlowValue): string | undefined {
@@ -792,7 +940,8 @@ class LocalFlowEngine {
       for (const element of bindings.elements) {
         const imported = element.propertyName?.text ?? element.name.text;
         let atom = UNKNOWN_ATOM;
-        if (module === "@supabase/supabase-js" && imported === "createClient") atom = SUPABASE_FACTORY_ATOM;
+        if (module === "postgres" && imported === "default") atom = POSTGRES_FACTORY_ATOM;
+        else if (module === "@supabase/supabase-js" && imported === "createClient") atom = SUPABASE_FACTORY_ATOM;
         else if (module === "vitest" && ["vi", "vitest"].includes(imported)) atom = `framework:${imported}`;
         else if (module === "vitest" && ["beforeAll", "beforeEach", "afterAll", "afterEach"].includes(imported)) {
           atom = `framework:${imported}`;
@@ -904,6 +1053,24 @@ class LocalFlowEngine {
         value.add(method);
         continue;
       }
+      if (receiver.startsWith("result:query:") && member === "error") {
+        const attempt = state.mutationAttempts.get(receiver);
+        if (attempt && this.queryResourcesByAtom.has(receiver)) {
+          const error = this.atom("mutation-error", node);
+          this.mutationErrorTargets.set(error, attempt.operation);
+          value.add(error);
+          continue;
+        }
+      }
+      if (member === "code") {
+        const operation = this.mutationErrorTargets.get(receiver);
+        if (operation) {
+          const code = this.atom("mutation-error-code", node);
+          this.mutationErrorTargets.set(code, operation);
+          value.add(code);
+          continue;
+        }
+      }
       if (
         receiver.startsWith("result:query:") &&
         member &&
@@ -934,6 +1101,12 @@ class LocalFlowEngine {
         ].includes(member)
       ) {
         const method = this.atom("supabase-chain", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
+      if (receiver.startsWith("result:query:") && member === "select" && this.mutationResourcesByAtom.has(receiver)) {
+        const method = this.atom("supabase-mutation-select", node);
         this.memberTargets.set(method, { receiver: new Set([receiver]), member });
         value.add(method);
         continue;
@@ -1527,6 +1700,48 @@ class LocalFlowEngine {
     });
   }
 
+  private mutationWitnessSignature(
+    state: FlowState,
+    beforeOperations: ReadonlySet<FlowAtom>,
+    finalAtom: FlowAtom,
+  ): string | undefined {
+    const attempts = new Map<FlowAtom, MutationAttempt>();
+    for (const attempt of state.mutationAttempts.values()) {
+      if (!beforeOperations.has(attempt.operation)) attempts.set(attempt.operation, attempt);
+    }
+    const final = state.mutationAttempts.get(finalAtom);
+    if (!final) return attempts.size ? JSON.stringify({ invalid: true }) : undefined;
+    const invalid = () => JSON.stringify({ invalid: true, kind: final.kind });
+    if (final.intentInvalid || !final.attemptedIds?.size || !attempts.has(final.operation)) return invalid();
+    if (final.kind === "update" || final.kind === "delete") {
+      if (attempts.size !== 1) return invalid();
+      const attempted = [...final.attemptedIds].sort();
+      return JSON.stringify({
+        kind: final.kind,
+        mode: "combined",
+        allowedAttemptIds: attempted,
+        deniedAttemptIds: attempted,
+      } satisfies MutationWitnessEvidence);
+    }
+    if (attempts.size !== 2) return invalid();
+    const denied = [...attempts.values()].find((attempt) => attempt.operation !== final.operation);
+    if (
+      !denied ||
+      denied.kind !== final.kind ||
+      denied.intentInvalid ||
+      !denied.attemptedIds?.size ||
+      denied.resources.size !== final.resources.size ||
+      [...denied.resources].some((resource) => !final.resources.has(resource)) ||
+      !state.observedDeniedMutationOperations.has(denied.operation)
+    ) return invalid();
+    return JSON.stringify({
+      kind: final.kind,
+      mode: "split",
+      allowedAttemptIds: [...final.attemptedIds].sort(),
+      deniedAttemptIds: [...denied.attemptedIds].sort(),
+    } satisfies MutationWitnessEvidence);
+  }
+
   private invokeAtoms(
     callees: FlowValue,
     args: readonly FlowValue[],
@@ -1792,17 +2007,61 @@ class LocalFlowEngine {
         }
         continue;
       }
+      if (callee.startsWith("supabase-mutation-select:")) {
+        if (call.arguments.length !== 1 || this.literalText(call.arguments[0]) !== "id") {
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          continue;
+        }
+        const result = this.atom("result:query", call);
+        const resources = new Set<string>();
+        const attempts: MutationAttempt[] = [];
+        for (const mutation of memberTarget?.receiver ?? []) {
+          for (const resource of this.mutationResourcesByAtom.get(mutation) ?? []) resources.add(resource);
+          const candidate = branch.mutationAttempts.get(mutation);
+          if (candidate) attempts.push(candidate);
+        }
+        const operations = new Set(attempts.map((attempt) => attempt.operation));
+        const attempt = operations.size === 1 ? attempts[0] : undefined;
+        this.queryResourcesByAtom.set(result, resources);
+        if (attempt) {
+          branch.mutationAttempts.set(result, {
+            ...attempt,
+            resources: new Set(attempt.resources),
+            ...(attempt.attemptedIds ? { attemptedIds: new Set(attempt.attemptedIds) } : {}),
+          });
+        }
+        results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });
+        continue;
+      }
       if (memberTarget && memberTarget.member && ["select", "insert", "update", "delete", "upsert"].includes(memberTarget.member)) {
         const result = this.atom("result:query", call);
         const resources = new Set<string>();
         for (const query of memberTarget.receiver) {
           for (const resource of this.queryResourcesByAtom.get(query) ?? []) resources.add(resource);
         }
-        this.queryResourcesByAtom.set(result, resources);
+        if (memberTarget.member === "select") this.queryResourcesByAtom.set(result, resources);
+        else {
+          const kind = memberTarget.member as MutationKind;
+          this.mutationResourcesByAtom.set(result, resources);
+          const attemptedIds = kind === "insert" || kind === "upsert"
+            ? this.mutationRowIds(branch, args[0] ?? this.values(UNKNOWN_ATOM))
+            : undefined;
+          branch.mutationAttempts.set(result, {
+            kind,
+            operation: result,
+            resources: new Set(resources),
+            ...(attemptedIds ? { attemptedIds } : {}),
+            intentInvalid: (kind === "insert" || kind === "upsert") && !attemptedIds,
+          });
+        }
         results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });
         continue;
       }
       if (callee.startsWith("supabase-chain:")) {
+        for (const receiver of memberTarget?.receiver ?? []) {
+          const attempt = branch.mutationAttempts.get(receiver);
+          if (attempt && memberTarget?.member) this.applyMutationFilter(branch, attempt, memberTarget.member, args);
+        }
         results.push({ state: branch, value: new Set(memberTarget?.receiver ?? [UNKNOWN_ATOM]) });
         continue;
       }
@@ -1817,12 +2076,17 @@ class LocalFlowEngine {
         const queryValues = args[0]
           ? this.propertyFromValue(branch, args[0], "query")
           : this.values(UNKNOWN_ATOM);
+        const beforeOperations = new Set(
+          [...branch.mutationAttempts.values()].map((attempt) => attempt.operation),
+        );
         const queryResults = this.invokeAtoms(queryValues, [], branch, call, active, true, false);
         for (const queryResult of queryResults) {
           for (const atom of queryResult.value) {
             for (const resource of this.queryResourcesByAtom.get(atom) ?? []) {
               queryResult.state.witnessResources.add(resource);
             }
+            const mutationSignature = this.mutationWitnessSignature(queryResult.state, beforeOperations, atom);
+            if (mutationSignature) queryResult.state.witnessMutationSignatures.add(mutationSignature);
           }
           results.push({ state: queryResult.state, value: this.values(UNDEFINED_ATOM) });
         }
@@ -2845,6 +3109,41 @@ class LocalFlowEngine {
     return states;
   }
 
+  private deniedErrorGuardOperations(expression: ts.Expression, state: FlowState): Set<FlowAtom> {
+    const condition = unwrapExpression(expression);
+    if (
+      !ts.isBinaryExpression(condition) ||
+      ![
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsToken,
+      ].includes(condition.operatorToken.kind)
+    ) {
+      return new Set();
+    }
+    const left = unwrapExpression(condition.left);
+    const right = unwrapExpression(condition.right);
+    const codeExpression = ts.isStringLiteralLike(left) && left.text === "42501"
+      ? condition.right
+      : ts.isStringLiteralLike(right) && right.text === "42501"
+        ? condition.left
+        : undefined;
+    if (!codeExpression) return new Set();
+    const evaluated = this.evaluateExpression(codeExpression, this.cloneState(state), new Set());
+    return new Set(
+      evaluated.flatMap((result) =>
+        [...result.value].flatMap((atom) => {
+          const operation = this.mutationErrorTargets.get(atom);
+          return operation ? [operation] : [];
+        })
+      ),
+    );
+  }
+
+  private isDirectThrow(statement: ts.Statement): boolean {
+    return ts.isThrowStatement(statement) ||
+      (ts.isBlock(statement) && statement.statements.length === 1 && ts.isThrowStatement(statement.statements[0]));
+  }
+
   private evaluateStatement(
     statement: ts.Statement,
     state: FlowState,
@@ -2918,6 +3217,17 @@ class LocalFlowEngine {
           return statement.elseStatement
             ? this.evaluateStatement(statement.elseStatement, condition.state, active)
             : [condition.state];
+        }
+        const deniedOperations = !statement.elseStatement && this.isDirectThrow(statement.thenStatement)
+          ? this.deniedErrorGuardOperations(statement.expression, condition.state)
+          : new Set<FlowAtom>();
+        if (deniedOperations.size) {
+          const normal = this.cloneState(condition.state);
+          for (const operation of deniedOperations) normal.observedDeniedMutationOperations.add(operation);
+          return [
+            ...this.evaluateStatement(statement.thenStatement, this.cloneState(condition.state), active),
+            normal,
+          ];
         }
         return [
           ...this.evaluateStatement(statement.thenStatement, this.cloneState(condition.state), active),
@@ -3359,6 +3669,7 @@ class LocalFlowEngine {
         queryResources: [],
         unsupported: true,
         normalPathWithoutWitness: true,
+        mutationEvidenceInvalid: false,
       };
     }
     const bases = this.globalStates(true);
@@ -3380,12 +3691,27 @@ class LocalFlowEngine {
       resourceSets.length > 0 && new Set(resourceSets).size === 1 && resourceSets[0]
         ? resourceSets[0].split(",")
         : [];
+    const mutationSignatureSets = normal.map((result) =>
+      [...result.state.witnessMutationSignatures].sort().join("\n"),
+    );
+    const mutationSignaturesConsistent =
+      mutationSignatureSets.length > 0 &&
+      normal.every((result) => result.state.witnessMutationSignatures.size <= 1) &&
+      new Set(mutationSignatureSets).size === 1;
+    const mutationSignature = mutationSignaturesConsistent ? mutationSignatureSets[0] : undefined;
+    const parsedMutation = mutationSignature
+      ? JSON.parse(mutationSignature) as MutationWitnessEvidence | { invalid: true }
+      : undefined;
     return {
       ...(dirtySupabase ? { mockedReceiver: "Supabase" as const } : dirtyPostgres ? { mockedReceiver: "Postgres" as const } : {}),
       mockedWitness: allStates.some((state) => state.dirty.has(WITNESS_ATOM)),
       ...(witnessCounts.length ? { witnessCount: Math.max(...witnessCounts) } : {}),
       ...(awaitedCounts.length ? { awaitedWitnessCount: Math.max(...awaitedCounts) } : {}),
       queryResources,
+      ...(parsedMutation && !("invalid" in parsedMutation) ? { mutationEvidence: parsedMutation } : {}),
+      mutationEvidenceInvalid:
+        mutationSignatureSets.some(Boolean) &&
+        (!mutationSignaturesConsistent || !parsedMutation || "invalid" in parsedMutation),
       unsupported: allStates.some((state) => state.unsupported),
       normalPathWithoutWitness:
         normal.length === 0 ||
@@ -4424,6 +4750,47 @@ function isolationWitnessError(
   }
   if (!deniedIds || !ts.isArrayLiteralExpression(deniedIds) || deniedIds.elements.length === 0) {
     return "isolation witness deniedIds must be a non-empty array literal";
+  }
+
+  if (proof.mutationEvidenceInvalid) {
+    return "mutation witness must prove authorized and denied attempted effects";
+  }
+  if (proof.mutationEvidence) {
+    const literalIds = (array: ts.ArrayLiteralExpression): string[] | undefined => {
+      const ids = array.elements.map((element) => {
+        if (ts.isSpreadElement(element)) return undefined;
+        const value = unwrapExpression(element);
+        return ts.isStringLiteralLike(value) ? value.text : undefined;
+      });
+      return ids.every((id): id is string => id !== undefined) ? ids : undefined;
+    };
+    const allowed = literalIds(allowedIds);
+    const denied = literalIds(deniedIds);
+    if (!allowed?.length || !denied?.length) {
+      return "mutation witness allowedIds and deniedIds must be non-empty string literals";
+    }
+    const allowedSet = new Set(allowed);
+    const deniedSet = new Set(denied);
+    if (
+      allowedSet.size !== allowed.length ||
+      deniedSet.size !== denied.length ||
+      [...allowedSet].some((id) => deniedSet.has(id))
+    ) {
+      return "mutation witness allowedIds and deniedIds must be unique and disjoint";
+    }
+    const sameIds = (actual: readonly string[], expected: ReadonlySet<string>) =>
+      actual.length === expected.size && actual.every((id) => expected.has(id));
+    if (proof.mutationEvidence.mode === "combined") {
+      const expected = new Set([...allowedSet, ...deniedSet]);
+      if (!sameIds(proof.mutationEvidence.allowedAttemptIds, expected)) {
+        return "mutation witness attempted IDs must exactly match allowedIds and deniedIds";
+      }
+    } else if (
+      !sameIds(proof.mutationEvidence.allowedAttemptIds, allowedSet) ||
+      !sameIds(proof.mutationEvidence.deniedAttemptIds, deniedSet)
+    ) {
+      return "mutation witness split attempts must exactly match allowedIds and deniedIds";
+    }
   }
 
   if (proof.unsupported) return "coverage test uses unsupported relevant flow or effect syntax";

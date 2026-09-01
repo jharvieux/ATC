@@ -516,6 +516,80 @@ describe("RLS integration", () => {
     expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, postgresCoverage]]))).toEqual([]);
   });
 
+  it("accepts a locally defined helper returning an aliased Postgres factory client", () => {
+    const helperCoverage = `
+import { default as pgFactory } from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+function makeTenantClient() { return pgFactory(DB_URL!); }
+const helper = makeTenantClient;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = helper();
+    const query = sql;
+    await assertIsolationQuery({ query: () => query\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toBeUndefined();
+  });
+
+  it.each([
+    ["fake return despite inert real imports", "function makeTenantClient() { return (() => Promise.resolve([])) as never; }"],
+    ["helper reassignment", "let makeTenantClient = () => postgres(DB_URL!); makeTenantClient = () => (() => Promise.resolve([])) as never;"],
+    ["branch-ambiguous return", "function makeTenantClient() { if (process.env.USE_FAKE) return (() => Promise.resolve([])) as never; return postgres(DB_URL!); }"],
+    ["shadowed factory", "function makeTenantClient(postgres = () => (() => Promise.resolve([]))) { return postgres(DB_URL!); }"],
+  ])("rejects a Postgres helper with a %s", (_shape, helper) => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+${helper}
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = makeTenantClient();
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a helper-returned Postgres client overwritten before its query", () => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const makeTenantClient = () => postgres(DB_URL!);
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    let sql = makeTenantClient();
+    sql = (() => Promise.resolve([])) as never;
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a helper-returned Postgres client mocked at instance level", () => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+import { vi } from "vitest";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const makeTenantClient = () => postgres(DB_URL!);
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = makeTenantClient();
+    vi.mocked(sql).mockImplementation(() => Promise.resolve([]));
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/mocks the Postgres client receiver at instance level/);
+  });
+
   it.each([
     ["compound assignment", "sql += fake;"],
     ["logical assignment", "sql &&= fake;"],
@@ -576,6 +650,166 @@ describe("RLS integration", () => {
 })(() => (() => Promise.resolve([])));
 `;
     expect(annotationErrorFor(postgresCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const deniedId = "booking-a"; const deniedRows = [{ id: deniedId }]; const { error } = await db.from("bookings").insert(deniedRows).select("id"); if (error?.code !== "42501") throw new Error("expected denied insert"); const allowedRows = [{ id: "allowed" }]; return db.from("bookings").insert(allowedRows).select("id"); }'],
+    ["UPDATE", '() => { const attemptedIds = ["allowed", "booking-a"]; return db.from("bookings").update({ status: "updated" }).in("id", attemptedIds).select("id"); }'],
+    ["DELETE", '() => { const attemptedIds = ["allowed", "booking-a"]; return db.from("bookings").delete().in("id", attemptedIds).select("id"); }'],
+    ["UPSERT", 'async () => { const deniedId = "booking-a"; const deniedRows = [{ id: deniedId }]; const denied = await db.from("bookings").upsert(deniedRows).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denied upsert"); const allowedRows = [{ id: "allowed" }]; return db.from("bookings").upsert(allowedRows).select("id"); }'],
+  ])("accepts %s evidence that returns affected row IDs from a proven receiver", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s denial probes that do not prove an RLS policy error", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("id")'],
+  ])("rejects %s evidence that never attempts the declared denied ID", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "unrelated" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPDATE", '() => db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "unrelated"]).select("id")'],
+    ["DELETE", '() => db.from("bookings").delete().in("id", ["allowed", "unrelated"]).select("id")'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "unrelated" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s evidence that attempts an unrelated ID instead of the denied ID", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "booking-a"]).neq("id", "booking-a").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().in("id", ["allowed", "booking-a"]).neq("id", "booking-a").select("id")'],
+  ])("rejects %s evidence whose later filter removes the denied attempt", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "booking-a" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "booking-a").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "unrelated").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "booking-a" }]).select("id")'],
+  ])("rejects %s evidence with no declared allowed effect", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPDATE", '() => db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "booking-a"]).select("id")'],
+    ["DELETE", '() => db.from("bookings").delete().in("id", ["allowed", "booking-a"]).select("id")'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s evidence whose declared returned IDs do not match the attempted allowed effect", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["other"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  const mutationLaunderingCases = [
+    ["INSERT", 'db.from("bookings").insert([{ id: "booking-a" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "unrelated").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "unrelated").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "booking-a" }]).select("id")'],
+  ] as const;
+
+  it.each(mutationLaunderingCases)("rejects an ignored %s before a returned canonical SELECT", (_mutation, mutation) => {
+    const query = `async () => { await ${mutation}; return db.from("bookings").select("id"); }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(mutationLaunderingCases)("rejects a saved canonical SELECT followed by an unrelated %s", (_mutation, mutation) => {
+    const query = `async () => { const selected = db.from("bookings").select("id"); await ${mutation}; return selected; }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(mutationLaunderingCases)("rejects a branch-conditional aliased %s before a returned SELECT", (_mutation, mutation) => {
+    const query = `async () => { const mutate = () => ${mutation}; if (process.env.RUN_MUTATION) await mutate(); return db.from("bookings").select("id"); }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }])'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }])'],
+  ])("rejects success-only %s results without affected-row evidence", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none|mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("status")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("status")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("status")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("status")'],
+  ])("rejects %s results that do not return affected IDs", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none|mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'fake.from("bookings").insert([{ id: "allowed" }]).select("id")'],
+    ["UPDATE", 'fake.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")'],
+    ["DELETE", 'fake.from("bookings").delete().eq("id", "allowed").select("id")'],
+    ["UPSERT", 'fake.from("bookings").upsert([{ id: "allowed" }]).select("id")'],
+  ])("rejects %s evidence from a fake receiver despite inert real-DB imports", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace(
+        '    const db = createClient("https://db.example.test", "anon-key");',
+        "    createClient(\"https://db.example.test\", \"anon-key\");\n    const fake = {} as never;",
+      )
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`);
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("preserves canonical SELECT evidence while mutation evidence is distinguished", () => {
+    expect(annotationErrorFor(REAL_DB_COVERAGE)).toBeUndefined();
   });
 
   it("rejects a real from call nested under an unrelated select chain", () => {

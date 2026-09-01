@@ -437,6 +437,70 @@ regress("sql:read-only", "SELECT with trailing semicolon", "safe", pointerUnit, 
 regress("sql:read-only", "read-only SELECT CTE remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"));
 
 regress(
+  "postgres:helper-return",
+  "local helper preserves imported factory provenance",
+  "safe",
+  pointerUnit,
+  postgresTarget("function makeSql() { return pgFactory(DB_URL!); } const sql = makeSql();")
+    .replace('import postgres from "postgres";', 'import { default as pgFactory } from "postgres";'),
+);
+regress(
+  "postgres:helper-return",
+  "fake helper cannot borrow provenance from inert import",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("function makeSql() { return (() => Promise.resolve([])) as never; } const sql = makeSql();"),
+);
+regress(
+  "postgres:helper-return",
+  "branch-ambiguous helper fails closed",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("function makeSql() { if (process.env.FAKE) return (() => Promise.resolve([])) as never; return postgres(DB_URL!); } const sql = makeSql();"),
+);
+
+for (const [mutation, operation, successOnly] of [
+  ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("id")', 'db.from("bookings").insert([{ id: "allowed" }])'],
+  ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")', 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed")'],
+  ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("id")', 'db.from("bookings").delete().eq("id", "allowed")'],
+  ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("id")', 'db.from("bookings").upsert([{ id: "allowed" }])'],
+] as const) {
+  regress(
+    "mutation:affected-rows",
+    `${mutation} omits the declared denied attempt`,
+    "unsafe",
+    pointerUnit,
+    supabaseTarget("const db = createClient(DB_URL!, \"key\");", operation)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]'),
+  );
+  regress("mutation:success-only", `${mutation} without affected IDs`, "unsafe", pointerUnit, supabaseTarget("const db = createClient(DB_URL!, \"key\");", successOnly));
+  regress(
+    "mutation:fake-receiver",
+    `${mutation} affected IDs from fake receiver`,
+    "unsafe",
+    pointerUnit,
+    supabaseTarget("createClient(DB_URL!, \"key\"); const db = fake;", operation),
+  );
+}
+
+for (const [mutation, operation] of [
+  ["INSERT", 'async () => { const { error } = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+  ["UPDATE", '() => { const ids = ["allowed", "booking-a"]; return db.from("bookings").update({ status: "updated" }).in("id", ids).select("id"); }'],
+  ["DELETE", '() => { const ids = ["allowed", "booking-a"]; return db.from("bookings").delete().in("id", ids).select("id"); }'],
+  ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+] as const) {
+  regress(
+    "mutation:attempted-effects",
+    `${mutation} proves allowed and denied attempts`,
+    "safe",
+    pointerUnit,
+    supabaseTarget("const db = createClient(DB_URL!, \"key\");", "placeholder")
+      .replace("query: () => placeholder", `query: ${operation}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]'),
+  );
+}
+
+regress(
   "effects:unknown-loop",
   "second while iteration mutates loader",
   "unsafe",
