@@ -5,7 +5,7 @@
 // vi.stubGlobal fetch mock so no real HTTP happens.
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { providerEmailIdempotencyKey, sendEmail, type SendEmailInput } from "@/lib/email/send";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const testHtml = "<p>Test email body</p>";
@@ -30,6 +30,21 @@ vi.mock("@/lib/abuse/state-machine", () => ({
 
 type DbChain = Record<string, unknown>;
 
+interface MockOutbox {
+  id: string;
+  status: string;
+  sent_at: string | null;
+  resend_message_id: string | null;
+  provider_idempotency_key: string;
+  provider_request_body: string;
+  provider_account_type: "platform_resend" | "tenant_resend";
+  provider_first_attempt_at: string | null;
+}
+
+interface MockOutboxStore {
+  current: MockOutbox | null;
+}
+
 function makeDb({
   suppressions = [] as unknown[],
   logCount = 0,
@@ -38,7 +53,9 @@ function makeDb({
   logInserts = null as Record<string, unknown>[] | null,
   retryContentInserts = null as Record<string, unknown>[] | null,
   rpcCalls = null as Array<{ name: string; args: Record<string, unknown> }> | null,
-  rpcError = null as { message: string } | null,
+  rpcErrors = {} as Record<string, { message: string }>,
+  rpcFailureCounts = {} as Record<string, number>,
+  outboxStore = { current: null } as MockOutboxStore,
 }: {
   suppressions?: unknown[];
   logCount?: number;
@@ -47,17 +64,74 @@ function makeDb({
   logInserts?: Record<string, unknown>[] | null;
   retryContentInserts?: Record<string, unknown>[] | null;
   rpcCalls?: Array<{ name: string; args: Record<string, unknown> }> | null;
-  rpcError?: { message: string } | null;
+  rpcErrors?: Record<string, { message: string }>;
+  rpcFailureCounts?: Record<string, number>;
+  outboxStore?: MockOutboxStore;
 } = {}): SupabaseClient {
   return {
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcCalls?.push({ name, args });
-      return rpcError
-        ? { data: null, error: rpcError }
-        : {
-            data: [{ email_log_id: insertId, newly_recorded: true, email_sent_today: 7 }],
-            error: null,
+      if ((rpcFailureCounts[name] ?? 0) > 0) {
+        rpcFailureCounts[name] = (rpcFailureCounts[name] ?? 0) - 1;
+        return { data: null, error: rpcErrors[name] ?? { message: `${name} failed` } };
+      }
+      if (rpcErrors[name] && !(name in rpcFailureCounts)) return { data: null, error: rpcErrors[name] };
+      if (name === "prepare_idempotent_email_send") {
+        if (!outboxStore.current) {
+          outboxStore.current = {
+            id: insertId,
+            status: "queued",
+            sent_at: null,
+            resend_message_id: null,
+            provider_idempotency_key: String(args.p_provider_idempotency_key),
+            provider_request_body: String(args.p_provider_request_body),
+            provider_account_type: String(args.p_provider_account_type) as MockOutbox["provider_account_type"],
+            provider_first_attempt_at: null,
           };
+        }
+        return {
+          data: [{
+            email_log_id: outboxStore.current.id,
+            email_status: outboxStore.current.status,
+            sent_at: outboxStore.current.sent_at,
+            resend_message_id: outboxStore.current.resend_message_id,
+            provider_idempotency_key: outboxStore.current.provider_idempotency_key,
+            provider_request_body: outboxStore.current.provider_request_body,
+            provider_first_attempt_at: outboxStore.current.provider_first_attempt_at,
+            newly_queued: outboxStore.current.provider_first_attempt_at === null,
+          }],
+          error: null,
+        };
+      }
+      if (name === "start_idempotent_email_dispatch") {
+        if (!outboxStore.current) return { data: null, error: { message: "missing outbox" } };
+        outboxStore.current.provider_first_attempt_at ??= "2026-08-31T12:00:00.000Z";
+        return {
+          data: [{
+            email_log_id: outboxStore.current.id,
+            provider_idempotency_key: outboxStore.current.provider_idempotency_key,
+            provider_request_body: outboxStore.current.provider_request_body,
+            provider_account_type: outboxStore.current.provider_account_type,
+            provider_first_attempt_at: outboxStore.current.provider_first_attempt_at,
+          }],
+          error: null,
+        };
+      }
+      if (name === "finalize_idempotent_email_send") {
+        if (!outboxStore.current) return { data: null, error: { message: "missing outbox" } };
+        outboxStore.current.status = "sent";
+        outboxStore.current.sent_at ??= "2026-08-31T12:00:01.000Z";
+        outboxStore.current.resend_message_id ??= String(args.p_resend_message_id);
+        return {
+          data: [{ email_log_id: outboxStore.current.id, newly_recorded: true, email_sent_today: 7 }],
+          error: null,
+        };
+      }
+      if (name === "abandon_unstarted_idempotent_email") {
+        if (!outboxStore.current?.provider_first_attempt_at) outboxStore.current = null;
+        return { data: true, error: null };
+      }
+      return { data: null, error: { message: `unexpected rpc ${name}` } };
     },
     from: (table: string) => {
       if (table === "email_retry_content") {
@@ -82,9 +156,27 @@ function makeDb({
         };
       }
       if (table === "email_log") {
-        // rate-limit query
         const countChain: DbChain = {
-          select: () => countChain,
+          select: (columns: string) => {
+            if (columns.includes("provider_first_attempt_at")) {
+              const outboxChain: DbChain = {
+                eq: () => outboxChain,
+                limit: () => outboxChain,
+                maybeSingle: vi.fn().mockImplementation(async () => ({
+                  data: outboxStore.current ? {
+                    id: outboxStore.current.id,
+                    status: outboxStore.current.status,
+                    sent_at: outboxStore.current.sent_at,
+                    resend_message_id: outboxStore.current.resend_message_id,
+                    provider_first_attempt_at: outboxStore.current.provider_first_attempt_at,
+                  } : null,
+                  error: null,
+                })),
+              };
+              return outboxChain;
+            }
+            return countChain;
+          },
           eq: () => countChain,
           gte: () => countChain,
           not: vi.fn().mockResolvedValue({ data: Array(logCount).fill({ id: "x" }), error: null }),
@@ -234,10 +326,16 @@ describe("sendEmail — §23", () => {
     });
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     const headers = calls[0]?.[1]?.headers as Record<string, string>;
-    expect(headers["Idempotency-Key"]).toBe("pre_cruise:booking-1:t_7");
-    expect(rpcCalls).toHaveLength(1);
+    expect(headers["Idempotency-Key"]).toBe(
+      providerEmailIdempotencyKey("tenant-1", "pre_cruise:booking-1:t_7"),
+    );
+    expect(rpcCalls.map((call) => call.name)).toEqual([
+      "prepare_idempotent_email_send",
+      "start_idempotent_email_dispatch",
+      "finalize_idempotent_email_send",
+    ]);
     expect(rpcCalls[0]).toMatchObject({
-      name: "finalize_idempotent_email_send",
+      name: "prepare_idempotent_email_send",
       args: {
         p_tenant_id: "tenant-1",
         p_idempotency_key: "pre_cruise:booking-1:t_7",
@@ -248,6 +346,94 @@ describe("sendEmail — §23", () => {
     expect(mocks.transitions[0]).toMatchObject({
       dimension: "email_volume",
       metric_value: 7n,
+    });
+  });
+
+  it("namespaces the provider key by tenant without truncating the logical key", async () => {
+    const logicalKey = `group_reminder:${"x".repeat(300)}`;
+    await sendEmail({
+      db: makeDb(),
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Tenant one",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: logicalKey,
+    });
+    await sendEmail({
+      db: makeDb(),
+      tenant: { ...baseTenant, id: "tenant-2" },
+      to: "customer@example.com",
+      subject: "Tenant two",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: logicalKey,
+    });
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const firstKey = (calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"];
+    const secondKey = (calls[1]?.[1]?.headers as Record<string, string>)["Idempotency-Key"];
+    expect(firstKey).toBe(providerEmailIdempotencyKey("tenant-1", logicalKey));
+    expect(secondKey).toBe(providerEmailIdempotencyKey("tenant-2", logicalKey));
+    expect(firstKey).not.toBe(secondKey);
+    expect(firstKey).toHaveLength(77);
+    expect(secondKey).toHaveLength(77);
+  });
+
+  it("replays the queued provider bytes after provider success and local finalization failure", async () => {
+    const outboxStore: MockOutboxStore = { current: null };
+    const rpcFailureCounts = { finalize_idempotent_email_send: 1 };
+    const db = makeDb({
+      outboxStore,
+      rpcFailureCounts,
+      rpcErrors: { finalize_idempotent_email_send: { message: "commit interrupted" } },
+    });
+    const beforeDispatch = vi.fn(async (_context: { providerReplay: boolean }) => ({ allowed: true }));
+    const firstInput: SendEmailInput = {
+      db,
+      tenant: baseTenant,
+      to: "first@example.com",
+      subject: "Original subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: "<p>Original body</p>",
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+      beforeDispatch,
+    };
+
+    await expect(sendEmail(firstInput)).rejects.toThrow(/finalize_idempotent_email_send/);
+    const recovered = await sendEmail({
+      ...firstInput,
+      tenant: {
+        ...baseTenant,
+        email_from_name: "Changed Agency",
+        email_from_address: "changed@example.com",
+      },
+      to: "changed@example.com",
+      subject: "Changed subject",
+      html: "<p>Changed body</p>",
+    });
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.[1]?.body).toBe(calls[0]?.[1]?.body);
+    expect(
+      (calls[1]?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe((calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"]);
+    expect(beforeDispatch.mock.calls.map(([context]) => context)).toEqual([
+      { providerReplay: false },
+      { providerReplay: true },
+    ]);
+    expect(recovered).toMatchObject({
+      status: "sent",
+      email_log_id: "log-1",
+      resend_message_id: "resend-msg-123",
+    });
+    expect(outboxStore.current).toMatchObject({
+      status: "sent",
+      resend_message_id: "resend-msg-123",
     });
   });
 
@@ -271,7 +457,7 @@ describe("sendEmail — §23", () => {
   });
 
   it("fails loudly after provider success when atomic finalization fails so the keyed call can retry", async () => {
-    const db = makeDb({ rpcError: { message: "database unavailable" } });
+    const db = makeDb({ rpcErrors: { finalize_idempotent_email_send: { message: "database unavailable" } } });
     await expect(sendEmail({
       db,
       tenant: baseTenant,
@@ -302,7 +488,12 @@ describe("sendEmail — §23", () => {
     await sendEmail(input);
     await sendEmail(input);
 
-    expect(rpcCalls).toHaveLength(2);
+    expect(rpcCalls.map((call) => call.name)).toEqual([
+      "prepare_idempotent_email_send",
+      "start_idempotent_email_dispatch",
+      "finalize_idempotent_email_send",
+      "finalize_idempotent_email_send",
+    ]);
     expect(mocks.transitions).toHaveLength(2);
   });
 

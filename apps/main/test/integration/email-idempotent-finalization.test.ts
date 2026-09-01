@@ -63,9 +63,45 @@ async function finalize(
   suffix: string,
   retryOf: string | null = null,
 ): Promise<{ email_log_id: string; newly_recorded: boolean; email_sent_today: number }> {
+  const payload = rpcPayload(key, suffix, retryOf);
+  const { data: preparedData, error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send", {
+    p_tenant_id: tenantId,
+    p_idempotency_key: key,
+    p_provider_idempotency_key: `integration:${tenantId}:${key}`,
+    p_provider_request_body: JSON.stringify({
+      from: "noreply@example.test",
+      to: `${suffix}@example.test`,
+      subject: `Subject ${suffix}`,
+      html: `<p>${suffix}</p>`,
+    }),
+    p_provider_account_type: "platform_resend",
+    p_log: payload.p_log,
+    p_retry_content: payload.p_retry_content,
+  });
+  if (prepareError) throw new Error(prepareError.message);
+  const prepared = (preparedData as Array<{ sent_at: string | null }> | null)?.[0];
+  if (!prepared) throw new Error("prepare_idempotent_email_send returned no row");
+
+  if (!prepared.sent_at) {
+    const { error: startError } = await fx.admin.rpc("start_idempotent_email_dispatch", {
+      p_tenant_id: tenantId,
+      p_idempotency_key: key,
+    });
+    if (startError) throw new Error(startError.message);
+  }
+
+  return finalizeEffects(tenantId, key, `resend-${runTag}-${suffix}`);
+}
+
+async function finalizeEffects(
+  tenantId: string,
+  key: string,
+  resendMessageId: string,
+): Promise<{ email_log_id: string; newly_recorded: boolean; email_sent_today: number }> {
   const { data, error } = await fx.admin.rpc("finalize_idempotent_email_send", {
     p_tenant_id: tenantId,
-    ...rpcPayload(key, suffix, retryOf),
+    p_idempotency_key: key,
+    p_resend_message_id: resendMessageId,
   });
   if (error) throw new Error(error.message);
   const row = (data as Array<{
@@ -139,19 +175,25 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     const [orphan] = await fx.sql<{ id: string }[]>`
       INSERT INTO public.email_log (
         tenant_id, to_email, from_email, subject, template_id,
-        email_category, status, sent_at, resend_message_id, idempotency_key
+        email_category, status, sent_at, resend_message_id, idempotency_key,
+        provider_idempotency_key, provider_request_body, provider_account_type,
+        provider_first_attempt_at, provider_snapshot_expires_at, retry_content_snapshot
       ) VALUES (
         ${fx.tenantOne}, 'orphan@example.test', 'noreply@example.test', 'Subject orphan',
         'integration_test', 'transactional', 'sent', now(),
-        ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`}
+        ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`},
+        ${`integration:${fx.tenantOne}:${runTag}:orphan`},
+        ${JSON.stringify({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
+        'platform_resend', now(), now() + interval '7 days',
+        ${JSON.stringify(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}::jsonb
       )
       RETURNING id
     `;
     if (!orphan) throw new Error("orphan seed returned no row");
-    const healed = await finalize(fx.tenantOne, `${runTag}:orphan`, "orphan");
+    const healed = await finalizeEffects(fx.tenantOne, `${runTag}:orphan`, `resend-${runTag}-orphan`);
     expect(healed).toMatchObject({
       email_log_id: orphan.id,
-      newly_recorded: false,
+      newly_recorded: true,
       email_sent_today: 2,
     });
 
@@ -179,9 +221,27 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
       ORDER BY upper(billing_period) DESC
       LIMIT 1
     `;
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () => finalize(fx.tenantOne, `${runTag}:concurrent`, "concurrent")),
-    );
+    const key = `${runTag}:concurrent`;
+    const payload = rpcPayload(key, "concurrent");
+    const { error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+      p_provider_idempotency_key: `integration:${fx.tenantOne}:${key}`,
+      p_provider_request_body: JSON.stringify({ from: "noreply@example.test", to: "concurrent@example.test", subject: "Subject concurrent", html: "<p>concurrent</p>" }),
+      p_provider_account_type: "platform_resend",
+      p_log: payload.p_log,
+      p_retry_content: payload.p_retry_content,
+    });
+    if (prepareError) throw new Error(prepareError.message);
+    const { error: startError } = await fx.admin.rpc("start_idempotent_email_dispatch", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+    });
+    if (startError) throw new Error(startError.message);
+    const results = await Promise.all(Array.from(
+      { length: 8 },
+      () => finalizeEffects(fx.tenantOne, key, `resend-${runTag}-concurrent`),
+    ));
     expect(results.filter((row) => row.newly_recorded)).toHaveLength(1);
     expect(new Set(results.map((row) => row.email_log_id)).size).toBe(1);
 
@@ -219,15 +279,31 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
         (${fx.tenantOne}, 'null-two@example.test', 'noreply@example.test', 'Null two', 'integration_test', 'transactional', 'queued', NULL)
     `;
 
-    const wrongTenant = await fx.admin.rpc("finalize_idempotent_email_send", {
+    const retryOf = (
+      await fx.sql<{ id: string }[]>`
+        SELECT id FROM public.email_log
+        WHERE tenant_id = ${fx.tenantOne} AND idempotency_key = ${`${runTag}:first`}
+        LIMIT 1
+      `
+    )[0]!.id;
+    const wrongTenantPayload = rpcPayload(
+      `${runTag}:wrong-tenant-retry`,
+      "wrong-tenant-retry",
+      retryOf,
+    );
+    const wrongTenant = await fx.admin.rpc("prepare_idempotent_email_send", {
       p_tenant_id: fx.tenantTwo,
-      ...rpcPayload(`${runTag}:wrong-tenant-retry`, "wrong-tenant-retry", (
-        await fx.sql<{ id: string }[]>`
-          SELECT id FROM public.email_log
-          WHERE tenant_id = ${fx.tenantOne} AND idempotency_key = ${`${runTag}:first`}
-          LIMIT 1
-        `
-      )[0]!.id),
+      p_idempotency_key: `${runTag}:wrong-tenant-retry`,
+      p_provider_idempotency_key: `integration:${fx.tenantTwo}:${runTag}:wrong-tenant-retry`,
+      p_provider_request_body: JSON.stringify({
+        from: "noreply@example.test",
+        to: "wrong-tenant-retry@example.test",
+        subject: "Subject wrong-tenant-retry",
+        html: "<p>wrong-tenant-retry</p>",
+      }),
+      p_provider_account_type: "platform_resend",
+      p_log: wrongTenantPayload.p_log,
+      p_retry_content: wrongTenantPayload.p_retry_content,
     });
     expect(wrongTenant.error?.message).toMatch(/retry_of does not belong to tenant/);
   }, 60000);

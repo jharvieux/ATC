@@ -16,47 +16,76 @@ ALTER TABLE public.pre_cruise_email_content
 
 ALTER TABLE public.email_log
   ADD COLUMN idempotency_key TEXT,
-  ADD COLUMN idempotent_effects_recorded_at TIMESTAMPTZ;
+  ADD COLUMN idempotent_effects_recorded_at TIMESTAMPTZ,
+  ADD COLUMN provider_idempotency_key TEXT,
+  ADD COLUMN provider_request_body TEXT,
+  ADD COLUMN provider_account_type TEXT,
+  ADD COLUMN provider_first_attempt_at TIMESTAMPTZ,
+  ADD COLUMN provider_snapshot_expires_at TIMESTAMPTZ,
+  ADD COLUMN retry_content_snapshot JSONB,
+  ADD CONSTRAINT email_log_provider_idempotency_key_length_chk CHECK (
+    provider_idempotency_key IS NULL
+    OR char_length(provider_idempotency_key) BETWEEN 1 AND 256
+  ),
+  ADD CONSTRAINT email_log_provider_account_type_chk CHECK (
+    provider_account_type IS NULL
+    OR provider_account_type IN ('platform_resend', 'tenant_resend')
+  );
 
 CREATE UNIQUE INDEX email_log_tenant_idempotency_key_uidx
   ON public.email_log(tenant_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 
--- collectively-atomic-writes: one successful provider delivery owns exactly
--- one logical log, one retry payload, and one usage increment. The effects
--- timestamp also lets a replay heal an orphaned logical log without counting
--- it twice.
-CREATE OR REPLACE FUNCTION public.finalize_idempotent_email_send(
+-- A queued row is an outbox snapshot, not evidence of a completed send. Its
+-- exact provider body/key remain immutable across retries; the first caller to
+-- insert a tenant/logical key owns the authoritative provider variant.
+CREATE OR REPLACE FUNCTION public.prepare_idempotent_email_send(
   p_tenant_id UUID,
   p_idempotency_key TEXT,
+  p_provider_idempotency_key TEXT,
+  p_provider_request_body TEXT,
+  p_provider_account_type TEXT,
   p_log JSONB,
   p_retry_content JSONB DEFAULT NULL
 )
 RETURNS TABLE (
   email_log_id UUID,
-  newly_recorded BOOLEAN,
-  email_sent_today INTEGER
+  email_status TEXT,
+  sent_at TIMESTAMPTZ,
+  resend_message_id TEXT,
+  provider_idempotency_key TEXT,
+  provider_request_body TEXT,
+  provider_first_attempt_at TIMESTAMPTZ,
+  newly_queued BOOLEAN
 )
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_now TIMESTAMPTZ := clock_timestamp();
   v_log_id UUID;
   v_inserted BOOLEAN := FALSE;
-  v_effects_recorded_at TIMESTAMPTZ;
-  v_existing_resend_message_id TEXT;
   v_retry_of UUID := NULLIF(p_log->>'retry_of', '')::UUID;
-  v_today DATE := (clock_timestamp() AT TIME ZONE 'UTC')::DATE;
-  v_period DATERANGE := daterange(
-    date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC')::DATE,
-    (date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month')::DATE,
-    '[)'
-  );
-  v_daily_count INTEGER;
 BEGIN
   IF p_idempotency_key IS NULL OR btrim(p_idempotency_key) = '' THEN
     RAISE EXCEPTION 'idempotency key is required';
+  END IF;
+
+  IF
+    p_provider_idempotency_key IS NULL
+    OR btrim(p_provider_idempotency_key) = ''
+    OR char_length(p_provider_idempotency_key) > 256
+  THEN
+    RAISE EXCEPTION 'provider idempotency key must contain 1-256 characters';
+  END IF;
+
+  IF p_provider_request_body IS NULL OR p_provider_request_body = '' THEN
+    RAISE EXCEPTION 'provider request body is required';
+  END IF;
+
+  IF p_provider_account_type NOT IN ('platform_resend', 'tenant_resend') THEN
+    RAISE EXCEPTION 'provider account type is invalid';
   END IF;
 
   IF v_retry_of IS NOT NULL AND NOT EXISTS (
@@ -89,7 +118,12 @@ BEGIN
     related_booking_id,
     related_group_id,
     retry_of,
-    idempotency_key
+    idempotency_key,
+    provider_idempotency_key,
+    provider_request_body,
+    provider_account_type,
+    provider_snapshot_expires_at,
+    retry_content_snapshot
   ) VALUES (
     p_tenant_id,
     NULLIF(p_log->>'user_id', '')::UUID,
@@ -101,13 +135,18 @@ BEGIN
     p_log->>'template_id',
     NULLIF(p_log->>'template_version', '')::INTEGER,
     NULLIF(p_log->'template_variables', 'null'::JSONB),
-    'sent',
-    COALESCE(NULLIF(p_log->>'sent_at', '')::TIMESTAMPTZ, clock_timestamp()),
+    'queued',
+    NULL,
     p_log->>'email_category',
     NULLIF(p_log->>'related_booking_id', '')::UUID,
     NULLIF(p_log->>'related_group_id', '')::UUID,
     v_retry_of,
-    p_idempotency_key
+    p_idempotency_key,
+    p_provider_idempotency_key,
+    p_provider_request_body,
+    p_provider_account_type,
+    v_now + INTERVAL '7 days',
+    p_retry_content
   )
   ON CONFLICT (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL
@@ -116,56 +155,215 @@ BEGIN
 
   v_inserted := v_log_id IS NOT NULL;
 
+  RETURN QUERY
+  SELECT
+    email_log.id,
+    email_log.status,
+    email_log.sent_at,
+    email_log.resend_message_id,
+    email_log.provider_idempotency_key,
+    email_log.provider_request_body,
+    email_log.provider_first_attempt_at,
+    v_inserted
+  FROM public.email_log
+  WHERE email_log.tenant_id = p_tenant_id
+    AND email_log.idempotency_key = p_idempotency_key;
+END;
+$$;
+
+-- The attempt epoch is stamped only after the caller's last policy check and
+-- immediately before dispatch. Once set, the exact outbox request may replay
+-- for 23 hours; after that the function fails closed before another provider
+-- call can escape Resend's 24-hour deduplication window.
+CREATE OR REPLACE FUNCTION public.start_idempotent_email_dispatch(
+  p_tenant_id UUID,
+  p_idempotency_key TEXT
+)
+RETURNS TABLE (
+  email_log_id UUID,
+  provider_idempotency_key TEXT,
+  provider_request_body TEXT,
+  provider_account_type TEXT,
+  provider_first_attempt_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := clock_timestamp();
+  v_log_id UUID;
+  v_provider_key TEXT;
+  v_provider_body TEXT;
+  v_provider_account_type TEXT;
+  v_first_attempt_at TIMESTAMPTZ;
+  v_snapshot_expires_at TIMESTAMPTZ;
+BEGIN
   SELECT
     id,
-    idempotent_effects_recorded_at,
-    resend_message_id
+    email_log.provider_idempotency_key,
+    email_log.provider_request_body,
+    email_log.provider_account_type,
+    email_log.provider_first_attempt_at,
+    provider_snapshot_expires_at
   INTO
     v_log_id,
-    v_effects_recorded_at,
-    v_existing_resend_message_id
+    v_provider_key,
+    v_provider_body,
+    v_provider_account_type,
+    v_first_attempt_at,
+    v_snapshot_expires_at
   FROM public.email_log
   WHERE tenant_id = p_tenant_id
     AND idempotency_key = p_idempotency_key
-    AND to_email = p_log->>'to_email'
-    AND from_email = p_log->>'from_email'
-    AND subject = p_log->>'subject'
-    AND template_id = p_log->>'template_id'
-    AND email_category IS NOT DISTINCT FROM p_log->>'email_category'
-    AND retry_of IS NOT DISTINCT FROM v_retry_of
+    AND status = 'queued'
+    AND sent_at IS NULL
+  FOR UPDATE;
+
+  IF v_log_id IS NULL OR v_provider_key IS NULL OR v_provider_body IS NULL THEN
+    RAISE EXCEPTION 'queued provider snapshot not found';
+  END IF;
+
+  IF v_snapshot_expires_at IS NULL OR v_snapshot_expires_at <= v_now THEN
+    RAISE EXCEPTION 'queued provider snapshot expired';
+  END IF;
+
+  IF v_first_attempt_at IS NOT NULL AND v_now - v_first_attempt_at >= INTERVAL '23 hours' THEN
+    RAISE EXCEPTION 'provider replay window expired';
+  END IF;
+
+  IF v_first_attempt_at IS NULL THEN
+    v_first_attempt_at := v_now;
+    UPDATE public.email_log
+    SET provider_first_attempt_at = v_first_attempt_at
+    WHERE id = v_log_id
+      AND tenant_id = p_tenant_id
+      AND provider_first_attempt_at IS NULL;
+  END IF;
+
+  RETURN QUERY SELECT
+    v_log_id,
+    v_provider_key,
+    v_provider_body,
+    v_provider_account_type,
+    v_first_attempt_at;
+END;
+$$;
+
+-- A policy rejection can discard only a queued snapshot that has never crossed
+-- the provider-attempt boundary. Started/ambiguous rows are immutable.
+CREATE OR REPLACE FUNCTION public.abandon_unstarted_idempotent_email(
+  p_tenant_id UUID,
+  p_idempotency_key TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_deleted UUID;
+BEGIN
+  DELETE FROM public.email_log
+  WHERE tenant_id = p_tenant_id
+    AND idempotency_key = p_idempotency_key
+    AND status = 'queued'
+    AND sent_at IS NULL
+    AND provider_first_attempt_at IS NULL
+  RETURNING id INTO v_deleted;
+
+  RETURN v_deleted IS NOT NULL;
+END;
+$$;
+
+-- collectively-atomic-writes: after provider success, one transaction marks
+-- the queued log sent, creates the original retry payload, and accounts for the
+-- send exactly once. Replays also return the current UTC-day count so the
+-- caller can heal a state-transition crash.
+CREATE OR REPLACE FUNCTION public.finalize_idempotent_email_send(
+  p_tenant_id UUID,
+  p_idempotency_key TEXT,
+  p_resend_message_id TEXT
+)
+RETURNS TABLE (
+  email_log_id UUID,
+  newly_recorded BOOLEAN,
+  email_sent_today INTEGER
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := clock_timestamp();
+  v_log_id UUID;
+  v_effects_recorded_at TIMESTAMPTZ;
+  v_existing_resend_message_id TEXT;
+  v_retry_of UUID;
+  v_retry_content JSONB;
+  v_today DATE := (v_now AT TIME ZONE 'UTC')::DATE;
+  v_period DATERANGE := daterange(
+    date_trunc('month', v_now AT TIME ZONE 'UTC')::DATE,
+    (date_trunc('month', v_now AT TIME ZONE 'UTC') + INTERVAL '1 month')::DATE,
+    '[)'
+  );
+  v_daily_count INTEGER;
+  v_newly_recorded BOOLEAN;
+BEGIN
+  SELECT
+    id,
+    idempotent_effects_recorded_at,
+    resend_message_id,
+    retry_of,
+    retry_content_snapshot
+  INTO
+    v_log_id,
+    v_effects_recorded_at,
+    v_existing_resend_message_id,
+    v_retry_of,
+    v_retry_content
+  FROM public.email_log
+  WHERE tenant_id = p_tenant_id
+    AND idempotency_key = p_idempotency_key
   FOR UPDATE;
 
   IF v_log_id IS NULL THEN
-    RAISE EXCEPTION 'idempotency key payload mismatch';
+    RAISE EXCEPTION 'idempotent email outbox not found';
+  END IF;
+
+  IF
+    v_existing_resend_message_id IS NULL
+    AND (p_resend_message_id IS NULL OR btrim(p_resend_message_id) = '')
+  THEN
+    RAISE EXCEPTION 'provider message id is required';
   END IF;
 
   IF
     v_existing_resend_message_id IS NOT NULL
-    AND NULLIF(p_log->>'resend_message_id', '') IS NOT NULL
-    AND v_existing_resend_message_id <> p_log->>'resend_message_id'
+    AND p_resend_message_id IS NOT NULL
+    AND v_existing_resend_message_id <> p_resend_message_id
   THEN
     RAISE EXCEPTION 'idempotency key provider response mismatch';
   END IF;
+
+  v_newly_recorded := v_effects_recorded_at IS NULL;
 
   UPDATE public.email_log
   SET status = CASE
         WHEN status IN ('queued', 'rejected') THEN 'sent'
         ELSE status
       END,
-      sent_at = COALESCE(
-        sent_at,
-        NULLIF(p_log->>'sent_at', '')::TIMESTAMPTZ,
-        clock_timestamp()
-      ),
-      resend_message_id = COALESCE(
-        resend_message_id,
-        NULLIF(p_log->>'resend_message_id', '')
-      )
+      sent_at = COALESCE(sent_at, v_now),
+      resend_message_id = COALESCE(resend_message_id, p_resend_message_id)
   WHERE id = v_log_id
     AND tenant_id = p_tenant_id;
 
   IF v_effects_recorded_at IS NULL THEN
     IF v_retry_of IS NULL THEN
+      IF v_retry_content IS NULL THEN
+        RAISE EXCEPTION 'retry content snapshot is required for an original send';
+      END IF;
+
       INSERT INTO public.email_retry_content (
         email_log_id,
         tenant_id,
@@ -183,17 +381,17 @@ BEGIN
       ) VALUES (
         v_log_id,
         p_tenant_id,
-        p_retry_content->>'to_email',
-        p_retry_content->>'subject',
-        p_retry_content->>'template_id',
-        p_retry_content->>'email_category',
-        p_retry_content->>'html',
-        NULLIF(p_retry_content->>'reply_to', ''),
-        NULLIF(p_retry_content->>'related_booking_id', '')::UUID,
-        NULLIF(p_retry_content->>'related_group_id', '')::UUID,
-        NULLIF(p_retry_content->>'user_id', '')::UUID,
-        NULLIF(p_retry_content->>'contact_id', '')::UUID,
-        (p_retry_content->>'expires_at')::TIMESTAMPTZ
+        v_retry_content->>'to_email',
+        v_retry_content->>'subject',
+        v_retry_content->>'template_id',
+        v_retry_content->>'email_category',
+        v_retry_content->>'html',
+        NULLIF(v_retry_content->>'reply_to', ''),
+        NULLIF(v_retry_content->>'related_booking_id', '')::UUID,
+        NULLIF(v_retry_content->>'related_group_id', '')::UUID,
+        NULLIF(v_retry_content->>'user_id', '')::UUID,
+        NULLIF(v_retry_content->>'contact_id', '')::UUID,
+        (v_retry_content->>'expires_at')::TIMESTAMPTZ
       )
       ON CONFLICT (email_log_id) DO NOTHING;
     END IF;
@@ -223,13 +421,17 @@ BEGIN
     RETURNING public.tenant_usage_metrics.email_sent_today INTO v_daily_count;
 
     UPDATE public.email_log
-    SET idempotent_effects_recorded_at = clock_timestamp()
+    SET idempotent_effects_recorded_at = v_now,
+        provider_request_body = NULL,
+        provider_snapshot_expires_at = NULL,
+        retry_content_snapshot = NULL
     WHERE id = v_log_id
       AND tenant_id = p_tenant_id
       AND idempotent_effects_recorded_at IS NULL;
   ELSE
     SELECT CASE
-      WHEN email_sent_day_ref = v_today THEN email_sent_today
+      WHEN public.tenant_usage_metrics.email_sent_day_ref = v_today
+        THEN public.tenant_usage_metrics.email_sent_today
       ELSE 0
     END
     INTO v_daily_count
@@ -240,11 +442,26 @@ BEGIN
     v_daily_count := COALESCE(v_daily_count, 0);
   END IF;
 
-  RETURN QUERY SELECT v_log_id, v_inserted, v_daily_count;
+  RETURN QUERY SELECT v_log_id, v_newly_recorded, v_daily_count;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.finalize_idempotent_email_send(UUID, TEXT, JSONB, JSONB)
+REVOKE ALL ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.finalize_idempotent_email_send(UUID, TEXT, JSONB, JSONB)
+GRANT EXECUTE ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.start_idempotent_email_dispatch(UUID, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.start_idempotent_email_dispatch(UUID, TEXT)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.abandon_unstarted_idempotent_email(UUID, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.abandon_unstarted_idempotent_email(UUID, TEXT)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.finalize_idempotent_email_send(UUID, TEXT, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finalize_idempotent_email_send(UUID, TEXT, TEXT)
   TO service_role;

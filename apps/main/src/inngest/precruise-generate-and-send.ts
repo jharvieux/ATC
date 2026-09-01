@@ -23,7 +23,14 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
-import { sendEmail, type SendEmailInput, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
+import {
+  abandonUnstartedIdempotentEmail,
+  recoverIdempotentEmail,
+  resumeIdempotentEmail,
+  sendEmail,
+  type SendEmailInput,
+  TENANT_BRANDING_COLUMNS,
+} from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
@@ -139,13 +146,23 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       .eq("email_phase", phase)
       .maybeSingle();
     const existing = existingRaw as ExistingPrecruiseContent | null;
-    if (existing && await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })) {
+    const recovery = existing
+      ? await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })
+      : { status: "missing" as const };
+    if (recovery.status === "sent") {
+      return;
+    }
+    if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+      await resumeStartedPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
       return;
     }
 
     // §15.16 — Skip past-grace tenants (both paths).
     const paymentCheck = await assertTenantStillPayingById(svc, tenant_id);
     if (!paymentCheck.ok) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
       console.info(
         "[precruise] skipping past-grace tenant",
         { tenant_id, booking_id, phase, reason: paymentCheck.reason, days: paymentCheck.days_since_non_paying },
@@ -155,16 +172,28 @@ export const precruiseGenerateAndSend = inngest.createFunction(
 
     // Resolve the full email context (shared by both paths).
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
-    if (!emailCtx) return; // already logged
+    if (!emailCtx) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      return;
+    }
     if (
       expected_contact_id && expected_contact_email &&
       (emailCtx.booking.primary_contact_id !== expected_contact_id ||
         normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
     ) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
       console.info(`[precruise] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
       return;
     }
     const contentContextFingerprint = fingerprintEmailContext(emailCtx);
+    if (recovery.status === "queued" && existing?.content_context_hash !== contentContextFingerprint) {
+      await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      return;
+    }
 
     if (existing?.send_claimed_at || existing?.provider_first_attempt_at) {
       await buildAndSend({ svc, phase, emailCtx, contentId: existing.id });
@@ -292,6 +321,10 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       console.error(`[precruise:batch-result] missing caller_metadata for request ${request_id}`);
       return;
     }
+    if (caller_metadata.tenant_id !== tenant_id) {
+      console.error(`[precruise:batch-result] tenant mismatch for request ${request_id}`);
+      return;
+    }
     const { booking_id, phase, expected_contact_id, expected_contact_email } = caller_metadata;
     const svc = createServiceRoleClient();
 
@@ -305,7 +338,46 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       .eq("email_phase", phase)
       .maybeSingle();
     const existing = existingRaw as ExistingPrecruiseContent | null;
-    if (existing && await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })) {
+    const recovery = existing
+      ? await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })
+      : { status: "missing" as const };
+    if (recovery.status === "sent") {
+      return;
+    }
+    if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+      await resumeStartedPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      return;
+    }
+
+    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
+    if (!emailCtx) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      return;
+    }
+    if (
+      expected_contact_id && expected_contact_email &&
+      (emailCtx.booking.primary_contact_id !== expected_contact_id ||
+        normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
+    ) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      console.info(`[precruise:batch-result] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
+      return;
+    }
+    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
+    if (
+      recovery.status === "queued" &&
+      existing?.generated_content &&
+      existing.content_context_hash === contentContextFingerprint
+    ) {
+      await buildAndSend({ svc, phase, emailCtx, contentId: existing.id });
+      return;
+    }
+    if (recovery.status === "queued") {
+      await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
       return;
     }
 
@@ -317,17 +389,6 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       return;
     }
 
-    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
-    if (!emailCtx) return;
-    if (
-      expected_contact_id && expected_contact_email &&
-      (emailCtx.booking.primary_contact_id !== expected_contact_id ||
-        normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
-    ) {
-      console.info(`[precruise:batch-result] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
-      return;
-    }
-    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
     if (caller_metadata.content_context_hash !== contentContextFingerprint) {
       if (existing?.send_claimed_at || existing?.provider_first_attempt_at) {
         console.info(`[precruise:batch-result] context changed after send claim: booking=${booking_id} phase=${phase}`);
@@ -497,37 +558,62 @@ async function recoverExistingPrecruiseSend(args: {
   tenantId: string;
   bookingId: string;
   phase: Phase;
-}): Promise<boolean> {
-  if (args.existing.sent_at) {
-    console.info(`[precruise] already sent: booking=${args.bookingId} phase=${args.phase}`);
-    return true;
+}): Promise<{ status: "sent" | "missing" | "queued"; providerFirstAttemptAt?: string | null }> {
+  const recovery = await recoverIdempotentEmail({
+    db: args.svc,
+    tenantId: args.tenantId,
+    idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+  });
+
+  if (recovery.status === "sent") {
+    if (!args.existing.sent_at) {
+      await finalizeContentAsSent({
+        svc: args.svc,
+        contentId: args.existing.id,
+        tenantId: args.tenantId,
+        sentAt: recovery.sent_at ?? new Date().toISOString(),
+      });
+    }
+    console.info(`[precruise] recovered sent email: booking=${args.bookingId} phase=${args.phase}`);
+    return { status: "sent" };
   }
 
-  const logicalLog = await safeAwait(
-    args.svc
-      .from("email_log")
-      .select("id, status, sent_at")
-      .eq("tenant_id", args.tenantId)
-      .eq("idempotency_key", precruiseIdempotencyKey(args.bookingId, args.phase))
-      .limit(1)
-      .maybeSingle(),
-    "precruise.recover.email_log",
-  ) as { id: string; status: string; sent_at: string | null } | null;
+  // A stamped companion row is terminal even if its historical logical log is
+  // missing or incomplete. The shared recovery above still gets first chance
+  // to heal any durable keyed effects, but this path must never re-deliver.
+  if (args.existing.sent_at) {
+    console.info(`[precruise] already sent: booking=${args.bookingId} phase=${args.phase}`);
+    return { status: "sent" };
+  }
 
-  if (!logicalLog) return false;
+  if (recovery.status === "missing") return { status: "missing" };
 
-  if (logicalLog.sent_at) {
-    await finalizeContentAsSent({
+  return {
+    status: "queued",
+    providerFirstAttemptAt: recovery.provider_first_attempt_at ?? null,
+  };
+}
+
+async function abandonRecoveredPrecruiseOutbox(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  existing: ExistingPrecruiseContent;
+  tenantId: string;
+  bookingId: string;
+  phase: Phase;
+}): Promise<void> {
+  await abandonUnstartedIdempotentEmail({
+    db: args.svc,
+    tenantId: args.tenantId,
+    idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+  });
+  if (args.existing.send_claimed_at) {
+    await releaseContentClaim({
       svc: args.svc,
       contentId: args.existing.id,
       tenantId: args.tenantId,
-      sentAt: logicalLog.sent_at,
+      claimedAt: args.existing.send_claimed_at,
     });
-    console.info(`[precruise] recovered sent email: booking=${args.bookingId} phase=${args.phase}`);
-  } else {
-    console.info(`[precruise] logical email state is ambiguous: booking=${args.bookingId} phase=${args.phase} status=${logicalLog.status}`);
   }
-  return true;
 }
 
 async function enqueuePrecruiseBatchGeneration(args: {
@@ -903,6 +989,126 @@ async function finalizeContentAsSent(args: {
   }
 }
 
+async function loadTenantForOutboxReplay(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  tenantId: string;
+}): Promise<SendEmailInput["tenant"]> {
+  const tenant = await safeAwait(
+    args.svc
+      .from("tenants")
+      .select("id, legal_name, mailing_address")
+      .eq("id", args.tenantId)
+      .limit(1)
+      .maybeSingle(),
+    "precruise.replay.tenant",
+  ) as { id: string; legal_name: string | null; mailing_address: string | null } | null;
+  if (!tenant) throw new Error("pre-cruise replay tenant not found");
+
+  const branding = await safeAwait(
+    args.svc
+      .from("tenant_branding")
+      .select(TENANT_BRANDING_COLUMNS)
+      .eq("tenant_id", args.tenantId)
+      .limit(1)
+      .maybeSingle(),
+    "precruise.replay.branding",
+  ) as EmailCtx["branding"] | null;
+
+  return {
+    id: tenant.id,
+    legal_name: tenant.legal_name ?? "Travel Agency",
+    mailing_address: tenant.mailing_address,
+    email_send_pattern: (branding?.email_send_pattern ?? "platform_resend") as
+      | "platform_resend"
+      | "tenant_resend",
+    tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+    email_from_address: branding?.email_from_address ?? null,
+    email_from_name: branding?.email_from_name ?? null,
+    email_from_domain: branding?.email_from_domain ?? null,
+    email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
+  };
+}
+
+async function resumeStartedPrecruiseOutbox(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  existing: ExistingPrecruiseContent;
+  tenantId: string;
+  bookingId: string;
+  phase: Phase;
+}): Promise<void> {
+  const claim = await claimContentForSend({
+    svc: args.svc,
+    contentId: args.existing.id,
+    tenantId: args.tenantId,
+  });
+  if (!claim) {
+    console.info(`[precruise] replay already claimed: booking=${args.bookingId} phase=${args.phase}`);
+    return;
+  }
+  const { claimedAt, providerFirstAttemptAt } = claim;
+  if (providerReplayWindowExpired(providerFirstAttemptAt)) {
+    await releaseContentClaim({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      claimedAt,
+    });
+    console.warn(`[precruise] provider replay window expired: booking=${args.bookingId} phase=${args.phase}`);
+    return;
+  }
+
+  const tenant = await loadTenantForOutboxReplay({ svc: args.svc, tenantId: args.tenantId });
+  let result;
+  try {
+    result = await resumeIdempotentEmail({
+      db: args.svc,
+      tenant,
+      idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+      beforeDispatch: async ({ providerReplay }) => {
+        if (!providerReplay) return { allowed: false, reason: "provider_replay_state_missing" };
+        return establishProviderAttempt({
+          svc: args.svc,
+          contentId: args.existing.id,
+          tenantId: args.tenantId,
+          claimedAt,
+          providerFirstAttemptAt,
+        });
+      },
+    });
+  } catch (error) {
+    await releaseContentClaim({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      claimedAt,
+    });
+    throw error;
+  }
+
+  if (result.status === "sent") {
+    await finalizeContentAsSent({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      sentAt: new Date().toISOString(),
+      claimedAt,
+    });
+    return;
+  }
+
+  await releaseContentClaim({
+    svc: args.svc,
+    contentId: args.existing.id,
+    tenantId: args.tenantId,
+    claimedAt,
+  });
+  if (result.status === "failed") {
+    throw new Error(
+      `[precruise] replay failed booking=${args.bookingId} phase=${args.phase} reason=${result.reason ?? "unknown"}`,
+    );
+  }
+}
+
 async function buildAndSend(args: {
   svc: ReturnType<typeof createServiceRoleClient>;
   phase: Phase;
@@ -1077,13 +1283,15 @@ async function buildAndSend(args: {
       category: "pre_cruise",
       html,
       idempotencyKey: precruiseIdempotencyKey(emailCtx.booking.id, phase),
-      beforeDispatch: async () => {
-        const finalPaymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);
-        if (!finalPaymentCheck.ok) {
-          return { allowed: false, reason: "tenant_not_paying" };
-        }
-        if (!await emailContextStillCurrent({ svc, emailCtx })) {
-          return { allowed: false, reason: "email_context_changed" };
+      beforeDispatch: async ({ providerReplay }) => {
+        if (!providerReplay) {
+          const finalPaymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);
+          if (!finalPaymentCheck.ok) {
+            return { allowed: false, reason: "tenant_not_paying" };
+          }
+          if (!await emailContextStillCurrent({ svc, emailCtx })) {
+            return { allowed: false, reason: "email_context_changed" };
+          }
         }
         return establishProviderAttempt({
           svc,

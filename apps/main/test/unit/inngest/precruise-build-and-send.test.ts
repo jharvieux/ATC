@@ -68,9 +68,9 @@ vi.mock("@/lib/email/send", () => ({
     mocks.operations.push("sendEmail");
     mocks.sendEmailArgs.push(args);
     mocks.beforeDispatchMutation?.();
-    const beforeDispatch = args.beforeDispatch as (() => Promise<boolean | { allowed: boolean; reason?: string }>) | undefined;
+    const beforeDispatch = args.beforeDispatch as ((context: { providerReplay: boolean }) => Promise<boolean | { allowed: boolean; reason?: string }>) | undefined;
     if (beforeDispatch) {
-      const verdict = await beforeDispatch();
+      const verdict = await beforeDispatch({ providerReplay: false });
       if (!(typeof verdict === "boolean" ? verdict : verdict.allowed)) {
         return { status: "cancelled", reason: typeof verdict === "boolean" ? null : verdict.reason ?? null };
       }
@@ -78,6 +78,9 @@ vi.mock("@/lib/email/send", () => ({
     mocks.providerCalls++;
     return mocks.sendEmailResult;
   },
+  recoverIdempotentEmail: async () => ({ status: "missing" }),
+  resumeIdempotentEmail: async () => ({ status: "failed", reason: "not used" }),
+  abandonUnstartedIdempotentEmail: async () => undefined,
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
     "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +

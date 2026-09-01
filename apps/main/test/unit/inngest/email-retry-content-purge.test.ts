@@ -23,23 +23,41 @@ interface Row {
   email_log_id: string;
   expires_at: string;
 }
+interface OutboxRow {
+  id: string;
+  provider_snapshot_expires_at: string;
+  provider_request_body: string | null;
+  retry_content_snapshot: Record<string, unknown> | null;
+}
 let rows: Row[];
+let outboxRows: OutboxRow[];
 let selectErr: { message: string } | null;
 let deleteErr: { message: string } | null;
+let updateErr: { message: string } | null;
 let deleteCalls: number;
+let updateCalls: number;
 const inserts: string[] = [];
 
-function makeChain() {
+function makeChain(table: string) {
   return {
     select() {
       let cutoff = "";
       const chain = {
+        not() {
+          return chain;
+        },
         lt(_col: string, c: string) {
           cutoff = c;
           return chain;
         },
         limit(n: number) {
           if (selectErr) return Promise.resolve({ data: null, error: selectErr });
+          if (table === "email_log") {
+            const matched = outboxRows
+              .filter((row) => row.provider_request_body && row.provider_snapshot_expires_at < cutoff)
+              .slice(0, n);
+            return Promise.resolve({ data: matched.map((row) => ({ id: row.id })), error: null });
+          }
           const matched = rows.filter((r) => r.expires_at < cutoff).slice(0, n);
           return Promise.resolve({ data: matched.map((r) => ({ email_log_id: r.email_log_id })), error: null });
         },
@@ -57,6 +75,25 @@ function makeChain() {
         },
       };
     },
+    update() {
+      return {
+        in(_col: string, ids: string[]) {
+          updateCalls += 1;
+          if (updateErr) return Promise.resolve({ count: null, error: updateErr });
+          let count = 0;
+          outboxRows = outboxRows.map((row) => {
+            if (!ids.includes(row.id)) return row;
+            count += 1;
+            return {
+              ...row,
+              provider_request_body: null,
+              retry_content_snapshot: null,
+            };
+          });
+          return Promise.resolve({ count, error: null });
+        },
+      };
+    },
     insert(row: { cron_id: string }) {
       inserts.push(row.cron_id);
       return Promise.resolve({ error: null });
@@ -65,14 +102,24 @@ function makeChain() {
 }
 
 vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({ from: (_t: string) => makeChain() }),
+  createServiceRoleClient: () => ({ from: (table: string) => makeChain(table) }),
 }));
 
-async function runPurge(): Promise<{ purged?: number; skipped_for_staging?: boolean; capped?: boolean }> {
+async function runPurge(): Promise<{
+  purged?: number;
+  outbox_snapshots_purged?: number;
+  skipped_for_staging?: boolean;
+  capped?: boolean;
+}> {
   vi.resetModules();
   const { emailRetryContentPurge } = await import("@/inngest/email-retry-content-purge");
   const fn = emailRetryContentPurge as unknown as {
-    __handler: () => Promise<{ purged?: number; skipped_for_staging?: boolean; capped?: boolean }>;
+    __handler: () => Promise<{
+      purged?: number;
+      outbox_snapshots_purged?: number;
+      skipped_for_staging?: boolean;
+      capped?: boolean;
+    }>;
   };
   return fn.__handler();
 }
@@ -88,9 +135,12 @@ const daysAhead = (d: number) => new Date(Date.now() + d * 24 * 60 * 60 * 1000).
 
 beforeEach(() => {
   rows = [];
+  outboxRows = [];
   selectErr = null;
   deleteErr = null;
+  updateErr = null;
   deleteCalls = 0;
+  updateCalls = 0;
   inserts.length = 0;
   vi.clearAllMocks();
   vi.unstubAllEnvs();
@@ -107,6 +157,39 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
     const result = await runPurge();
     expect(result.purged).toBe(2);
     expect(rows.map((r) => r.email_log_id)).toEqual(["c"]);
+  });
+
+  it("clears expired queued provider snapshots without touching live snapshots", async () => {
+    outboxRows = [
+      {
+        id: "expired",
+        provider_snapshot_expires_at: daysAgo(1),
+        provider_request_body: JSON.stringify({ to: "expired@example.test" }),
+        retry_content_snapshot: { html: "<p>expired</p>" },
+      },
+      {
+        id: "live",
+        provider_snapshot_expires_at: daysAhead(1),
+        provider_request_body: JSON.stringify({ to: "live@example.test" }),
+        retry_content_snapshot: { html: "<p>live</p>" },
+      },
+    ];
+
+    const result = await runPurge();
+
+    expect(result).toMatchObject({ outbox_snapshots_purged: 1 });
+    expect(updateCalls).toBe(1);
+    expect(outboxRows).toEqual([
+      expect.objectContaining({
+        id: "expired",
+        provider_request_body: null,
+        retry_content_snapshot: null,
+      }),
+      expect.objectContaining({
+        id: "live",
+        provider_request_body: expect.any(String),
+      }),
+    ]);
   });
 
   it("STAGING_MODE records the skip and returns early without deleting", async () => {
@@ -128,6 +211,18 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
     rows = [{ email_log_id: "a", expires_at: daysAgo(1) }];
     selectErr = { message: "read timeout" };
     await expect(runPurge()).rejects.toThrow(/email_retry_content_purge_failed/);
+  });
+
+  it("throws when clearing an expired provider snapshot fails", async () => {
+    outboxRows = [{
+      id: "expired",
+      provider_snapshot_expires_at: daysAgo(1),
+      provider_request_body: "{}",
+      retry_content_snapshot: null,
+    }];
+    updateErr = { message: "write timeout" };
+
+    await expect(runPurge()).rejects.toThrow(/email_outbox_snapshot_purge_failed/);
   });
 
   it("loops across multiple batches (DELETE_BATCH+1 rows → two delete calls) without capping", async () => {

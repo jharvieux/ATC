@@ -38,6 +38,7 @@ export const emailRetryContentPurge = inngest.createFunction(
     const cutoff = new Date().toISOString();
     let purged = 0;
     let capped = false;
+    // serial-await-ok: each delete must drain the selected PK batch before the next query.
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const { data: rows, error: selErr } = await svc
         // d091-allow:service-role-tenant global TTL retention sweep — deliberately cross-tenant (purge every tenant's expired PII); service-role only, PK-projected.
@@ -70,8 +71,56 @@ export const emailRetryContentPurge = inngest.createFunction(
       console.warn(
         `[email-retry-content-purge] hit MAX_BATCHES=${MAX_BATCHES} (purged=${purged}); expired rows remain past TTL. The next hourly run continues, but a persistent cap means PII is outliving its retention window.`,
       );
-      return { purged, capped: true };
     }
-    return { purged };
+
+    // A provider attempt can be accepted before local finalization succeeds.
+    // The queued email_log row keeps the exact request briefly so a retry can
+    // replay it with the same provider key. Once its replay window expires,
+    // clear that rendered payload rather than retaining recipient PII for the
+    // much longer email_log retention period.
+    let outboxSnapshotsPurged = 0;
+    let outboxCapped = false;
+    // serial-await-ok: each update must clear the selected PK batch before the next query.
+    for (let batch = 0; batch < MAX_BATCHES; batch++) {
+      const { data: rows, error: selErr } = await svc
+        // d091-allow:service-role-tenant global TTL retention sweep — deliberately cross-tenant; service-role only, PK-projected.
+        .from("email_log")
+        .select("id")
+        .not("provider_request_body", "is", null)
+        .lt("provider_snapshot_expires_at", cutoff)
+        .limit(DELETE_BATCH);
+      if (selErr) {
+        throw new Error(`email_outbox_snapshot_purge_failed: ${selErr.message}`);
+      }
+      const ids = ((rows ?? []) as Array<{ id: string }>).map((row) => row.id);
+      if (ids.length === 0) break;
+
+      const { count, error: updateErr } = await svc
+        // d091-allow:service-role-tenant global TTL retention sweep — updates only PKs returned by the bounded service-role query above.
+        .from("email_log")
+        .update({
+          provider_request_body: null,
+          provider_snapshot_expires_at: null,
+          retry_content_snapshot: null,
+        }, { count: "exact" })
+        .in("id", ids);
+      if (updateErr) {
+        throw new Error(`email_outbox_snapshot_purge_failed: ${updateErr.message}`);
+      }
+      outboxSnapshotsPurged += count ?? ids.length;
+      if (ids.length < DELETE_BATCH) break;
+      if (batch === MAX_BATCHES - 1) outboxCapped = true;
+    }
+    if (outboxCapped) {
+      console.warn(
+        `[email-retry-content-purge] hit MAX_BATCHES=${MAX_BATCHES} while clearing queued provider snapshots (purged=${outboxSnapshotsPurged}); expired snapshots remain past TTL.`,
+      );
+    }
+
+    return {
+      purged,
+      outbox_snapshots_purged: outboxSnapshotsPurged,
+      ...(capped || outboxCapped ? { capped: true } : {}),
+    };
   },
 );

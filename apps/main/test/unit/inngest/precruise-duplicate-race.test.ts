@@ -29,7 +29,10 @@ const mocks = vi.hoisted(() => ({
     content_context_hash: string | null;
     provider_first_attempt_at?: string | null;
   } | null,
-  logicalEmailLog: null as { id: string; status: string; sent_at: string | null } | null,
+  logicalEmailLog: null as { id: string; status: string; sent_at: string | null; provider_first_attempt_at?: string | null } | null,
+  recoveryCalls: 0,
+  resumeCalls: 0,
+  abandonCalls: 0,
   updatePayloads: [] as Array<Record<string, unknown>>,
   regenerationRace: null as "claimed" | "sent" | null,
   regenerationUpdateError: null as { code: string; message: string } | null,
@@ -63,6 +66,28 @@ vi.mock("@/lib/email/send", () => ({
   sendEmail: async () => {
     mocks.sendEmailCalls++;
     return { status: "sent", email_log_id: "log-1" };
+  },
+  recoverIdempotentEmail: async () => {
+    mocks.recoveryCalls++;
+    if (!mocks.logicalEmailLog) return { status: "missing" };
+    return mocks.logicalEmailLog.sent_at
+      ? {
+          status: "sent",
+          email_log_id: mocks.logicalEmailLog.id,
+          sent_at: mocks.logicalEmailLog.sent_at,
+        }
+      : {
+          status: "queued",
+          email_log_id: mocks.logicalEmailLog.id,
+          provider_first_attempt_at: mocks.logicalEmailLog.provider_first_attempt_at ?? null,
+        };
+  },
+  resumeIdempotentEmail: async () => {
+    mocks.resumeCalls++;
+    return { status: "sent", email_log_id: "log-1", resend_message_id: "resend-1" };
+  },
+  abandonUnstartedIdempotentEmail: async () => {
+    mocks.abandonCalls++;
   },
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
@@ -222,6 +247,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           select() {
             const chain = {
               eq: () => chain,
+              limit: () => chain,
               maybeSingle: async () => ({ data: { id: "t1", legal_name: "Anchor & Compass" }, error: null }),
             };
             return chain;
@@ -233,6 +259,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
         select() {
           const chain = {
             eq: () => chain,
+            limit: () => chain,
             maybeSingle: async () => ({ data: {}, error: null }),
           };
           return chain;
@@ -255,6 +282,9 @@ beforeEach(() => {
   mocks.regenerationUpdateError = null;
   mocks.paymentResults = [];
   mocks.logicalEmailLog = null;
+  mocks.recoveryCalls = 0;
+  mocks.resumeCalls = 0;
+  mocks.abandonCalls = 0;
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
@@ -282,6 +312,68 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       sent_at: "2026-08-31T22:00:00.000Z",
       send_claimed_at: null,
     });
+    expect(mocks.recoveryCalls).toBe(1);
+  });
+
+  it("resumes a started provider outbox after recipient/context change without regenerating", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      provider_first_attempt_at: "2026-08-31T22:00:00.000Z",
+      generated_content: { documentation_reminder: "authoritative provider copy" },
+      content_context_hash: "context-before-provider",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: "2026-08-31T22:00:00.100Z",
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: {
+        data: {
+          booking_id: "b1",
+          tenant_id: "t1",
+          phase: "t_90",
+          via: "direct",
+          expected_contact_id: "changed-contact",
+          expected_contact_email: "changed@example.com",
+        },
+      },
+    });
+
+    expect(mocks.resumeCalls).toBe(1);
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.updatePayloads.some((payload) => "sent_at" in payload)).toBe(true);
+  });
+
+  it("abandons an unstarted stale outbox and releases its claim without regenerating", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: "2026-08-31T22:00:00.000Z",
+      provider_first_attempt_at: null,
+      generated_content: { documentation_reminder: "stale queued copy" },
+      content_context_hash: "stale-context",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: null,
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.abandonCalls).toBe(1);
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.updatePayloads).toContainEqual({ send_claimed_at: null });
   });
 
   it("skips the send when the insert hits a 23505 unique violation", async () => {
