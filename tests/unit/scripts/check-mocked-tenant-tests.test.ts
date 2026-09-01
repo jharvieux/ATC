@@ -711,7 +711,9 @@ describe("RLS integration", () => {
 
   it.each([
     ["absent options", "", ""],
+    ["an inline static id conflict target", "", ', { onConflict: "id" }'],
     ["an aliased static id conflict target", 'const options = { onConflict: "id" };', ", options"],
+    ["a single-assignment const alias chain", 'const original = { onConflict: "id" }; const forwarded = original; const options = forwarded;', ", options"],
   ])("accepts UPSERT evidence with %s", (_shape, setup, options) => {
     const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }]${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]${options}).select("id"); }`;
     const coverage = REAL_DB_COVERAGE
@@ -728,8 +730,13 @@ describe("RLS integration", () => {
     ["branch-ambiguous options", 'const options = process.env.USE_ID ? { onConflict: "id" } : { onConflict: "external_ref" };'],
     ["a reassigned options alias", 'let options = { onConflict: "id" }; options = { onConflict: "external_ref" };'],
     ["an overwritten conflict key", 'const options = { onConflict: "external_ref" }; options.onConflict = "id";'],
-  ])("rejects UPSERT evidence with %s", (_shape, setup) => {
-    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }], options).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }], options).select("id"); }`;
+    ["a restored original binding", 'const original = { onConflict: "id" }; let options = original; options = { onConflict: "external_ref" }; options = original;'],
+    ["an alias overwritten away and back", 'const original = { onConflict: "id" }; let options = original; let alias = options; alias = { onConflict: "external_ref" }; alias = options;', "alias"],
+    ["a branch overwrite followed by fresh restoration", 'let options = { onConflict: "id" }; if (process.env.USE_EXTERNAL) options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
+    ["an external binding restored to a fresh id target", 'let options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
+    ["a tainted alias chain", 'const original = { onConflict: "id" }; let options = original; options = { onConflict: "external_ref" }; options = original; const forwarded = options; const finalOptions = forwarded;', "finalOptions"],
+  ])("rejects UPSERT evidence with %s", (_shape, setup, options = "options") => {
+    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }], ${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }], ${options}).select("id"); }`;
     const coverage = REAL_DB_COVERAGE
       .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
       .replace("allowedIds: []", 'allowedIds: ["allowed"]');

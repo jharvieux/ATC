@@ -234,6 +234,7 @@ interface MutationWitnessEvidence {
 
 interface FlowState {
   cells: Map<ts.Symbol, Set<FlowAtom>>;
+  reassignedCells: Set<ts.Symbol>;
   members: Map<FlowAtom, Map<string, Set<FlowAtom>>>;
   dirty: Set<FlowAtom>;
   outcome: FlowOutcome;
@@ -274,6 +275,7 @@ interface TestFlowProof {
 
 const UNKNOWN_ATOM = "unknown";
 const UNDEFINED_ATOM = "undefined";
+const REASSIGNED_BINDING_ATOM = "binding:reassigned";
 const ORIGINAL_LOADER_ATOM = "loader:original";
 const ORIGINAL_MODULE_ATOM = "module:original";
 const SUPABASE_FACTORY_ATOM = "factory:supabase";
@@ -371,6 +373,7 @@ class LocalFlowEngine {
   private cloneState(state: FlowState): FlowState {
     return {
       cells: new Map([...state.cells].map(([symbol, value]) => [symbol, new Set(value)])),
+      reassignedCells: new Set(state.reassignedCells),
       members: new Map(
         [...state.members].map(([atom, members]) => [
           atom,
@@ -438,6 +441,7 @@ class LocalFlowEngine {
   private emptyState(): FlowState {
     return {
       cells: new Map(),
+      reassignedCells: new Set(),
       members: new Map(),
       dirty: new Set(),
       outcome: "normal",
@@ -473,6 +477,7 @@ class LocalFlowEngine {
     return (
       left.outcome === right.outcome &&
       sameMap(left.cells, right.cells, sameSet) &&
+      sameSet(left.reassignedCells, right.reassignedCells) &&
       sameMap(left.members, right.members, (a, b) => sameMap(a, b, sameSet)) &&
       sameSet(left.dirty, right.dirty) &&
       sameSet(left.returned, right.returned) &&
@@ -543,7 +548,14 @@ class LocalFlowEngine {
       return this.values(UNDEFINED_ATOM);
     }
     if (node.text === "Promise" && !sourceDeclaration) return this.values(NATIVE_PROMISE_ATOM);
-    if (symbol) return new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
+    if (symbol) {
+      const value = new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
+      if (
+        state.reassignedCells.has(symbol) &&
+        [...value].some((atom) => atom.startsWith("object:") || atom === REASSIGNED_BINDING_ATOM)
+      ) value.add(REASSIGNED_BINDING_ATOM);
+      return value;
+    }
     if (node.text === "vi" || node.text === "jest") return this.values(`framework:${node.text}`);
     return this.values(UNKNOWN_ATOM);
   }
@@ -835,6 +847,8 @@ class LocalFlowEngine {
   ): FlowState[] {
     const expression = unwrapExpression(target);
     if (ts.isIdentifier(expression)) {
+      const symbol = this.symbol(expression);
+      if (symbol) state.reassignedCells.add(symbol);
       this.setCell(state, expression, value);
       return [state];
     }
