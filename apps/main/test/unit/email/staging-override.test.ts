@@ -13,7 +13,8 @@ function makeDb(): SupabaseClient {
     eq: () => chain,
     gte: () => chain,
     in: () => chain,
-    or: vi.fn().mockResolvedValue({ data: [], error: null }),
+    or: () => chain,
+    limit: vi.fn().mockResolvedValue({ data: [], error: null }),
     not: vi.fn().mockResolvedValue({ data: [], error: null }),
     insert: () => ({
       select: () => ({
