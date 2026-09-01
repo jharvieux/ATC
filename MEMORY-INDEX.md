@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-372 — 2026-09-01 — Verified custom domains for currently eligible Agency tenants may explicitly opt into indexing; false remains the default, platform subdomains stay permanently noindex, crawler eligibility rechecks live domain/tier/setting fail-closed, and tenant robots/sitemaps are no-store so disable or downgrade is immediate (PR #2100; supersedes D-368 only for custom domains)
 - D-371 — 2026-08-31 — Manual pre-cruise T-90/T-30/T-7/T-1 sends and chosen-time schedules use direct generation for predictable timing; automatic T-90/T-30/T-7 remain batched and every delivery rechecks confirmed status (PR #2107; refs D-107/D-118)
 - D-370 — 2026-07-31 — Seam-secret rotation sets FINAL for #2002 (supersedes queued service-JWT); CRON_SECRET stays boot-required (Vercel builds the cron Bearer from it — _CURRENT-only config silently kills all 9 crons); MAIN_APP_ADMIN_API_KEY boot-required on main, Preview holds a random placeholder (PRs #2068/#2070/#2071)
 - D-369 — 2026-07-30 — /issue-sweep executor rules move to .claude/agents/sweep-executor.md + acceptance-verifier.md (dispatch via subagent_type, never restate in prompts); sync-token drift detector between repo and portable copies; blocked_on/next_action ledger fields + PR-attribution turn-exit; Phase 1 fetch completeness check; claude_md_updates → instruction_updates (PRs #2063, #2065)
