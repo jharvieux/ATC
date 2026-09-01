@@ -24,7 +24,11 @@ describe("getNodeRuntimeError", () => {
   });
 
   it("fails closed when the runtime version is malformed", () => {
-    expect(getNodeRuntimeError("unknown", "/unexpected/node")).toContain("Node.js 24.x is required");
+    for (const version of ["unknown", "v24garbage", "24beta", "v24.19x", "v24.19.0-rc.1"]) {
+      expect(getNodeRuntimeError(version, "/unexpected/node"), version).toContain(
+        "Node.js 24.x is required",
+      );
+    }
   });
 
   it("guards every primary repository workflow before work begins", () => {

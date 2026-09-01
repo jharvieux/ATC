@@ -5,8 +5,7 @@ import { pathToFileURL } from "node:url";
 const REQUIRED_NODE_MAJOR = 24;
 
 export function getNodeRuntimeError(version, execPath) {
-  const major = Number.parseInt(version.replace(/^v/, "").split(".")[0] ?? "", 10);
-  if (major === REQUIRED_NODE_MAJOR) return null;
+  if (new RegExp(`^v?${REQUIRED_NODE_MAJOR}\\.\\d+\\.\\d+$`).test(version)) return null;
 
   return [
     `Node.js ${REQUIRED_NODE_MAJOR}.x is required; found ${version}.`,
