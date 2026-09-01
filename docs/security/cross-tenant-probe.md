@@ -2,7 +2,9 @@
 
 ## What this is
 
-The cross-tenant probe enumerates every API route under `src/app/api/` and, for each HTTP method it exports, attempts to access a resource owned by tenant A while authenticated as tenant B. Any 2xx response is a cross-tenant data leak and fails the build immediately. Any 5xx is also a failure.
+The cross-tenant probe enumerates the deployed `/api/**` paths backed by every route under `src/app/api/` and exercises them while authenticated as tenant B. It first requires `/api/health` to return a readable main-app response with a concrete deployed commit, preventing an all-404 or wrong-host run from masquerading as acceptance.
+
+For seeded dynamic route families, the request targets the matching tenant-A booking, conversation, or contact ID; any 2xx is a leak. Other dynamic routes use a non-existent sentinel, and collection/static-route 2xx JSON bodies are recursively inspected for every known tenant-A tenant, public-user, auth-user, booking, conversation, and contact identifier. A matching identifier is a leak, unreadable or non-JSON 2xx evidence fails closed, and 5xx responses fail. Expected 401/403/404 denials are intentional. Public routes such as `/api/health` must be explicitly documented in the allowlist.
 
 The test runs on every PR as part of CI.
 
@@ -30,15 +32,14 @@ The `reason` field is required and must explain both why cross-tenant access is 
 
 ## How to implement the fixture setup
 
-`tests/security/fixtures/cross-tenant-setup.ts` is currently a stub. Once the application schema exists, implement `setupCrossTenantFixtures()` to:
+`tests/security/fixtures/cross-tenant-setup.ts` creates deterministic, idempotent live fixtures. `setupCrossTenantFixtures()`:
 
-1. Create (or find) two orgs: `test-tenant-a` and `test-tenant-b`
-2. Create one user per org
-3. Sign in both users and capture their JWTs
-4. Seed one resource of each type (booking, conversation, price_watch, quote, etc.) per org
-5. Return the tokens and resource IDs keyed by resource type
+1. Creates or reuses two active tenants and one confirmed user per tenant.
+2. Signs in both users and returns real JWTs.
+3. Seeds a contact, conversation, and booking for each tenant with deterministic IDs.
+4. Returns route-family resource IDs plus the complete exact-identifier evidence set used to inspect otherwise legitimate 2xx responses.
 
-Then set `CROSS_TENANT_FIXTURES=true` in CI to activate the live probe step.
+`CROSS_TENANT_FIXTURES=true` activates the live probe. Human CI paths fail if the fixture credentials or application host are missing; Dependabot PRs use an explicit secret-less exemption that does not claim live acceptance.
 
 ## Running locally
 
@@ -52,3 +53,8 @@ SUPABASE_SERVICE_ROLE_KEY=<key> \
 CROSS_TENANT_FIXTURES=true \
 npm run test:cross-tenant
 ```
+
+The live probe binds its checked-out code and rebuilt main/RAG test-database
+state to the event SHA. Unless the caller separately verifies `/api/health`'s
+commit against that SHA, the shared `APP_BASE_URL` application revision remains
+unverified and must be described that way.

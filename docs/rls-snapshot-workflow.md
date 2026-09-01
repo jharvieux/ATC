@@ -2,7 +2,7 @@
 
 ## What this is
 
-`db/rls-snapshot-main.sql` is the committed baseline for all Row Level Security (RLS) policies on `public.*` plus `storage.objects`. `db/rls-snapshot-rag.sql` covers the RAG database's `public.*` relations. The `rls-snapshot-diff` CI job compares the live databases against these baselines on every PR and push to `release/*`, failing the build if they diverge.
+`db/rls-snapshot-main.sql` is the committed baseline for all Row Level Security (RLS) policies on `public.*` plus `storage.objects`. `db/rls-snapshot-rag.sql` covers the RAG database's `public.*` relations. The `rls-snapshot-diff` CI job is the single uninterrupted main/RAG test-database provenance holder: it resets and applies both migration trees at the event SHA, compares both live databases with the committed baselines, and runs the database-backed main, RAG, ledger, and cross-tenant acceptance suites before releasing the shared lock.
 
 This catches accidental RLS changes: a policy accidentally dropped or modified in dev won't silently reach production.
 
@@ -44,7 +44,7 @@ pnpm rls:check:main         # main only
 pnpm rls:check:rag          # rag only
 ```
 
-A target whose env var is unset is **skipped with a warning**, not a failure. This means CI without the rag secret configured will still pass on main; once the secret is added, rag is checked automatically.
+A target whose env var is unset is **skipped with a warning** by these local commands. The primary CI holder has a stricter contract: human PRs, release branches, merge-group runs, and manual dispatches must establish live main, RAG, and cross-tenant modes before they can publish revision provenance. Dependabot PRs are the only explicit secret-less exemption, and their receipts state that no live acceptance is claimed.
 
 ## Handling drift on dev
 
@@ -55,10 +55,18 @@ If someone ran a manual SQL change on dev that modified RLS (outside of a migrat
 
 ## Secrets required
 
-The `rls-snapshot-diff` CI job requires:
+Live `rls-snapshot-diff` acceptance requires:
 
 - `SUPABASE_TEST_DB_URL` — direct Postgres URL for the main test/dev DB.
-- `SUPABASE_RAG_TEST_DB_URL` — direct Postgres URL for the rag test/dev DB. (Optional; if absent the rag check is skipped.)
+- `SUPABASE_RAG_TEST_DB_URL` — direct Postgres URL for the rag test/dev DB.
+- `SUPABASE_TEST_URL` and `SUPABASE_TEST_SERVICE_KEY` — fixture creation and tenant-B authentication for the cross-tenant probe.
+- `APP_STAGING_URL` — deployed application host exercised by the probe.
+
+For non-release events, the exact event SHA binds the checked-out probe code and
+both rebuilt test databases. `APP_STAGING_URL` is a shared deployed host, so its
+application revision is explicitly reported as unverified; the receipt must not
+claim that the host runs the event SHA. Release staging proves its hosted SHA
+separately in the `db-copy` holder's health check.
 
 Add these at: GitHub → Settings → Secrets and variables → Actions → New repository secret.
 
