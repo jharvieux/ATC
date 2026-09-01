@@ -15,8 +15,13 @@ const originalMigration = migrations.find(
 const isolationMigration = migrations.find(
   ({ file }) => file === "20260901063425_isolate_email_provider_dispatch.sql",
 )?.sql;
+const retentionCommentMigration = migrations.find(
+  ({ file }) => file.endsWith("_clarify_email_provider_dispatch_retention.sql"),
+)?.sql;
 
-if (!originalMigration || !isolationMigration) throw new Error("email outbox migrations not found");
+if (!originalMigration || !isolationMigration || !retentionCommentMigration) {
+  throw new Error("email outbox migrations not found");
+}
 
 function effectiveFunctionBody(name: string): string {
   let effectiveBody: string | undefined;
@@ -58,6 +63,12 @@ describe("idempotent email outbox migration", () => {
     expect(isolationMigration).toContain("WHERE provider_request_body IS NOT NULL");
     expect(effectiveFunctionBody("start_idempotent_email_dispatch")).toContain(
       "INTERVAL '23 hours'",
+    );
+    expect(retentionCommentMigration).toContain(
+      "become purge-eligible when the 23-hour provider replay window closes",
+    );
+    expect(retentionCommentMigration).toContain(
+      "bounded hourly purge after the 23-hour replay window",
     );
   });
 

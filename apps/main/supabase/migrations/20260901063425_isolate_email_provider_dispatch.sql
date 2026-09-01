@@ -48,9 +48,9 @@ CREATE INDEX email_provider_dispatch_expiry_idx
   WHERE provider_request_body IS NOT NULL;
 
 COMMENT ON TABLE public.email_provider_dispatch IS
-  'Service-role-only transient provider outbox. Exact rendered request and retry snapshot become purge-eligible when the 23-hour provider replay window closes.';
+  'Service-role-only transient provider outbox. Exact rendered request and retry snapshot are retained for at most the 23-hour provider replay window.';
 COMMENT ON COLUMN public.email_provider_dispatch.provider_request_body IS
-  'Exact serialized Resend request body; customer PII; cleared on finalization or by the bounded hourly purge after the 23-hour replay window.';
+  'Exact serialized Resend request body; customer PII; cleared on finalization or after the 23-hour replay window.';
 COMMENT ON COLUMN public.email_provider_dispatch.retry_content_snapshot IS
   'Rendered retry payload; customer PII; moved to email_retry_content on successful finalization.';
 

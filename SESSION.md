@@ -10,14 +10,15 @@
 - Independent acceptance passed on `defefe0d`; the D-091 audit was clean and posted its current hash-bound marker.
 - The pre-PR audit found three final evidence/wording gaps. The working tree now pins staging and capped-backlog outbox purge behavior, pins deterministic IDs for both scheduler variants and distinct cron runs, and describes provider PII as purge-eligible after 23 hours. The three focused suites pass 27/27.
 - Full `pnpm verify` also passes on that final audit repair under Node 24.15.0: 630 main files / 7,029 tests and 30 RAG files / 201 tests passed; all blocking guards are green and hosted schema drift is the only DB-URL-gated skip.
+- Restored the already-applied outbox migration byte-for-byte and put the catalog-comment accuracy correction in collision-safe append-only migration `20260901074338_clarify_email_provider_dispatch_retention.sql`.
+- Applied that comment-only migration to the disposable local Supabase ledger with `PGSSLMODE=disable` and verified the live table/column comments; no shared or hosted database was contacted.
 - Opened #2118 for the post-switchover contract migration and #2119 for the separate `email_log`/`email_suppressions` authenticated-access reconciliation.
 
 ## In flight
-- PR #2116 remains open. Five scoped source-comment/test/baseline files plus this session checkpoint are modified locally and fully verified for the final pre-PR audit repair.
-- Commit/push, exact-head acceptance, both fresh hash-bound audits, audit-gate rerun, and merge remain.
+- PR #2116 remains open in exact-head audit/finalization. Fresh acceptance, both hash-bound audits, the audit-gate rerun, and merge remain after the current checkpoint is verified and published.
 
 ## Next step
-- Commit and push the verified final audit repair, then rerun exact-head acceptance and both PR audits; after both markers post, rerun the audit gate and merge only when every required check is green.
+- Verify and publish the current checkpoint if needed, then rerun exact-head acceptance and both PR audits; after both markers post, rerun the audit gate and merge only when every required check is green.
 
 ## Blocked on user
 - Awaiting approval to add two append-only MEMORY entries for the Lighthouse dependency override and atomic keyed-email finalization decisions.
