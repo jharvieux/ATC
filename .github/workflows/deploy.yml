@@ -340,7 +340,7 @@ jobs:
       group: shared-test-db
       cancel-in-progress: false
     outputs:
-      verified_sha: ${{ steps.revision-provenance.outputs.verified_sha }}
+      db_probe_sha: ${{ steps.revision-provenance.outputs.db_probe_sha }}
       acceptance_mode: ${{ steps.revision-provenance.outputs.acceptance_mode }}
     permissions:
       contents: read
@@ -545,7 +545,7 @@ jobs:
             echo "Dependabot pull request has no live cross-tenant credentials; retaining the explicit secret-less exemption."
             exit 0
           fi
-          echo "::error::Live cross-tenant acceptance requires NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, APP_BASE_URL, and CROSS_TENANT_FIXTURES=true."
+          echo "::error::Live cross-tenant requests require NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, APP_BASE_URL, and CROSS_TENANT_FIXTURES=true."
           exit 1
 
       - name: Run main RLS integration suite
@@ -585,14 +585,14 @@ jobs:
             exit 1
           fi
           if [ "$MAIN_MODE" = "true" ] && [ "$RAG_MODE" = "true" ] && [ "$CROSS_TENANT_MODE" = "true" ]; then
-            echo "acceptance_mode=live" >> "$GITHUB_OUTPUT"
+            echo "acceptance_mode=db-probe-live-host-unverified" >> "$GITHUB_OUTPUT"
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
             echo "acceptance_mode=dependabot-exempt" >> "$GITHUB_OUTPUT"
           else
             echo "::error::Required live acceptance modes were not established: main=$MAIN_MODE rag=$RAG_MODE cross_tenant=$CROSS_TENANT_MODE"
             exit 1
           fi
-          echo "verified_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "db_probe_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   integration-tests-critical:
     name: Integration Tests (RLS + RAG Scope + Payments)
@@ -612,7 +612,7 @@ jobs:
       DETECT_RESULT: ${{ needs.detect-changes.result }}
       HOLDER_RESULT: ${{ needs.rls-snapshot-diff.result }}
       EXPECTED_SHA: ${{ github.sha }}
-      VERIFIED_SHA: ${{ needs.rls-snapshot-diff.outputs.verified_sha }}
+      DB_PROBE_SHA: ${{ needs.rls-snapshot-diff.outputs.db_probe_sha }}
       ACCEPTANCE_MODE: ${{ needs.rls-snapshot-diff.outputs.acceptance_mode }}
     steps:
       - name: Verify exact tested revision
@@ -621,14 +621,14 @@ jobs:
             echo "::error::Required dependency failed or was cancelled: detect=$DETECT_RESULT holder=$HOLDER_RESULT"
             exit 1
           fi
-          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
-            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+          if [ -z "$DB_PROBE_SHA" ] || [ "$DB_PROBE_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::DB/probe revision provenance missing or stale: expected=$EXPECTED_SHA verified=${DB_PROBE_SHA:-missing}"
             exit 1
           fi
-          if [ "$ACCEPTANCE_MODE" = "live" ]; then
-            echo "Live integration acceptance passed for $VERIFIED_SHA."
+          if [ "$ACCEPTANCE_MODE" = "db-probe-live-host-unverified" ]; then
+            echo "Revision-bound main/RAG DB integration acceptance passed for $DB_PROBE_SHA."
           elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
-            echo "Dependabot secret-less exemption recorded for $VERIFIED_SHA; no live integration acceptance is claimed."
+            echo "Dependabot secret-less exemption recorded for $DB_PROBE_SHA; no live integration acceptance is claimed."
           else
             echo "::error::Unexpected acceptance mode: ${ACCEPTANCE_MODE:-missing}"
             exit 1
@@ -679,7 +679,7 @@ jobs:
       SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
       HOLDER_RESULT: ${{ needs.rls-snapshot-diff.result }}
       EXPECTED_SHA: ${{ github.sha }}
-      VERIFIED_SHA: ${{ needs.rls-snapshot-diff.outputs.verified_sha }}
+      DB_PROBE_SHA: ${{ needs.rls-snapshot-diff.outputs.db_probe_sha }}
       ACCEPTANCE_MODE: ${{ needs.rls-snapshot-diff.outputs.acceptance_mode }}
     steps:
       - name: Verify exact tested revision
@@ -690,14 +690,14 @@ jobs:
               exit 1
             fi
           done
-          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
-            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+          if [ -z "$DB_PROBE_SHA" ] || [ "$DB_PROBE_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::DB/probe revision provenance missing or stale: expected=$EXPECTED_SHA verified=${DB_PROBE_SHA:-missing}"
             exit 1
           fi
-          if [ "$ACCEPTANCE_MODE" = "live" ]; then
-            echo "Live cross-tenant acceptance passed for $VERIFIED_SHA."
+          if [ "$ACCEPTANCE_MODE" = "db-probe-live-host-unverified" ]; then
+            echo "Cross-tenant probe code and main/RAG test-DB state were revision-bound to $DB_PROBE_SHA; live requests ran against APP_BASE_URL, whose hosted app revision was not verified."
           elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
-            echo "Dependabot secret-less exemption recorded for $VERIFIED_SHA; no live cross-tenant acceptance is claimed."
+            echo "Dependabot secret-less exemption recorded for $DB_PROBE_SHA; no live cross-tenant acceptance is claimed."
           else
             echo "::error::Unexpected acceptance mode: ${ACCEPTANCE_MODE:-missing}"
             exit 1
@@ -761,7 +761,7 @@ jobs:
       group: shared-test-db
       cancel-in-progress: false
     outputs:
-      verified_sha: ${{ steps.staging-provenance.outputs.verified_sha }}
+      staged_sha: ${{ steps.staging-provenance.outputs.staged_sha }}
     needs:
       [
         typecheck,
@@ -1012,19 +1012,33 @@ jobs:
           retention-days: 14
 
       - name: Smoke test staging
+        id: staging-health
         run: |
           sleep 20
-          curl -f https://staging.ai-travelconcierge.com/api/health
+          health_response=$(curl -f --silent --show-error https://staging.ai-travelconcierge.com/api/health)
+          echo "$health_response"
+          health_commit=$(printf '%s' "$health_response" | node -e 'const fs = require("fs"); const health = JSON.parse(fs.readFileSync(0, "utf8")); if (health.status !== "ok" || health.service !== "main" || typeof health.commit !== "string") process.exit(1); process.stdout.write(health.commit.trim());')
+          if [ -z "$health_commit" ] || [ "$health_commit" = "unknown" ]; then
+            echo "::error::Staging health response did not identify a concrete deployed commit."
+            exit 1
+          fi
+          echo "commit=$health_commit" >> "$GITHUB_OUTPUT"
 
       - name: Record staging revision provenance
         id: staging-provenance
+        env:
+          HEALTH_COMMIT: ${{ steps.staging-health.outputs.commit }}
         run: |
           checked_out_sha=$(git rev-parse HEAD)
           if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
             echo "::error::Staging revision provenance mismatch: checkout=$checked_out_sha event=$GITHUB_SHA"
             exit 1
           fi
-          echo "verified_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          if [ -z "$HEALTH_COMMIT" ] || [ "$HEALTH_COMMIT" = "unknown" ] || [ "$HEALTH_COMMIT" != "$GITHUB_SHA" ]; then
+            echo "::error::Staging hosted revision mismatch: event=$GITHUB_SHA hosted=${HEALTH_COMMIT:-missing}"
+            exit 1
+          fi
+          echo "staged_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   # ============================================================
   # Staging receipt — preserves the required status name (job 6)
@@ -1043,7 +1057,7 @@ jobs:
     env:
       HOLDER_RESULT: ${{ needs.db-copy.result }}
       EXPECTED_SHA: ${{ github.sha }}
-      VERIFIED_SHA: ${{ needs.db-copy.outputs.verified_sha }}
+      STAGED_SHA: ${{ needs.db-copy.outputs.staged_sha }}
     steps:
       - name: Verify exact staged revision
         run: |
@@ -1051,11 +1065,11 @@ jobs:
             echo "::error::Staging holder failed, was skipped, or was cancelled: holder=$HOLDER_RESULT"
             exit 1
           fi
-          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
-            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+          if [ -z "$STAGED_SHA" ] || [ "$STAGED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Staging deployment provenance missing or stale: expected=$EXPECTED_SHA staged=${STAGED_SHA:-missing}"
             exit 1
           fi
-          echo "Staging acceptance passed for $VERIFIED_SHA."
+          echo "Staging deployment and acceptance passed for $STAGED_SHA."
 
   # ============================================================
   # Production block — deploy + smoke + tag + auto-merge (job 7)

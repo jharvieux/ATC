@@ -6,5 +6,10 @@
       "method": "GET",
       "reason": "Platform-admin route; intentionally cross-tenant. Requires platform-admin role, not tenant user."
     }
+  },
+  {
+    "route": "/api/health",
+    "method": "GET",
+    "reason": "Public health sentinel; validated separately for a 200 response and a concrete hosted commit before protected routes are probed."
   }
 ]

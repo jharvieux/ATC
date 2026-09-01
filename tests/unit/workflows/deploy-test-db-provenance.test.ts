@@ -102,7 +102,7 @@ function jobOperations(job: WorkflowJob): Operation[] {
     if (step.body.includes(ragAcceptanceCommand)) operations.push("accept-rag");
     if (step.name === "Reset staging public schema and restore") operations.push("copy-prod");
     if (step.name === "Apply Supabase migrations") operations.push("apply-release");
-    if (step.body.includes("npx playwright test") || step.body.includes("curl -f https://staging.ai-travelconcierge.com/api/health")) {
+    if (step.body.includes("npx playwright test") || step.name === "Smoke test staging") {
       operations.push("consume-release");
     }
   }
@@ -203,6 +203,18 @@ function runStep(workflowStep: WorkflowStep, env: NodeJS.ProcessEnv = {}) {
     env: { ...process.env, GITHUB_OUTPUT: outputPath, ...env },
   });
   return { ...result, output: fs.readFileSync(outputPath, "utf8") };
+}
+
+function fakeStagingCommands(): string {
+  const commandDir = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-provenance-bin-"));
+  tempDirs.push(commandDir);
+  fs.writeFileSync(path.join(commandDir, "sleep"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(commandDir, "curl"),
+    "#!/usr/bin/env bash\nprintf '%s' \"$FAKE_CURL_BODY\"\nexit \"${FAKE_CURL_STATUS:-0}\"\n",
+    { mode: 0o755 },
+  );
+  return commandDir;
 }
 
 interface HolderArrival {
@@ -330,11 +342,16 @@ describe("deploy shared-test-DB provenance", () => {
     for (const receipt of [integrationReceipt, crossTenantReceipt, deployStaging]) {
       expect(receipt?.ifExpression).toContain("always()");
       expect(receipt?.body).toContain("_RESULT");
-      expect(receipt?.body).toContain("outputs.verified_sha");
-      expect(receipt?.body).toContain('if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]');
-      expect(receipt?.body).toContain("Revision provenance missing or stale");
       expect(jobOperations(receipt as WorkflowJob)).toEqual([]);
     }
+    for (const receipt of [integrationReceipt, crossTenantReceipt]) {
+      expect(receipt?.body).toContain("outputs.db_probe_sha");
+      expect(receipt?.body).toContain('if [ -z "$DB_PROBE_SHA" ] || [ "$DB_PROBE_SHA" != "$EXPECTED_SHA" ]');
+      expect(receipt?.body).toContain("DB/probe revision provenance missing or stale");
+    }
+    expect(deployStaging?.body).toContain("outputs.staged_sha");
+    expect(deployStaging?.body).toContain('if [ -z "$STAGED_SHA" ] || [ "$STAGED_SHA" != "$EXPECTED_SHA" ]');
+    expect(deployStaging?.body).toContain("Staging deployment provenance missing or stale");
     expect(integrationReceipt?.needs).toEqual(["detect-changes", "rls-snapshot-diff"]);
     expect(crossTenantReceipt?.needs).toEqual([
       "detect-changes",
@@ -360,15 +377,16 @@ describe("deploy shared-test-DB provenance", () => {
       DETECT_RESULT: "success",
       HOLDER_RESULT: "success",
       EXPECTED_SHA: sha,
-      VERIFIED_SHA: sha,
-      ACCEPTANCE_MODE: "live",
+      DB_PROBE_SHA: sha,
+      STAGED_SHA: sha,
+      ACCEPTANCE_MODE: "db-probe-live-host-unverified",
       EVENT_NAME: "push",
       PR_AUTHOR: "",
     };
     const integrationScript = step(integrationReceipt, "Verify exact tested revision");
     expect(runStep(integrationScript, common).status).toBe(0);
     expect(runStep(integrationScript, { ...common, HOLDER_RESULT: "cancelled" }).status).not.toBe(0);
-    expect(runStep(integrationScript, { ...common, VERIFIED_SHA: "stale" }).status).not.toBe(0);
+    expect(runStep(integrationScript, { ...common, DB_PROBE_SHA: "stale" }).status).not.toBe(0);
 
     const crossTenantScript = step(crossTenantReceipt, "Verify exact tested revision");
     const crossTenantDependencies = {
@@ -378,20 +396,45 @@ describe("deploy shared-test-DB provenance", () => {
       TEST_RESULT: "success",
       SECRET_SCAN_RESULT: "success",
     };
-    expect(runStep(crossTenantScript, crossTenantDependencies).status).toBe(0);
+    const liveCrossTenant = runStep(crossTenantScript, crossTenantDependencies);
+    expect(liveCrossTenant.status).toBe(0);
+    expect(liveCrossTenant.stdout).toContain("hosted app revision was not verified");
+    expect(liveCrossTenant.stdout).toContain(sha);
     expect(runStep(crossTenantScript, { ...crossTenantDependencies, TEST_RESULT: "skipped" }).status).not.toBe(0);
     expect(runStep(crossTenantScript, { ...crossTenantDependencies, HOLDER_RESULT: "cancelled" }).status).not.toBe(0);
 
     const stagingScript = step(deployStaging, "Verify exact staged revision");
     expect(runStep(stagingScript, common).status).toBe(0);
     expect(runStep(stagingScript, { ...common, HOLDER_RESULT: "failure" }).status).not.toBe(0);
-    expect(runStep(stagingScript, { ...common, VERIFIED_SHA: "stale" }).status).not.toBe(0);
+    expect(runStep(stagingScript, { ...common, STAGED_SHA: "stale" }).status).not.toBe(0);
 
     const stagingProvenance = step(dbCopy, "Record staging revision provenance");
-    const staged = runStep(stagingProvenance, { GITHUB_SHA: sha });
+    const staged = runStep(stagingProvenance, { GITHUB_SHA: sha, HEALTH_COMMIT: sha });
     expect(staged.status, `${staged.stdout}\n${staged.stderr}`).toBe(0);
-    expect(staged.output).toBe(`verified_sha=${sha}\n`);
-    expect(runStep(stagingProvenance, { GITHUB_SHA: "stale" }).status).not.toBe(0);
+    expect(staged.output).toBe(`staged_sha=${sha}\n`);
+    expect(runStep(stagingProvenance, { GITHUB_SHA: sha, HEALTH_COMMIT: "unknown" }).status).not.toBe(0);
+    expect(runStep(stagingProvenance, { GITHUB_SHA: sha, HEALTH_COMMIT: "stale" }).status).not.toBe(0);
+    expect(runStep(stagingProvenance, { GITHUB_SHA: "stale", HEALTH_COMMIT: "stale" }).status).not.toBe(0);
+  });
+
+  it("executes the existing staging health request and rejects unusable hosted revisions", () => {
+    const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+    const health = step(dbCopy, "Smoke test staging");
+    expect(health.body).toContain("curl -f --silent --show-error https://staging.ai-travelconcierge.com/api/health");
+    const commandDir = fakeStagingCommands();
+    const common = { PATH: `${commandDir}:${process.env.PATH ?? ""}` };
+    const valid = runStep(health, {
+      ...common,
+      FAKE_CURL_BODY: JSON.stringify({ status: "ok", service: "main", commit: sha }),
+    });
+    expect(valid.status, `${valid.stdout}\n${valid.stderr}`).toBe(0);
+    expect(valid.output).toBe(`commit=${sha}\n`);
+    expect(runStep(health, { ...common, FAKE_CURL_STATUS: "22" }).status).not.toBe(0);
+    expect(runStep(health, { ...common, FAKE_CURL_BODY: "not-json" }).status).not.toBe(0);
+    expect(runStep(health, {
+      ...common,
+      FAKE_CURL_BODY: JSON.stringify({ status: "ok", service: "main", commit: "unknown" }),
+    }).status).not.toBe(0);
   });
 
   it("distinguishes Dependabot exemptions from live acceptance in receipt output", () => {
@@ -400,7 +443,7 @@ describe("deploy shared-test-DB provenance", () => {
       DETECT_RESULT: "success",
       HOLDER_RESULT: "success",
       EXPECTED_SHA: sha,
-      VERIFIED_SHA: sha,
+      DB_PROBE_SHA: sha,
       ACCEPTANCE_MODE: "dependabot-exempt",
       EVENT_NAME: "pull_request",
       PR_AUTHOR: "dependabot[bot]",
@@ -428,6 +471,9 @@ describe("deploy shared-test-DB provenance", () => {
     expect(provenanceHolder?.body).toContain("steps.cross-tenant-preflight.outputs.run_cross_tenant");
     expect(provenanceHolder?.body).toContain("acceptance_mode=dependabot-exempt");
     expect(provenanceHolder?.body).not.toContain("tested_sha=");
+    expect(provenanceHolder?.body).not.toContain("acceptance_mode=live");
+    expect(crossTenantReceipt?.body).not.toContain("Live cross-tenant acceptance passed for");
+    expect(crossTenantReceipt?.body).toContain("hosted app revision was not verified");
 
     const preflight = step(provenanceHolder, "Require live cross-tenant probe inputs");
     const livePreflight = runStep(preflight, {
@@ -459,7 +505,9 @@ describe("deploy shared-test-DB provenance", () => {
       PR_AUTHOR: "",
     });
     expect(liveProvenance.status, `${liveProvenance.stdout}\n${liveProvenance.stderr}`).toBe(0);
-    expect(liveProvenance.output).toBe(`acceptance_mode=live\nverified_sha=${sha}\n`);
+    expect(liveProvenance.output).toBe(
+      `acceptance_mode=db-probe-live-host-unverified\ndb_probe_sha=${sha}\n`,
+    );
     expect(
       runStep(provenance, {
         GITHUB_SHA: sha,
@@ -479,7 +527,7 @@ describe("deploy shared-test-DB provenance", () => {
       PR_AUTHOR: "dependabot[bot]",
     });
     expect(dependabotProvenance.status).toBe(0);
-    expect(dependabotProvenance.output).toBe(`acceptance_mode=dependabot-exempt\nverified_sha=${sha}\n`);
+    expect(dependabotProvenance.output).toBe(`acceptance_mode=dependabot-exempt\ndb_probe_sha=${sha}\n`);
     expect(
       runStep(provenance, {
         GITHUB_SHA: "stale",

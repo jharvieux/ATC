@@ -30,22 +30,8 @@ function filePathToRoute(filePath: string, apiRoot: string): string {
   const rel = relative(apiRoot, filePath);
   // Remove filename (route.ts / route.js)
   const segments = rel.split("/").slice(0, -1);
-  const route =
-    "/" +
-    segments
-      .map((s) => {
-        // [...rest] catch-all
-        if (s.startsWith("[...") && s.endsWith("]")) {
-          return "*";
-        }
-        // [param] dynamic segment
-        if (s.startsWith("[") && s.endsWith("]")) {
-          return s;
-        }
-        return s;
-      })
-      .join("/");
-  return route.replace(/^\/\//, "/");
+  const route = "/api/" + segments.join("/");
+  return route.replace(/\/$/, "");
 }
 
 function extractMethods(source: string): HttpMethod[] {
