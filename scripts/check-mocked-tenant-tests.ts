@@ -303,6 +303,7 @@ class LocalFlowEngine {
   private readonly literalValues = new Map<FlowAtom, string>();
   private readonly stringLiteralAtoms = new Set<FlowAtom>();
   private readonly ambiguousLiteralAtoms = new Set<FlowAtom>();
+  private readonly overwrittenObjectAtoms = new Set<FlowAtom>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
   // Keep attempted mutation IDs separate from returned rows: both are required to prove tenant isolation.
   private readonly mutationResourcesByAtom = new Map<FlowAtom, Set<string>>();
@@ -769,6 +770,7 @@ class LocalFlowEngine {
     value: FlowValue,
   ): void {
     for (const receiver of receivers) {
+      if (receiver.startsWith("object:")) this.overwrittenObjectAtoms.add(receiver);
       if (receiver === NATIVE_PROMISE_ATOM) {
         const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
         const key = member ?? "@unknown";
@@ -2046,12 +2048,33 @@ class LocalFlowEngine {
           const attemptedIds = kind === "insert" || kind === "upsert"
             ? this.mutationRowIds(branch, args[0] ?? this.values(UNKNOWN_ATOM))
             : undefined;
+          const repeatedOperation = branch.mutationAttempts.has(result);
+          let upsertOptionsValid = true;
+          const options = args[1];
+          if (kind === "upsert" && options && !(options.size === 1 && options.has(UNDEFINED_ATOM))) {
+            for (const option of options) {
+              const members = branch.members.get(option);
+              const onConflict = members?.get("onConflict");
+              const targets = onConflict && this.stringValues(onConflict);
+              if (
+                !option.startsWith("object:") ||
+                this.overwrittenObjectAtoms.has(option) ||
+                !members ||
+                members.has("@all") ||
+                members.has("@unknown") ||
+                (onConflict !== undefined && (!targets || targets.size !== 1 || !targets.has("id")))
+              ) upsertOptionsValid = false;
+            }
+          }
           branch.mutationAttempts.set(result, {
             kind,
             operation: result,
             resources: new Set(resources),
             ...(attemptedIds ? { attemptedIds } : {}),
-            intentInvalid: (kind === "insert" || kind === "upsert") && !attemptedIds,
+            intentInvalid:
+              repeatedOperation ||
+              ((kind === "insert" || kind === "upsert") && !attemptedIds) ||
+              !upsertOptionsValid,
           });
         }
         results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });

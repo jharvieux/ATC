@@ -664,6 +664,78 @@ describe("RLS integration", () => {
     expect(annotationErrorFor(coverage)).toBeUndefined();
   });
 
+  const helperMutationCases = [
+    ["UPDATE", 'const patch = { status: "updated" };', 'db.from("bookings").update(patch).in("id", ids).select("id")'],
+    ["DELETE", "", 'db.from("bookings").delete().in("id", ids).select("id")'],
+  ] as const;
+
+  it.each(helperMutationCases)("accepts a single exact %s helper mutation", (_mutation, setup, operation) => {
+    const query = `() => { ${setup} const mutate = (ids: string[]) => ${operation}; return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  it.each(helperMutationCases)("rejects an ignored %s helper mutation before an authoritative call", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; await mutate(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects repeated identical valid %s helper mutations", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; await mutate(["allowed", "booking-a"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects repeated %s mutations through a helper alias", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; const alias = mutate; await alias(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects a branch-conditional earlier %s helper mutation", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; if (process.env.RUN_MUTATION) await mutate(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["absent options", "", ""],
+    ["an aliased static id conflict target", 'const options = { onConflict: "id" };', ", options"],
+  ])("accepts UPSERT evidence with %s", (_shape, setup, options) => {
+    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }]${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]${options}).select("id"); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  it.each([
+    ["an alternate conflict key", 'const options = { onConflict: "external_ref" };'],
+    ["a composite conflict key", 'const options = { onConflict: "id,tenant_id" };'],
+    ["a dynamic conflict key", "const options = { onConflict: process.env.CONFLICT_KEY };"],
+    ["unresolved options", "const options = getOptions();"],
+    ["branch-ambiguous options", 'const options = process.env.USE_ID ? { onConflict: "id" } : { onConflict: "external_ref" };'],
+    ["a reassigned options alias", 'let options = { onConflict: "id" }; options = { onConflict: "external_ref" };'],
+    ["an overwritten conflict key", 'const options = { onConflict: "external_ref" }; options.onConflict = "id";'],
+  ])("rejects UPSERT evidence with %s", (_shape, setup) => {
+    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }], options).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }], options).select("id"); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
   it.each([
     ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
     ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
