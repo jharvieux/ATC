@@ -35,12 +35,22 @@ function filePathToRoute(filePath: string, apiRoot: string): string {
 }
 
 function extractMethods(source: string): HttpMethod[] {
+  const destructuredMethods = new Set<HttpMethod>();
+  for (const match of source.matchAll(/export\s+const\s*\{([\s\S]*?)\}\s*=/g)) {
+    for (const binding of match[1].split(",")) {
+      const method = HTTP_METHODS.find(
+        (candidate) => candidate === binding.trim(),
+      );
+      if (method) destructuredMethods.add(method);
+    }
+  }
+
   return HTTP_METHODS.filter((m) => {
     const pattern = new RegExp(
       `export\\s+(async\\s+)?function\\s+${m}\\b`,
       "m",
     );
-    return pattern.test(source);
+    return pattern.test(source) || destructuredMethods.has(m);
   });
 }
 

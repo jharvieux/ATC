@@ -13,7 +13,7 @@
  * mode and does not claim live cross-tenant acceptance.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { globSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "path";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -280,6 +280,41 @@ describe("Route enumerator", () => {
     expect(routes.length).toBeGreaterThan(0);
   });
 
+  it("enumerates every repository route file", () => {
+    const enumeratedFiles = new Set(
+      enumerateRoutes(API_ROOT).map((route) => route.filePath),
+    );
+    const missingFiles = globSync("**/route.{ts,js}", { cwd: API_ROOT })
+      .map((file) => join(API_ROOT, file))
+      .filter((file) => !enumeratedFiles.has(file));
+    expect(missingFiles).toEqual([]);
+  });
+
+  it("extracts exported destructured HTTP handlers conservatively", () => {
+    const apiRoot = mkdtempSync(join(tmpdir(), "api-route-enumerator-"));
+    try {
+      const routeDir = join(apiRoot, "inngest");
+      mkdirSync(routeDir, { recursive: true });
+      writeFileSync(join(routeDir, "route.ts"), `
+        const handlers = {};
+        export const {
+          GET,
+          POST,
+          PUT,
+          ignored,
+        } = handlers;
+        export const { DELETE: renamedDelete } = handlers;
+      `);
+      expect(enumerateRoutes(apiRoot).map(({ method, path }) => ({ method, path }))).toEqual([
+        { method: "GET", path: "/api/inngest" },
+        { method: "POST", path: "/api/inngest" },
+        { method: "PUT", path: "/api/inngest" },
+      ]);
+    } finally {
+      rmSync(apiRoot, { recursive: true, force: true });
+    }
+  });
+
   it("health route is included", () => {
     const routes = enumerateRoutes(API_ROOT);
     const health = routes.find((r) => r.path === "/api/health");
@@ -325,6 +360,23 @@ describe("Route enumerator", () => {
       hasParam: false,
       filePath: "apps/main/src/app/api/health/route.ts",
     })).toBe(true);
+  });
+
+  it("exempts only Inngest's mutating registration method", () => {
+    const inngestPut = (allowlist as (AllowlistEntry | Record<string, unknown>)[])
+      .find((entry): entry is AllowlistEntry =>
+        "route" in entry && entry.route === "/api/inngest" && entry.method === "PUT",
+      );
+    expect(inngestPut?.reason).toMatch(/out-of-band registration/i);
+
+    for (const method of ["GET", "POST", "PUT"] as const) {
+      expect(isAllowlisted({
+        method,
+        path: "/api/inngest",
+        hasParam: false,
+        filePath: "apps/main/src/app/api/inngest/route.ts",
+      })).toBe(method === "PUT");
+    }
   });
 
   it("pins probe URLs to real /api paths with or without a trailing base slash", () => {
