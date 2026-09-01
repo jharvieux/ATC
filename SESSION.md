@@ -6,9 +6,10 @@
 - Implemented the safe pre-cruise portions of #2108 through local commit `c7d365607afdf061e2e8a70f6d15cb051cedd80d`: reviewed-recipient binding, post-claim joined booking/contact/payment validation, context-hash cache invalidation, CAS-protected regeneration, send claims, unmount-safe UI completion, and scheduler tenant scoping.
 - The #2108 branch passes 104 focused tests, main typecheck, source lint, migration/PII/policy/D-091/slop/tenant/query guards, and diff checks. A prior full `pnpm verify` passed 6,915 main tests plus 201 RAG tests before the latest safe checkpoint; it must be rerun after the remaining approved work.
 - Completed a bounded consumer/sender/cache census. It proved durable local exactly-once behavior requires a shared sender/accounting transaction and an immutable provider-attempt epoch; filed #2112 for the adjacent shared usage-state transition race outside #2108.
+- Added approved decision entry D-372 for PR #2111's scoped Lighthouse 12 → Puppeteer 25 override; the MEMORY/index consistency guard passes and MEMORY now has 350 entries.
 
 ## In flight
-- Issue #2108 remains local and unpushed on `feature/precruise-delivery-hardening` in `/private/tmp/atc-precruise-2108`; the worktree is clean at `c7d365607afdf061e2e8a70f6d15cb051cedd80d` before this SESSION update.
+- Issue #2108 remains local and unpushed on `feature/precruise-delivery-hardening` in `/private/tmp/atc-precruise-2108`; safe application code is at `c7d365607afdf061e2e8a70f6d15cb051cedd80d`, with checkpoint/MEMORY commits through `47d5fbc8`.
 - Remaining design: tenant-scoped `email_log.idempotency_key`, partial unique index, SECURITY INVOKER atomic log/retry-content/counter RPC, state-transition healing, immutable <24-hour provider epoch, and recovery-before-regeneration. The environment safety gate requires explicit user approval because this changes the shared sender and usage accounting.
 
 ## Next step
@@ -16,7 +17,6 @@
 
 ## Blocked on user
 - Explicit approval is required to modify shared `sendEmail`, `email_log`, retry-content finalization, and tenant email usage accounting for #2108's durable exactly-once guarantee.
-- Explicit approval is also required before adding the proposed D-372 MEMORY entry for PR #2111's scoped Puppeteer override; the safety gate rejected the unapproved decision-log write.
 - The issue sweep remains intentionally paused. Do not resume it unless the user explicitly asks.
 
 ## Open questions
