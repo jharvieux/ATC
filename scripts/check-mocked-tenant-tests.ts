@@ -56,18 +56,34 @@ const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
 
 export type PostgresProvenanceTarget = "main" | "rag";
 type PostgresRelationKind = "table" | "partitioned_table" | "view" | "materialized_view" | "foreign_table";
+const REVIEWED_POLICY_ROUTINES = ["auth_user_in_tenant"] as const;
+const REVIEWED_ROUTINES = ["public.auth_user_in_tenant", "public.match_region_itinerary_chunks"] as const;
 
 interface PostgresPolicyProvenance {
   command: "all" | "select" | "insert" | "update" | "delete";
   definitionHash: string;
+  functionBindings: ReadonlyMap<string, string | undefined>;
 }
 
 export interface PostgresMigrationProvenance {
   relations: ReadonlyMap<string, PostgresRelationKind>;
+  relationAlterations: ReadonlyMap<string, readonly string[]>;
   rlsEnabled: ReadonlyMap<string, boolean>;
   policies: ReadonlyMap<string, ReadonlyMap<string, PostgresPolicyProvenance>>;
   functions: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  functionIdentities: ReadonlyMap<string, ReadonlyMap<string, string>>;
   rules: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  operators: ReadonlyMap<string, string>;
+  casts: ReadonlySet<string>;
+  types: ReadonlySet<string>;
+  extensions: ReadonlyMap<string, string>;
+  runtimeSearchPaths: ReadonlyMap<string, readonly string[] | undefined>;
+  ambiguousSchemas: ReadonlySet<string>;
+  ambiguousOperators: ReadonlySet<string>;
+  ambiguousCasts: ReadonlySet<string>;
+  ambiguousTypes: ReadonlySet<string>;
+  ambiguousExtensions: ReadonlySet<string>;
+  ambiguousIndexCatalog: ReadonlySet<string>;
   ambiguousPolicyTables: ReadonlySet<string>;
   ambiguousFunctions: ReadonlySet<string>;
 }
@@ -123,6 +139,12 @@ function skipLeadingSqlTrivia(sql: string): number {
 
 function migrationStatements(sql: string): string[] {
   const statements: string[] = [];
+  const executableSql = sql.split("");
+  const maskComment = (from: number, to: number) => {
+    for (let offset = from; offset < to; offset += 1) {
+      if (executableSql[offset] !== "\n" && executableSql[offset] !== "\r") executableSql[offset] = " ";
+    }
+  };
   let start = 0;
   let index = 0;
   while (index < sql.length) {
@@ -145,11 +167,14 @@ function migrationStatements(sql: string): string[] {
       continue;
     }
     if (sql.startsWith("--", index)) {
+      const commentStart = index;
       const newline = sql.indexOf("\n", index + 2);
       index = newline < 0 ? sql.length : newline + 1;
+      maskComment(commentStart, index);
       continue;
     }
     if (sql.startsWith("/*", index)) {
+      const commentStart = index;
       let depth = 1;
       index += 2;
       while (index < sql.length && depth > 0) {
@@ -162,6 +187,7 @@ function migrationStatements(sql: string): string[] {
         } else index += 1;
       }
       if (depth !== 0) throw new Error("unterminated block comment in migration SQL");
+      maskComment(commentStart, index);
       continue;
     }
     if (char === "$") {
@@ -174,13 +200,13 @@ function migrationStatements(sql: string): string[] {
       }
     }
     if (char === ";") {
-      const statement = sql.slice(start, index).trim();
+      const statement = executableSql.slice(start, index).join("").trim();
       if (statement) statements.push(statement.slice(skipLeadingSqlTrivia(statement)).trim());
       start = index + 1;
     }
     index += 1;
   }
-  const statement = sql.slice(start).trim();
+  const statement = executableSql.slice(start).join("").trim();
   if (statement) statements.push(statement.slice(skipLeadingSqlTrivia(statement)).trim());
   return statements.filter(Boolean);
 }
@@ -189,10 +215,84 @@ function definitionHash(sql: string): string {
   return createHash("sha256").update(sql.replace(/\r\n?/g, "\n").trim()).digest("hex");
 }
 
+const POSTGRES_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  int: "integer", int4: "integer", int2: "smallint", int8: "bigint",
+  bool: "boolean", float4: "real", float8: "double precision",
+  varchar: "character varying", char: "character", decimal: "numeric",
+  timestamp: "timestamp without time zone", timestamptz: "timestamp with time zone",
+  time: "time without time zone", timetz: "time with time zone",
+};
+
 function normalizedRoutineSignature(types: readonly string[]): string {
-  return types
-    .map((type) => type.trim().replace(/\s+/g, " ").replace(/\s*\[\s*\]/g, "[]").toLowerCase())
-    .join(",");
+  return types.map((type) => {
+    const normalized = type
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/(?:\bpg_catalog|"pg_catalog")\s*\.\s*/gi, "")
+      .replace(/\s+ARRAY\b/gi, "[]")
+      .replace(/\s*\[\s*\]/g, "[]")
+      .toLowerCase();
+    const suffix = normalized.endsWith("[]") ? "[]" : "";
+    const rawBase = suffix ? normalized.slice(0, -2) : normalized;
+    const base = /^"(?:""|[^"])+"$/.test(rawBase) ? unquotePostgresIdentifier(rawBase) : rawBase;
+    return `${POSTGRES_TYPE_ALIASES[base] ?? base}${suffix}`;
+  }).join(",");
+}
+
+function normalizedSearchPath(value: string): string[] | undefined {
+  const normalized = value.trim().replace(/^TO\s+/i, "").replace(/^=\s*/, "");
+  if (/^DEFAULT$/i.test(normalized)) return ["$user", "public"];
+  const schemas: string[] = [];
+  for (const raw of normalized.split(",")) {
+    const item = raw.trim();
+    if (!item) return undefined;
+    if (/^'[^']*'$/.test(item)) {
+      const contents = item.slice(1, -1).replace(/''/g, "'");
+      for (const part of contents.split(",")) {
+        const schema = part.trim();
+        if (!schema) return undefined;
+        schemas.push(schema === "$user" ? schema : schema.toLowerCase());
+      }
+      continue;
+    }
+    if (item === "$user") schemas.push(item);
+    else {
+      const name = new RegExp(`^(${SQL_IDENTIFIER})$`).exec(item)?.[1];
+      if (!name) return undefined;
+      schemas.push(unquotePostgresIdentifier(name));
+    }
+  }
+  return schemas;
+}
+
+const POSTGRES_OPERATOR_NAME = "[-+*/<>=~!@#%^&|`?]+";
+
+interface PostgresOperatorClass {
+  name: string;
+  method: string;
+  isDefault: boolean;
+}
+
+const POSTGRES_BUILTIN_OPERATOR_CLASSES = new Set([
+  "array_ops\u0000btree", "array_ops\u0000hash", "array_ops\u0000gin",
+  "date_ops\u0000btree", "date_ops\u0000hash",
+  "text_ops\u0000btree", "text_ops\u0000hash",
+  "timestamp_ops\u0000btree", "timestamp_ops\u0000hash",
+  "timestamptz_ops\u0000btree", "timestamptz_ops\u0000hash",
+  "uuid_ops\u0000btree", "uuid_ops\u0000hash",
+]);
+
+function normalizedOperatorName(value: string): { schema: string; name: string } | undefined {
+  const match = new RegExp(`^(?:(${SQL_IDENTIFIER})\\s*\\.\\s*)?(${POSTGRES_OPERATOR_NAME})$`).exec(value.trim());
+  if (!match) return undefined;
+  return {
+    schema: match[1] ? unquotePostgresIdentifier(match[1]) : "public",
+    name: match[2]!,
+  };
+}
+
+function operatorIdentity(schema: string, name: string, leftType: string, rightType: string): string {
+  return [schema, name, leftType, rightType].join("\u0000");
 }
 
 /** Derives only executable object facts needed to validate reviewed raw-SQL witnesses. */
@@ -200,12 +300,29 @@ export function derivePostgresMigrationProvenance(
   migrations: readonly { file: string; sql: string }[],
 ): PostgresMigrationProvenance {
   const relations = new Map<string, PostgresRelationKind>();
+  const relationAlterations = new Map<string, string[]>();
   const rlsEnabled = new Map<string, boolean>();
   const policies = new Map<string, Map<string, PostgresPolicyProvenance>>();
   const functions = new Map<string, Map<string, string>>();
+  const functionIdentities = new Map<string, Map<string, string>>();
   const rules = new Map<string, Map<string, string>>();
+  const operators = new Map<string, string>();
+  const casts = new Set<string>();
+  const types = new Set<string>();
+  const extensions = new Map<string, string>();
+  const runtimeSearchPaths = new Map<string, readonly string[] | undefined>();
+  const ambiguousSchemas = new Set<string>();
+  const ambiguousOperators = new Set<string>();
+  const ambiguousCasts = new Set<string>();
+  const ambiguousTypes = new Set<string>();
+  const ambiguousExtensions = new Set<string>();
+  const ambiguousIndexCatalog = new Set<string>();
+  const operatorClasses = new Map<string, PostgresOperatorClass>();
+  const accessMethods = new Set<string>();
   const ambiguousPolicyTables = new Set<string>();
   const ambiguousFunctions = new Set<string>();
+  let sessionSearchPath: readonly string[] | undefined = ["$user", "public"];
+  let routineIdentitySerial = 0;
   const relationExpression = new RegExp(
     `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(UNLOGGED)\\s+)?(MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE|VIEW|TABLE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
     "i",
@@ -240,7 +357,58 @@ export function derivePostgresMigrationProvenance(
   );
 
   for (const migration of migrations) {
+    let currentSearchPath = sessionSearchPath;
     for (const statement of migrationStatements(migration.sql)) {
+      const setSearchPath = /^SET\s+(LOCAL\s+|SESSION\s+)?search_path(?=\s|=)\s*([\s\S]+)$/i.exec(statement) ??
+        /^SET\s+(LOCAL\s+|SESSION\s+)?SCHEMA\s+([\s\S]+)$/i.exec(statement);
+      if (setSearchPath) {
+        currentSearchPath = normalizedSearchPath(setSearchPath[2]!);
+        if (!/^LOCAL\s+$/i.test(setSearchPath[1] ?? "")) sessionSearchPath = currentSearchPath;
+      } else if (/^RESET\s+(?:search_path|ALL)$/i.test(statement)) {
+        currentSearchPath = ["$user", "public"];
+        sessionSearchPath = currentSearchPath;
+      }
+      const configuredSearchPath = /^SELECT\s+(?:pg_catalog\s*\.\s*)?set_config\s*\(\s*'search_path'\s*,\s*'((?:''|[^'])*)'\s*,\s*(true|false)\s*\)$/i.exec(statement);
+      if (configuredSearchPath) {
+        currentSearchPath = normalizedSearchPath(`'${configuredSearchPath[1]}'`);
+        if (configuredSearchPath[2]!.toLowerCase() === "false") sessionSearchPath = currentSearchPath;
+      } else if (/^SELECT\s+(?:pg_catalog\s*\.\s*)?set_config\s*\(\s*'search_path'/i.test(statement)) {
+        currentSearchPath = undefined;
+        sessionSearchPath = undefined;
+      }
+
+      const alteredRuntimePath = /^ALTER\s+(ROLE|DATABASE|SYSTEM)\s+([\s\S]+)$/i.exec(statement);
+      if (alteredRuntimePath && /\b(?:SET|RESET)\s+(?:ALL\b|search_path\b)/i.test(alteredRuntimePath[2]!)) {
+        const kind = alteredRuntimePath[1]!.toLowerCase();
+        const tail = alteredRuntimePath[2]!;
+        let key: string | undefined;
+        let action: string | undefined;
+        if (kind === "role") {
+          const match = new RegExp(`^(${SQL_IDENTIFIER})(?:\\s+IN\\s+DATABASE\\s+${SQL_IDENTIFIER})?\\s+([\\s\\S]+)$`, "i").exec(tail);
+          if (match) {
+            const role = unquotePostgresIdentifier(match[1]!);
+            key = ["all", "current_role", "current_user", "session_user"].includes(role) ? "system" : `role:${role}`;
+            action = match[2];
+          }
+        } else if (kind === "database") {
+          const match = new RegExp(`^${SQL_IDENTIFIER}\\s+([\\s\\S]+)$`, "i").exec(tail);
+          if (match) {
+            key = "database";
+            action = match[1];
+          }
+        } else {
+          key = "system";
+          action = tail;
+        }
+        if (key && action) {
+          if (/^RESET\s+(?:ALL|search_path)$/i.test(action.trim())) runtimeSearchPaths.delete(key);
+          else {
+            const value = /^SET\s+search_path(?=\s|=)\s*([\s\S]+)$/i.exec(action.trim())?.[1];
+            runtimeSearchPaths.set(key, value ? normalizedSearchPath(value) : undefined);
+          }
+        }
+      }
+
       const relation = relationExpression.exec(statement);
       if (relation) {
         const name = normalizedQualifiedName(relation[3]!);
@@ -256,6 +424,7 @@ export function derivePostgresMigrationProvenance(
                 ? "partitioned_table"
                 : "table";
         relations.set(name, kind);
+        if (!relationAlterations.has(name)) relationAlterations.set(name, []);
       }
       const droppedRelation = dropRelationExpression.exec(statement);
       if (droppedRelation) {
@@ -263,6 +432,7 @@ export function derivePostgresMigrationProvenance(
           const name = normalizedQualifiedName(candidate);
           if (!name) continue;
           relations.delete(name);
+          relationAlterations.delete(name);
           rlsEnabled.delete(name);
           policies.delete(name);
           rules.delete(name);
@@ -273,6 +443,9 @@ export function derivePostgresMigrationProvenance(
         const name = normalizedQualifiedName(alteredTable[1]!);
         if (name) {
           const tail = alteredTable[2]!;
+          const alterations = relationAlterations.get(name) ?? [];
+          alterations.push(definitionHash(statement));
+          relationAlterations.set(name, alterations);
           if (/\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(tail)) rlsEnabled.set(name, true);
           if (/\bDISABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(tail)) rlsEnabled.set(name, false);
           const renamed = new RegExp(`^\\s*RENAME\\s+TO\\s+(${SQL_IDENTIFIER})`, "i").exec(tail);
@@ -285,6 +458,8 @@ export function derivePostgresMigrationProvenance(
             const kind = relations.get(name);
             if (kind) relations.set(next, kind);
             relations.delete(name);
+            relationAlterations.set(next, relationAlterations.get(name) ?? []);
+            relationAlterations.delete(name);
             if (rlsEnabled.has(name)) rlsEnabled.set(next, rlsEnabled.get(name)!);
             rlsEnabled.delete(name);
             if (policies.has(name)) policies.set(next, policies.get(name)!);
@@ -300,8 +475,35 @@ export function derivePostgresMigrationProvenance(
         if (table) {
           const name = unquotePostgresIdentifier(createdPolicy[1]!);
           const command = /\bFOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE)\b/i.exec(createdPolicy[3]!)?.[1]?.toLowerCase() ?? "all";
+          const functionBindings = new Map<string, string | undefined>();
+          for (const routine of REVIEWED_POLICY_ROUTINES) {
+            const qualifiedCallsRemoved = createdPolicy[3]!.replace(
+              new RegExp(`${SQL_IDENTIFIER}\\s*\\.\\s*${routine}\\s*\\(`, "gi"),
+              "",
+            );
+            if (new RegExp(`\\b${routine}\\s*\\(`, "i").test(qualifiedCallsRemoved)) {
+              let identity: string | undefined;
+              const ordered = currentSearchPath?.includes("pg_catalog")
+                ? currentSearchPath
+                : currentSearchPath && ["pg_catalog", ...currentSearchPath];
+              for (const schema of ordered ?? []) {
+                const qualified = `${schema === "$user" ? "postgres" : schema}.${routine}`;
+                const overloads = functions.get(qualified);
+                if (overloads && overloads.size > 1) break;
+                if (overloads?.size === 1) {
+                  identity = functionIdentities.get(qualified)?.values().next().value;
+                  break;
+                }
+              }
+              functionBindings.set(routine, identity);
+            }
+          }
           const byName = policies.get(table) ?? new Map<string, PostgresPolicyProvenance>();
-          byName.set(name, { command: command as PostgresPolicyProvenance["command"], definitionHash: definitionHash(statement) });
+          byName.set(name, {
+            command: command as PostgresPolicyProvenance["command"],
+            definitionHash: definitionHash(statement),
+            functionBindings,
+          });
           policies.set(table, byName);
         }
       }
@@ -329,29 +531,289 @@ export function derivePostgresMigrationProvenance(
         const table = normalizedQualifiedName(droppedRule[2]!);
         if (table) rules.get(table)?.delete(unquotePostgresIdentifier(droppedRule[1]!));
       }
-      for (const event of parseRoutineEvents(statement, migration.file)) {
+      const routineStatement = statement
+        .replace(/^(CREATE\s+(?:OR\s+REPLACE\s+)?)(?:PROCEDURE|AGGREGATE)\b/i, "$1FUNCTION")
+        .replace(/^(DROP\s+)(?:PROCEDURE|AGGREGATE|ROUTINE)\b/i, "$1FUNCTION");
+      for (const event of parseRoutineEvents(routineStatement, migration.file)) {
         const name = `${event.schema.toLowerCase()}.${event.name.toLowerCase()}`;
-        const signature = normalizedRoutineSignature(event.arguments.map((argument) =>
-          event.action === "drop" ? argument.typeCandidates[0]! : argument.typeCandidates.at(-1)!,
-        ));
-        if (event.action === "drop") functions.get(name)?.delete(signature);
-        else {
+        const signature = normalizedRoutineSignature(
+          event.arguments.map((argument) => {
+            const first = argument.typeCandidates[0]!;
+            const last = argument.typeCandidates.at(-1)!;
+            return event.action === "drop" && /^(?:\.|\[|array\b|with(?:out)?\b|varying\b|precision\b)/i.test(last.trim())
+              ? first
+              : last;
+          }),
+        );
+        if (event.action === "drop") {
+          const overloads = functions.get(name);
+          overloads?.delete(signature);
+          functionIdentities.get(name)?.delete(signature);
+          if (overloads?.size === 0) {
+            functions.delete(name);
+            functionIdentities.delete(name);
+            ambiguousFunctions.delete(name);
+          }
+        } else {
           const overloads = functions.get(name) ?? new Map<string, string>();
+          const identities = functionIdentities.get(name) ?? new Map<string, string>();
+          const replacing = overloads.has(signature);
           overloads.set(signature, definitionHash(statement));
+          if (!replacing) identities.set(signature, `${migration.file}:${routineIdentitySerial++}`);
           functions.set(name, overloads);
+          functionIdentities.set(name, identities);
+          if (!replacing && overloads.size === 1) ambiguousFunctions.delete(name);
+        }
+      }
+      if (/^DROP\s+(?:FUNCTION|PROCEDURE|ROUTINE|AGGREGATE)\b/i.test(statement)) {
+        for (const name of REVIEWED_ROUTINES) {
+          const [schema, routine] = name.split(".", 2);
+          if (functions.has(name) && new RegExp(`\\b${schema}\\s*\\.\\s*${routine}\\s*\\(`, "i").test(statement)) {
+            ambiguousFunctions.add(name);
+          }
         }
       }
       const alteredFunction = new RegExp(
-        `^ALTER\\s+FUNCTION\\s+(${SQL_QUALIFIED_NAME})\\s*\\(`,
+        `^ALTER\\s+(?:FUNCTION|PROCEDURE|ROUTINE|AGGREGATE)\\s+(${SQL_QUALIFIED_NAME})\\s*\\(`,
         "i",
       ).exec(statement);
       if (alteredFunction) {
         const name = normalizedQualifiedName(alteredFunction[1]!);
         if (name) ambiguousFunctions.add(name);
       }
+
+      const operatorNamePattern = `(?:${SQL_IDENTIFIER}\\s*\\.\\s*)?${POSTGRES_OPERATOR_NAME}`;
+      const createdOperator = new RegExp(`^CREATE\\s+OPERATOR\\s+(${operatorNamePattern})\\s*\\(([\\s\\S]*)\\)$`, "i").exec(statement);
+      if (createdOperator) {
+        const name = normalizedOperatorName(createdOperator[1]!);
+        const left = /\bLEFTARG\s*=\s*([^,]+)/i.exec(createdOperator[2]!)?.[1] ?? "NONE";
+        const right = /\bRIGHTARG\s*=\s*([^,]+)/i.exec(createdOperator[2]!)?.[1] ?? "NONE";
+        if (name) {
+          const leftType = normalizedRoutineSignature([left]);
+          const rightType = normalizedRoutineSignature([right]);
+          const identity = operatorIdentity(name.schema, name.name, leftType, rightType);
+          operators.set(identity, `${name.schema}.${name.name}`);
+          ambiguousOperators.delete(`${name.schema}.${name.name}`);
+        }
+      }
+      const droppedOperator = new RegExp(
+        `^DROP\\s+OPERATOR\\s+(?:IF\\s+EXISTS\\s+)?(${operatorNamePattern})\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)`,
+        "i",
+      ).exec(statement);
+      if (droppedOperator) {
+        const name = normalizedOperatorName(droppedOperator[1]!);
+        if (name) {
+          const identity = operatorIdentity(
+            name.schema,
+            name.name,
+            normalizedRoutineSignature([droppedOperator[2]!]),
+            normalizedRoutineSignature([droppedOperator[3]!]),
+          );
+          if (operators.delete(identity)) ambiguousOperators.delete(`${name.schema}.${name.name}`);
+          else ambiguousOperators.add(`${name.schema}.${name.name}`);
+        }
+      }
+      const alteredOperator = new RegExp(`^ALTER\\s+OPERATOR\\s+(${operatorNamePattern})\\s*\\(`, "i").exec(statement);
+      if (alteredOperator) {
+        const name = normalizedOperatorName(alteredOperator[1]!);
+        if (name) ambiguousOperators.add(`${name.schema}.${name.name}`);
+      }
+
+      const createdCast = /^CREATE\s+CAST\s*\(\s*([\s\S]+?)\s+AS\s+([\s\S]+?)\s*\)/i.exec(statement);
+      if (createdCast) {
+        const identity = `${normalizedRoutineSignature([createdCast[1]!])}\u0000${normalizedRoutineSignature([createdCast[2]!])}`;
+        casts.add(identity);
+        ambiguousCasts.delete(identity);
+      }
+      const droppedCast = /^DROP\s+CAST\s+(?:IF\s+EXISTS\s+)?\(\s*([\s\S]+?)\s+AS\s+([\s\S]+?)\s*\)/i.exec(statement);
+      if (droppedCast) {
+        const identity = `${normalizedRoutineSignature([droppedCast[1]!])}\u0000${normalizedRoutineSignature([droppedCast[2]!])}`;
+        if (casts.delete(identity)) ambiguousCasts.delete(identity);
+        else ambiguousCasts.add(identity);
+      }
+
+      const createdType = new RegExp(`^CREATE\\s+(?:TYPE|DOMAIN)\\s+(${SQL_QUALIFIED_NAME})\\b`, "i").exec(statement);
+      if (createdType) {
+        const name = normalizedQualifiedName(createdType[1]!);
+        if (name) {
+          types.add(name);
+          ambiguousTypes.delete(name);
+        }
+      }
+      const droppedType = new RegExp(`^DROP\\s+(?:TYPE|DOMAIN)\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})\\b`, "i").exec(statement);
+      if (droppedType) {
+        const name = normalizedQualifiedName(droppedType[1]!);
+        if (name) {
+          if (types.delete(name)) ambiguousTypes.delete(name);
+          else ambiguousTypes.add(name);
+        }
+      }
+      const alteredType = new RegExp(`^ALTER\\s+(?:TYPE|DOMAIN)\\s+(${SQL_QUALIFIED_NAME})\\b`, "i").exec(statement);
+      if (alteredType) {
+        const name = normalizedQualifiedName(alteredType[1]!);
+        if (name) ambiguousTypes.add(name);
+      }
+
+      const createdExtension = new RegExp(`^CREATE\\s+EXTENSION\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+      if (createdExtension) {
+        const name = unquotePostgresIdentifier(createdExtension[1]!);
+        extensions.set(name, definitionHash(statement));
+        ambiguousExtensions.delete(name);
+      }
+      const droppedExtension = new RegExp(`^DROP\\s+EXTENSION\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+      if (droppedExtension) {
+        const name = unquotePostgresIdentifier(droppedExtension[1]!);
+        if (extensions.delete(name)) ambiguousExtensions.delete(name);
+        else ambiguousExtensions.add(name);
+      }
+      if (/^DROP\s+EXTENSION\b/i.test(statement)) {
+        for (const name of ["vector", "pg_trgm"]) {
+          if (extensions.has(name) && new RegExp(`\\b${name}\\b`, "i").test(statement)) {
+            ambiguousExtensions.add(name);
+          }
+        }
+      }
+      const alteredExtension = new RegExp(`^ALTER\\s+EXTENSION\\s+(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+      if (alteredExtension) ambiguousExtensions.add(unquotePostgresIdentifier(alteredExtension[1]!));
+
+      const createdOperatorClass = new RegExp(
+        `^CREATE\\s+OPERATOR\\s+CLASS\\s+(${SQL_QUALIFIED_NAME})\\s+(DEFAULT\\s+)?FOR\\s+TYPE\\s+[\\s\\S]+?\\s+USING\\s+(${SQL_IDENTIFIER})\\b`,
+        "i",
+      ).exec(statement);
+      if (createdOperatorClass) {
+        const name = normalizedQualifiedName(createdOperatorClass[1]!);
+        const method = unquotePostgresIdentifier(createdOperatorClass[3]!);
+        if (name) {
+          operatorClasses.set(`${name}\u0000${method}`, {
+            name,
+            method,
+            isDefault: createdOperatorClass[2] !== undefined,
+          });
+        }
+      }
+      const changedOperatorIndexObject = new RegExp(
+        `^(ALTER|DROP)\\s+OPERATOR\\s+(?:CLASS|FAMILY)\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})\\s+USING\\s+(${SQL_IDENTIFIER})`,
+        "i",
+      ).exec(statement);
+      if (changedOperatorIndexObject) {
+        const name = normalizedQualifiedName(changedOperatorIndexObject[2]!);
+        if (name) {
+          const identity = `${name}\u0000${unquotePostgresIdentifier(changedOperatorIndexObject[3]!)}`;
+          if (changedOperatorIndexObject[1]!.toLowerCase() === "drop" && operatorClasses.delete(identity)) {
+            ambiguousIndexCatalog.delete(identity);
+          } else ambiguousIndexCatalog.add(identity);
+        }
+      }
+      const createdAccessMethod = new RegExp(
+        `^CREATE\\s+ACCESS\\s+METHOD\\s+(${SQL_IDENTIFIER})\\s+TYPE\\s+INDEX\\s+HANDLER\\b`,
+        "i",
+      ).exec(statement);
+      if (createdAccessMethod) accessMethods.add(unquotePostgresIdentifier(createdAccessMethod[1]!));
+      const changedAccessMethod = new RegExp(
+        `^(ALTER|DROP)\\s+ACCESS\\s+METHOD\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\b`,
+        "i",
+      ).exec(statement);
+      if (changedAccessMethod) {
+        const method = unquotePostgresIdentifier(changedAccessMethod[2]!);
+        const identity = `*\u0000${method}`;
+        if (changedAccessMethod[1]!.toLowerCase() === "drop" && accessMethods.delete(method)) {
+          ambiguousIndexCatalog.delete(identity);
+        } else ambiguousIndexCatalog.add(identity);
+      }
+
+      const createdIndex = new RegExp(
+        `^CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})\\s+ON\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?:\\s+USING\\s+(${SQL_IDENTIFIER}))?([\\s\\S]*)$`,
+        "i",
+      ).exec(statement);
+      if (createdIndex) {
+        const index = normalizedQualifiedName(createdIndex[1]!);
+        const relation = normalizedQualifiedName(createdIndex[2]!);
+        const method = createdIndex[3] ? unquotePostgresIdentifier(createdIndex[3]) : "btree";
+        const qualifiedIdentifiers = new Set<string>();
+        const unqualifiedIdentifiers = new Set<string>();
+        for (const match of createdIndex[4]!.matchAll(new RegExp(SQL_QUALIFIED_NAME, "g"))) {
+          const raw = match[0];
+          if (new RegExp(`^${SQL_IDENTIFIER}\\s*\\.\\s*${SQL_IDENTIFIER}$`).test(raw)) {
+            const name = normalizedQualifiedName(raw);
+            if (name) qualifiedIdentifiers.add(name);
+          } else unqualifiedIdentifiers.add(unquotePostgresIdentifier(raw));
+        }
+        const configuredIndexSearchPath = currentSearchPath?.map((schema) => schema === "$user" ? "postgres" : schema);
+        const indexSearchPath = configuredIndexSearchPath?.includes("pg_catalog")
+          ? configuredIndexSearchPath
+          : configuredIndexSearchPath && ["pg_catalog", ...configuredIndexSearchPath];
+        const resolvedUnqualifiedClasses = new Set<string>();
+        for (const name of unqualifiedIdentifiers) {
+          if (!indexSearchPath) {
+            for (const operatorClass of operatorClasses.values()) {
+              if (operatorClass.method === method && operatorClass.name.split(".").at(-1) === name) {
+                resolvedUnqualifiedClasses.add(`${operatorClass.name}\u0000${method}`);
+              }
+            }
+            continue;
+          }
+          for (const schema of indexSearchPath) {
+            const identity = `${schema}.${name}\u0000${method}`;
+            if (operatorClasses.has(identity)) {
+              resolvedUnqualifiedClasses.add(identity);
+              break;
+            }
+            if (schema === "pg_catalog" && POSTGRES_BUILTIN_OPERATOR_CLASSES.has(`${name}\u0000${method}`)) break;
+          }
+        }
+        const hazardousClass = [...operatorClasses.values()].some((operatorClass) =>
+          operatorClass.method === method && (
+            qualifiedIdentifiers.has(operatorClass.name) ||
+            resolvedUnqualifiedClasses.has(`${operatorClass.name}\u0000${method}`) ||
+            operatorClass.isDefault && (!indexSearchPath || indexSearchPath.includes(operatorClass.name.split(".", 1)[0]!))
+          ),
+        );
+        if (index && relation && (accessMethods.has(method) || hazardousClass)) {
+          ambiguousIndexCatalog.add(`index\u0000${relation}\u0000${index}`);
+        }
+      }
+      const droppedIndex = /^DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?([\s\S]+)$/i.exec(statement);
+      if (droppedIndex) {
+        const dropped = new Set(
+          droppedIndex[1]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "").split(",")
+            .map((candidate) => normalizedQualifiedName(candidate.trim()))
+            .filter((name): name is string => name !== undefined),
+        );
+        for (const identity of ambiguousIndexCatalog) {
+          if (identity.startsWith("index\u0000") && dropped.has(identity.split("\u0000")[2]!)) {
+            ambiguousIndexCatalog.delete(identity);
+          }
+        }
+      }
+
+      const changedSchema = new RegExp(`^(?:ALTER|DROP)\\s+SCHEMA\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+      if (changedSchema) ambiguousSchemas.add(unquotePostgresIdentifier(changedSchema[1]!));
+      if (/^DROP\s+SCHEMA\b/i.test(statement) && /\bpublic\b/i.test(statement)) ambiguousSchemas.add("public");
+      if (/^(?:DROP|REASSIGN)\s+OWNED\s+BY\b/i.test(statement)) ambiguousSchemas.add("public");
     }
   }
-  return { relations, rlsEnabled, policies, functions, rules, ambiguousPolicyTables, ambiguousFunctions };
+  return {
+    relations,
+    relationAlterations,
+    rlsEnabled,
+    policies,
+    functions,
+    functionIdentities,
+    rules,
+    operators,
+    casts,
+    types,
+    extensions,
+    runtimeSearchPaths,
+    ambiguousSchemas,
+    ambiguousOperators,
+    ambiguousCasts,
+    ambiguousTypes,
+    ambiguousExtensions,
+    ambiguousIndexCatalog,
+    ambiguousPolicyTables,
+    ambiguousFunctions,
+  };
 }
 
 function normalizePostgresSql(sql: string): string {
@@ -492,6 +954,7 @@ const REVIEWED_POSTGRES_SQL = new Map<string, ReviewedPostgresSql>([
 
 interface ReviewedRelationProvenance {
   selectPolicies: Readonly<Record<string, string>>;
+  alterationHashes: readonly string[];
   functionDependencies?: readonly string[];
 }
 
@@ -501,17 +964,86 @@ const REVIEWED_POSTGRES_RELATIONS: Readonly<Record<PostgresProvenanceTarget, Rea
       selectPolicies: {
         bookings_select_policy: "cb7d6cca52a1500a5e6ef8c69c81289e120d228c03989a8bb864e53f8a6a4eed",
       },
+      alterationHashes: [
+        "cd53441be04dcdee8104199623551ed741da71fb895c177962cc64207e17e007",
+        "eac5db2d2c2496a33033bc57dd214a61b7a4536f99b8c787236b80938ec3131e",
+        "b35491d18f5bfcd1220eabff9eebd93f41de6a109555e97e3fd66d40f3abcc70",
+        "92f33bb85537a3e1b17fc882ea653b22b75438a88d37c3b606a41e9699fabdfd",
+        "81003c20e4d60982982b08d776a16b580663eb47ace5bd6c5725f14bd5890840",
+        "a24f5122f5f2cf252fb3e23c27e0d412a768935ed105444587109663eb974a74",
+        "90e03c68f4a11207c0a2afbc3aa20a2dd03505a3eb24747b83741ec9db95d2da",
+        "829c34c7bcadfffa0d5edd68c17a999de3d3255225064b98a3c70cdebf7d46fa",
+        "afe08f39d57827ef3ba73b2acf584a4d54305c27ceb43e3e502d70ae9e81b569",
+        "7b89751ae9255c9924f9c30252f1be102d1435e182a3546edb88f606031313d8",
+        "0532d7527cef77d7cd42e0d50c2d37d5f93d10daeaca8e258a7e8457f05e1d54",
+        "f8add2d51e737b253145a7e667151de1c9895254553ccb8b46137e3cee4368ed",
+        "ceaad2f7fdc75cbaad36f6dec8093692b4ea0bb578026bd4def14fbc2ae95c09",
+        "349e5e6604e62d1f4f75ad12365e0d2f37a15af56dfb28501fac5dc44405083b",
+        "fa3c125c246d08c0ec54f9518df8d140a2a0a7f4051d4a0b1f13cc0158fcc475",
+      ],
       functionDependencies: ["public.auth_user_in_tenant"],
     },
   },
   rag: {
-    "public.itineraries": { selectPolicies: {} },
-    "public.knowledge_chunks": { selectPolicies: {} },
+    "public.itineraries": {
+      selectPolicies: {},
+      alterationHashes: [
+        "9fccd630c26dc99ffd2afe2d0078978f468762b3f4c5c439b83edd07497213d4",
+        "e564820c52593e6dc7be9139d361f940f243fc726b5109c50f65a43a5b493237",
+      ],
+    },
+    "public.knowledge_chunks": {
+      selectPolicies: {},
+      alterationHashes: [
+        "2fdefd61f8806ecca1f54099bfbee80bebe76334b5a50a49baf334bde0046c3b",
+        "e7d8615d4e2b677863a4e9cd3aa0e46666d667048bfff5043eba7b1ac87710d4",
+        "45aa8cf3432b71f03aa63cd5e92d7e93404bf82ee317a4ef112a40fce50354ca",
+        "7fd111f282a3e1a42223371c2f45096d52fd435bc72ff77797eccf85b4d2735b",
+        "225ad7c6342a0e5ec986620fa632553690e53de8bc2b305015de0327b0be7112",
+        "f384dcf0edd5220c677a2bab7d5614fbeae18d926a6826b79d917b6106c1becd",
+      ],
+    },
     "public.rag_media_assets": {
       selectPolicies: {
         rag_media_assets_select: "a26e20481a252a561df5db1b7ca0f06ac7da348cc20045e662cd17fb87e823d9",
       },
+      alterationHashes: [
+        "07fa2168c6f2af532cbae3dc01a4be015adbe2cf2304147c8fd65a616f91cefc",
+        "f6d578a40c2cc97c0d107907a42d84091042aa5e69fc43b1d5633d900f829744",
+        "872def233818397cf458779672efca31b810a5b461137af43b669ee997df3fba",
+        "254c23a36b6d40325906a419f243863bc41a4990c89409e457a782ef9b63cb80",
+        "e7bd20d48cdd4d84420f008bd741d3952c385ed6b00fd4853bec9e8c0a961e12",
+        "0762238b6e83cc8e94809307a5007101b850a58563100787733ab354e1b04b39",
+      ],
     },
+  },
+};
+
+const REVIEWED_POSTGRES_EXTENSIONS: Readonly<Record<PostgresProvenanceTarget, Readonly<Record<string, string>>>> = {
+  main: {},
+  rag: {
+    vector: "8d2eedd3856d2a3a5094f8448f3ba641f7721f109d50bd712c5581c9a0d28196",
+    pg_trgm: "fc12c63e2a252eb5752fad2823324b076344ba3ef3f2bb2110e339b742938524",
+  },
+};
+
+const REVIEWED_POSTGRES_CATALOG_NAMES: Readonly<Record<PostgresProvenanceTarget, {
+  operators: ReadonlySet<string>;
+  types: ReadonlySet<string>;
+  roles: ReadonlySet<string>;
+  indexCatalog: ReadonlySet<string>;
+}>> = {
+  main: {
+    operators: new Set(["=", ">=", "<=", "||"]),
+    types: new Set(["uuid", "text", "date", "time", "timestamp", "timestamptz"]),
+    roles: new Set(["authenticated", "service_role", "postgres"]),
+    indexCatalog: new Set(["uuid_ops", "text_ops", "date_ops", "timestamp_ops", "timestamptz_ops", "btree"]),
+  },
+  rag: {
+    operators: new Set(["=", ">=", "<=", "||", "~~*"]),
+    types: new Set(["uuid", "text", "date", "integer"]),
+    roles: new Set(["authenticated", "service_role", "postgres"]),
+    indexCatalog: new Set(["uuid_ops", "text_ops", "date_ops", "array_ops", "vector_cosine_ops", "gin_trgm_ops", "btree", "gin", "hnsw", "ivfflat"]),
   },
 };
 
@@ -556,6 +1088,8 @@ export function postgresResourcesMatchReviewedProvenance(
   provenance: PostgresMigrationProvenance,
 ): boolean {
   const functions = new Set<string>();
+  const sameOrderedValues = (actual: readonly string[] | undefined, expected: readonly string[]) =>
+    actual?.length === expected.length && actual.every((value, index) => value === expected[index]);
   for (const resource of resources) {
     const [kind, name] = resource.split(":", 2) as ["table" | "rpc", string];
     if (kind === "rpc") {
@@ -564,13 +1098,24 @@ export function postgresResourcesMatchReviewedProvenance(
     }
     const review = REVIEWED_POSTGRES_RELATIONS[target][name];
     if (!review || provenance.relations.get(name) !== "table" || provenance.rlsEnabled.get(name) !== true) return false;
+    if (provenance.ambiguousSchemas.has(name.split(".", 1)[0]!) ||
+      !sameOrderedValues(provenance.relationAlterations.get(name), review.alterationHashes)) return false;
     if (provenance.ambiguousPolicyTables.has(name) || (provenance.rules.get(name)?.size ?? 0) > 0) return false;
     const effectivePolicies = new Map(
       [...(provenance.policies.get(name) ?? [])].filter(([, policy]) => policy.command === "all" || policy.command === "select"),
     );
     if (effectivePolicies.size !== Object.keys(review.selectPolicies).length) return false;
     for (const [policy, hash] of Object.entries(review.selectPolicies)) {
-      if (effectivePolicies.get(policy)?.definitionHash !== hash) return false;
+      const effective = effectivePolicies.get(policy);
+      if (effective?.definitionHash !== hash) return false;
+      for (const dependency of review.functionDependencies ?? []) {
+        const dependencyReview = REVIEWED_POSTGRES_FUNCTIONS[target][dependency];
+        const objectName = dependency.slice(dependency.indexOf(".") + 1);
+        const identity = dependencyReview
+          ? provenance.functionIdentities.get(dependency)?.get(dependencyReview.signature)
+          : undefined;
+        if (!identity || effective.functionBindings.get(objectName) !== identity) return false;
+      }
     }
     for (const dependency of review.functionDependencies ?? []) functions.add(dependency);
   }
@@ -578,9 +1123,47 @@ export function postgresResourcesMatchReviewedProvenance(
     const review = REVIEWED_POSTGRES_FUNCTIONS[target][name];
     const overloads = provenance.functions.get(name);
     if (
-      !review || provenance.ambiguousFunctions.has(name) || !overloads || overloads.size !== 1 ||
+      !review || provenance.ambiguousSchemas.has(name.split(".", 1)[0]!) ||
+      provenance.ambiguousFunctions.has(name) || !overloads || overloads.size !== 1 ||
       overloads.get(review.signature) !== review.definitionHash
     ) return false;
+  }
+
+  const expectedExtensions = REVIEWED_POSTGRES_EXTENSIONS[target];
+  if (provenance.extensions.size !== Object.keys(expectedExtensions).length) return false;
+  for (const [name, hash] of Object.entries(expectedExtensions)) {
+    if (provenance.extensions.get(name) !== hash || provenance.ambiguousExtensions.has(name)) return false;
+  }
+  if (provenance.ambiguousExtensions.size > 0) return false;
+
+  const catalog = REVIEWED_POSTGRES_CATALOG_NAMES[target];
+  const catalogSchemaRelevant = (name: string) => ["pg_catalog", "public"].includes(name.split(".", 1)[0]!);
+  const operatorRelevant = (operator: string) =>
+    catalogSchemaRelevant(operator) && catalog.operators.has(operator.slice(operator.indexOf(".") + 1));
+  if ([...provenance.operators.values()].some(operatorRelevant) ||
+    [...provenance.ambiguousOperators].some(operatorRelevant)) return false;
+  const castTouchesReviewedType = (identity: string) =>
+    identity.split("\u0000").every((type) => catalog.types.has(type.replace(/\[\]$/, "").split(".").at(-1)!));
+  if ([...provenance.casts].some(castTouchesReviewedType) ||
+    [...provenance.ambiguousCasts].some(castTouchesReviewedType)) return false;
+  const typeTouchesReviewedName = (name: string) =>
+    catalogSchemaRelevant(name) && catalog.types.has(name.split(".").at(-1)!);
+  if ([...provenance.types].some(typeTouchesReviewedName) ||
+    [...provenance.ambiguousTypes].some(typeTouchesReviewedName)) return false;
+  if ([...provenance.ambiguousIndexCatalog].some((identity) => {
+    if (identity.startsWith("index\u0000")) {
+      return resources.includes(`table:${identity.split("\u0000")[1]}`);
+    }
+    const [name, method] = identity.split("\u0000", 2);
+    return name === "*"
+      ? catalog.indexCatalog.has(method!)
+      : catalogSchemaRelevant(name!) && catalog.indexCatalog.has(name!.split(".").at(-1)!) &&
+        catalog.indexCatalog.has(method!);
+  })) return false;
+  for (const [key, searchPath] of provenance.runtimeSearchPaths) {
+    const relevant = key === "database" || key === "system" ||
+      (key.startsWith("role:") && catalog.roles.has(key.slice(5)));
+    if (relevant && !sameOrderedValues(searchPath, ["$user", "public"])) return false;
   }
   return true;
 }

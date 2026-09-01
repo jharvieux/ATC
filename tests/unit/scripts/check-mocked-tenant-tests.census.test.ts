@@ -1,5 +1,12 @@
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { findMockedTenantTests } from "../../../scripts/check-mocked-tenant-tests";
+import {
+  derivePostgresMigrationProvenance,
+  findMockedTenantTests,
+  postgresResourcesMatchReviewedProvenance,
+  type PostgresProvenanceTarget,
+} from "../../../scripts/check-mocked-tenant-tests";
 
 const UNIT = "apps/main/test/unit/probe.test.ts";
 const TARGET = "apps/main/test/integration/probe.test.ts";
@@ -1741,6 +1748,188 @@ regress(
   postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"),
 );
 
+type ProvenanceCase = {
+  shape: string;
+  target: PostgresProvenanceTarget;
+  resources: string[];
+  sql: string;
+  accepted: boolean;
+};
+
+const reviewedPolicy = "CREATE POLICY bookings_select_policy ON public.bookings\n" +
+  "  FOR SELECT\n" +
+  "  USING (auth_user_in_tenant(tenant_id));";
+const provenanceCases: ProvenanceCase[] = [
+  { shape: "ALTER ROUTINE policy dependency", target: "main", resources: ["table:public.bookings"], sql: "ALTER ROUTINE public.auth_user_in_tenant(uuid) SET search_path = private, public;", accepted: false },
+  { shape: "comment-separated ALTER ROUTINE", target: "main", resources: ["table:public.bookings"], sql: "ALTER/*probe*/ ROUTINE public.auth_user_in_tenant(uuid) SET search_path = private, public;", accepted: false },
+  { shape: "DROP ROUTINE RPC", target: "rag", resources: ["rpc:public.match_region_itinerary_chunks"], sql: "DROP ROUTINE public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer);", accepted: false },
+  { shape: "named DROP FUNCTION identity", target: "main", resources: ["table:public.bookings"], sql: "DROP FUNCTION public.auth_user_in_tenant(target_tenant_id uuid);", accepted: false },
+  { shape: "qualified DROP FUNCTION identity", target: "main", resources: ["table:public.bookings"], sql: "DROP FUNCTION public.auth_user_in_tenant(pg_catalog.uuid);", accepted: false },
+  { shape: "ARRAY and int DROP FUNCTION identities", target: "rag", resources: ["rpc:public.match_region_itinerary_chunks"], sql: "DROP FUNCTION public.match_region_itinerary_chunks(text ARRAY, text ARRAY, date, date, text ARRAY, int);", accepted: false },
+  {
+    shape: "policy OID rebound by session search_path",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; " +
+      "CREATE FUNCTION private.auth_user_in_tenant(target_tenant_id uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$; " +
+      "SET search_path = private, public; DROP POLICY bookings_select_policy ON public.bookings; " + reviewedPolicy,
+    accepted: false,
+  },
+  {
+    shape: "policy OID rebound by default $user search_path",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA postgres; " +
+      "CREATE FUNCTION postgres.auth_user_in_tenant(target_tenant_id uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$; " +
+      "DROP POLICY bookings_select_policy ON public.bookings; " + reviewedPolicy,
+    accepted: false,
+  },
+  { shape: "operator plus persistent search_path", target: "main", resources: ["table:public.bookings"], sql: "CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); ALTER ROLE authenticated SET search_path = public, pg_catalog;", accepted: false },
+  {
+    shape: "created operator class reaches reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "CREATE INDEX bookings_uuid_ops_probe ON public.bookings USING btree (id public.uuid_ops);",
+    accepted: false,
+  },
+  {
+    shape: "comment-separated CREATE operator class reaches reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE/*probe*/ OPERATOR CLASS public.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "CREATE INDEX bookings_uuid_ops_probe ON public.bookings USING btree (id public.evil_uuid_ops);",
+    accepted: false,
+  },
+  {
+    shape: "created access method reaches reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler; " +
+      "CREATE INDEX bookings_evil_probe ON public.bookings USING evil (id);",
+    accepted: false,
+  },
+  {
+    shape: "temporary search_path binds private opclass to reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; " +
+      "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "SET search_path = private, public; " +
+      "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops); " +
+      "RESET search_path;",
+    accepted: false,
+  },
+  {
+    shape: "no-space SET LOCAL binds private opclass to reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; " +
+      "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "SET LOCAL search_path=private,public; " +
+      "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    accepted: false,
+  },
+  {
+    shape: "comment-separated SET binds private opclass to reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; " +
+      "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "SET/*probe*/ search_path=private,public; " +
+      "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    accepted: false,
+  },
+  {
+    shape: "SET SCHEMA binds private opclass to reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; " +
+      "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "SET SCHEMA 'private'; " +
+      "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    accepted: false,
+  },
+  {
+    shape: "implicit pg_catalog binds created opclass to reviewed index",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "CREATE INDEX bookings_pg_catalog_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    accepted: false,
+  },
+  { shape: "reviewed column type mutation", target: "main", resources: ["table:public.bookings"], sql: "ALTER TABLE public.bookings ALTER COLUMN id TYPE text USING id::text;", accepted: false },
+  { shape: "comment-separated reviewed RLS mutation", target: "main", resources: ["table:public.bookings"], sql: "ALTER/*probe*/ TABLE public.bookings DISABLE ROW LEVEL SECURITY;", accepted: false },
+  { shape: "relevant cast removal", target: "main", resources: ["table:public.bookings"], sql: "DROP CAST (uuid AS text);", accepted: false },
+  { shape: "built-in type shadow", target: "main", resources: ["table:public.bookings"], sql: "CREATE DOMAIN public.uuid AS text;", accepted: false },
+  { shape: "unreviewed extension", target: "main", resources: ["table:public.bookings"], sql: "CREATE EXTENSION IF NOT EXISTS hstore;", accepted: false },
+  { shape: "reviewed schema rename", target: "main", resources: ["table:public.bookings"], sql: "ALTER SCHEMA public RENAME TO app_public;", accepted: false },
+  { shape: "reviewed operator family", target: "main", resources: ["table:public.bookings"], sql: "ALTER OPERATOR FAMILY pg_catalog.uuid_ops USING btree ADD OPERATOR 1 pg_catalog.= (uuid, uuid);", accepted: false },
+  { shape: "unrelated table ALTER", target: "main", resources: ["table:public.bookings"], sql: "CREATE TABLE public.other_rows (id uuid); ALTER TABLE public.other_rows ALTER COLUMN id TYPE text USING id::text;", accepted: true },
+  { shape: "unrelated role search_path", target: "main", resources: ["table:public.bookings"], sql: "ALTER ROLE reporting_user SET search_path = private, public;", accepted: true },
+  { shape: "operator effective cleanup", target: "main", resources: ["table:public.bookings"], sql: "CREATE OPERATOR public.## (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); DROP OPERATOR public.## (uuid, uuid);", accepted: true },
+  { shape: "extension effective cleanup", target: "main", resources: ["table:public.bookings"], sql: "CREATE EXTENSION IF NOT EXISTS hstore; DROP EXTENSION hstore;", accepted: true },
+  { shape: "unused created access method", target: "main", resources: ["table:public.bookings"], sql: "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler;", accepted: true },
+  {
+    shape: "unused private operator class",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);",
+    accepted: true,
+  },
+  {
+    shape: "unused pg_catalog operator class",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);",
+    accepted: true,
+  },
+  {
+    shape: "implicit pg_catalog built-in wins before private shadow",
+    target: "main",
+    resources: ["table:public.bookings"],
+    sql: "CREATE SCHEMA private; CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+      "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+      "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+      "SET search_path = private, public; " +
+      "CREATE INDEX bookings_builtin_shadow_probe ON public.bookings USING btree (id uuid_ops);",
+    accepted: true,
+  },
+  { shape: "catalog text inside dollar body", target: "main", resources: ["table:public.bookings"], sql: "CREATE FUNCTION public.inert_catalog_text() RETURNS text LANGUAGE sql AS $$ SELECT 'DROP OWNED BY authenticated' $$;", accepted: true },
+];
+
+const repoMigrations = new Map<PostgresProvenanceTarget, { file: string; sql: string }[]>();
+function provenanceFor(target: PostgresProvenanceTarget, sql: string) {
+  let migrations = repoMigrations.get(target);
+  if (!migrations) {
+    const dir = path.join(process.cwd(), "apps", target, "supabase", "migrations");
+    migrations = readdirSync(dir)
+      .filter((file) => file.endsWith(".sql"))
+      .sort()
+      .map((file) => ({ file, sql: readFileSync(path.join(dir, file), "utf8") }));
+    repoMigrations.set(target, migrations);
+  }
+  return derivePostgresMigrationProvenance([...migrations, { file: "zzzz_census.sql", sql }]);
+}
+
 describe("mocked-tenant flow/effect census", () => {
   it("retains the complete 137-case acceptance matrix", () => {
     expect(rows).toHaveLength(137);
@@ -1752,5 +1941,10 @@ describe("mocked-tenant flow/effect census", () => {
 
   it.each(regressions)("regression: $family — $shape", ({ intent, verdict, detail }) => {
     expect(verdict, detail).toBe(intent === "safe" ? "ACCEPT" : "REJECT");
+  });
+
+  it.each(provenanceCases)("provenance: $shape", ({ target, resources, sql, accepted }) => {
+    expect(postgresResourcesMatchReviewedProvenance(target, resources, provenanceFor(target, sql)))
+      .toBe(accepted);
   });
 });

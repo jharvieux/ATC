@@ -150,6 +150,9 @@ describe("raw Postgres migration provenance", () => {
       .sort()
       .map((file) => ({ file, sql: readFileSync(path.join(dir, file), "utf8") }));
   };
+  const reviewedBookingsPolicy = "CREATE POLICY bookings_select_policy ON public.bookings\n" +
+    "  FOR SELECT\n" +
+    "  USING (auth_user_in_tenant(tenant_id));";
 
   it("derives base-table relation kinds without accepting view or catalog-backed lookalikes", () => {
     const provenance = derive(`
@@ -297,13 +300,511 @@ describe("raw Postgres migration provenance", () => {
   });
 
   it.each([
+    ["ALTER ROUTINE", "ALTER ROUTINE public.auth_user_in_tenant(uuid) SET search_path = public, pg_catalog;"],
+    ["comment-separated ALTER ROUTINE", "ALTER/*probe*/ ROUTINE public.auth_user_in_tenant(uuid) SET search_path = public, pg_catalog;"],
+    ["DROP ROUTINE", "DROP ROUTINE public.auth_user_in_tenant(uuid);"],
+    ["named DROP FUNCTION argument", "DROP FUNCTION public.auth_user_in_tenant(target_tenant_id uuid);"],
+    ["qualified DROP FUNCTION argument", "DROP FUNCTION public.auth_user_in_tenant(pg_catalog.uuid);"],
+    ["quoted qualified DROP FUNCTION argument", "DROP FUNCTION \"public\".\"auth_user_in_tenant\"(\"pg_catalog\".\"uuid\");"],
+    ["multi-object DROP ROUTINE", "DROP ROUTINE public.unrelated_routine(), public.auth_user_in_tenant(uuid);"],
+    ["procedure overload", "CREATE PROCEDURE public.auth_user_in_tenant(text) LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["aggregate overload", "CREATE AGGREGATE public.auth_user_in_tenant(text) (SFUNC = textcat, STYPE = text, INITCOND = '');"],
+  ])("rejects reviewed policy-function provenance after %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_routine_alias.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("accepts an exact reviewed routine and policy recreated with a fresh binding", () => {
+    const migrations = repoMigrations("main");
+    const helperMigration = migrations.find(({ file }) => file === "20260521120001_rls_helper_functions.sql");
+    expect(helperMigration).toBeDefined();
+    const provenance = derivePostgresMigrationProvenance([
+      ...migrations,
+      { file: "zzzza_drop.sql", sql: "DROP POLICY bookings_select_policy ON public.bookings; DROP ROUTINE public.auth_user_in_tenant(uuid);" },
+      { file: "zzzzb_recreate.sql", sql: helperMigration!.sql },
+      { file: "zzzzc_policy.sql", sql: reviewedBookingsPolicy },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it("rejects a byte-identical reviewed policy rebound through session search_path", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_policy_rebind.sql",
+        sql: "CREATE SCHEMA private;\n" +
+          "CREATE FUNCTION private.auth_user_in_tenant(target_tenant_id uuid) " +
+          "RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;\n" +
+          "SET search_path = private, public;\n" +
+          "DROP POLICY bookings_select_policy ON public.bookings;\n" +
+          reviewedBookingsPolicy,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("rejects a byte-identical reviewed policy rebound through default $user search_path", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_policy_user_rebind.sql",
+        sql: "CREATE SCHEMA postgres;\n" +
+          "CREATE FUNCTION postgres.auth_user_in_tenant(target_tenant_id uuid) " +
+          "RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;\n" +
+          "DROP POLICY bookings_select_policy ON public.bookings;\n" +
+          reviewedBookingsPolicy,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("accepts default $user policy resolution when only an unrelated schema shadows the routine", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_policy_user_control.sql",
+        sql: "CREATE SCHEMA private;\n" +
+          "CREATE FUNCTION private.auth_user_in_tenant(target_tenant_id uuid) " +
+          "RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;\n" +
+          "DROP POLICY bookings_select_policy ON public.bookings;\n" +
+          reviewedBookingsPolicy,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["SET LOCAL", "SET LOCAL search_path = private, public;"],
+    ["set_config", "SELECT set_config('search_path', 'private,public', true);"],
+  ])("rejects reviewed policy OID rebinding through %s", (_shape, setPath) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_policy_rebind.sql",
+        sql: "CREATE SCHEMA private;\n" +
+          "CREATE FUNCTION private.auth_user_in_tenant(target_tenant_id uuid) " +
+          "RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;\n" +
+          `${setPath}\n` +
+          "DROP POLICY bookings_select_policy ON public.bookings;\n" +
+          reviewedBookingsPolicy,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("accepts a reviewed policy recreated after search_path is reset", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_policy_reset.sql",
+        sql: "CREATE SCHEMA private;\n" +
+          "CREATE FUNCTION private.auth_user_in_tenant(target_tenant_id uuid) " +
+          "RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;\n" +
+          "SET search_path = private, public;\n" +
+          "RESET search_path;\n" +
+          "DROP POLICY bookings_select_policy ON public.bookings;\n" +
+          reviewedBookingsPolicy,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it("rejects reviewed operator provenance after a search-path override", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_operator.sql",
+        sql: `
+          CREATE OPERATOR public.= (
+            LEFTARG = uuid,
+            RIGHTARG = uuid,
+            FUNCTION = pg_catalog.uuid_eq
+          );
+          ALTER ROLE authenticated SET search_path = public, pg_catalog;
+        `,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["role", "ALTER ROLE authenticated SET search_path = public, pg_catalog;"],
+    ["role in database", "ALTER ROLE authenticated IN DATABASE postgres SET search_path = public, pg_catalog;"],
+    ["database", "ALTER DATABASE postgres SET search_path = public, pg_catalog;"],
+    ["system", "ALTER SYSTEM SET search_path = public, pg_catalog;"],
+  ])("rejects a reviewed query after a persistent %s search_path override", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_runtime_path.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["reset relevant role", "ALTER ROLE authenticated SET search_path = public, pg_catalog; ALTER ROLE authenticated RESET search_path;"],
+    ["unrelated role", "ALTER ROLE reporting_user SET search_path = private, public;"],
+  ])("accepts reviewed provenance after %s search_path configuration", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_runtime_path_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["relevant operator", "CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq);"],
+    ["relevant cast", "DROP CAST (uuid AS text);"],
+    ["built-in type shadow", "CREATE DOMAIN public.uuid AS text;"],
+    ["new extension", "CREATE EXTENSION IF NOT EXISTS hstore;"],
+    ["reviewed schema rename", "ALTER SCHEMA public RENAME TO app_public;"],
+    ["unknown ownership cascade", "DROP OWNED BY authenticated CASCADE;"],
+    ["unknown ownership reassignment", "REASSIGN OWNED BY postgres TO authenticated;"],
+    ["reviewed operator family", "ALTER OPERATOR FAMILY pg_catalog.uuid_ops USING btree ADD OPERATOR 1 pg_catalog.= (uuid, uuid);"],
+    ["reviewed access method", "ALTER ACCESS METHOD btree RENAME TO unsafe_btree;"],
+  ])("rejects reviewed provenance after %s catalog mutation", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_catalog.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    [
+      "operator class",
+      "CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX bookings_uuid_ops_probe ON public.bookings USING btree (id public.uuid_ops);",
+    ],
+    [
+      "comment-separated operator class",
+      "CREATE/*probe*/ OPERATOR CLASS public.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX bookings_uuid_ops_probe ON public.bookings USING btree (id public.evil_uuid_ops);",
+    ],
+    [
+      "access method",
+      "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler; " +
+        "CREATE INDEX bookings_evil_probe ON public.bookings USING evil (id);",
+    ],
+  ])("rejects a reviewed index backed by a created %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_index_catalog.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    [
+      "creation-time search_path",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET search_path = private, public; " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops); " +
+        "RESET search_path;",
+    ],
+    ...["SET", "SET LOCAL"].map((command) => [
+      `${command} no-space assignment`,
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        `${command} search_path=private,public; ` +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    ]),
+    [
+      "comment-separated SET",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET/*probe*/ search_path=private,public; " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    ],
+    [
+      "SET SCHEMA alias",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET SCHEMA 'private'; " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+    ],
+    [
+      "explicit pg_catalog after private",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET search_path = private, pg_catalog, public; " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id uuid_ops);",
+    ],
+    [
+      "qualified operator class",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id private.uuid_ops);",
+    ],
+  ])("rejects a reviewed index bound to a private opclass through %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_private_opclass.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["implicit pg_catalog", ""],
+    ["explicit pg_catalog placement", "SET search_path = public, pg_catalog; "],
+    ["unknown explicit path", "SET search_path = missing_schema; "],
+  ])("rejects a reviewed index bound through %s opclass lookup", (_shape, setPath) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_pg_catalog_opclass.sql",
+        sql: "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+          "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+          "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+          setPath +
+          "CREATE INDEX bookings_pg_catalog_ops_probe ON public.bookings USING btree (id evil_uuid_ops);",
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["relevant operator cleanup", "CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); DROP OPERATOR public.= (uuid, uuid);"],
+    ["operator cleanup", "CREATE OPERATOR public.## (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); DROP OPERATOR public.## (uuid, uuid);"],
+    ["cast cleanup", "CREATE TYPE public.effect_source AS ENUM ('x'); CREATE CAST (public.effect_source AS text) WITH INOUT AS IMPLICIT; DROP CAST (public.effect_source AS text);"],
+    ["extension cleanup", "CREATE EXTENSION IF NOT EXISTS hstore; DROP EXTENSION hstore;"],
+    ["unrelated types and cast", "CREATE TYPE public.effect_source AS ENUM ('x'); CREATE TYPE public.effect_target AS ENUM ('y'); CREATE CAST (public.effect_source AS public.effect_target) WITH INOUT;"],
+    ["unrelated-schema operator", "CREATE SCHEMA private; CREATE OPERATOR private.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq);"],
+    ["unrelated-schema type shadow", "CREATE SCHEMA private; CREATE DOMAIN private.uuid AS text;"],
+    ["unrelated schema", "CREATE SCHEMA private; ALTER SCHEMA private OWNER TO postgres;"],
+    ["unrelated operator family", "CREATE OPERATOR FAMILY public.unrelated_ops USING hash; ALTER OPERATOR FAMILY public.unrelated_ops USING hash OWNER TO postgres;"],
+    ["unrelated-schema operator family", "CREATE SCHEMA private; CREATE OPERATOR FAMILY private.uuid_ops USING btree; ALTER OPERATOR FAMILY private.uuid_ops USING btree OWNER TO postgres;"],
+    ["unrelated table ALTER", "CREATE TABLE public.unrelated_rows (id uuid); ALTER TABLE public.unrelated_rows ALTER COLUMN id TYPE text USING id::text;"],
+    [
+      "unused operator class",
+      "CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);",
+    ],
+    ["unused access method", "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler;"],
+    [
+      "unused private operator class",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);",
+    ],
+    [
+      "unused pg_catalog operator class",
+      "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);",
+    ],
+    [
+      "implicit pg_catalog built-in before private shadow",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET search_path = private, public; " +
+        "CREATE INDEX bookings_builtin_shadow_probe ON public.bookings USING btree (id uuid_ops);",
+    ],
+    [
+      "SET SCHEMA retains implicit pg_catalog built-in precedence",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET SCHEMA 'private'; " +
+        "CREATE INDEX bookings_builtin_shadow_probe ON public.bookings USING btree (id uuid_ops);",
+    ],
+    [
+      "ordinary built-in pg_catalog operator class",
+      "CREATE INDEX bookings_builtin_ops_probe ON public.bookings USING btree (id pg_catalog.uuid_ops);",
+    ],
+    [
+      "operator class on unrelated index",
+      "CREATE TABLE public.catalog_control_rows (id uuid); " +
+        "CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX catalog_control_uuid_idx ON public.catalog_control_rows USING btree (id public.uuid_ops);",
+    ],
+    [
+      "access method on unrelated index",
+      "CREATE TABLE public.catalog_control_rows (id uuid); " +
+        "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler; " +
+        "CREATE INDEX catalog_control_evil_idx ON public.catalog_control_rows USING evil (id);",
+    ],
+    [
+      "private operator class on unrelated index",
+      "CREATE SCHEMA private; CREATE TABLE public.catalog_control_rows (id uuid); " +
+        "CREATE OPERATOR CLASS private.uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET search_path = private, public; " +
+        "CREATE INDEX catalog_control_uuid_idx ON public.catalog_control_rows USING btree (id uuid_ops); " +
+        "RESET search_path;",
+    ],
+    [
+      "pg_catalog operator class on unrelated index",
+      "CREATE TABLE public.catalog_control_rows (id uuid); " +
+        "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX catalog_control_uuid_idx ON public.catalog_control_rows USING btree (id evil_uuid_ops);",
+    ],
+    [
+      "reviewed operator-class index cleanup",
+      "CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX bookings_uuid_ops_probe ON public.bookings USING btree (id public.uuid_ops); " +
+        "DROP INDEX public.bookings_uuid_ops_probe; DROP OPERATOR CLASS public.uuid_ops USING btree;",
+    ],
+    [
+      "reviewed access-method index cleanup",
+      "CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler; " +
+        "CREATE INDEX bookings_evil_probe ON public.bookings USING evil (id); " +
+        "DROP INDEX public.bookings_evil_probe; DROP ACCESS METHOD evil;",
+    ],
+    [
+      "private opclass reviewed-index cleanup",
+      "CREATE SCHEMA private; " +
+        "CREATE OPERATOR CLASS private.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "SET search_path = private, public; " +
+        "CREATE INDEX bookings_private_ops_probe ON public.bookings USING btree (id evil_uuid_ops); " +
+        "RESET search_path; DROP INDEX public.bookings_private_ops_probe; " +
+        "DROP OPERATOR CLASS private.evil_uuid_ops USING btree;",
+    ],
+    [
+      "pg_catalog opclass reviewed-index cleanup",
+      "CREATE OPERATOR CLASS pg_catalog.evil_uuid_ops FOR TYPE uuid USING btree AS " +
+        "OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid), " +
+        "OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid); " +
+        "CREATE INDEX bookings_pg_catalog_ops_probe ON public.bookings USING btree (id evil_uuid_ops); " +
+        "DROP INDEX public.bookings_pg_catalog_ops_probe; " +
+        "DROP OPERATOR CLASS pg_catalog.evil_uuid_ops USING btree;",
+    ],
+  ])("accepts reviewed provenance after effective or unrelated %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_catalog_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it("ignores catalog mutation text in comments, strings, identifiers, and dollar bodies", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_inert.sql",
+        sql: `
+          -- ALTER ROUTINE public.auth_user_in_tenant(uuid) SET search_path = private;
+          SELECT 'CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid)';
+          SELECT 'CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler';
+          CREATE TABLE public."ALTER TABLE public.bookings OWNER TO attacker" (id uuid);
+          CREATE FUNCTION public.inert_catalog_text() RETURNS text LANGUAGE plpgsql AS $body$
+          BEGIN
+            RETURN 'CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree';
+          END;
+          $body$;
+        `,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["column type", "ALTER TABLE public.bookings ALTER COLUMN id TYPE text USING id::text;"],
+    ["column rename", "ALTER TABLE public.bookings RENAME COLUMN id TO replaced_id;"],
+    ["forced RLS", "ALTER TABLE public.bookings FORCE ROW LEVEL SECURITY;"],
+    ["unforced RLS", "ALTER TABLE public.bookings NO FORCE ROW LEVEL SECURITY;"],
+    ["owner", "ALTER TABLE public.bookings OWNER TO authenticated;"],
+    ["inheritance", "ALTER TABLE public.bookings INHERIT public.unrelated_rows;"],
+    ["partition attachment", "ALTER TABLE public.bookings ATTACH PARTITION public.unrelated_rows DEFAULT;"],
+    ["access method", "ALTER TABLE public.bookings SET ACCESS METHOD heap;"],
+    ["rule state", "ALTER TABLE public.bookings DISABLE RULE bookings_read_effect;"],
+    ["comment-separated RLS state", "ALTER/*probe*/ TABLE public.bookings DISABLE ROW LEVEL SECURITY;"],
+  ])("rejects an unreviewed %s change on the reviewed relation", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_relation_alter.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("rejects an unreviewed ALTER on a reviewed RAG relation", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("rag"),
+      { file: "zzzz_relation_alter.sql", sql: "ALTER TABLE public.knowledge_chunks ALTER COLUMN id TYPE text USING id::text;" },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["table:public.knowledge_chunks"],
+      provenance,
+    )).toBe(false);
+  });
+
+  it.each([
     ["effective body replacement", "CREATE OR REPLACE FUNCTION public.match_region_itinerary_chunks(p_region_terms text[], p_port_terms text[], p_date_from date, p_date_to date, p_origin_port_terms text[] DEFAULT '{}', p_limit integer DEFAULT 12) RETURNS TABLE (related_chunk_id uuid, first_departure date) LANGUAGE sql AS $$ DELETE FROM public.itineraries RETURNING related_chunk_id, departure_date $$;"],
     ["new overload", "CREATE FUNCTION public.match_region_itinerary_chunks(p_region_terms text[]) RETURNS TABLE (related_chunk_id uuid) LANGUAGE sql AS $$ SELECT NULL::uuid $$;"],
     ["ambiguous ALTER", "ALTER FUNCTION public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer) RENAME TO replaced_match_region_itinerary_chunks;"],
+    ["ALTER ROUTINE", "ALTER ROUTINE public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer) SET search_path = private, public;"],
+    ["DROP ROUTINE", "DROP ROUTINE public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer);"],
+    ["DROP FUNCTION aliases", "DROP FUNCTION public.match_region_itinerary_chunks(text ARRAY, text ARRAY, date, date, text ARRAY, int);"],
   ])("rejects reviewed RPC provenance after %s", (_shape, sql) => {
     const provenance = derivePostgresMigrationProvenance([
       ...repoMigrations("rag"),
       { file: "zzzz_effect.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["rpc:public.match_region_itinerary_chunks"],
+      provenance,
+    )).toBe(false);
+  });
+
+  it("accepts an exact reviewed RPC recreated after DROP ROUTINE", () => {
+    const migrations = repoMigrations("rag");
+    const latest = migrations.find(({ file }) => file === "0033_region_itinerary_segment_match.sql");
+    expect(latest).toBeDefined();
+    const provenance = derivePostgresMigrationProvenance([
+      ...migrations,
+      { file: "zzzza_drop.sql", sql: "DROP ROUTINE public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer);" },
+      { file: "zzzzb_recreate.sql", sql: latest!.sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["rpc:public.match_region_itinerary_chunks"],
+      provenance,
+    )).toBe(true);
+  });
+
+  it.each([
+    ["drop", "DROP EXTENSION vector;"],
+    ["update", "ALTER EXTENSION vector UPDATE;"],
+    ["schema transfer", "ALTER EXTENSION vector SET SCHEMA extensions;"],
+  ])("rejects RAG provenance after reviewed extension %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("rag"),
+      { file: "zzzz_extension.sql", sql },
     ]);
     expect(postgresResourcesMatchReviewedProvenance(
       "rag",
