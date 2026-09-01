@@ -583,6 +583,12 @@ jobs:
           RAG_SCOPE_DB_REQUIRED: "true"
         run: pnpm -C apps/rag exec vitest run test/integration/retrieval-scope-isolation.test.ts
 
+      - name: Run ledger routine-identity PostgreSQL fixtures
+        # Uses the same SUPABASE_DB_URL test target already migrated and
+        # serialized by this job. The fixture rolls back every DDL change;
+        # absent secrets make its describeIf guard skip for Dependabot.
+        run: pnpm vitest run tests/integration/scripts/check-ledger-objects-db.test.ts
+
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
