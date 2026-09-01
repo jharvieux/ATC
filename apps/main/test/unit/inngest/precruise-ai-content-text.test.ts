@@ -23,18 +23,20 @@ describe("precruiseAiContentText", () => {
     expect(text).toContain("Nassau has the clearest waters.");
   });
 
-  it("t_30: includes reminders, check-in, payment note, recommendations, packing", () => {
+  it("t_30: includes reminders, check-in, payment note, recommendations, experiences, packing", () => {
     const text = precruiseAiContentText("t_30", {
       reservation_reminders: ["Specialty dining"],
       checkin_window: "Check-in opens day 45.",
       final_payment_note: "Final payment due.",
       personalized_recommendations: ["Sushi night"],
+      specialty_experiences: ["Chef-led market tour"],
       pack_inspiration: "Pack light.",
     });
     expect(text).toContain("• Specialty dining");
     expect(text).toContain("Check-in opens day 45.");
     expect(text).toContain("Final payment due.");
     expect(text).toContain("• Sushi night");
+    expect(text).toContain("• Chef-led market tour");
     expect(text).toContain("Pack light.");
   });
 

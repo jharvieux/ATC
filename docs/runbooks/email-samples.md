@@ -20,7 +20,7 @@ The T-1 email calls Open-Meteo directly for live Miami weather — no API key re
 ## How to run
 
 ```bash
-pnpm tsx scripts/render-email-samples.tsx
+pnpm tsx --tsconfig apps/main/tsconfig.json scripts/render-email-samples.tsx
 ```
 
 Output lands in a unique directory under the OS temp dir — the script prints the path on its last log line (e.g. `[samples] wrote 6 HTML files to /var/folders/.../email-samples-aBc123`). Inside that directory:

@@ -1,7 +1,3 @@
-// §23.4 — Pre-cruise email template tests.
-// Verifies the T-1 carry-on essentials callout is present (hardcoded, not AI-generated),
-// and that all four templates render without throwing.
-
 import { describe, it, expect } from "vitest";
 import * as React from "react";
 import * as ReactDOMServer from "react-dom/server";
@@ -33,6 +29,8 @@ describe("PreCruiseT1 — §23.4 carry-on essentials callout", () => {
     expect(html).toContain("Cruise paperwork");
     expect(html).toContain("Medications you take regularly");
     expect(html).toContain("Checked luggage doesn");
+    expect(html).toContain("background-color:#fffbeb");
+    expect(html).toContain("border:2px solid #b45309");
   });
 
   it("renders port info when departure_port is provided", () => {
@@ -54,9 +52,6 @@ describe("PreCruiseT1 — §23.4 carry-on essentials callout", () => {
     expect(html).toContain("Arrive 2 hours before departure.");
   });
 
-  // The PortInfo interface has carried terminal_addresses + parking_info
-  // since 2026-05-30 but the template body didn't read them until this
-  // PR. These two cases pin the wiring so a future revert is loud.
   it("renders terminal_addresses table when provided", () => {
     const jsx = React.createElement(PreCruiseT1, {
       layout: baseLayout,
@@ -116,6 +111,10 @@ describe("PreCruiseT90 — §23.4", () => {
     expect(html).toContain("Charlie");
     expect(html).toContain("Royal Caribbean");
     expect(html).toContain("Nassau awaits!");
+    expect(html).toContain("Your voyage briefing");
+    expect(html).toContain("The horizon is getting closer.");
+    expect(html).toContain("<h1");
+    expect(html).toContain("<h2");
   });
 
   // #975 — T-90 gained the companion-page CTA in the marketing-grade redesign.
@@ -148,12 +147,17 @@ describe("PreCruiseT30 — §23.4", () => {
       reservation_reminders: ["Book specialty dining"],
       checkin_window: "Check in opens 45 days before sailing.",
       personalized_recommendations: ["Sushi restaurant"],
+      specialty_experiences: ["Chef’s table"],
       pack_inspiration: "Pack light for the tropics.",
       companion_page_url: "https://example.com/companion/token123",
     });
     const html = ReactDOMServer.renderToStaticMarkup(jsx);
     expect(html).toContain("Dana");
     expect(html).toContain("companion/token123");
+    expect(html).toContain("Your departure edit");
+    expect(html).toContain("Put this on your calendar");
+    expect(html).toContain("Worth reserving");
+    expect(html).toContain("Chef’s table");
   });
 });
 
@@ -174,5 +178,7 @@ describe("PreCruiseT7 — §23.4", () => {
     expect(html).toContain("Eve");
     expect(html).toContain("Sunscreen");
     expect(html).toContain("Arrive at port by 11am.");
+    expect(html).toContain("Your final week");
+    expect(html).toContain("Embarkation day, made easy");
   });
 });

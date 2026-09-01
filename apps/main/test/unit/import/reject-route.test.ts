@@ -101,6 +101,7 @@ describe("POST /api/imports/review/[id]/reject (#1330)", () => {
     expect((await res.json()) as { error: string }).toEqual({ error: "reject_conflict" });
   });
 
+  // @rls-covered-by resources=table:public.import_queue target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies import_queue: userB cannot SELECT tenantA rows
   it("cross-tenant row → 403 forbidden, no write", async () => {
     h.loadRow = { ...h.loadRow!, tenant_id: "tenant-2" };
     const res = await call();

@@ -1,11 +1,11 @@
 name: prod-drift-check
 
-# Nightly read-only check that PRODUCTION's live table GRANTs + RLS match the
-# committed snapshots (db/grants-snapshot-*.sql, db/rls-snapshot-*.sql). Catches
-# out-of-band / manual changes made directly in prod — the purpose formerly
-# served by the pre-migration prod grants gate in deploy.yml, which was removed
-# because it false-failed every new-table release (it compared prod BEFORE the
-# release's own migrations applied).
+# Nightly read-only check that PRODUCTION's live table GRANTs, RLS, and
+# migration-ledger objects match committed baselines. Catches out-of-band /
+# manual changes made directly in prod — the purpose formerly served by the
+# pre-migration prod grants gate in deploy.yml, which was removed because it
+# false-failed every new-table release (it compared prod BEFORE the release's
+# own migrations applied).
 #
 # Decoupled from releases AND from STAGING_PIPELINE_ENABLED, so it runs even
 # while the staging→prod pipeline is off and prod deploys are manual. It also
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   prod-drift:
-    name: Prod grants + RLS drift
+    name: Prod grants + RLS + ledger-object drift
     runs-on: ubuntu-latest
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
@@ -52,7 +52,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Read-only diffs of live prod grants/RLS vs the committed snapshots.
-      # grants:check runs regardless of the RLS outcome so the issue reports both.
+      # Follow-on checks run regardless of earlier outcomes so the issue reports all drift.
       - name: Check RLS drift vs prod
         id: rls
         run: pnpm rls:check
@@ -62,27 +62,35 @@ jobs:
         if: always()
         run: pnpm grants:check
 
+      - name: Check main ledger-object drift vs prod
+        id: ledger
+        if: always()
+        # check-ledger-objects sets default_transaction_read_only before every
+        # catalog query. Its exact output is retained in this Actions run.
+        run: pnpm check:ledger-objects:main
+
       - name: Open GitHub issue on prod drift
-        if: failure() && (steps.rls.outcome == 'failure' || steps.grants.outcome == 'failure')
+        if: failure() && (steps.rls.outcome == 'failure' || steps.grants.outcome == 'failure' || steps.ledger.outcome == 'failure')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RLS_OUTCOME: ${{ steps.rls.outcome }}
           GRANTS_OUTCOME: ${{ steps.grants.outcome }}
+          LEDGER_OUTCOME: ${{ steps.ledger.outcome }}
         run: |
           # Dedupe: only one open prod-drift issue at a time — comment instead of
           # spawning a new issue every night while the drift persists.
           existing=$(gh issue list --state open --label prod-drift --json number --jq '.[0].number')
-          summary="RLS: ${RLS_OUTCOME}, grants: ${GRANTS_OUTCOME} (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          summary="RLS: ${RLS_OUTCOME}, grants: ${GRANTS_OUTCOME}, ledger objects: ${LEDGER_OUTCOME} (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "Prod drift still present on $(date -u +%Y-%m-%dT%H:%M:%SZ). ${summary}"
           else
             gh issue create \
-              --title "Prod schema drift detected (grants/RLS vs committed snapshot)" \
+              --title "Prod schema drift detected (grants/RLS/ledger objects)" \
               --label "prod-drift" \
               --body "$(cat <<BODY
           ## Production schema drift
 
-          The nightly prod-drift check found that prod's live GRANTs and/or RLS no longer match the committed snapshots.
+          The nightly prod-drift check found that prod's live GRANTs, RLS, and/or migration-ledger objects no longer match the committed baselines. The workflow log retains the exact catalog divergence.
 
           ${summary}
 
@@ -94,8 +102,9 @@ jobs:
           \`\`\`
           SUPABASE_DB_URL=<prod> SUPABASE_RAG_DB_URL=<rag-prod> pnpm rls:check
           SUPABASE_DB_URL=<prod> SUPABASE_RAG_DB_URL=<rag-prod> pnpm grants:check
+          SUPABASE_DB_URL=<prod> pnpm check:ledger-objects:main
           \`\`\`
-          The diff output names the exact tables/grants. Reconcile by applying the pending migration to prod (ledger-correct: \`supabase db push\`, never raw psql) or by correcting the out-of-band change.
+          The diff output names the exact tables, grants, or catalog objects. Reconcile by applying the pending migration to prod (ledger-correct: \`supabase db push\`, never raw psql) or by correcting the out-of-band change.
           BODY
           )"
           fi

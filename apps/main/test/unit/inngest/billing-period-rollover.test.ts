@@ -230,7 +230,7 @@ describe("#1885 — billing-period-rollover outcome tallies", () => {
   });
 });
 
-describe("#1885 — billing-period-rollover error isolation", () => {
+describe("#1885 — billing-period-rollover error handling", () => {
   it("pins ACTUAL behavior: one tenant's audit-event insert failure rejects the whole rollover", async () => {
     // mapWithConcurrency has no per-item try/catch — safeAwait throwing for
     // one tenant's usage_limit_events insert rejects the shared Promise.all,

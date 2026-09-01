@@ -227,6 +227,7 @@ beforeEach(() => {
 });
 
 describe("runExtractMemory — cross-tenant scope (§11.2.2 mandatory contract)", () => {
+  // @rls-covered-by resources=table:public.customer_memories target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies customer_memories: userB cannot SELECT tenantA rows
   it("processes tenant A event without touching tenant B's memory", async () => {
     // DB scoped to TENANT_A — simulates tenantClient(ctx) where ctx.tenant_id = TENANT_A.
     // Existing memory row is present (UPDATE path). The mock DB only knows about
@@ -256,6 +257,7 @@ describe("runExtractMemory — cross-tenant scope (§11.2.2 mandatory contract)"
     // The scope contract is enforced by tenantContextFromInngestEvent → tenantClient(ctx).
   });
 
+  // @rls-covered-by resources=table:public.conversations target=apps/main/test/integration/rls.test.ts#RLS integration BP05 domain tables RLS conversations: userB cannot SELECT tenantA rows
   it("throws when conversation.user_id !== event.data.user_id (scope assertion)", async () => {
     // Simulate: event says user is USER_A, but the conversation in the DB
     // belongs to USER_B. This is the attack vector the assertion catches.
@@ -279,6 +281,7 @@ describe("runExtractMemory — cross-tenant scope (§11.2.2 mandatory contract)"
     ).rejects.toThrow("SCOPE ASSERTION FAILED");
   });
 
+  // @rls-covered-by resources=table:public.conversations target=apps/main/test/integration/rls.test.ts#RLS integration BP05 domain tables RLS conversations: userB cannot SELECT tenantA rows
   it("returns not-found error when conversation does not belong to the event tenant", async () => {
     // Simulate: event uses TENANT_A, but CONV_B belongs to TENANT_B.
     // The tenantClient auto-filter returns null (no matching row in tenant A).

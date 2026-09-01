@@ -17,6 +17,7 @@ vi.mock("@/inngest/client", () => ({
 
 const mocks = vi.hoisted(() => ({
   insertError: null as { code: string; message: string } | null,
+  insertPayloads: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
   revalidateCalls: [] as Array<[string, string]>,
 }));
@@ -73,7 +74,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
             };
             return chain;
           },
-          insert() {
+          insert(payload: Record<string, unknown>) {
+            mocks.insertPayloads.push(payload);
             return {
               select: () => ({
                 single: async () => ({ data: null, error: mocks.insertError }),
@@ -91,6 +93,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 data: {
                   id: "b1",
                   tenant_id: "t1",
+                  status: "confirmed",
                   group_booking_id: "g1",
                   user_id: "u1",
                   primary_contact_id: "contact-1",
@@ -148,6 +151,7 @@ import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send"
 
 beforeEach(() => {
   mocks.insertError = null;
+  mocks.insertPayloads = [];
   mocks.sendEmailCalls = 0;
   mocks.revalidateCalls = [];
 });
@@ -167,10 +171,29 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90" } },
     });
     expect(mocks.sendEmailCalls).toBe(1);
+    expect(mocks.insertPayloads[0]).toMatchObject({
+      booking_id: "b1",
+      contact_id: "contact-1",
+    });
     // #1953 — the successful content insert must purge the companion
     // page's (booking_id, phase) cache entry, or a pre-insert "no content"
     // render stays pinned for the customer.
     expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
+  });
+
+  it("makes the T-30 specialty experiences section reachable in direct sends", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    try {
+      await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+        event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_30", via: "direct" } },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(mocks.insertPayloads[0]?.generated_content).toMatchObject({
+      specialty_experiences: ["unused"],
+    });
   });
 
   it("throws (not swallows) on a non-23505 insert error", async () => {

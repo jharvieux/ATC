@@ -90,6 +90,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 data: {
                   id: "b1",
                   tenant_id: "t1",
+                  status: "confirmed",
                   group_booking_id: "g1",
                   user_id: "u1",
                   primary_contact_id: "contact-1",
@@ -185,6 +186,14 @@ describe("PRECRUISE_OUTPUT_SCHEMAS — Anthropic structured-output validity", ()
       expect(Object.keys(s.properties).sort()).toEqual([...RENDERED_KEYS[phase]!].sort());
     });
   }
+
+  it("t_30 generates specialty experiences instead of defining a dead field", () => {
+    const schema = PRECRUISE_OUTPUT_SCHEMAS.t_30 as {
+      properties: { specialty_experiences: { description: string } };
+    };
+    expect(schema.properties.specialty_experiences.description).toContain("Exactly 3");
+    expect(schema.properties.specialty_experiences.description).not.toContain("empty array");
+  });
 });
 
 describe("precruiseGenerateAndSend via:'batched' — schema wiring", () => {

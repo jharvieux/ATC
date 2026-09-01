@@ -288,7 +288,7 @@ function shapeStructuredChunks(
 // content: skip superseded chunks, require an embedding, and never boost a promo
 // chunk (any sell_by_at) — promo chunks fall through to the vector path, which
 // runs the full promo-lifecycle gate. Layer-one tenant isolation via .or().
-async function fetchApprovedChunksByIds(
+export async function fetchApprovedChunksByIds(
   db: ReturnType<typeof getRagDb>,
   tenantId: string,
   chunkIds: string[],

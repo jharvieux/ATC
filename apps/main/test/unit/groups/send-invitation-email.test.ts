@@ -206,7 +206,7 @@ describe("sendGroupInvitationEmail — claim-before-send stamping (#1584 / #1716
     expect(lastUpdatePayload()).toEqual({ last_email_sent_at: null });
   });
 
-  it("scopes the claim CAS to exactly the target invitation id (no cross-tenant mass-stamp) (#1654)", async () => {
+  it("scopes the claim CAS to exactly the target invitation id (no unrelated mass-stamp) (#1654)", async () => {
     mocks.sendEmail.mockResolvedValue({ status: "sent", resend_message_id: "m-1" });
 
     await sendGroupInvitationEmail({
