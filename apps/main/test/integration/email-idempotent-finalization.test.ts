@@ -258,6 +258,87 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     expect(after).toEqual({ logs: 1, retries: 1, count: (before[0]?.count ?? 0) + 1 });
   }, 60000);
 
+  it("abandons only an unstarted outbox and preserves a started attempt", async () => {
+    const unstartedKey = `${runTag}:abandon-unstarted`;
+    const unstartedPayload = rpcPayload(unstartedKey, "abandon-unstarted");
+    const { error: unstartedPrepareError } = await fx.admin.rpc(
+      "prepare_idempotent_email_send",
+      {
+        p_tenant_id: fx.tenantOne,
+        p_idempotency_key: unstartedKey,
+        p_provider_idempotency_key: `integration:${fx.tenantOne}:${unstartedKey}`,
+        p_provider_request_body: JSON.stringify({
+          from: "noreply@example.test",
+          to: "abandon-unstarted@example.test",
+          subject: "Subject abandon-unstarted",
+          html: "<p>abandon-unstarted</p>",
+        }),
+        p_provider_account_type: "platform_resend",
+        p_provider_credential_hash: providerCredentialHash,
+        p_log: unstartedPayload.p_log,
+        p_retry_content: unstartedPayload.p_retry_content,
+      },
+    );
+    if (unstartedPrepareError) throw new Error(unstartedPrepareError.message);
+
+    const abandoned = await fx.admin.rpc("abandon_unstarted_idempotent_email", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: unstartedKey,
+    });
+    if (abandoned.error) throw new Error(abandoned.error.message);
+    expect(abandoned.data).toBe(true);
+    const abandonedRows = await fx.sql`
+      SELECT 1
+      FROM public.email_log
+      WHERE tenant_id = ${fx.tenantOne}
+        AND idempotency_key = ${unstartedKey}
+    `;
+    expect(abandonedRows).toHaveLength(0);
+
+    const startedKey = `${runTag}:abandon-started`;
+    const startedPayload = rpcPayload(startedKey, "abandon-started");
+    const { error: startedPrepareError } = await fx.admin.rpc(
+      "prepare_idempotent_email_send",
+      {
+        p_tenant_id: fx.tenantOne,
+        p_idempotency_key: startedKey,
+        p_provider_idempotency_key: `integration:${fx.tenantOne}:${startedKey}`,
+        p_provider_request_body: JSON.stringify({
+          from: "noreply@example.test",
+          to: "abandon-started@example.test",
+          subject: "Subject abandon-started",
+          html: "<p>abandon-started</p>",
+        }),
+        p_provider_account_type: "platform_resend",
+        p_provider_credential_hash: providerCredentialHash,
+        p_log: startedPayload.p_log,
+        p_retry_content: startedPayload.p_retry_content,
+      },
+    );
+    if (startedPrepareError) throw new Error(startedPrepareError.message);
+    const { error: startError } = await fx.admin.rpc("start_idempotent_email_dispatch", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: startedKey,
+    });
+    if (startError) throw new Error(startError.message);
+
+    const startedAbandon = await fx.admin.rpc("abandon_unstarted_idempotent_email", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: startedKey,
+    });
+    if (startedAbandon.error) throw new Error(startedAbandon.error.message);
+    expect(startedAbandon.data).toBe(false);
+    const startedRows = await fx.sql<{ status: string; provider_first_attempt_at: Date | null }[]>`
+      SELECT status, provider_first_attempt_at
+      FROM public.email_log
+      WHERE tenant_id = ${fx.tenantOne}
+        AND idempotency_key = ${startedKey}
+    `;
+    expect(startedRows).toHaveLength(1);
+    expect(startedRows[0]).toMatchObject({ status: "queued" });
+    expect(startedRows[0]?.provider_first_attempt_at).not.toBeNull();
+  }, 60000);
+
   it("enforces tenant-scoped uniqueness while allowing another tenant and null keys", async () => {
     const sharedKey = `${runTag}:raw-unique`;
     await fx.sql`
