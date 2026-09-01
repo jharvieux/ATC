@@ -664,40 +664,43 @@ describe("sendEmail — §23", () => {
     expect(outboxStore.current).toBeNull();
   });
 
-  it("keeps a concurrent-provider conflict replayable with the stored request", async () => {
-    const outboxStore: MockOutboxStore = { current: null };
-    const beforeDispatch = vi.fn(async (_context: { providerReplay: boolean }) => ({ allowed: true }));
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 409 })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "resend-recovered" }) }));
-    const input: SendEmailInput = {
-      db: makeDb({ outboxStore }),
-      tenant: baseTenant,
-      to: "customer@example.com",
-      subject: "Stable subject",
-      template_id: "pre_cruise_t_7",
-      category: "pre_cruise",
-      html: testHtml,
-      idempotencyKey: "pre_cruise:booking-1:t_7",
-      beforeDispatch,
-    };
+  it.each([408, 409, 429, 500])(
+    "keeps retryable provider status %i replayable with the stored request",
+    async (status) => {
+      const outboxStore: MockOutboxStore = { current: null };
+      const beforeDispatch = vi.fn(async (_context: { providerReplay: boolean }) => ({ allowed: true }));
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce({ ok: false, status })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "resend-recovered" }) }));
+      const input: SendEmailInput = {
+        db: makeDb({ outboxStore }),
+        tenant: baseTenant,
+        to: "customer@example.com",
+        subject: "Stable subject",
+        template_id: "pre_cruise_t_7",
+        category: "pre_cruise",
+        html: testHtml,
+        idempotencyKey: "pre_cruise:booking-1:t_7",
+        beforeDispatch,
+      };
 
-    await expect(sendEmail(input)).resolves.toMatchObject({
-      status: "failed",
-      reason: "resend_409",
-    });
-    expect(outboxStore.current?.provider_attempt_state).toBe("ambiguous");
+      await expect(sendEmail(input)).resolves.toMatchObject({
+        status: "failed",
+        reason: `resend_${status}`,
+      });
+      expect(outboxStore.current?.provider_attempt_state).toBe("ambiguous");
 
-    await expect(sendEmail(input)).resolves.toMatchObject({
-      status: "sent",
-      resend_message_id: "resend-recovered",
-    });
-    expect(beforeDispatch.mock.calls.map(([context]) => context)).toEqual([
-      { providerReplay: false },
-      { providerReplay: true },
-    ]);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-  });
+      await expect(sendEmail(input)).resolves.toMatchObject({
+        status: "sent",
+        resend_message_id: "resend-recovered",
+      });
+      expect(beforeDispatch.mock.calls.map(([context]) => context)).toEqual([
+        { providerReplay: false },
+        { providerReplay: true },
+      ]);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("fails loudly after provider success when atomic finalization fails so the keyed call can retry", async () => {
     const db = makeDb({ rpcErrors: { finalize_idempotent_email_send: { message: "database unavailable" } } });

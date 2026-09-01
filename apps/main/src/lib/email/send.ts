@@ -375,12 +375,19 @@ async function fetchProvider(args: {
     });
     if (!res.ok) {
       recordVendorFailure("resend", `${res.status}`);
-      // Resend uses 409 for a concurrent request with the same key, whose
-      // delivery outcome is not yet known to this caller.
+      // Retryable provider responses keep the request immutable: a timeout,
+      // concurrent key, rate limit, or server failure may not conclusively
+      // describe the provider-side delivery state.
+      const outcome = (
+        res.status === 408
+        || res.status === 409
+        || res.status === 429
+        || res.status >= 500
+      ) ? "ambiguous" : "rejected";
       return {
         status: "failed",
         reason: `resend_${res.status}`,
-        outcome: res.status === 409 ? "ambiguous" : "rejected",
+        outcome,
       };
     }
 
