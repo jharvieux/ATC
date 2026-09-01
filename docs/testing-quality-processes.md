@@ -539,7 +539,7 @@ pnpm verify = typecheck + lint + test + slop-check + check:auth-error +
 
 **Implementation:** `.github/workflows/nightly-full-test.yml`
 
-**Critical prerequisite:** The nightly suite must point at a dedicated test Supabase project, not the production project. Once customer data exists in production, running destructive crons against it would be catastrophic. See issue #386 for the migration plan.
+**Critical safeguard:** D-257 provisioned the dedicated test/staging Supabase project and issue #386 is complete. The nightly suite must continue to use the `SUPABASE_TEST_*` credentials for that project, never production credentials; its destructive crons make that boundary non-negotiable.
 
 **New project notes:** Apply to any project where some integration tests are too slow or too destructive for PR CI. The dedicated-test-project requirement is non-negotiable once real data exists.
 
@@ -621,6 +621,5 @@ These are quality processes that exist in intent but aren't fully implemented:
 |-----|-------|----------------|------------|
 | Cross-Tenant Probe (live host) | #1913 | Test-DB-bound `APP_BASE_URL` that passes health and tenant-B own-booking controls | Operator provisioning |
 | E2E test bodies | #384 item 3 | 28 placeholder `test.skip` specs | Product prioritization |
-| Nightly test on dedicated DB | #386 | Dedicated test Supabase project | Operator provisioning |
 | Contracts canary live | #473 | `STRIPE_TEST_SECRET_KEY` + `ANTHROPIC_API_KEY_TEST` GitHub secrets | Operator provisioning |
 | S5852 SonarCloud false positives | #594 | 33 hotspots need manual "Safe" marking | SonarCloud UI review |
