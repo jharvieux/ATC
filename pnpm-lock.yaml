@@ -27,6 +27,8 @@ overrides:
   sharp: '>=0.35.0 <0.36'
   lighthouse@12.6.1>puppeteer-core: 25.1.0
 
+pnpmfileChecksum: sha256-E9/gw0EG/pSStqSlbn3BxoWajX//82Qsz65BfvMAlFs=
+
 importers:
 
   .:

@@ -17,6 +17,8 @@ session; keep it lean.
 
 ## Entries
 
+- D-377 — 2026-09-01 — Every pnpm command loads a shared fail-closed Node 24 validator through `.pnpmfile.mjs`, covering secondary scripts and install/add entrypoints including `--ignore-scripts`; this supersedes D-376's initial `devEngines.runtime` plus eight-script allowlist mechanism, not its Node 24 contract
+- D-376 — 2026-09-01 — Node 24.x remains the local, CI, and Vercel runtime contract until Vercel supports a newer major and a compatibility upgrade is verified; login shells activate `.nvmrc`, and checked-in primary workflows fail immediately instead of continuing after an engine warning
 - D-375 — 2026-09-01 — Keyed email sends use a service-role-only durable provider outbox, exact request/key replay for ambiguous outcomes within 23 hours, and atomic log/retry-content/usage finalization; pre-cruise binds the reviewed recipient and rechecks live eligibility/context, while tenant-scoped provider keys remain staged in #2115 (PR #2116; refs D-371)
 - D-374 — 2026-09-01 — Keep LHCI 0.15.1/Lighthouse 12.6.1 but narrowly override its Puppeteer Core to 25.1.0, removing the unpatched extract-zip dependency while preserving verified Lighthouse collection behavior (PR #2111)
 - D-373 — 2026-09-01 — Tenant-isolation mutation witnesses bind declared IDs to proven attempted and affected IDs: UPDATE/DELETE target the exact allowed+denied union, INSERT/UPSERT split an observed denied 42501 probe from the allowed effect, any extra mutation prevents SELECT laundering, and helper-returned Postgres clients require fail-closed imported-factory provenance (issues #2095/#2096)

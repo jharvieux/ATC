@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-377 — 2026-09-01 — Enforce Node 24 at pnpm's repository-wide load boundary
+
+**Decision.** Every pnpm command in this repository loads `.pnpmfile.mjs`, which reuses the strict Node 24 runtime validator and throws before command dispatch when the active runtime is unsupported. This supersedes [[D-376]] only for its initial `devEngines.runtime` plus primary-script allowlist mechanism; the Node 24 runtime contract remains unchanged.
+
+**Why.**
+- pnpm 11.1.3 did not enforce `devEngines.runtime.onFail` as a global command preflight in this repository.
+- Prefixing eight primary scripts left secondary tests, migrations, database tools, standalone guards, and dependency installation able to begin under Node 26.
+- The pnpmfile load boundary runs for scripts and resolution commands, including frozen installation with `--ignore-scripts`, so one shared validator protects the full pnpm surface without duplicating every script.
+
+**Rejected.**
+- *Keep the eight-script prefix allowlist.* Rejected because unlisted operational scripts remained reachable under Node 26.
+- *Treat `devEngines.runtime.onFail: error` as sufficient.* Rejected because process-level falsifiers proved it did not block pnpm 11.1.3 script or install entrypoints here.
+- *Prefix every package script independently.* Rejected because a central load boundary is smaller, automatically covers future scripts, and also protects install/add operations.
+
+**Related artifacts.** `.pnpmfile.mjs`, `scripts/check-node-runtime.mjs`, `tests/unit/scripts/check-node-runtime.test.ts`, `tests/fixtures/node-26-runtime.cjs`, [[D-376]].
+
+---
+
+## D-376 — 2026-09-01 — Keep local and Vercel development on Node 24
+
+**Decision.** Node 24.x remains the application, development, CI, and Vercel runtime contract until Vercel explicitly supports a newer major and a compatibility upgrade is verified. Login shells select the repository `.nvmrc` before Homebrew's system Node, while the repository declares `devEngines.runtime` and fails primary workflows immediately when the executing Node major is not 24.
+
+**Why.**
+- Vercel currently lists Node 24.x as its newest supported and default Builds/Functions runtime; local Node 26 created unsupported build and test drift.
+- `.nvmrc` and `engines.node` were advisory in the affected command path, so pnpm warned but continued doing expensive work under the wrong runtime.
+- Shell activation prevents the mismatch on this workstation, while a checked-in guard protects every developer and automation environment that bypasses shell initialization.
+
+**Rejected.**
+- *Upgrade the application to Node 26 because Homebrew installed it.* Rejected because local package availability does not imply Vercel runtime support.
+- *Rely on pnpm's engine warning.* Rejected because the warning allowed verification to continue under an unsupported major.
+- *Hard-code this workstation's absolute Node binary in repository scripts.* Rejected because machine-specific paths would break CI and other contributors; the scripts validate the active portable runtime instead.
+
+**Related artifacts.** `.nvmrc`, `package.json`, `scripts/check-node-runtime.mjs`, `tests/unit/scripts/check-node-runtime.test.ts`, Vercel's supported Node.js versions documentation.
+
+---
+
 ## D-375 — 2026-09-01 — Atomic keyed email delivery uses a durable provider outbox
 
 **Decision.** Keyed email sends prepare a service-role-only provider outbox before dispatch, bind it to the effective provider account and credential, and preserve the exact serialized request plus literal provider idempotency key once an attempt starts. Successful delivery atomically finalizes the logical email log, retry content, and tenant usage counter; ambiguous outcomes replay the stored request only within a 23-hour safety window, while definitive rejection returns to current policy checks. Pre-cruise delivery additionally binds a manual dispatch to the reviewed contact ID and email, rechecks payment, confirmed booking, recipient, and trip context immediately before the provider call, and recovers a prior outcome before regenerating content.
