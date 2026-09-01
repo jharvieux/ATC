@@ -15,11 +15,11 @@ import { resolveIndexingTarget } from "@/lib/seo/resolve-indexing-target";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function textResponse(body: string): Response {
+function textResponse(body: string, cacheControl: string): Response {
   return new Response(body, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=86400",
+      "Cache-Control": cacheControl,
     },
   });
 }
@@ -27,7 +27,7 @@ function textResponse(body: string): Response {
 export async function GET(request: Request): Promise<Response> {
   const target = await resolveIndexingTarget(request.headers.get("host"));
   if (!target) {
-    return textResponse("User-agent: *\nDisallow: /\n");
+    return textResponse("User-agent: *\nDisallow: /\n", "private, no-store");
   }
 
   // No `Allow: /` anywhere: an absent rule already means "allowed", and
@@ -43,5 +43,8 @@ export async function GET(request: Request): Promise<Response> {
     `User-agent: *\n${disallow}\n\n` +
       `${aiCrawlers}\n` +
       `Sitemap: ${target.origin}/sitemap.xml\n`,
+    target.kind === "platform"
+      ? "public, max-age=3600, s-maxage=86400"
+      : "private, no-store",
   );
 }

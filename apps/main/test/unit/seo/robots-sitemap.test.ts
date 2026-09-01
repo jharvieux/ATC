@@ -58,8 +58,12 @@ function customDomainTenant(
 
 describe("robots.txt", () => {
   it("serves the crawl policy and sitemap pointer on the platform domain", async () => {
-    const body = await (await robotsGet(req(PLATFORM))).text();
+    const res = await robotsGet(req(PLATFORM));
+    const body = await res.text();
 
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=3600, s-maxage=86400",
+    );
     expect(body).toContain(`Sitemap: https://${PLATFORM}/sitemap.xml`);
     expect(body).toContain("User-agent: *");
     for (const path of DISALLOWED_PATHS) {
@@ -108,11 +112,11 @@ describe("robots.txt", () => {
       customDomainTenant(false),
     );
 
-    const body = await (
-      await robotsGet(req("harborlighttravel.com"))
-    ).text();
+    const res = await robotsGet(req("harborlighttravel.com"));
+    const body = await res.text();
 
     expect(body).toBe("User-agent: *\nDisallow: /\n");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("serves the full crawl policy at an enabled custom-domain origin", async () => {
@@ -120,10 +124,10 @@ describe("robots.txt", () => {
       customDomainTenant(true),
     );
 
-    const body = await (
-      await robotsGet(req("harborlighttravel.com"))
-    ).text();
+    const res = await robotsGet(req("harborlighttravel.com"));
+    const body = await res.text();
 
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     expect(body).toContain(
       "Sitemap: https://harborlighttravel.com/sitemap.xml",
     );
@@ -137,11 +141,11 @@ describe("robots.txt", () => {
       customDomainTenant(true),
     );
 
-    const body = await (
-      await robotsGet(req(`harborlight.${PLATFORM}`))
-    ).text();
+    const res = await robotsGet(req(`harborlight.${PLATFORM}`));
+    const body = await res.text();
 
     expect(body).toBe("User-agent: *\nDisallow: /\n");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     expect(
       mocks.getCurrentIndexingTenantByCustomDomain,
     ).not.toHaveBeenCalled();
@@ -152,11 +156,11 @@ describe("robots.txt", () => {
       customDomainTenant(true, "sub_pro"),
     );
 
-    const body = await (
-      await robotsGet(req("harborlighttravel.com"))
-    ).text();
+    const res = await robotsGet(req("harborlighttravel.com"));
+    const body = await res.text();
 
     expect(body).toBe("User-agent: *\nDisallow: /\n");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("blanket-disallows when the current tier is missing", async () => {
@@ -170,6 +174,15 @@ describe("robots.txt", () => {
     ).text();
 
     expect(body).toBe("User-agent: *\nDisallow: /\n");
+  });
+
+  it("does not shared-cache an unknown-host denial", async () => {
+    mocks.getCurrentIndexingTenantByCustomDomain.mockResolvedValue(null);
+
+    const res = await robotsGet(req("unknown.example.com"));
+
+    expect(await res.text()).toBe("User-agent: *\nDisallow: /\n");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("observes an indexing disable on the next crawler read", async () => {
@@ -200,6 +213,9 @@ describe("sitemap.xml", () => {
     const body = await res.text();
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=3600, s-maxage=86400",
+    );
     expect(res.headers.get("Content-Type")).toContain("application/xml");
     for (const entry of SITEMAP_ENTRIES) {
       expect(body).toContain(`<loc>https://${PLATFORM}${entry.path}</loc>`);
@@ -233,7 +249,10 @@ describe("sitemap.xml", () => {
       customDomainTenant(false),
     );
 
-    expect((await sitemapGet(req("harborlighttravel.com"))).status).toBe(404);
+    const res = await sitemapGet(req("harborlighttravel.com"));
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("lists only tenant-public URLs at the enabled custom-domain origin", async () => {
@@ -245,6 +264,7 @@ describe("sitemap.xml", () => {
     const body = await res.text();
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     for (const entry of TENANT_SITEMAP_ENTRIES) {
       expect(body).toContain(
         `<loc>https://harborlighttravel.com${entry.path}</loc>`,
@@ -259,7 +279,10 @@ describe("sitemap.xml", () => {
       customDomainTenant(true),
     );
 
-    expect((await sitemapGet(req(`harborlight.${PLATFORM}`))).status).toBe(404);
+    const res = await sitemapGet(req(`harborlight.${PLATFORM}`));
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     expect(
       mocks.getCurrentIndexingTenantByCustomDomain,
     ).not.toHaveBeenCalled();
@@ -270,7 +293,19 @@ describe("sitemap.xml", () => {
       customDomainTenant(true, "byo_professional"),
     );
 
-    expect((await sitemapGet(req("harborlighttravel.com"))).status).toBe(404);
+    const res = await sitemapGet(req("harborlighttravel.com"));
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("does not shared-cache an unknown-host 404", async () => {
+    mocks.getCurrentIndexingTenantByCustomDomain.mockResolvedValue(null);
+
+    const res = await sitemapGet(req("unknown.example.com"));
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("omits /for-agencies, which permanently redirects to /", async () => {

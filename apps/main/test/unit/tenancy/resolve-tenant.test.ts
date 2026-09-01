@@ -239,6 +239,25 @@ describe("getCurrentIndexingTenantByCustomDomain", () => {
     ).toHaveLength(2);
   });
 
+  it.each<
+    [string, MockRow["tier_definitions"], string | null]
+  >([
+    ["object", { code: "sub_agency" }, "sub_agency"],
+    ["array", [{ code: "byo_agency" }], "byo_agency"],
+    ["null", null, null],
+    ["empty array", [], null],
+  ])("normalizes the %s tier join shape", async (label, tier, expected) => {
+    const hostname = `tier-shape-${label.replace(" ", "-")}.acme.com`;
+    mockTenantsRow = makeRow({
+      custom_domain: hostname,
+      tier_definitions: tier,
+    });
+
+    const tenant = await getCurrentIndexingTenantByCustomDomain(hostname);
+
+    expect(tenant?.tier_code).toBe(expected);
+  });
+
   it("throws on a failed current-state read", async () => {
     mockTenantsError = { message: "tier join unavailable" };
 

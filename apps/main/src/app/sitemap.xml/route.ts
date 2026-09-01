@@ -25,7 +25,10 @@ export async function GET(request: Request): Promise<Response> {
   if (!target) {
     return new Response("Not found", {
       status: 404,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "private, no-store",
+      },
     });
   }
 
@@ -55,7 +58,10 @@ export async function GET(request: Request): Promise<Response> {
   return new Response(xml, {
     headers: {
       "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=86400",
+      "Cache-Control":
+        target.kind === "platform"
+          ? "public, max-age=3600, s-maxage=86400"
+          : "private, no-store",
     },
   });
 }
