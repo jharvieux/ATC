@@ -5,7 +5,7 @@
 // claim so the next flush retries instead of resubmitting or stranding
 // the rows).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { flushPendingForPurpose } from "@/lib/ai/batch/flush";
 import { InMemoryTable, makeBatchDb } from "./batch-db-mock";
 
@@ -68,15 +68,6 @@ function makeSelectOnlyDb(opts: {
   };
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  mockSubmit.mockResolvedValue({
-    batch_id: "batch-abc",
-    request_count: 1,
-    processing_status: "in_progress",
-  });
-});
-
 describe("flushPendingForPurpose", () => {
   it("returns early with zero counts when no rows are pending", async () => {
     const db = makeSelectOnlyDb({ pendingRows: [] });
@@ -111,6 +102,12 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
     const requests = new InMemoryTable(rows);
     const jobs = new InMemoryTable([]);
     const db = makeBatchDb({ ai_batch_requests: requests, ai_batch_jobs: jobs });
+    mockSubmit.mockReset();
+    mockSubmit.mockResolvedValue({
+      batch_id: "batch-abc",
+      request_count: 1,
+      processing_status: "in_progress",
+    });
 
     const result = await flushPendingForPurpose({ purpose: PURPOSE, db: db as never });
 
@@ -155,6 +152,7 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
       },
     };
 
+    mockSubmit.mockReset();
     mockSubmit.mockResolvedValueOnce({ batch_id: "batch-xyz", request_count: 1, processing_status: "in_progress" });
     await flushPendingForPurpose({ purpose: PURPOSE, db: db as never });
 
@@ -166,6 +164,7 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
     const jobs = new InMemoryTable([]);
     const db = makeBatchDb({ ai_batch_requests: requests, ai_batch_jobs: jobs });
 
+    mockSubmit.mockReset();
     mockSubmit.mockImplementation(async () => {
       // At the moment Anthropic is "called", the row must already be
       // claimed — otherwise a crash right here would leave it 'pending'
@@ -182,6 +181,7 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
     const requests = new InMemoryTable([makePendingRow(1), makePendingRow(2)]);
     const jobs = new InMemoryTable([]);
     const db = makeBatchDb({ ai_batch_requests: requests, ai_batch_jobs: jobs });
+    mockSubmit.mockReset();
     mockSubmit.mockRejectedValue(new Error("anthropic 503"));
 
     await expect(flushPendingForPurpose({ purpose: PURPOSE, db: db as never })).rejects.toThrow("anthropic 503");
@@ -198,6 +198,7 @@ describe("flushPendingForPurpose — claim-before-send (#1599)", () => {
     const jobs = new InMemoryTable([]);
     const db = makeBatchDb({ ai_batch_requests: requests, ai_batch_jobs: jobs });
 
+    mockSubmit.mockReset();
     mockSubmit.mockRejectedValueOnce(new Error("transient network failure"));
     await expect(flushPendingForPurpose({ purpose: PURPOSE, db: db as never })).rejects.toThrow(
       "transient network failure",

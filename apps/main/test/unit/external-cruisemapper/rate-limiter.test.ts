@@ -1,34 +1,45 @@
 // BP36 §33.5 — rate limiter test.
 //
-// 5 concurrent acquires at 2 RPS must take at least ~2s elapsed —
-// proving the token bucket genuinely throttles under concurrent load.
+// 5 concurrent acquires at 2 RPS must leave the fifth acquire waiting
+// through the first 1.499 seconds — proving the token bucket genuinely
+// throttles under concurrent load without consuming real suite time.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetRateLimiterForTests, getCruiseMapperRateLimiter } from "../../../src/lib/external/cruisemapper/rate-limiter";
 
 const originalEnv = { ...process.env };
-beforeEach(() => { _resetRateLimiterForTests(); });
-afterEach(() => { process.env = { ...originalEnv }; _resetRateLimiterForTests(); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  _resetRateLimiterForTests();
+});
+afterEach(() => {
+  vi.useRealTimers();
+  process.env = { ...originalEnv };
+  _resetRateLimiterForTests();
+});
 
 describe("CruiseMapper token bucket", () => {
-  it("throttles 5 concurrent acquires at 2 RPS to ~2 seconds", async () => {
+  it("throttles 5 concurrent acquires at 2 RPS", async () => {
     process.env.CRUISEMAPPER_DIY_RATE_LIMIT_RPS = "2";
     const limiter = getCruiseMapperRateLimiter();
-    const start = Date.now();
-    await Promise.all([
+    const acquires = Promise.all([
       limiter.acquire(),
       limiter.acquire(),
       limiter.acquire(),
       limiter.acquire(),
       limiter.acquire(),
     ]);
-    const elapsedMs = Date.now() - start;
-    // 5 tokens at 2 RPS with initial burst of 2: tokens 1,2 immediate;
-    // tokens 3,4,5 wait 500ms, 1000ms, 1500ms. Min ≈ 1500ms.
-    expect(elapsedMs).toBeGreaterThanOrEqual(1400);
-    // Upper bound (generous): 3.5s
-    expect(elapsedMs).toBeLessThan(3500);
-  }, 10000);
+    let completed = false;
+    void acquires.then(() => {
+      completed = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(completed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(acquires).resolves.toHaveLength(5);
+  });
 
   it("singleton survives across getCruiseMapperRateLimiter calls", () => {
     process.env.CRUISEMAPPER_DIY_RATE_LIMIT_RPS = "1";
