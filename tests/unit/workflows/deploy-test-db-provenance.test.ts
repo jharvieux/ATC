@@ -87,7 +87,7 @@ const remainingAcceptanceCommands = [
   "pnpm vitest run tests/integration/scripts/check-ledger-objects-db.test.ts",
   "pnpm test:cross-tenant",
 ];
-const liveAcceptanceCommands = [...mainAcceptanceCommands, ragAcceptanceCommand, ...remainingAcceptanceCommands];
+const holderAcceptanceCommands = [...mainAcceptanceCommands, ragAcceptanceCommand, ...remainingAcceptanceCommands];
 
 function jobOperations(job: WorkflowJob): Operation[] {
   const operations: Operation[] = [];
@@ -251,7 +251,7 @@ describe("deploy shared-test-DB provenance", () => {
     }
   });
 
-  it("keeps both exact-revision applies, snapshots, and every live acceptance in one holder", () => {
+  it("keeps both exact-revision applies, snapshots, and every acceptance command in one holder", () => {
     expect(provenanceHolder?.concurrencyGroup).toBe("shared-test-db");
     expect(provenanceHolder?.cancelInProgress).toBe(false);
     const holderBody = provenanceHolder?.body ?? "";
@@ -274,7 +274,7 @@ describe("deploy shared-test-DB provenance", () => {
       previous = position;
     }
 
-    for (const command of liveAcceptanceCommands) {
+    for (const command of holderAcceptanceCommands) {
       expect(integrationReceipt?.body).not.toContain(command);
       expect(crossTenantReceipt?.body).not.toContain(command);
     }
@@ -403,6 +403,18 @@ describe("deploy shared-test-DB provenance", () => {
     expect(runStep(crossTenantScript, { ...crossTenantDependencies, TEST_RESULT: "skipped" }).status).not.toBe(0);
     expect(runStep(crossTenantScript, { ...crossTenantDependencies, HOLDER_RESULT: "cancelled" }).status).not.toBe(0);
 
+    const hostUnavailable = {
+      ...crossTenantDependencies,
+      ACCEPTANCE_MODE: "db-probe-host-unavailable",
+    };
+    const hostUnavailableIntegration = runStep(integrationScript, hostUnavailable);
+    expect(hostUnavailableIntegration.status, `${hostUnavailableIntegration.stdout}\n${hostUnavailableIntegration.stderr}`).toBe(0);
+    expect(hostUnavailableIntegration.stdout).toContain("no live cross-tenant acceptance is claimed");
+    const hostUnavailableCrossTenant = runStep(crossTenantScript, hostUnavailable);
+    expect(hostUnavailableCrossTenant.status, `${hostUnavailableCrossTenant.stdout}\n${hostUnavailableCrossTenant.stderr}`).toBe(0);
+    expect(hostUnavailableCrossTenant.stdout).toContain("route enumeration");
+    expect(hostUnavailableCrossTenant.stdout).toContain("no live cross-tenant acceptance is claimed");
+
     const stagingScript = step(deployStaging, "Verify exact staged revision");
     expect(runStep(stagingScript, common).status).toBe(0);
     expect(runStep(stagingScript, { ...common, HOLDER_RESULT: "failure" }).status).not.toBe(0);
@@ -465,17 +477,19 @@ describe("deploy shared-test-DB provenance", () => {
     ).not.toBe(0);
   });
 
-  it("publishes live evidence only after main, RAG, and cross-tenant live modes ran", () => {
+  it("publishes honest live, host-unavailable, and Dependabot evidence", () => {
     expect(provenanceHolder?.body).toContain("steps.isolation-db-preflight.outputs.run_main_rls");
     expect(provenanceHolder?.body).toContain("steps.isolation-db-preflight.outputs.run_rag_scope");
-    expect(provenanceHolder?.body).toContain("steps.cross-tenant-preflight.outputs.run_cross_tenant");
+    expect(provenanceHolder?.body).toContain("steps.cross-tenant-preflight.outputs.cross_tenant_mode");
+    expect(provenanceHolder?.body).toContain("acceptance_mode=db-probe-host-unavailable");
     expect(provenanceHolder?.body).toContain("acceptance_mode=dependabot-exempt");
     expect(provenanceHolder?.body).not.toContain("tested_sha=");
     expect(provenanceHolder?.body).not.toContain("acceptance_mode=live");
     expect(crossTenantReceipt?.body).not.toContain("Live cross-tenant acceptance passed for");
     expect(crossTenantReceipt?.body).toContain("hosted app revision was not verified");
+    expect(crossTenantReceipt?.body).toContain("no live cross-tenant acceptance is claimed");
 
-    const preflight = step(provenanceHolder, "Require live cross-tenant probe inputs");
+    const preflight = step(provenanceHolder, "Classify cross-tenant probe inputs");
     const livePreflight = runStep(preflight, {
       NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
       SUPABASE_SERVICE_ROLE_KEY: "service-key",
@@ -485,14 +499,54 @@ describe("deploy shared-test-DB provenance", () => {
       PR_AUTHOR: "",
     });
     expect(livePreflight.status, `${livePreflight.stdout}\n${livePreflight.stderr}`).toBe(0);
-    expect(livePreflight.output).toBe("run_cross_tenant=true\n");
-    expect(runStep(preflight, { EVENT_NAME: "push", PR_AUTHOR: "" }).status).not.toBe(0);
+    expect(livePreflight.output).toBe("cross_tenant_mode=live\n");
+
+    const hostUnavailablePreflight = runStep(preflight, {
+      NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+      SUPABASE_SERVICE_ROLE_KEY: "service-key",
+      APP_BASE_URL: "",
+      CROSS_TENANT_FIXTURES: "true",
+      EVENT_NAME: "push",
+      PR_AUTHOR: "",
+    });
+    expect(hostUnavailablePreflight.status, `${hostUnavailablePreflight.stdout}\n${hostUnavailablePreflight.stderr}`).toBe(0);
+    expect(hostUnavailablePreflight.output).toBe("cross_tenant_mode=host-unavailable\n");
+    expect(hostUnavailablePreflight.stdout).toContain("no live cross-tenant acceptance");
+
+    for (const incomplete of [
+      {
+        NEXT_PUBLIC_SUPABASE_URL: "",
+        SUPABASE_SERVICE_ROLE_KEY: "service-key",
+        CROSS_TENANT_FIXTURES: "true",
+      },
+      {
+        NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+        SUPABASE_SERVICE_ROLE_KEY: "",
+        CROSS_TENANT_FIXTURES: "true",
+      },
+      {
+        NEXT_PUBLIC_SUPABASE_URL: "https://db.example.test",
+        SUPABASE_SERVICE_ROLE_KEY: "service-key",
+        CROSS_TENANT_FIXTURES: "false",
+      },
+    ]) {
+      expect(runStep(preflight, {
+        ...incomplete,
+        APP_BASE_URL: "",
+        EVENT_NAME: "push",
+        PR_AUTHOR: "",
+      }).status).not.toBe(0);
+    }
     const dependabotPreflight = runStep(preflight, {
       EVENT_NAME: "pull_request",
       PR_AUTHOR: "dependabot[bot]",
     });
     expect(dependabotPreflight.status).toBe(0);
-    expect(dependabotPreflight.output).toBe("run_cross_tenant=false\n");
+    expect(dependabotPreflight.output).toBe("cross_tenant_mode=dependabot-exempt\n");
+
+    const crossTenantCommand = step(provenanceHolder, "Run cross-tenant probe");
+    expect(crossTenantCommand.body).toContain("pnpm test:cross-tenant");
+    expect(crossTenantCommand.body).not.toMatch(/^\s+if:/m);
 
     const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
     const provenance = step(provenanceHolder, "Record revision provenance");
@@ -500,7 +554,7 @@ describe("deploy shared-test-DB provenance", () => {
       GITHUB_SHA: sha,
       MAIN_MODE: "true",
       RAG_MODE: "true",
-      CROSS_TENANT_MODE: "true",
+      CROSS_TENANT_MODE: "live",
       EVENT_NAME: "merge_group",
       PR_AUTHOR: "",
     });
@@ -508,21 +562,44 @@ describe("deploy shared-test-DB provenance", () => {
     expect(liveProvenance.output).toBe(
       `acceptance_mode=db-probe-live-host-unverified\ndb_probe_sha=${sha}\n`,
     );
-    expect(
-      runStep(provenance, {
+
+    const hostUnavailableProvenance = runStep(provenance, {
+      GITHUB_SHA: sha,
+      MAIN_MODE: "true",
+      RAG_MODE: "true",
+      CROSS_TENANT_MODE: "host-unavailable",
+      EVENT_NAME: "workflow_dispatch",
+      PR_AUTHOR: "",
+    });
+    expect(hostUnavailableProvenance.status, `${hostUnavailableProvenance.stdout}\n${hostUnavailableProvenance.stderr}`).toBe(0);
+    expect(hostUnavailableProvenance.output).toBe(
+      `acceptance_mode=db-probe-host-unavailable\ndb_probe_sha=${sha}\n`,
+    );
+    for (const dbModes of [
+      { MAIN_MODE: "false", RAG_MODE: "true" },
+      { MAIN_MODE: "true", RAG_MODE: "false" },
+    ]) {
+      expect(runStep(provenance, {
         GITHUB_SHA: sha,
-        MAIN_MODE: "true",
-        RAG_MODE: "false",
-        CROSS_TENANT_MODE: "true",
+        ...dbModes,
+        CROSS_TENANT_MODE: "host-unavailable",
         EVENT_NAME: "push",
         PR_AUTHOR: "",
-      }).status,
-    ).not.toBe(0);
+      }).status).not.toBe(0);
+    }
+    expect(runStep(provenance, {
+      GITHUB_SHA: sha,
+      MAIN_MODE: "false",
+      RAG_MODE: "false",
+      CROSS_TENANT_MODE: "dependabot-exempt",
+      EVENT_NAME: "pull_request",
+      PR_AUTHOR: "repo-owner",
+    }).status).not.toBe(0);
     const dependabotProvenance = runStep(provenance, {
       GITHUB_SHA: sha,
       MAIN_MODE: "false",
       RAG_MODE: "false",
-      CROSS_TENANT_MODE: "false",
+      CROSS_TENANT_MODE: "dependabot-exempt",
       EVENT_NAME: "pull_request",
       PR_AUTHOR: "dependabot[bot]",
     });
@@ -533,7 +610,7 @@ describe("deploy shared-test-DB provenance", () => {
         GITHUB_SHA: "stale",
         MAIN_MODE: "true",
         RAG_MODE: "true",
-        CROSS_TENANT_MODE: "true",
+        CROSS_TENANT_MODE: "live",
         EVENT_NAME: "push",
         PR_AUTHOR: "",
       }).status,

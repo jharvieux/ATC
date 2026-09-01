@@ -9,8 +9,8 @@
  * Explicitly public or intentionally cross-tenant routes are documented in
  * cross-tenant-allowlist.json and excluded from leak classification.
  *
- * When application fixtures don't exist yet, the suite runs in
- * "enumeration-only" mode and still verifies that the route enumerator works.
+ * Without a compatible application host, the suite runs in enumeration-only
+ * mode and does not claim live cross-tenant acceptance.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +23,8 @@ import {
 } from "../../scripts/enumerate-api-routes";
 import {
   tenantFixtureEvidence,
+  type CrossTenantFixtures,
+  type TenantFixture,
   type TenantResourceIds,
 } from "./fixtures/cross-tenant-setup";
 import allowlist from "./cross-tenant-allowlist.json";
@@ -36,7 +38,7 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 // origins and must not be used interchangeably. See issue #563.
 const APP_BASE_URL = process.env.APP_BASE_URL ?? "";
 
-const FIXTURES_AVAILABLE =
+const LIVE_PROBE_AVAILABLE =
   SUPABASE_URL !== "" &&
   SERVICE_KEY !== "" &&
   APP_BASE_URL !== "" &&
@@ -115,6 +117,46 @@ async function requireLiveAppHealth(
     throw new Error("Live app health sentinel did not identify a concrete main-app commit");
   }
   return commit;
+}
+
+async function requireTenantOwnBookingRead(
+  appBaseUrl: string,
+  bookingId: string,
+  token: string,
+  fetchBooking: typeof fetch = fetch,
+): Promise<void> {
+  const request = makeRequest({
+    method: "GET",
+    path: "/api/bookings/[id]",
+    hasParam: true,
+    paramName: "id",
+    filePath: "apps/main/src/app/api/bookings/[id]/route.ts",
+  }, bookingId, token, appBaseUrl);
+
+  let response: Response;
+  try {
+    response = await fetchBooking(request);
+  } catch (error) {
+    throw new Error(`Tenant-B own-booking positive control request failed: ${(error as Error).message}`);
+  }
+  if (response.status !== 200) {
+    throw new Error(`Tenant-B own-booking positive control returned ${response.status}; expected 200`);
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json") && !contentType.includes("+json")) {
+    throw new Error("Tenant-B own-booking positive control did not return JSON");
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("Tenant-B own-booking positive control returned unreadable JSON");
+  }
+  const returnedId = (body as { booking?: { id?: unknown } }).booking?.id;
+  if (returnedId !== bookingId) {
+    throw new Error(`Tenant-B own-booking positive control returned booking.id=${String(returnedId)}; expected ${bookingId}`);
+  }
 }
 
 function containsKnownIdentifier(value: unknown, knownIdentifiers: Set<string>): boolean {
@@ -197,6 +239,39 @@ function matchingTenantResourceId(
   if (route.path.startsWith("/api/chat/conversations/[id]")) return resourceIds.conversation;
   if (route.path.startsWith("/api/crm/contacts/[id]")) return resourceIds.contact;
   return undefined;
+}
+
+async function probeTenantIsolationRoutes(
+  appBaseUrl: string,
+  routes: RouteEntry[],
+  fixtures: CrossTenantFixtures,
+  fetchProbe: typeof fetch = fetch,
+): Promise<string[]> {
+  await requireTenantOwnBookingRead(
+    appBaseUrl,
+    fixtures.tenantB.resourceIds.booking,
+    fixtures.tenantB.sessionToken,
+    fetchProbe,
+  );
+
+  const failures: string[] = [];
+  const knownTenantAIdentifiers = new Set(fixtures.tenantA.knownIds);
+  for (const route of routes) {
+    const resourceId = matchingTenantResourceId(
+      route,
+      fixtures.tenantA.resourceIds,
+    );
+    const failure = await probeRoute(
+      appBaseUrl,
+      route,
+      resourceId,
+      fixtures.tenantB.sessionToken,
+      knownTenantAIdentifiers,
+      fetchProbe,
+    );
+    if (failure) failures.push(failure);
+  }
+  return failures;
 }
 
 describe("Route enumerator", () => {
@@ -301,6 +376,77 @@ describe("Route enumerator", () => {
     await expect(requireLiveAppHealth("https://app.example.test", async () => {
       throw new Error("network down");
     })).rejects.toThrow(/network down/);
+  });
+
+  it("reads tenant B's own booking before probing tenant A resources", async () => {
+    const tenant = (prefix: string): TenantFixture => ({
+      tenantId: `${prefix}-tenant`,
+      userId: `${prefix}-user`,
+      sessionToken: `${prefix}-token`,
+      knownIds: [`${prefix}-tenant`, `${prefix}-booking`],
+      resourceIds: {
+        booking: `${prefix}-booking`,
+        conversation: `${prefix}-conversation`,
+        contact: `${prefix}-contact`,
+      },
+    });
+    const fixtures: CrossTenantFixtures = {
+      tenantA: tenant("tenant-a"),
+      tenantB: tenant("tenant-b"),
+    };
+    const route: RouteEntry = {
+      method: "GET",
+      path: "/api/bookings/[id]",
+      hasParam: true,
+      paramName: "id",
+      filePath: "apps/main/src/app/api/bookings/[id]/route.ts",
+    };
+    const requests: Request[] = [];
+    const failures = await probeTenantIsolationRoutes(
+      "https://app.example.test",
+      [route],
+      fixtures,
+      async (request) => {
+        const resolved = request instanceof Request ? request : new Request(request);
+        requests.push(resolved);
+        if (requests.length === 1) {
+          return Response.json({ booking: { id: fixtures.tenantB.resourceIds.booking } });
+        }
+        return Response.json({ error: "not_found" }, { status: 404 });
+      },
+    );
+
+    expect(failures).toEqual([]);
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://app.example.test/api/bookings/tenant-b-booking",
+      "https://app.example.test/api/bookings/tenant-a-booking",
+    ]);
+    expect(requests[0].headers.get("authorization")).toBe("Bearer tenant-b-token");
+  });
+
+  it("fails loudly when tenant B's own-booking control is not exact readable evidence", async () => {
+    const responses = [
+      new Response("not found", { status: 404 }),
+      new Response("server error", { status: 500 }),
+      new Response("not json", { status: 200 }),
+      new Response("not json", { status: 200, headers: { "content-type": "application/json" } }),
+      Response.json({ booking: { id: "wrong-booking" } }),
+      Response.json({ booking: {} }),
+    ];
+    for (const response of responses) {
+      await expect(requireTenantOwnBookingRead(
+        "https://app.example.test",
+        "tenant-b-booking",
+        "tenant-b-token",
+        async () => response.clone(),
+      )).rejects.toThrow(/own-booking positive control/i);
+    }
+    await expect(requireTenantOwnBookingRead(
+      "https://app.example.test",
+      "tenant-b-booking",
+      "tenant-b-token",
+      async () => { throw new Error("network down"); },
+    )).rejects.toThrow(/own-booking positive control.*network down/i);
   });
 
   it("classifies live responses by known tenant-A evidence", async () => {
@@ -454,8 +600,8 @@ describe("Cross-tenant probe", () => {
     routes = enumerateRoutes(API_ROOT).filter((r) => !isAllowlisted(r));
   });
 
-  if (!FIXTURES_AVAILABLE) {
-    it.skip("cross-tenant fixture tests skipped — set CROSS_TENANT_FIXTURES=true with valid Supabase credentials to enable", () => {});
+  if (!LIVE_PROBE_AVAILABLE) {
+    it.skip("live cross-tenant requests skipped — APP_BASE_URL or fixture credentials unavailable; route enumeration completed", () => {});
     return;
   }
 
@@ -468,26 +614,11 @@ describe("Cross-tenant probe", () => {
     const { setupCrossTenantFixtures } =
       await import("./fixtures/cross-tenant-setup");
     const fixtures = await setupCrossTenantFixtures(SUPABASE_URL, SERVICE_KEY);
-    const knownTenantAIdentifiers = new Set(fixtures.tenantA.knownIds);
-
-    const failures: string[] = [];
-
-    for (const route of routes) {
-      const resourceId = matchingTenantResourceId(
-        route,
-        fixtures.tenantA.resourceIds,
-      );
-
-      const failure = await probeRoute(
-        APP_BASE_URL,
-        route,
-        resourceId,
-        fixtures.tenantB.sessionToken,
-        knownTenantAIdentifiers,
-      );
-      if (failure) failures.push(failure);
-      // 401, 403, 404 are all acceptable — access correctly denied
-    }
+    const failures = await probeTenantIsolationRoutes(
+      APP_BASE_URL,
+      routes,
+      fixtures,
+    );
 
     if (failures.length > 0) {
       throw new Error(

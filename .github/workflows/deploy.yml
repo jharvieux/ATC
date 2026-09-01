@@ -530,22 +530,27 @@ jobs:
           ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: pnpm tsx scripts/check-critical-rag-db.ts
 
-      - name: Require live cross-tenant probe inputs
+      - name: Classify cross-tenant probe inputs
         id: cross-tenant-preflight
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           if [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$APP_BASE_URL" ] && [ "$CROSS_TENANT_FIXTURES" = "true" ]; then
-            echo "run_cross_tenant=true" >> "$GITHUB_OUTPUT"
+            echo "cross_tenant_mode=live" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ "$CROSS_TENANT_FIXTURES" = "true" ] && [ -z "$APP_BASE_URL" ]; then
+            echo "cross_tenant_mode=host-unavailable" >> "$GITHUB_OUTPUT"
+            echo "No compatible APP_BASE_URL is configured; route enumeration will run, but no live cross-tenant acceptance is claimed."
             exit 0
           fi
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
-            echo "run_cross_tenant=false" >> "$GITHUB_OUTPUT"
+            echo "cross_tenant_mode=dependabot-exempt" >> "$GITHUB_OUTPUT"
             echo "Dependabot pull request has no live cross-tenant credentials; retaining the explicit secret-less exemption."
             exit 0
           fi
-          echo "::error::Live cross-tenant requests require NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, APP_BASE_URL, and CROSS_TENANT_FIXTURES=true."
+          echo "::error::Cross-tenant enumeration requires NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and CROSS_TENANT_FIXTURES=true; live requests additionally require APP_BASE_URL."
           exit 1
 
       - name: Run main RLS integration suite
@@ -567,7 +572,6 @@ jobs:
         run: pnpm vitest run tests/integration/scripts/check-ledger-objects-db.test.ts
 
       - name: Run cross-tenant probe
-        if: steps.cross-tenant-preflight.outputs.run_cross_tenant == 'true'
         run: pnpm test:cross-tenant
 
       - name: Record revision provenance
@@ -577,19 +581,21 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           MAIN_MODE: ${{ steps.isolation-db-preflight.outputs.run_main_rls }}
           RAG_MODE: ${{ steps.isolation-db-preflight.outputs.run_rag_scope }}
-          CROSS_TENANT_MODE: ${{ steps.cross-tenant-preflight.outputs.run_cross_tenant }}
+          CROSS_TENANT_MODE: ${{ steps.cross-tenant-preflight.outputs.cross_tenant_mode }}
         run: |
           checked_out_sha=$(git rev-parse HEAD)
           if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
             echo "::error::Revision provenance mismatch: checkout=$checked_out_sha event=$GITHUB_SHA"
             exit 1
           fi
-          if [ "$MAIN_MODE" = "true" ] && [ "$RAG_MODE" = "true" ] && [ "$CROSS_TENANT_MODE" = "true" ]; then
+          if [ "$MAIN_MODE" = "true" ] && [ "$RAG_MODE" = "true" ] && [ "$CROSS_TENANT_MODE" = "live" ]; then
             echo "acceptance_mode=db-probe-live-host-unverified" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+          elif [ "$MAIN_MODE" = "true" ] && [ "$RAG_MODE" = "true" ] && [ "$CROSS_TENANT_MODE" = "host-unavailable" ]; then
+            echo "acceptance_mode=db-probe-host-unavailable" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ] && [ "$CROSS_TENANT_MODE" = "dependabot-exempt" ]; then
             echo "acceptance_mode=dependabot-exempt" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Required live acceptance modes were not established: main=$MAIN_MODE rag=$RAG_MODE cross_tenant=$CROSS_TENANT_MODE"
+            echo "::error::Required acceptance modes were not established: main=$MAIN_MODE rag=$RAG_MODE cross_tenant=$CROSS_TENANT_MODE"
             exit 1
           fi
           echo "db_probe_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -627,6 +633,8 @@ jobs:
           fi
           if [ "$ACCEPTANCE_MODE" = "db-probe-live-host-unverified" ]; then
             echo "Revision-bound main/RAG DB integration acceptance passed for $DB_PROBE_SHA."
+          elif [ "$ACCEPTANCE_MODE" = "db-probe-host-unavailable" ]; then
+            echo "Revision-bound main/RAG DB integration acceptance passed for $DB_PROBE_SHA; route enumeration ran, but no live cross-tenant acceptance is claimed."
           elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
             echo "Dependabot secret-less exemption recorded for $DB_PROBE_SHA; no live integration acceptance is claimed."
           else
@@ -696,6 +704,8 @@ jobs:
           fi
           if [ "$ACCEPTANCE_MODE" = "db-probe-live-host-unverified" ]; then
             echo "Cross-tenant probe code and main/RAG test-DB state were revision-bound to $DB_PROBE_SHA; live requests ran against APP_BASE_URL, whose hosted app revision was not verified."
+          elif [ "$ACCEPTANCE_MODE" = "db-probe-host-unavailable" ]; then
+            echo "Cross-tenant route enumeration ran at revision $DB_PROBE_SHA; no compatible APP_BASE_URL was configured, so no live cross-tenant acceptance is claimed."
           elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
             echo "Dependabot secret-less exemption recorded for $DB_PROBE_SHA; no live cross-tenant acceptance is claimed."
           else
