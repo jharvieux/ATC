@@ -8,6 +8,7 @@
 // before sendEmail is ever reached.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
@@ -26,7 +27,9 @@ const mocks = vi.hoisted(() => ({
     send_claimed_at: string | null;
     generated_content: Record<string, unknown>;
     content_context_hash: string | null;
+    provider_first_attempt_at?: string | null;
   } | null,
+  logicalEmailLog: null as { id: string; status: string; sent_at: string | null } | null,
   updatePayloads: [] as Array<Record<string, unknown>>,
   regenerationRace: null as "claimed" | "sent" | null,
   regenerationUpdateError: null as { code: string; message: string } | null,
@@ -79,6 +82,18 @@ vi.mock("@/lib/sailings/sailing-itinerary", () => ({
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
     from(table: string) {
+      if (table === "email_log") {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => ({ data: mocks.logicalEmailLog, error: null }),
+            };
+            return chain;
+          },
+        };
+      }
       if (table === "pre_cruise_email_content") {
         return {
           select() {
@@ -110,6 +125,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 if ("generated_content" in payload && mocks.regenerationUpdateError) {
                   return { data: null, error: mocks.regenerationUpdateError };
                 }
+                if (
+                  "generated_content" in payload && mocks.existingContent &&
+                  ((nullFilters.has("sent_at") && mocks.existingContent.sent_at) ||
+                    (nullFilters.has("send_claimed_at") && mocks.existingContent.send_claimed_at) ||
+                    (nullFilters.has("provider_first_attempt_at") && mocks.existingContent.provider_first_attempt_at))
+                ) {
+                  return { data: [], error: null };
+                }
                 if ("generated_content" in payload && mocks.regenerationRace && mocks.existingContent) {
                   mocks.existingContent.generated_content = { documentation_reminder: "winning prose" };
                   if (mocks.regenerationRace === "claimed") {
@@ -122,10 +145,25 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   }
                   mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
                 }
+                if ("generated_content" in payload && mocks.existingContent) {
+                  mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
+                  mocks.existingContent.content_context_hash = payload.content_context_hash as string;
+                }
                 return {
                   data: "send_claimed_at" in payload
                     ? payload.send_claimed_at
-                      ? [{ send_claimed_at: payload.send_claimed_at }]
+                      ? [{
+                          send_claimed_at: payload.send_claimed_at,
+                          provider_first_attempt_at: mocks.existingContent?.provider_first_attempt_at ?? null,
+                          content_context_hash:
+                            mocks.existingContent?.content_context_hash ??
+                            mocks.insertPayloads.at(-1)?.content_context_hash ??
+                            null,
+                          generated_content:
+                            mocks.existingContent?.generated_content ??
+                            mocks.insertPayloads.at(-1)?.generated_content ??
+                            {},
+                        }]
                       : [{ id: "content-1" }]
                     : [{ id: "content-1" }],
                   error: null,
@@ -216,9 +254,36 @@ beforeEach(() => {
   mocks.regenerationRace = null;
   mocks.regenerationUpdateError = null;
   mocks.paymentResults = [];
+  mocks.logicalEmailLog = null;
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
+  it("recovers a committed logical send before regeneration and stamps the content row", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "old copy" },
+      content_context_hash: "stale",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "sent",
+      sent_at: "2026-08-31T22:00:00.000Z",
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.updatePayloads).toContainEqual({
+      sent_at: "2026-08-31T22:00:00.000Z",
+      send_claimed_at: null,
+    });
+  });
+
   it("skips the send when the insert hits a 23505 unique violation", async () => {
     mocks.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
     await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
@@ -283,6 +348,35 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.sendEmailCalls).toBe(1);
   });
 
+  it("sends the persisted variant when cached content already matches the current context", async () => {
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({
+        contact_id: "contact-1",
+        recipient_email: "jordan@example.com",
+        customer_name: "Jordan",
+        cruise_line: "Norwegian",
+        ship_name: "Bliss",
+        sailing_date: "2026-09-01",
+        departure_port: "Miami, FL",
+        ports: [],
+      }))
+      .digest("hex");
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "authoritative copy" },
+      content_context_hash: fingerprint,
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.updatePayloads.filter((payload) => "generated_content" in payload)).toHaveLength(0);
+    expect(mocks.sendEmailCalls).toBe(1);
+  });
+
   it("does not let a slow direct regeneration overwrite content claimed by the winner", async () => {
     mocks.existingContent = {
       id: "content-1",
@@ -300,6 +394,24 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.existingContent.generated_content).toEqual({ documentation_reminder: "winning prose" });
     expect(mocks.existingContent.send_claimed_at).not.toBeNull();
+  });
+
+  it("does not regenerate content after the first provider attempt has fixed the keyed payload", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      provider_first_attempt_at: "2026-08-31T20:00:00.000Z",
+      generated_content: { documentation_reminder: "provider-attempted copy" },
+      content_context_hash: "stale",
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.existingContent.generated_content).toEqual({ documentation_reminder: "provider-attempted copy" });
   });
 
   it("fails loudly when the guarded direct regeneration update fails", async () => {

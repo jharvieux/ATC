@@ -15,6 +15,20 @@
 // NOT throw (they are not transient errors — retrying won't help).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
+
+const CONTENT_CONTEXT_HASH = createHash("sha256")
+  .update(JSON.stringify({
+    contact_id: "contact-1",
+    recipient_email: "traveler@example.com",
+    customer_name: "Jordan",
+    cruise_line: "Test Cruise Line",
+    ship_name: "Test Ship",
+    sailing_date: "2026-09-01",
+    departure_port: null,
+    ports: [],
+  }))
+  .digest("hex");
 
 const mocks = vi.hoisted(() => ({
   sendEmailResult: { status: "sent" as string, reason: null as string | null },
@@ -26,8 +40,11 @@ const mocks = vi.hoisted(() => ({
   sailingDate: "2026-09-01",
   claimed: false,
   afterClaim: null as (() => void) | null,
+  beforeDispatchMutation: null as (() => void) | null,
   operations: [] as string[],
   tenantPaying: true,
+  providerCalls: 0,
+  providerFirstAttemptAt: null as string | null,
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -50,6 +67,15 @@ vi.mock("@/lib/email/send", () => ({
   sendEmail: async (args: Record<string, unknown>) => {
     mocks.operations.push("sendEmail");
     mocks.sendEmailArgs.push(args);
+    mocks.beforeDispatchMutation?.();
+    const beforeDispatch = args.beforeDispatch as (() => Promise<boolean | { allowed: boolean; reason?: string }>) | undefined;
+    if (beforeDispatch) {
+      const verdict = await beforeDispatch();
+      if (!(typeof verdict === "boolean" ? verdict : verdict.allowed)) {
+        return { status: "cancelled", reason: typeof verdict === "boolean" ? null : verdict.reason ?? null };
+      }
+    }
+    mocks.providerCalls++;
     return mocks.sendEmailResult;
   },
   TENANT_BRANDING_COLUMNS:
@@ -104,7 +130,19 @@ function makeSvc() {
                 mocks.claimed = true;
                 mocks.operations.push("claim");
                 mocks.afterClaim?.();
-                return { data: [{ send_claimed_at: payload.send_claimed_at }], error: null };
+                return {
+                  data: [{
+                    send_claimed_at: payload.send_claimed_at,
+                    provider_first_attempt_at: mocks.providerFirstAttemptAt,
+                    content_context_hash: CONTENT_CONTEXT_HASH,
+                    generated_content: {},
+                  }],
+                  error: null,
+                };
+              }
+              if (payload.provider_first_attempt_at) {
+                mocks.operations.push("provider-attempt");
+                return { data: [{ id: "content-1" }], error: null };
               }
               mocks.claimed = false;
               mocks.operations.push("release-or-finalize");
@@ -148,8 +186,11 @@ beforeEach(() => {
   mocks.sailingDate = "2026-09-01";
   mocks.claimed = false;
   mocks.afterClaim = null;
+  mocks.beforeDispatchMutation = null;
   mocks.operations = [];
   mocks.tenantPaying = true;
+  mocks.providerCalls = 0;
+  mocks.providerFirstAttemptAt = null;
 });
 
 describe("buildAndSend — #1582 transient-failure retry semantics", () => {
@@ -160,7 +201,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         svc: makeSvc(),
         phase: "t_90",
         emailCtx: EMAIL_CTX,
-        generatedContent: {},
         contentId: "content-1",
       }),
     ).rejects.toThrow(/send failed/);
@@ -175,7 +215,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         svc: makeSvc(),
         phase: "t_90",
         emailCtx: EMAIL_CTX,
-        generatedContent: {},
         contentId: "content-1",
       }),
     ).resolves.toBeUndefined();
@@ -198,7 +237,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
           svc: makeSvc(),
           phase: "t_90",
           emailCtx: EMAIL_CTX,
-          generatedContent: {},
           contentId: "content-1",
         }),
       ).resolves.toBeUndefined();
@@ -214,7 +252,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       svc: makeSvc(),
       phase: "t_7",
       emailCtx: EMAIL_CTX,
-      generatedContent: {},
       contentId: "content-1",
     });
 
@@ -228,7 +265,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       svc: makeSvc(),
       phase: "t_7",
       emailCtx: EMAIL_CTX,
-      generatedContent: {},
       contentId: "content-1",
     });
 
@@ -246,7 +282,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       svc: makeSvc(),
       phase: "t_7",
       emailCtx: EMAIL_CTX,
-      generatedContent: {},
       contentId: "content-1",
     });
 
@@ -261,7 +296,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       svc: makeSvc(),
       phase: "t_7",
       emailCtx: EMAIL_CTX,
-      generatedContent: {},
       contentId: "content-1",
     });
 
@@ -275,7 +309,6 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       svc: makeSvc(),
       phase: "t_30",
       emailCtx: EMAIL_CTX,
-      generatedContent: {},
       contentId: "content-1",
     });
 
@@ -286,10 +319,48 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
     const svc = makeSvc();
 
     await Promise.all([
-      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, generatedContent: {}, contentId: "content-1" }),
-      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, generatedContent: {}, contentId: "content-1" }),
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, contentId: "content-1" }),
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, contentId: "content-1" }),
     ]);
 
     expect(mocks.sendEmailArgs).toHaveLength(1);
+  });
+
+  it.each([
+    ["booking cancellation", () => { mocks.bookingStatus = "cancelled"; }],
+    ["recipient mutation", () => {
+      mocks.bookingContactId = "contact-2";
+      mocks.contactEmail = "new-recipient@example.com";
+    }],
+    ["payment ineligibility", () => { mocks.tenantPaying = false; }],
+  ])("blocks provider fetch when %s happens after rendering", async (_label, mutate) => {
+    mocks.beforeDispatchMutation = mutate;
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+    expect(mocks.providerCalls).toBe(0);
+    expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
+    expect(mocks.operations.at(-1)).toBe("release-or-finalize");
+  });
+
+  it("never re-enters the provider after the 23-hour replay cutoff", async () => {
+    mocks.providerFirstAttemptAt = new Date(Date.now() - 23 * 60 * 60_000).toISOString();
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+    expect(mocks.providerCalls).toBe(0);
+    expect(mocks.operations).toEqual(["claim", "release-or-finalize"]);
   });
 });

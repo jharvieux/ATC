@@ -27,7 +27,10 @@ const mocks = vi.hoisted(() => ({
     sent_at: string | null;
     send_claimed_at: string | null;
     generated_content: Record<string, unknown>;
+    content_context_hash?: string | null;
+    provider_first_attempt_at?: string | null;
   } | null,
+  logicalEmailLog: null as { id: string; status: string; sent_at: string | null } | null,
   regenerationRace: null as "sent" | null,
   regenerationUpdateError: null as { code: string; message: string } | null,
   tenantPaying: true,
@@ -85,6 +88,18 @@ vi.mock("@/lib/sailings/sailing-itinerary", () => ({
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
     from(table: string) {
+      if (table === "email_log") {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => ({ data: mocks.logicalEmailLog, error: null }),
+            };
+            return chain;
+          },
+        };
+      }
       if (table === "pre_cruise_email_content") {
         return {
           select() {
@@ -115,6 +130,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 if ("generated_content" in payload && mocks.regenerationUpdateError) {
                   return { data: null, error: mocks.regenerationUpdateError };
                 }
+                if (
+                  "generated_content" in payload && mocks.existingContent &&
+                  ((nullFilters.has("sent_at") && mocks.existingContent.sent_at) ||
+                    (nullFilters.has("send_claimed_at") && mocks.existingContent.send_claimed_at) ||
+                    (nullFilters.has("provider_first_attempt_at") && mocks.existingContent.provider_first_attempt_at))
+                ) {
+                  return { data: [], error: null };
+                }
                 if ("generated_content" in payload && mocks.regenerationRace && mocks.existingContent) {
                   mocks.existingContent.sent_at = "2026-08-31T22:00:00.000Z";
                   mocks.existingContent.generated_content = { summary: "winning prose" };
@@ -123,10 +146,25 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   }
                   mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
                 }
+                if ("generated_content" in payload && mocks.existingContent) {
+                  mocks.existingContent.generated_content = payload.generated_content as Record<string, unknown>;
+                  mocks.existingContent.content_context_hash = payload.content_context_hash as string;
+                }
                 return {
                   data: "send_claimed_at" in payload
                     ? payload.send_claimed_at
-                      ? [{ send_claimed_at: payload.send_claimed_at }]
+                      ? [{
+                          send_claimed_at: payload.send_claimed_at,
+                          provider_first_attempt_at: mocks.existingContent?.provider_first_attempt_at ?? null,
+                          content_context_hash:
+                            mocks.existingContent?.content_context_hash ??
+                            mocks.insertPayloads.at(-1)?.content_context_hash ??
+                            null,
+                          generated_content:
+                            mocks.existingContent?.generated_content ??
+                            mocks.insertPayloads.at(-1)?.generated_content ??
+                            {},
+                        }]
                       : [{ id: "content-1" }]
                     : [{ id: "content-1" }],
                   error: null,
@@ -220,6 +258,8 @@ type BatchResultEvent = {
         email_ctx_id: string | null;
         companion_page_url: string;
         content_context_hash?: string;
+        expected_contact_id?: string;
+        expected_contact_email?: string;
       } | null;
     };
   };
@@ -271,9 +311,32 @@ beforeEach(() => {
   mocks.regenerationRace = null;
   mocks.regenerationUpdateError = null;
   mocks.tenantPaying = true;
+  mocks.logicalEmailLog = null;
 });
 
 describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (batched-path twin)", () => {
+  it("recovers a committed logical send before parsing or regenerating batch content", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { summary: "old copy" },
+      content_context_hash: "stale",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "sent",
+      sent_at: "2026-08-31T22:00:00.000Z",
+    };
+    const event = makeEvent();
+    event.event.data.result_text = "not json because recovery runs first";
+
+    await runHandler(event);
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+  });
+
   it("skips the send when the insert hits a 23505 unique violation", async () => {
     mocks.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
     await runHandler(makeEvent());
@@ -296,6 +359,24 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.revalidateCalls).toEqual([["b1", "t_90"]]);
   });
 
+  it("uses the persisted authoritative variant when concurrent batch results differ", async () => {
+    const event = makeEvent();
+    const fingerprint = event.event.data.caller_metadata!.content_context_hash!;
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { summary: "authoritative prose" },
+      content_context_hash: fingerprint,
+    };
+    event.event.data.result_text = JSON.stringify({ summary: "late competing prose" });
+
+    await runHandler(event);
+
+    expect(mocks.sendEmailCalls).toBe(1);
+    expect(mocks.existingContent.generated_content).toEqual({ summary: "authoritative prose" });
+  });
+
   it("throws (not swallows) on a non-23505 insert error — the batch consumer must fail loud for Inngest retry, same as the direct path", async () => {
     mocks.insertError = { code: "42501", message: "permission denied" };
     await expect(runHandler(makeEvent())).rejects.toThrow();
@@ -316,6 +397,18 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     });
   });
 
+  it("does not retarget a reviewed manual batch after the primary contact changes", async () => {
+    const event = makeEvent();
+    event.event.data.caller_metadata!.expected_contact_id = "contact-2";
+    event.event.data.caller_metadata!.expected_contact_email = "jordan@example.com";
+
+    await runHandler(event);
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.batchEnqueueCalls).toHaveLength(0);
+  });
+
   it("does not let a slow batch result overwrite prose already sent by the winner", async () => {
     mocks.existingContent = {
       id: "content-1",
@@ -330,6 +423,22 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.existingContent.sent_at).not.toBeNull();
     expect(mocks.existingContent.generated_content).toEqual({ summary: "winning prose" });
+  });
+
+  it("does not overwrite batch content after a provider attempt fixed the keyed payload", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      provider_first_attempt_at: "2026-08-31T20:00:00.000Z",
+      generated_content: { summary: "provider-attempted prose" },
+      content_context_hash: "stale",
+    };
+
+    await runHandler(makeEvent());
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.existingContent.generated_content).toEqual({ summary: "provider-attempted prose" });
   });
 
   it("fails loudly when the guarded batch regeneration update fails", async () => {

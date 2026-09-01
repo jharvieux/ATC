@@ -23,6 +23,8 @@ import { decryptCredential } from "@/lib/crypto/credential-cipher";
 import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementEmailSent } from "@/lib/abuse/counters";
+import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // #1935 — shared tenant_branding column projection for every cron/job that
 // reads branding before sending mail. Two crons omitted email_from_domain /
@@ -75,6 +77,10 @@ export interface SendEmailInput {
   // call, which would defeat the dedup. Optional: sends without one behave
   // exactly as before (no header sent).
   idempotencyKey?: string;
+  // Caller-owned policy/state check that must run at the last possible
+  // boundary before the provider call. A false verdict is terminal for this
+  // invocation and does not create a log or invoke Resend.
+  beforeDispatch?: () => Promise<boolean | { allowed: boolean; reason?: string }>;
   // §23.7/#1611 — set to the ORIGINAL email_log id when this send is itself a
   // soft-bounce re-send. Two effects: the row is stamped email_log.retry_of so
   // the Resend webhook won't start a fresh retry chain for it, and sendEmail
@@ -92,7 +98,7 @@ export interface SendEmailInput {
 const RETRY_CONTENT_TTL_DAYS = 7;
 
 export interface EmailSendResult {
-  status: "sent" | "suppressed" | "rate_limited" | "failed";
+  status: "sent" | "suppressed" | "rate_limited" | "cancelled" | "failed";
   reason?: string | null;
   email_log_id?: string | null;
   resend_message_id?: string | null;
@@ -211,6 +217,17 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
   let sendStatus: "sent" | "failed" = "sent";
   let sendFailReason: string | undefined;
 
+  if (input.beforeDispatch) {
+    const verdict = await input.beforeDispatch();
+    const allowed = typeof verdict === "boolean" ? verdict : verdict.allowed;
+    if (!allowed) {
+      return {
+        status: "cancelled",
+        reason: typeof verdict === "boolean" ? "before_dispatch_rejected" : verdict.reason ?? "before_dispatch_rejected",
+      };
+    }
+  }
+
   try {
     const res = await fetch(RESEND_API_URL, {
       method: "POST",
@@ -245,7 +262,74 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     recordVendorFailure("resend", err instanceof Error ? err.message : String(err));
   }
 
-  // 6 — Write email_log row
+  // 5 — Write local effects. Successful sends with a deterministic key use
+  // one transactional RPC so retries cannot duplicate the logical log,
+  // retry payload, or billing counter. A recovered call still re-runs the
+  // state transition check so a crash after the RPC can heal on retry.
+  if (sendStatus === "sent" && input.idempotencyKey) {
+    const sentAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + RETRY_CONTENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await safeAwait(
+      db.rpc("finalize_idempotent_email_send", {
+        p_tenant_id: tenant.id,
+        p_idempotency_key: input.idempotencyKey,
+        p_log: {
+          to_email: to,
+          from_email: fromAddr,
+          subject,
+          template_id,
+          template_variables: input.template_variables ?? null,
+          email_category: category,
+          sent_at: sentAt,
+          resend_message_id: resendMessageId ?? null,
+          retry_of: input.retry_of ?? null,
+          user_id: input.user_id ?? null,
+          contact_id: input.contact_id ?? null,
+          reply_to: input.reply_to ?? null,
+          related_booking_id: input.related_booking_id ?? null,
+          related_group_id: input.related_group_id ?? null,
+        },
+        p_retry_content: input.retry_of ? null : {
+          to_email: to,
+          subject,
+          template_id,
+          email_category: category,
+          html,
+          expires_at: expiresAt,
+          reply_to: input.reply_to ?? null,
+          related_booking_id: input.related_booking_id ?? null,
+          related_group_id: input.related_group_id ?? null,
+          user_id: input.user_id ?? null,
+          contact_id: input.contact_id ?? null,
+        },
+      }),
+      "finalize_idempotent_email_send",
+    );
+    const finalized = (rows as Array<{
+      email_log_id: string;
+      newly_recorded: boolean;
+      email_sent_today: number;
+    }> | null)?.[0];
+    if (!finalized) throw new Error("finalize_idempotent_email_send returned no row");
+
+    const snapshot = await loadTenantSnapshot(db, tenant.id);
+    await checkStateTransitionIfNeeded({
+      db,
+      tenant: snapshot.tenant,
+      dimension: "email_volume",
+      metric_value: BigInt(finalized.email_sent_today),
+    });
+
+    return {
+      status: "sent",
+      email_log_id: finalized.email_log_id,
+      resend_message_id: resendMessageId ?? null,
+    };
+  }
+
+  // 6 — Legacy local effects for callers without an idempotency key, and
+  // rejected provider attempts. Rejected attempts deliberately remain
+  // unkeyed so a later provider success can own the one logical keyed row.
   const logRow: Record<string, unknown> = {
     tenant_id: tenant.id,
     to_email: to,

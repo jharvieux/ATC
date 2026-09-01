@@ -10,6 +10,24 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const testHtml = "<p>Test email body</p>";
 
+const mocks = vi.hoisted(() => ({
+  transitions: [] as Array<Record<string, unknown>>,
+  transitionError: null as Error | null,
+}));
+
+vi.mock("@/lib/abuse/snapshot", () => ({
+  loadTenantSnapshot: async (_db: unknown, tenant_id: string) => ({
+    tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
+  }),
+}));
+
+vi.mock("@/lib/abuse/state-machine", () => ({
+  checkStateTransitionIfNeeded: async (args: Record<string, unknown>) => {
+    mocks.transitions.push(args);
+    if (mocks.transitionError) throw mocks.transitionError;
+  },
+}));
+
 type DbChain = Record<string, unknown>;
 
 function makeDb({
@@ -19,6 +37,8 @@ function makeDb({
   logInsertError = null as { message: string } | null,
   logInserts = null as Record<string, unknown>[] | null,
   retryContentInserts = null as Record<string, unknown>[] | null,
+  rpcCalls = null as Array<{ name: string; args: Record<string, unknown> }> | null,
+  rpcError = null as { message: string } | null,
 }: {
   suppressions?: unknown[];
   logCount?: number;
@@ -26,8 +46,19 @@ function makeDb({
   logInsertError?: { message: string } | null;
   logInserts?: Record<string, unknown>[] | null;
   retryContentInserts?: Record<string, unknown>[] | null;
+  rpcCalls?: Array<{ name: string; args: Record<string, unknown> }> | null;
+  rpcError?: { message: string } | null;
 } = {}): SupabaseClient {
   return {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      rpcCalls?.push({ name, args });
+      return rpcError
+        ? { data: null, error: rpcError }
+        : {
+            data: [{ email_log_id: insertId, newly_recorded: true, email_sent_today: 7 }],
+            error: null,
+          };
+    },
     from: (table: string) => {
       if (table === "email_retry_content") {
         return {
@@ -86,6 +117,8 @@ const baseTenant: SendEmailInput["tenant"] = {
 
 describe("sendEmail — §23", () => {
   beforeEach(() => {
+    mocks.transitions = [];
+    mocks.transitionError = null;
     process.env.RESEND_API_KEY = "re_test_key";
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
@@ -187,7 +220,8 @@ describe("sendEmail — §23", () => {
   });
 
   it("forwards idempotencyKey as the Resend Idempotency-Key header when provided (#1580)", async () => {
-    const db = makeDb();
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const db = makeDb({ rpcCalls });
     await sendEmail({
       db,
       tenant: baseTenant,
@@ -201,6 +235,111 @@ describe("sendEmail — §23", () => {
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     const headers = calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers["Idempotency-Key"]).toBe("pre_cruise:booking-1:t_7");
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]).toMatchObject({
+      name: "finalize_idempotent_email_send",
+      args: {
+        p_tenant_id: "tenant-1",
+        p_idempotency_key: "pre_cruise:booking-1:t_7",
+        p_retry_content: { html: testHtml },
+      },
+    });
+    expect(mocks.transitions).toHaveLength(1);
+    expect(mocks.transitions[0]).toMatchObject({
+      dimension: "email_volume",
+      metric_value: 7n,
+    });
+  });
+
+  it("runs the caller guard at the final boundary and does not call Resend when it rejects", async () => {
+    const beforeDispatch = vi.fn(async () => ({ allowed: false, reason: "booking_cancelled" }));
+    const db = makeDb();
+    const result = await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      beforeDispatch,
+    });
+
+    expect(result).toEqual({ status: "cancelled", reason: "booking_cancelled" });
+    expect(beforeDispatch).toHaveBeenCalledOnce();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails loudly after provider success when atomic finalization fails so the keyed call can retry", async () => {
+    const db = makeDb({ rpcError: { message: "database unavailable" } });
+    await expect(sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+    })).rejects.toThrow(/finalize_idempotent_email_send/);
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("re-runs the email state transition on a recovered keyed send", async () => {
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const db = makeDb({ rpcCalls });
+    const input: SendEmailInput = {
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+    };
+
+    await sendEmail(input);
+    await sendEmail(input);
+
+    expect(rpcCalls).toHaveLength(2);
+    expect(mocks.transitions).toHaveLength(2);
+  });
+
+  it("fails loudly when the post-RPC state transition is interrupted so recovery can heal it", async () => {
+    mocks.transitionError = new Error("transition interrupted");
+    const db = makeDb();
+    await expect(sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+    })).rejects.toThrow(/transition interrupted/);
+  });
+
+  it("does not create retry content for a keyed retry_of send", async () => {
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const db = makeDb({ rpcCalls });
+    await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Retry",
+      template_id: "retry_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "soft-retry:original:1",
+      retry_of: "original-log-id",
+    });
+
+    expect(rpcCalls[0]?.args).toMatchObject({
+      p_log: { retry_of: "original-log-id" },
+      p_retry_content: null,
+    });
   });
 
   it("omits the Idempotency-Key header when no idempotencyKey is given", async () => {
