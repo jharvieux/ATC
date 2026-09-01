@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-372 — 2026-09-01 — Verified Agency custom domains may opt into indexing
+
+**Decision.** A verified custom domain for a tenant currently on `sub_agency` or `byo_agency` may explicitly opt into search indexing; the setting remains false by default. Platform subdomains remain permanently noindex, crawler eligibility re-reads current tenant and tier state fail-closed on every request, and tenant/custom-domain robots and sitemap responses use `private, no-store` so a disable or tier downgrade takes effect on the next crawler request. This supersedes [[D-368]] only for its blanket custom-domain noindex rule.
+
+**Why.**
+- A verified custom domain is an Agency tenant's own public storefront, so explicit indexing is a legitimate product choice when the tenant consents.
+- Current domain verification, opt-in state, and Agency entitlement must all remain true at crawler time; relying only on the write-time gate would leave downgraded tenants indexable.
+- A live database check is insufficient if a shared CDN can replay a previously permissive robots policy or sitemap, so only the invariant platform-domain responses keep long public caching.
+- The false default preserves the safe behavior for every existing and future tenant, and platform subdomains remain duplicate application hosts rather than public storefronts.
+
+**Rejected.**
+- *Index verified Agency custom domains by default.* Rejected because indexing must be an explicit tenant choice and the safe migration default is noindex.
+- *Let every verified custom domain opt in regardless of tier.* Rejected because custom-domain indexing is an Agency entitlement and must fail closed after a downgrade.
+- *Clear the setting only during downgrade or invalidate caches after each mutation.* Rejected because every downgrade, domain lifecycle transition, and failure path would need perfect fan-out; authoritative request-time checks with no shared tenant cache close the whole class.
+- *Keep long shared caching for tenant robots and sitemaps.* Rejected because a cached permissive response could outlive a disable or entitlement loss for up to 24 hours.
+
+**Related artifacts.** PR #2100, issue #2058, `apps/main/src/lib/seo/resolve-indexing-target.ts`, `apps/main/src/lib/tenancy/resolve-tenant.ts`, `apps/main/src/app/robots.txt/route.ts`, `apps/main/src/app/sitemap.xml/route.ts`, `apps/main/src/app/api/tenant/search-indexing/route.ts`, [[D-368]], [[D-265]].
+
+---
+
 ## D-371 — 2026-08-31 — Manual pre-cruise delivery stays direct
 
 **Decision.** Agent-triggered pre-cruise emails use direct generation for every phase, whether sent immediately or scheduled for a chosen time. The automatic cadence keeps the existing split: T-90/T-30/T-7 use the cost-optimized batch path and T-1 remains direct; every delivery rechecks that the booking is still confirmed at execution time.
