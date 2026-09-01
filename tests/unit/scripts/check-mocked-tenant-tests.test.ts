@@ -112,15 +112,15 @@ describe("notes route", () => {
 });
 `;
 
-const annotationErrorFor = (coverageTarget: string): string | undefined => {
+const annotationErrorFor = (coverageTarget: string, resources = RLS_RESOURCE): string | undefined => {
   const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
     '  it("enforces tenant isolation on the list query", async () => {});',
-    `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    `  ${pointer(RLS_TEST, resources)}\n  it("enforces tenant isolation on the list query", async () => {});`,
   );
   return findMockedTenantTests(F, source, new Map([[RLS_FILE, coverageTarget]]))[0]?.annotationError;
 };
 
-const postgresAnnotationErrorFor = (query: string, setup = ""): string | undefined => annotationErrorFor(`
+const postgresAnnotationErrorFor = (query: string, setup = "", resources = RLS_RESOURCE): string | undefined => annotationErrorFor(`
 import postgres from "postgres";
 import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
 const DB_URL = process.env.SUPABASE_DB_URL;
@@ -131,7 +131,7 @@ describe("RLS integration", () => {
     await assertIsolationQuery({ query: ${query}, allowedIds: [], deniedIds: ["booking-a"] });
   });
 });
-`);
+`, resources);
 
 describe("findMockedTenantTests", () => {
   it("flags an isolation-claiming test in a file that mocks @supabase/*", () => {
@@ -551,6 +551,73 @@ describe("RLS integration", () => {
     expect(postgresAnnotationErrorFor(
       'async () => { await sql`SELECT id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }',
     )).toBeUndefined();
+  });
+
+  it("accepts a resource-free Postgres SELECT before the proof query", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => { await sql`SELECT 1`; return sql`SELECT id FROM public.bookings`; }',
+    )).toBeUndefined();
+  });
+
+  it("accepts the verified read-only region-matching Postgres function", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched JOIN public.bookings booking ON true`',
+      "",
+      "rpc:public.match_region_itinerary_chunks,table:public.bookings",
+    )).toBeUndefined();
+  });
+
+  it.each([
+    ["projected after the proof ID", 'async () => sql`SELECT id, public.increment_customer_chat_count(id, id, 30) AS side_effect FROM public.bookings`', ""],
+    ["projected before the proof ID", 'async () => sql`SELECT public.increment_customer_chat_count(id, id, 30) AS side_effect, id FROM public.bookings`', ""],
+    ["through a tag alias", 'async () => queryDb`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`', "const queryDb = sql;"],
+    ["through a local helper", "async () => readAndMutate()", 'const readAndMutate = () => sql`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`;'],
+    ["inside a read CTE", 'async () => sql`WITH effect AS MATERIALIZED (SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings) SELECT id FROM public.bookings`', ""],
+    ["before a returned saved SELECT", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings`; return selected; }', ""],
+    ["on a branch before a returned SELECT", 'async () => { if (process.env.MUTATE) await sql`SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+  ])("rejects a schema-qualified Postgres function %s", (_shape, query, setup) => {
+    expect(postgresAnnotationErrorFor(query, setup)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["in a SELECT list", "SELECT id, public.increment_weather_usage() FROM public.bookings"],
+    ["in a WHERE clause", "SELECT id FROM public.bookings WHERE public.increment_weather_usage() IS NOT NULL"],
+    ["in an ORDER BY clause", "SELECT id FROM public.bookings ORDER BY public.increment_weather_usage()"],
+    ["in a nested scalar SELECT", "SELECT id, (SELECT public.increment_weather_usage()) FROM public.bookings"],
+  ])("rejects a repository mutator %s", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["nextval", "nextval('booking_sequence')"],
+    ["setval", "setval('booking_sequence', 2)"],
+    ["set_config", "set_config('app.tenant_id', 'other', false)"],
+    ["advisory lock", "pg_advisory_lock(42)"],
+    ["transaction advisory lock", "pg_advisory_xact_lock(42)"],
+    ["sleep", "pg_sleep(1)"],
+    ["dblink execution", "dblink_exec('DELETE FROM public.bookings')"],
+    ["unknown aggregate", "unknown_aggregate(id)"],
+    ["unknown window function", "unknown_window(id) OVER ()"],
+  ])("rejects the effectful Postgres %s function in a SELECT", (_shape, call) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${call} FROM public.bookings\``,
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a mutating Postgres function used as the query resource", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT * FROM public.increment_customer_chat_count(NULL, NULL, 30)`',
+      "",
+      "rpc:public.increment_customer_chat_count",
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a mutating Postgres function used as a lateral resource", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.bookings booking CROSS JOIN LATERAL public.increment_weather_usage() effect`',
+      "",
+      "rpc:public.increment_weather_usage,table:public.bookings",
+    )).toMatch(/mutation witness/);
   });
 
   it.each([

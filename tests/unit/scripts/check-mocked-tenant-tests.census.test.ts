@@ -435,6 +435,55 @@ regress("sql:read-only", "read followed by destructive statement", "unsafe", poi
 regress("sql:read-only", "plain SELECT remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings`"));
 regress("sql:read-only", "SELECT with trailing semicolon", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings;`"));
 regress("sql:read-only", "read-only SELECT CTE remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"));
+regress(
+  "sql:function-effects",
+  "schema-qualified mutator in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "repository mutator in nested scalar expression",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, (SELECT public.increment_weather_usage()) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "schema-qualified mutator in read CTE",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH effect AS MATERIALIZED (SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings) SELECT id FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "effectful builtins in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, nextval('booking_sequence'), set_config('app.tenant_id', 'other', false), pg_advisory_lock(42) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "mutating function as matching RPC resource",
+  "unsafe",
+  pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.increment_customer_chat_count"),
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT * FROM public.increment_customer_chat_count(NULL, NULL, 30)`"),
+);
+regress(
+  "sql:function-effects",
+  "unknown unqualified function in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, unknown_effect(id) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "verified read-only RPC remains a proof query",
+  "safe",
+  pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.match_region_itinerary_chunks"),
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE)`"),
+);
 
 regress(
   "postgres:helper-return",

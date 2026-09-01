@@ -51,6 +51,11 @@ const COVERAGE_POINTER_FORMAT = /^@rls-covered-by resources=([^\s]+) target=([^\
 const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
+const READ_ONLY_POSTGRES_FUNCTIONS = new Set(["public.match_region_itinerary_chunks"]);
+const POSTGRES_PARENTHESIZED_SYNTAX = new Set([
+  "AND", "AS", "BY", "EXISTS", "FILTER", "FROM", "HAVING", "IN", "JOIN", "LATERAL", "LIMIT", "MATERIALIZED",
+  "NOT", "OFFSET", "ON", "OR", "OVER", "SELECT", "UNION", "USING", "WHEN", "WHERE", "WITHIN",
+]);
 
 const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
 
@@ -2822,7 +2827,7 @@ class LocalFlowEngine {
           const branch = this.cloneState(input.state);
           if (atom.startsWith("client:postgres:") && !branch.dirty.has(atom)) {
             const resources = this.sqlResources(sql);
-            if (!resources.length) {
+            if (!resources) {
               this.invalidPostgresOperations.add(this.atom("postgres-invalid", expression));
               results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
             } else {
@@ -2844,7 +2849,7 @@ class LocalFlowEngine {
     });
   }
 
-  private sqlResources(sql: string): string[] {
+  private sqlResources(sql: string): string[] | undefined {
     type SqlToken = { kind: "word" | "quotedIdentifier" | "punctuation"; text: string };
     const tokens: SqlToken[] = [];
     const punctuation = (text: string) => ({ kind: "punctuation" as const, text });
@@ -2878,7 +2883,7 @@ class LocalFlowEngine {
             index += 2;
           } else index += 1;
         }
-        if (depth !== 0) return [];
+        if (depth !== 0) return undefined;
         continue;
       }
       const escapeString = (char === "E" || char === "e") && next === "'";
@@ -2894,14 +2899,14 @@ class LocalFlowEngine {
             break;
           } else index += 1;
         }
-        if (!terminated) return [];
+        if (!terminated) return undefined;
         continue;
       }
       if (char === "$") {
         const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
         if (delimiter) {
           const end = sql.indexOf(delimiter, index + delimiter.length);
-          if (end < 0) return [];
+          if (end < 0) return undefined;
           index = end + delimiter.length;
           continue;
         }
@@ -2920,7 +2925,7 @@ class LocalFlowEngine {
             break;
           } else identifier += sql[index++]!;
         }
-        if (!terminated) return [];
+        if (!terminated) return undefined;
         tokens.push({ kind: "quotedIdentifier", text: identifier });
         continue;
       }
@@ -2933,21 +2938,30 @@ class LocalFlowEngine {
       if (char === "." || char === "(" || char === ")" || char === "," || char === ";") {
         if (char === "(") parenthesisDepth += 1;
         else if (char === ")") {
-          if (parenthesisDepth === 0) return [];
+          if (parenthesisDepth === 0) return undefined;
           parenthesisDepth -= 1;
         }
         tokens.push(punctuation(char));
       }
       index += 1;
     }
-    if (parenthesisDepth !== 0) return [];
+    if (parenthesisDepth !== 0) return undefined;
     const firstSemicolon = tokens.findIndex((token) => token.kind === "punctuation" && token.text === ";");
-    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return [];
+    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return undefined;
     const firstKeyword = tokens.find((token) => token.kind === "word")?.text.toUpperCase();
     const mutating = new Set([
       "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
     ]);
-    if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return [];
+    if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return undefined;
+    for (let cursor = 0; cursor < tokens.length - 1; cursor += 1) {
+      const functionName = tokens[cursor];
+      if (!isName(functionName) || tokens[cursor + 1]?.text !== "(") continue;
+      if (functionName.kind === "word" && POSTGRES_PARENTHESIZED_SYNTAX.has(functionName.text.toUpperCase())) continue;
+      const schema = tokens[cursor - 1]?.text === "." && isName(tokens[cursor - 2])
+        ? `${tokens[cursor - 2]!.text.toLowerCase()}.`
+        : "";
+      if (!READ_ONLY_POSTGRES_FUNCTIONS.has(`${schema}${functionName.text.toLowerCase()}`)) return undefined;
+    }
     let depth = 0;
     const topLevelFrom: number[] = [];
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
@@ -2973,7 +2987,7 @@ class LocalFlowEngine {
         tokens[cursor - 1]?.text !== "." &&
         isName(tokens[cursor + 1]) &&
         topLevelFrom.some((from) => from > cursor + 1)
-      ) return [];
+      ) return undefined;
     }
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
       const token = tokens[cursor]!;
@@ -2985,12 +2999,12 @@ class LocalFlowEngine {
           isKeyword(tokens[cursor + 2], "KEY") &&
           isKeyword(tokens[cursor + 3], "UPDATE")) ||
         (isKeyword(tokens[cursor + 1], "KEY") && isKeyword(tokens[cursor + 2], "SHARE"));
-      if (locking) return [];
+      if (locking) return undefined;
     }
     for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
       if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") continue;
       const bodyHead = tokens.slice(cursor + 2).find((candidate) => candidate.kind === "word");
-      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
+      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
     }
     if (firstKeyword === "WITH") {
       depth = 0;
@@ -3000,7 +3014,7 @@ class LocalFlowEngine {
         if (token.text === "(") {
           depth += 1;
           const bodyHead = tokens.slice(cursor + 1).find((candidate) => candidate.kind === "word");
-          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
+          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
           continue;
         }
         if (token.text === ")") {
@@ -3010,13 +3024,13 @@ class LocalFlowEngine {
         if (depth !== 0) continue;
         if (token.kind !== "word") continue;
         const keyword = token.text.toUpperCase();
-        if (mutating.has(keyword)) return [];
+        if (mutating.has(keyword)) return undefined;
         if (keyword === "SELECT") {
           mainSelect = true;
           break;
         }
       }
-      if (!mainSelect) return [];
+      if (!mainSelect) return undefined;
     }
     const cteNames = new Set<string>();
     for (let start = 0; start < tokens.length; start += 1) {
