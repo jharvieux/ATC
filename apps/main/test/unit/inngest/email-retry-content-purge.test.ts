@@ -135,6 +135,13 @@ const expiredRows = (n: number): Row[] =>
 
 const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 60 * 60 * 1000).toISOString();
 const daysAhead = (d: number) => new Date(Date.now() + d * 24 * 60 * 60 * 1000).toISOString();
+const expiredOutboxRows = (n: number): OutboxRow[] =>
+  Array.from({ length: n }, (_, i) => ({
+    email_log_id: `o${i}`,
+    provider_snapshot_expires_at: daysAgo(1),
+    provider_request_body: JSON.stringify({ to: `expired-${i}@example.test` }),
+    retry_content_snapshot: { html: `<p>expired-${i}</p>` },
+  }));
 
 beforeEach(() => {
   rows = [];
@@ -198,10 +205,16 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
   it("STAGING_MODE records the skip and returns early without deleting", async () => {
     vi.stubEnv("STAGING_MODE", "true");
     rows = [{ email_log_id: "a", expires_at: daysAgo(1) }]; // expired but must NOT be touched
+    outboxRows = expiredOutboxRows(1);
     const result = await runPurge();
     expect(result).toEqual({ skipped_for_staging: true });
     expect(inserts).toEqual(["email-retry-content-purge"]);
     expect(rows.map((r) => r.email_log_id)).toEqual(["a"]); // untouched
+    expect(updateCalls).toBe(0);
+    expect(outboxRows[0]).toMatchObject({
+      provider_request_body: expect.any(String),
+      retry_content_snapshot: { html: "<p>expired-0</p>" },
+    });
   });
 
   it("throws (fail-loud) when the DELETE errors, so the run surfaces as failed", async () => {
@@ -250,6 +263,24 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
     expect(deleteCalls).toBe(MAX_BATCHES);
     expect(rows).toHaveLength(1); // backlog left for the next hourly run
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("hit MAX_BATCHES"));
+    warn.mockRestore();
+  });
+
+  it("flags a capped provider-outbox purge and leaves the overflow for the next run", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    outboxRows = expiredOutboxRows(MAX_BATCHES * DELETE_BATCH + 1);
+
+    const result = await runPurge();
+
+    expect(result).toMatchObject({
+      outbox_snapshots_purged: MAX_BATCHES * DELETE_BATCH,
+      capped: true,
+    });
+    expect(updateCalls).toBe(MAX_BATCHES);
+    expect(outboxRows.filter((row) => row.provider_request_body !== null)).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("while clearing queued provider snapshots"),
+    );
     warn.mockRestore();
   });
 });

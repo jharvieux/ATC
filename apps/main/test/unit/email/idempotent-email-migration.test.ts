@@ -52,7 +52,7 @@ describe("idempotent email outbox migration", () => {
     expect(isolationMigration).not.toMatch(/GRANT[^;]+email_provider_dispatch[^;]+authenticated/);
   });
 
-  it("caps queued provider PII at the replay window and indexes the bounded purge", () => {
+  it("makes queued provider PII purge-eligible at the replay cutoff and indexes the bounded purge", () => {
     expect(isolationMigration).toContain("v_now + INTERVAL '23 hours'");
     expect(isolationMigration).toContain("email_provider_dispatch_expiry_idx");
     expect(isolationMigration).toContain("WHERE provider_request_body IS NOT NULL");

@@ -135,6 +135,31 @@ beforeEach(() => {
   mocks.contentEqCalls = [];
 });
 
+describe("pre-cruise schedulers — deterministic child event IDs", () => {
+  it.each([
+    ["multiphase", preCruiseEmailSchedulerMultiphase, 168, "t_7"],
+    ["T-1", preCruiseEmailSchedulerT1, 24, "t_1"],
+  ] as const)(
+    "%s retries reuse a child ID while a new cron event gets a distinct ID",
+    async (_name, scheduler, sailingHoursFromNow, phase) => {
+      mocks.sailingHoursFromNow = sailingHoursFromNow;
+      const run = scheduler as unknown as (args: {
+        event: { id: string };
+      }) => Promise<unknown>;
+
+      await run({ event: { id: "cron-source-1" } });
+      await run({ event: { id: "cron-source-1" } });
+      await run({ event: { id: "cron-source-2" } });
+
+      expect(mocks.sentEvents.map((event) => event.id)).toEqual([
+        `auto-precruise:cron-source-1:booking-1:${phase}`,
+        `auto-precruise:cron-source-1:booking-1:${phase}`,
+        `auto-precruise:cron-source-2:booking-1:${phase}`,
+      ]);
+    },
+  );
+});
+
 describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
   it("re-fires precruise/email.due when a content row exists but sent_at is null (prior send failed)", async () => {
     mocks.contentRow = { id: "content-1", sent_at: null };
@@ -153,20 +178,6 @@ describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
     mocks.contentRow = null;
     await (preCruiseEmailSchedulerMultiphase as unknown as () => Promise<unknown>)();
     expect(mocks.sentEvents).toHaveLength(1);
-  });
-
-  it("derives a stable child event id from the scheduler event so a cron retry cannot duplicate paid work", async () => {
-    const run = preCruiseEmailSchedulerMultiphase as unknown as (args: {
-      event: { id: string };
-    }) => Promise<unknown>;
-
-    await run({ event: { id: "cron-source-1" } });
-    await run({ event: { id: "cron-source-1" } });
-
-    expect(mocks.sentEvents.map((event) => event.id)).toEqual([
-      "auto-precruise:cron-source-1:booking-1:t_7",
-      "auto-precruise:cron-source-1:booking-1:t_7",
-    ]);
   });
 
   it("passes the booking owner to the service-role content dedup lookup", async () => {
