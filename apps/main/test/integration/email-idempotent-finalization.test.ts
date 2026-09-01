@@ -186,9 +186,9 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
         'integration_test', 'transactional', 'sent', now(),
         ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`},
         ${`integration:${fx.tenantOne}:${runTag}:orphan`},
-        ${JSON.stringify({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
+        ${fx.sql.json({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
         'platform_resend', ${providerCredentialHash}, now(), now() + interval '7 days',
-        ${JSON.stringify(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}::jsonb
+        ${fx.sql.json(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}
       )
       RETURNING id
     `;
