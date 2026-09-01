@@ -1286,6 +1286,31 @@ describe("RLS integration", () => {
   });
 
   it.each([
+    ["block comment", "SELECT /* harmless */ id FROM public.bookings"],
+    ["nested block comment", "SELECT /* outer /* nested */ harmless */ id FROM public.bookings"],
+    ["line comment", "SELECT -- harmless\n id FROM public.bookings"],
+    ["trailing line comment", "SELECT id FROM public.bookings -- harmless"],
+    ["comment between adjacent tokens", "SELECT id/* harmless */FROM public.bookings"],
+    ["comment after schema punctuation", "SELECT id FROM public./* harmless */bookings"],
+    ["comment before schema punctuation", "SELECT id FROM public/* harmless */.bookings"],
+    ["comment before a trailing terminator", "SELECT id FROM public.bookings/* harmless */;"],
+    ["comment after an opening parenthesis", "SELECT id FROM public.bookings WHERE (/* harmless */id IS NOT NULL)"],
+    ["comment after a comma", "SELECT COALESCE(id,/* harmless */id) AS id FROM public.bookings"],
+  ])("accepts reviewed SQL with a harmless %s", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toBeUndefined();
+  });
+
+  it.each([
+    ["unterminated block comment", "SELECT id FROM public.bookings /* unterminated"],
+    ["quoted comment marker", "SELECT '/* not a comment */' AS id FROM public.bookings"],
+    ["quoted line-comment marker", 'SELECT "--not-a-comment" AS id FROM public.bookings'],
+    ["dollar-quoted comment marker", "SELECT $$/* not a comment */$$ AS id FROM public.bookings"],
+    ["comment that separates one keyword", "SE/* not SELECT */LECT id FROM public.bookings"],
+  ])("rejects unreviewed SQL at a %s boundary", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toMatch(/mutation witness/);
+  });
+
+  it.each([
     ["unreviewed operator", "SELECT id + id AS id FROM public.bookings", RLS_RESOURCE],
     ["unreviewed JSON operator", "SELECT id FROM public.bookings WHERE metadata @> '{}'", RLS_RESOURCE],
     ["unreviewed cast", "SELECT id::public.effectful_id AS id FROM public.bookings", RLS_RESOURCE],

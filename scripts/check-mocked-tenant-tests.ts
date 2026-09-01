@@ -816,20 +816,51 @@ export function derivePostgresMigrationProvenance(
   };
 }
 
-function normalizePostgresSql(sql: string): string {
+function normalizePostgresSql(sql: string): string | undefined {
   let normalized = "";
   let index = 0;
   let pendingSpace = false;
+  let tightAfterPunctuation = false;
   const append = (value: string): void => {
-    if (pendingSpace && normalized) normalized += " ";
+    const punctuation = value.length === 1 && ".,()[]".includes(value);
+    if (punctuation) {
+      normalized += value;
+      pendingSpace = false;
+      tightAfterPunctuation = ".,([".includes(value);
+      return;
+    }
+    if (pendingSpace && normalized && !tightAfterPunctuation) normalized += " ";
     normalized += value;
     pendingSpace = false;
+    tightAfterPunctuation = false;
   };
   while (index < sql.length) {
     const char = sql[index]!;
     if (/\s/.test(char)) {
       pendingSpace = true;
       index += 1;
+      continue;
+    }
+    if (char === "-" && sql[index + 1] === "-") {
+      pendingSpace = true;
+      index += 2;
+      while (index < sql.length && sql[index] !== "\n") index += 1;
+      continue;
+    }
+    if (char === "/" && sql[index + 1] === "*") {
+      pendingSpace = true;
+      index += 2;
+      let depth = 1;
+      while (index < sql.length && depth > 0) {
+        if (sql[index] === "/" && sql[index + 1] === "*") {
+          depth += 1;
+          index += 2;
+        } else if (sql[index] === "*" && sql[index + 1] === "/") {
+          depth -= 1;
+          index += 2;
+        } else index += 1;
+      }
+      if (depth !== 0) return undefined;
       continue;
     }
     const escapeString = (char === "e" || char === "E") && sql[index + 1] === "'";
@@ -861,7 +892,7 @@ function normalizePostgresSql(sql: string): string {
     append(char);
     index += 1;
   }
-  return normalized.trim();
+  return normalized.trim().replace(/\s*;+$/, "");
 }
 
 // Raw witnesses are rare enough to review explicitly; executable object definitions are
@@ -931,11 +962,11 @@ interface ReviewedPostgresSql {
 const REVIEWED_POSTGRES_SQL = new Map<string, ReviewedPostgresSql>([
   ["SELECT 1", { resources: [] }],
   ...REVIEWED_MAIN_POSTGRES_SQL.map((sql) => [
-    normalizePostgresSql(sql),
+    normalizePostgresSql(sql)!,
     { target: "main" as const, resources: ["table:public.bookings"] },
   ] as const),
   ...REVIEWED_RAG_POSTGRES_SQL.map((sql, index) => [
-    normalizePostgresSql(sql),
+    normalizePostgresSql(sql)!,
     {
       target: "rag" as const,
       resources: [
@@ -3967,6 +3998,7 @@ class LocalFlowEngine {
 
   private sqlResources(sql: string): string[] | undefined {
     const normalizedSql = normalizePostgresSql(sql);
+    if (!normalizedSql) return undefined;
     const review = REVIEWED_POSTGRES_SQL.get(normalizedSql);
     if (!review) return undefined;
     type SqlToken = { kind: "word" | "quotedIdentifier" | "punctuation"; text: string };
