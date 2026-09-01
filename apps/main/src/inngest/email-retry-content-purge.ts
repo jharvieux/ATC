@@ -74,8 +74,8 @@ export const emailRetryContentPurge = inngest.createFunction(
     }
 
     // A provider attempt can be accepted before local finalization succeeds.
-    // The queued email_log row keeps the exact request briefly so a retry can
-    // replay it with the same provider key. Once its replay window expires,
+    // The private provider outbox keeps the exact request briefly so a retry
+    // can replay it with the same provider key. Once its replay window expires,
     // clear that rendered payload rather than retaining recipient PII for the
     // much longer email_log retention period.
     let outboxSnapshotsPurged = 0;
@@ -84,26 +84,26 @@ export const emailRetryContentPurge = inngest.createFunction(
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const { data: rows, error: selErr } = await svc
         // d091-allow:service-role-tenant global TTL retention sweep — deliberately cross-tenant; service-role only, PK-projected.
-        .from("email_log")
-        .select("id")
+        .from("email_provider_dispatch")
+        .select("email_log_id")
         .not("provider_request_body", "is", null)
         .lt("provider_snapshot_expires_at", cutoff)
         .limit(DELETE_BATCH);
       if (selErr) {
         throw new Error(`email_outbox_snapshot_purge_failed: ${selErr.message}`);
       }
-      const ids = ((rows ?? []) as Array<{ id: string }>).map((row) => row.id);
+      const ids = ((rows ?? []) as Array<{ email_log_id: string }>).map((row) => row.email_log_id);
       if (ids.length === 0) break;
 
       const { count, error: updateErr } = await svc
         // d091-allow:service-role-tenant global TTL retention sweep — updates only PKs returned by the bounded service-role query above.
-        .from("email_log")
+        .from("email_provider_dispatch")
         .update({
           provider_request_body: null,
           provider_snapshot_expires_at: null,
           retry_content_snapshot: null,
         }, { count: "exact" })
-        .in("id", ids);
+        .in("email_log_id", ids);
       if (updateErr) {
         throw new Error(`email_outbox_snapshot_purge_failed: ${updateErr.message}`);
       }

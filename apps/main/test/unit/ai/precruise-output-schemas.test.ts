@@ -25,6 +25,7 @@ vi.mock("@/inngest/client", () => ({
 const mocks = vi.hoisted(() => ({
   enqueueCalls: [] as Array<Record<string, unknown>>,
   sendEmailCalls: 0,
+  stepIds: [] as string[],
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -169,6 +170,7 @@ const RENDERED_KEYS: Record<string, string[]> = {
 beforeEach(() => {
   mocks.enqueueCalls = [];
   mocks.sendEmailCalls = 0;
+  mocks.stepIds = [];
 });
 
 describe("PRECRUISE_OUTPUT_SCHEMAS — Anthropic structured-output validity", () => {
@@ -198,8 +200,17 @@ describe("PRECRUISE_OUTPUT_SCHEMAS — Anthropic structured-output validity", ()
 
 describe("precruiseGenerateAndSend via:'batched' — schema wiring", () => {
   it("enqueues the batch request with the phase's json_schema output constraint and does not send", async () => {
-    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+    await (precruiseGenerateAndSend as unknown as (args: {
+      event: { data: unknown };
+      step: { run: (id: string, fn: () => unknown) => Promise<unknown> };
+    }) => Promise<void>)({
       event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "batched" } },
+      step: {
+        run: async (id, fn) => {
+          mocks.stepIds.push(id);
+          return await fn();
+        },
+      },
     });
 
     expect(mocks.sendEmailCalls).toBe(0);
@@ -208,5 +219,9 @@ describe("precruiseGenerateAndSend via:'batched' — schema wiring", () => {
     expect(params.output_config).toEqual({
       format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS.t_90 },
     });
+    const contextHash = (mocks.enqueueCalls[0] as {
+      caller_metadata: { content_context_hash: string };
+    }).caller_metadata.content_context_hash;
+    expect(mocks.stepIds).toEqual([`enqueue-batch:t_90:${contextHash}`]);
   });
 });

@@ -12,7 +12,13 @@ import { createHash } from "node:crypto";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
-    createFunction: (_cfg: unknown, handler: unknown) => handler,
+    createFunction: (_cfg: unknown, handler: unknown) => {
+      const run = handler as (args: Record<string, unknown>) => Promise<unknown>;
+      return (args: Record<string, unknown>) => run({
+        ...args,
+        step: args.step ?? { run: async (_id: string, fn: () => unknown) => await fn() },
+      });
+    },
   },
 }));
 
@@ -29,7 +35,13 @@ const mocks = vi.hoisted(() => ({
     generated_content: Record<string, unknown>;
     content_context_hash?: string | null;
   } | null,
-  logicalEmailLog: null as { id: string; status: string; sent_at: string | null; provider_first_attempt_at?: string | null } | null,
+  logicalEmailLog: null as {
+    id: string;
+    status: string;
+    sent_at: string | null;
+    provider_first_attempt_at?: string | null;
+    provider_attempt_state?: "unstarted" | "ambiguous" | "rejected";
+  } | null,
   recoveryCalls: 0,
   resumeCalls: 0,
   abandonCalls: 0,
@@ -87,6 +99,8 @@ vi.mock("@/lib/email/send", () => ({
           status: "queued",
           email_log_id: mocks.logicalEmailLog.id,
           provider_first_attempt_at: mocks.logicalEmailLog.provider_first_attempt_at ?? null,
+          provider_attempt_state: mocks.logicalEmailLog.provider_attempt_state
+            ?? (mocks.logicalEmailLog.provider_first_attempt_at ? "ambiguous" : "unstarted"),
         };
   },
   resumeIdempotentEmail: async () => {
@@ -97,6 +111,7 @@ vi.mock("@/lib/email/send", () => ({
     mocks.abandonCalls++;
     if (mocks.startWinsOnAbandon && mocks.logicalEmailLog) {
       mocks.logicalEmailLog.provider_first_attempt_at = new Date().toISOString();
+      mocks.logicalEmailLog.provider_attempt_state = "ambiguous";
       return false;
     }
     mocks.logicalEmailLog = null;
@@ -298,8 +313,13 @@ type BatchResultEvent = {
   };
 };
 
-function runHandler(event: BatchResultEvent): Promise<void> {
-  return (precruiseSendFromBatchResult as unknown as (args: BatchResultEvent) => Promise<void>)(event);
+function runHandler(
+  event: BatchResultEvent,
+  step?: { run: (id: string, fn: () => unknown) => Promise<unknown> },
+): Promise<void> {
+  return (precruiseSendFromBatchResult as unknown as (
+    args: BatchResultEvent & { step?: typeof step },
+  ) => Promise<void>)({ ...event, ...(step ? { step } : {}) });
 }
 
 function makeEvent(): BatchResultEvent {
@@ -405,6 +425,30 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.insertPayloads).toHaveLength(0);
     expect(mocks.updatePayloads.some((payload) => "sent_at" in payload)).toBe(true);
+  });
+
+  it("re-enters live batch context after a definitive provider rejection", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { summary: "rejected stale copy" },
+      content_context_hash: "stale",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: "2026-08-31T22:00:00.100Z",
+      provider_attempt_state: "rejected",
+    };
+
+    await runHandler(makeEvent());
+
+    expect(mocks.resumeCalls).toBe(0);
+    expect(mocks.abandonCalls).toBe(1);
+    expect(mocks.sendEmailCalls).toBe(1);
+    expect(mocks.existingContent.generated_content).toEqual({ summary: "Enjoy your cruise!" });
   });
 
   it("abandons an unstarted stale outbox before regenerating and sending batch content", async () => {
@@ -533,10 +577,51 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     });
   });
 
+  it("memoizes a stale-context batch re-enqueue across handler retries", async () => {
+    const event = makeEvent();
+    event.event.data.caller_metadata!.content_context_hash = "stale";
+    const durableResults = new Map<string, unknown>();
+    const stepIds: string[] = [];
+    const step = {
+      run: async (id: string, fn: () => unknown) => {
+        stepIds.push(id);
+        if (durableResults.has(id)) return durableResults.get(id);
+        const value = await fn();
+        durableResults.set(id, value);
+        return value;
+      },
+    };
+
+    await runHandler(event, step);
+    await runHandler(event, step);
+
+    const currentHash = (mocks.batchEnqueueCalls[0]?.caller_metadata as {
+      content_context_hash: string;
+    }).content_context_hash;
+    expect(stepIds).toEqual([
+      `reenqueue-batch:t_90:${currentHash}`,
+      `reenqueue-batch:t_90:${currentHash}`,
+    ]);
+    expect(mocks.batchEnqueueCalls).toHaveLength(1);
+    expect(mocks.sendEmailCalls).toBe(0);
+  });
+
   it("does not retarget a reviewed manual batch after the primary contact changes", async () => {
     const event = makeEvent();
     event.event.data.caller_metadata!.expected_contact_id = "contact-2";
     event.event.data.caller_metadata!.expected_contact_email = "jordan@example.com";
+
+    await runHandler(event);
+
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.batchEnqueueCalls).toHaveLength(0);
+  });
+
+  it("does not retarget a reviewed manual batch after only the reviewed email changes", async () => {
+    const event = makeEvent();
+    event.event.data.caller_metadata!.expected_contact_id = "contact-1";
+    event.event.data.caller_metadata!.expected_contact_email = "old-address@example.com";
 
     await runHandler(event);
 
@@ -561,7 +646,7 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.existingContent.generated_content).toEqual({ summary: "winning prose" });
   });
 
-  it("uses only the started outbox epoch to stop expired batch replay", async () => {
+  it("fails loudly after releasing the claim when the batch replay window expires", async () => {
     mocks.existingContent = {
       id: "content-1",
       sent_at: null,
@@ -576,10 +661,11 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
       provider_first_attempt_at: new Date(Date.now() - 23 * 60 * 60_000).toISOString(),
     };
 
-    await runHandler(makeEvent());
+    await expect(runHandler(makeEvent())).rejects.toThrow(/operator reconciliation required/);
 
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.resumeCalls).toBe(0);
+    expect(mocks.existingContent.send_claimed_at).toBeNull();
     expect(mocks.existingContent.generated_content).toEqual({ summary: "provider-attempted prose" });
   });
 

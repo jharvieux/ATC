@@ -52,8 +52,9 @@ async function scanAndEmit(args: {
   via: "direct" | "batched";
   phases: typeof ALL_PHASES;
   windowHours: number;
+  sourceEventId: string;
 }): Promise<{ triggered: number }> {
-  const { via, phases, windowHours } = args;
+  const { via, phases, windowHours, sourceEventId } = args;
   const svc = createServiceRoleClient();
   const nowMs = Date.now();
 
@@ -118,6 +119,7 @@ async function scanAndEmit(args: {
       if (existing?.sent_at) continue;
 
       await inngest.send({
+        id: `auto-precruise:${sourceEventId}:${booking.id}:${phase}`,
         name: "precruise/email.due",
         data: {
           booking_id: booking.id,
@@ -138,7 +140,12 @@ async function scanAndEmit(args: {
 // sensitive 24-hours-before email).
 export const preCruiseEmailSchedulerT1 = inngest.createFunction(
   { id: "pre-cruise-email-scheduler-t1", triggers: [{ cron: "0 * * * *" }] },
-  async () => scanAndEmit({ via: "direct", phases: T1_ONLY, windowHours: 1 }),
+  async ({ event }) => scanAndEmit({
+    via: "direct",
+    phases: T1_ONLY,
+    windowHours: 1,
+    sourceEventId: event.id,
+  }),
 );
 
 // ── T-7 / T-30 / T-90: daily 9:00 UTC, batched.
@@ -149,5 +156,10 @@ export const preCruiseEmailSchedulerT1 = inngest.createFunction(
 // or "about a month" out.
 export const preCruiseEmailSchedulerMultiphase = inngest.createFunction(
   { id: "pre-cruise-email-scheduler-multiphase", triggers: [{ cron: "0 9 * * *" }] },
-  async () => scanAndEmit({ via: "batched", phases: MULTIPHASE, windowHours: 12 }),
+  async ({ event }) => scanAndEmit({
+    via: "batched",
+    phases: MULTIPHASE,
+    windowHours: 12,
+    sourceEventId: event.id,
+  }),
 );

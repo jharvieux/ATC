@@ -7,12 +7,18 @@
 // This pins that the insert error is now checked and a 23505 short-circuits
 // before sendEmail is ever reached.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
-    createFunction: (_cfg: unknown, handler: unknown) => handler,
+    createFunction: (_cfg: unknown, handler: unknown) => {
+      const run = handler as (args: Record<string, unknown>) => Promise<unknown>;
+      return (args: Record<string, unknown>) => run({
+        ...args,
+        step: args.step ?? { run: async (_id: string, fn: () => unknown) => await fn() },
+      });
+    },
   },
 }));
 
@@ -28,7 +34,13 @@ const mocks = vi.hoisted(() => ({
     generated_content: Record<string, unknown>;
     content_context_hash: string | null;
   } | null,
-  logicalEmailLog: null as { id: string; status: string; sent_at: string | null; provider_first_attempt_at?: string | null } | null,
+  logicalEmailLog: null as {
+    id: string;
+    status: string;
+    sent_at: string | null;
+    provider_first_attempt_at?: string | null;
+    provider_attempt_state?: "unstarted" | "ambiguous" | "rejected";
+  } | null,
   recoveryCalls: 0,
   resumeCalls: 0,
   abandonCalls: 0,
@@ -84,6 +96,8 @@ vi.mock("@/lib/email/send", () => ({
           status: "queued",
           email_log_id: mocks.logicalEmailLog.id,
           provider_first_attempt_at: mocks.logicalEmailLog.provider_first_attempt_at ?? null,
+          provider_attempt_state: mocks.logicalEmailLog.provider_attempt_state
+            ?? (mocks.logicalEmailLog.provider_first_attempt_at ? "ambiguous" : "unstarted"),
         };
   },
   resumeIdempotentEmail: async () => {
@@ -94,6 +108,7 @@ vi.mock("@/lib/email/send", () => ({
     mocks.abandonCalls++;
     if (mocks.startWinsOnAbandon && mocks.logicalEmailLog) {
       mocks.logicalEmailLog.provider_first_attempt_at = new Date().toISOString();
+      mocks.logicalEmailLog.provider_attempt_state = "ambiguous";
       return false;
     }
     mocks.logicalEmailLog = null;
@@ -297,6 +312,10 @@ beforeEach(() => {
   mocks.generationCalls = 0;
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
   it("recovers a committed logical send before regeneration and stamps the content row", async () => {
     mocks.existingContent = {
@@ -357,6 +376,36 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.insertPayloads).toHaveLength(0);
     expect(mocks.updatePayloads.some((payload) => "sent_at" in payload)).toBe(true);
+  });
+
+  it("re-enters live context and regenerates after a definitive provider rejection", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "rejected stale copy" },
+      content_context_hash: "stale",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: "2026-08-31T22:00:00.100Z",
+      provider_attempt_state: "rejected",
+    };
+
+    await (precruiseGenerateAndSend as unknown as (args: {
+      event: { data: unknown };
+    }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.resumeCalls).toBe(0);
+    expect(mocks.abandonCalls).toBe(1);
+    expect(mocks.sendEmailCalls).toBe(1);
+    expect(mocks.existingContent.generated_content).not.toEqual({
+      documentation_reminder: "rejected stale copy",
+    });
   });
 
   it("abandons an unstarted stale outbox, releases its claim, and regenerates", async () => {
@@ -528,7 +577,7 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.existingContent.send_claimed_at).not.toBeNull();
   });
 
-  it("uses only the started outbox epoch to stop expired direct replay", async () => {
+  it("fails loudly after releasing the claim when the direct replay window expires", async () => {
     mocks.existingContent = {
       id: "content-1",
       sent_at: null,
@@ -543,12 +592,15 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       provider_first_attempt_at: new Date(Date.now() - 23 * 60 * 60_000).toISOString(),
     };
 
-    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
-      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
-    });
+    await expect(
+      (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+        event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+      }),
+    ).rejects.toThrow(/operator reconciliation required/);
 
     expect(mocks.sendEmailCalls).toBe(0);
     expect(mocks.resumeCalls).toBe(0);
+    expect(mocks.existingContent.send_claimed_at).toBeNull();
     expect(mocks.existingContent.generated_content).toEqual({ documentation_reminder: "provider-attempted copy" });
   });
 
@@ -570,6 +622,48 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.sendEmailCalls).toBe(0);
   });
 
+  it("memoizes paid direct generation across a downstream DB failure and handler retry", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: null,
+      generated_content: { documentation_reminder: "old copy" },
+      content_context_hash: "stale",
+    };
+    mocks.regenerationUpdateError = { code: "40001", message: "serialization failure" };
+    const durableResults = new Map<string, unknown>();
+    const stepIds: string[] = [];
+    const step = {
+      run: async (id: string, fn: () => unknown) => {
+        stepIds.push(id);
+        if (durableResults.has(id)) return durableResults.get(id);
+        const value = await fn();
+        durableResults.set(id, value);
+        return value;
+      },
+    };
+    const args = {
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+      step,
+    };
+    const run = precruiseGenerateAndSend as unknown as (input: typeof args) => Promise<void>;
+
+    await expect(run(args)).rejects.toThrow();
+    mocks.regenerationUpdateError = null;
+    await run(args);
+
+    const contextHash = mocks.updatePayloads.find(
+      (payload) => "content_context_hash" in payload,
+    )?.content_context_hash;
+    expect(stepIds).toEqual([
+      `generate-direct:t_90:${contextHash}`,
+      `generate-direct:t_90:${contextHash}`,
+    ]);
+    expect(mocks.generationCalls).toBe(4);
+    expect(mocks.sendEmailCalls).toBe(1);
+  });
+
   it("does not retarget a scheduled manual send after the reviewed contact changes", async () => {
     await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
       event: {
@@ -580,6 +674,24 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
           via: "direct",
           expected_contact_id: "contact-2",
           expected_contact_email: "jordan@example.com",
+        },
+      },
+    });
+
+    expect(mocks.insertPayloads).toHaveLength(0);
+    expect(mocks.sendEmailCalls).toBe(0);
+  });
+
+  it("does not retarget a scheduled manual send after only the reviewed email changes", async () => {
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: {
+        data: {
+          booking_id: "b1",
+          tenant_id: "t1",
+          phase: "t_30",
+          via: "direct",
+          expected_contact_id: "contact-1",
+          expected_contact_email: "old-address@example.com",
         },
       },
     });

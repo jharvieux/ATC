@@ -213,4 +213,17 @@ describe("POST /api/precruise-emails/dispatch", () => {
     expect(await response.json()).toEqual({ error: "recipient_changed" });
     expect(mocks.send).not.toHaveBeenCalled();
   });
+
+  it("rejects dispatch when the reviewed contact keeps the same ID but changes email", async () => {
+    const response = await POST(request({
+      action: "send_now",
+      booking_id: BOOKING_ID,
+      phase: "t_7",
+      expected_contact_email: "old-address@example.com",
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "recipient_changed" });
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
 });

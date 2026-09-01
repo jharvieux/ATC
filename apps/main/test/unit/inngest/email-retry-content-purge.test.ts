@@ -24,7 +24,7 @@ interface Row {
   expires_at: string;
 }
 interface OutboxRow {
-  id: string;
+  email_log_id: string;
   provider_snapshot_expires_at: string;
   provider_request_body: string | null;
   retry_content_snapshot: Record<string, unknown> | null;
@@ -52,11 +52,14 @@ function makeChain(table: string) {
         },
         limit(n: number) {
           if (selectErr) return Promise.resolve({ data: null, error: selectErr });
-          if (table === "email_log") {
+          if (table === "email_provider_dispatch") {
             const matched = outboxRows
               .filter((row) => row.provider_request_body && row.provider_snapshot_expires_at < cutoff)
               .slice(0, n);
-            return Promise.resolve({ data: matched.map((row) => ({ id: row.id })), error: null });
+            return Promise.resolve({
+              data: matched.map((row) => ({ email_log_id: row.email_log_id })),
+              error: null,
+            });
           }
           const matched = rows.filter((r) => r.expires_at < cutoff).slice(0, n);
           return Promise.resolve({ data: matched.map((r) => ({ email_log_id: r.email_log_id })), error: null });
@@ -82,7 +85,7 @@ function makeChain(table: string) {
           if (updateErr) return Promise.resolve({ count: null, error: updateErr });
           let count = 0;
           outboxRows = outboxRows.map((row) => {
-            if (!ids.includes(row.id)) return row;
+            if (!ids.includes(row.email_log_id)) return row;
             count += 1;
             return {
               ...row,
@@ -162,13 +165,13 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
   it("clears expired queued provider snapshots without touching live snapshots", async () => {
     outboxRows = [
       {
-        id: "expired",
+        email_log_id: "expired",
         provider_snapshot_expires_at: daysAgo(1),
         provider_request_body: JSON.stringify({ to: "expired@example.test" }),
         retry_content_snapshot: { html: "<p>expired</p>" },
       },
       {
-        id: "live",
+        email_log_id: "live",
         provider_snapshot_expires_at: daysAhead(1),
         provider_request_body: JSON.stringify({ to: "live@example.test" }),
         retry_content_snapshot: { html: "<p>live</p>" },
@@ -181,12 +184,12 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
     expect(updateCalls).toBe(1);
     expect(outboxRows).toEqual([
       expect.objectContaining({
-        id: "expired",
+        email_log_id: "expired",
         provider_request_body: null,
         retry_content_snapshot: null,
       }),
       expect.objectContaining({
-        id: "live",
+        email_log_id: "live",
         provider_request_body: expect.any(String),
       }),
     ]);
@@ -215,7 +218,7 @@ describe("email-retry-content-purge — §23.7 / #1611", () => {
 
   it("throws when clearing an expired provider snapshot fails", async () => {
     outboxRows = [{
-      id: "expired",
+      email_log_id: "expired",
       provider_snapshot_expires_at: daysAgo(1),
       provider_request_body: "{}",
       retry_content_snapshot: null,

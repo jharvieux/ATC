@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   contentRow: null as { id: string; sent_at: string | null } | null,
-  sentEvents: [] as Array<{ name: string; data: unknown }>,
+  sentEvents: [] as Array<{ id: string; name: string; data: unknown }>,
   // Hours-before-sailing for the single mocked booking. Multiphase tests
   // use 168h (matches the T-7 default target); T1 tests set 24h (matches
   // the T-1 default target) so the ±windowHours match fires for the
@@ -41,8 +41,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
-    createFunction: (_cfg: unknown, handler: unknown) => handler,
-    send: async (payload: { name: string; data: unknown }) => {
+    createFunction: (_cfg: unknown, handler: unknown) => {
+      const run = handler as (args: Record<string, unknown>) => Promise<unknown>;
+      return (args: Record<string, unknown> = {}) => run({
+        event: { id: "cron-test-event" },
+        ...args,
+      });
+    },
+    send: async (payload: { id: string; name: string; data: unknown }) => {
       mocks.sentEvents.push(payload);
     },
   },
@@ -147,6 +153,20 @@ describe("pre-cruise-email-scheduler — #1582 sent_at dedup", () => {
     mocks.contentRow = null;
     await (preCruiseEmailSchedulerMultiphase as unknown as () => Promise<unknown>)();
     expect(mocks.sentEvents).toHaveLength(1);
+  });
+
+  it("derives a stable child event id from the scheduler event so a cron retry cannot duplicate paid work", async () => {
+    const run = preCruiseEmailSchedulerMultiphase as unknown as (args: {
+      event: { id: string };
+    }) => Promise<unknown>;
+
+    await run({ event: { id: "cron-source-1" } });
+    await run({ event: { id: "cron-source-1" } });
+
+    expect(mocks.sentEvents.map((event) => event.id)).toEqual([
+      "auto-precruise:cron-source-1:booking-1:t_7",
+      "auto-precruise:cron-source-1:booking-1:t_7",
+    ]);
   });
 
   it("passes the booking owner to the service-role content dedup lookup", async () => {

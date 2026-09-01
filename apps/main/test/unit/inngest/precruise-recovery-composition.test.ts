@@ -11,7 +11,13 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/inngest/client", () => ({
   inngest: {
-    createFunction: (_config: unknown, handler: unknown) => handler,
+    createFunction: (_config: unknown, handler: unknown) => {
+      const run = handler as (args: Record<string, unknown>) => Promise<unknown>;
+      return (args: Record<string, unknown>) => run({
+        ...args,
+        step: args.step ?? { run: async (_id: string, fn: () => unknown) => await fn() },
+      });
+    },
   },
 }));
 
@@ -50,6 +56,23 @@ import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send"
 function makeDb() {
   return {
     rpc(name: string, args: Record<string, unknown>) {
+      if (name === "recover_idempotent_email_send") {
+        expect(args).toEqual({
+          p_tenant_id: "tenant-1",
+          p_idempotency_key: "pre_cruise:booking-1:t_90",
+        });
+        return Promise.resolve({
+          data: [{
+            email_log_id: "log-1",
+            email_status: "sent",
+            sent_at: "2026-08-31T22:00:00.000Z",
+            resend_message_id: "resend-1",
+            provider_first_attempt_at: "2026-08-31T21:59:59.000Z",
+            provider_attempt_state: "ambiguous",
+          }],
+          error: null,
+        });
+      }
       if (name !== "finalize_idempotent_email_send") {
         throw new Error(`unexpected RPC ${name}`);
       }
@@ -73,27 +96,6 @@ function makeDb() {
       });
     },
     from(table: string) {
-      if (table === "email_log") {
-        return {
-          select() {
-            const chain = {
-              eq: () => chain,
-              limit: () => chain,
-              maybeSingle: async () => ({
-                data: {
-                  id: "log-1",
-                  status: "sent",
-                  sent_at: "2026-08-31T22:00:00.000Z",
-                  resend_message_id: "resend-1",
-                  provider_first_attempt_at: "2026-08-31T21:59:59.000Z",
-                },
-                error: null,
-              }),
-            };
-            return chain;
-          },
-        };
-      }
       if (table !== "pre_cruise_email_content") {
         throw new Error(`unexpected table ${table}`);
       }

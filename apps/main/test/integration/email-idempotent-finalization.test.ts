@@ -65,7 +65,7 @@ async function finalize(
   retryOf: string | null = null,
 ): Promise<{ email_log_id: string; newly_recorded: boolean; email_sent_today: number }> {
   const payload = rpcPayload(key, suffix, retryOf);
-  const { data: preparedData, error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send", {
+  const { data: preparedData, error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send_v2", {
     p_tenant_id: tenantId,
     p_idempotency_key: key,
     p_provider_idempotency_key: `integration:${tenantId}:${key}`,
@@ -82,7 +82,7 @@ async function finalize(
   });
   if (prepareError) throw new Error(prepareError.message);
   const prepared = (preparedData as Array<{ sent_at: string | null }> | null)?.[0];
-  if (!prepared) throw new Error("prepare_idempotent_email_send returned no row");
+  if (!prepared) throw new Error("prepare_idempotent_email_send_v2 returned no row");
 
   if (!prepared.sent_at) {
     const { error: startError } = await fx.admin.rpc("start_idempotent_email_dispatch", {
@@ -140,6 +140,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     if (!fx) return;
     try {
       await fx.sql`DELETE FROM public.email_retry_content WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
+      await fx.sql`DELETE FROM public.email_provider_dispatch WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_log WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.tenant_usage_metrics WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql.begin(async (tx) => {
@@ -154,6 +155,29 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
   it("records, replays, resets the UTC day, heals an orphan, and omits retry content for retry_of", async () => {
     const first = await finalize(fx.tenantOne, `${runTag}:first`, "first");
     expect(first).toMatchObject({ newly_recorded: true, email_sent_today: 1 });
+    const [firstStorage] = await fx.sql<{
+      provider_request_body: string | null;
+      provider_snapshot_expires_at: Date | null;
+      legacy_provider_request_body: string | null;
+      retry_expires_at: Date;
+    }[]>`
+      SELECT
+        dispatch.provider_request_body,
+        dispatch.provider_snapshot_expires_at,
+        log.provider_request_body AS legacy_provider_request_body,
+        retry.expires_at AS retry_expires_at
+      FROM public.email_log AS log
+      JOIN public.email_provider_dispatch AS dispatch ON dispatch.email_log_id = log.id
+      JOIN public.email_retry_content AS retry ON retry.email_log_id = log.id
+      WHERE log.id = ${first.email_log_id}
+    `;
+    expect(firstStorage).toMatchObject({
+      provider_request_body: null,
+      provider_snapshot_expires_at: null,
+      legacy_provider_request_body: null,
+    });
+    expect(firstStorage!.retry_expires_at.getTime()).toBeGreaterThan(Date.now() + 6.9 * 24 * 60 * 60_000);
+    expect(firstStorage!.retry_expires_at.getTime()).toBeLessThan(Date.now() + 7.1 * 24 * 60 * 60_000);
 
     const replay = await finalize(fx.tenantOne, `${runTag}:first`, "first");
     expect(replay).toMatchObject({
@@ -175,22 +199,33 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     expect(newUtcDay.email_sent_today).toBe(1);
 
     const [orphan] = await fx.sql<{ id: string }[]>`
-      INSERT INTO public.email_log (
-        tenant_id, to_email, from_email, subject, template_id,
-        email_category, status, sent_at, resend_message_id, idempotency_key,
-        provider_idempotency_key, provider_request_body, provider_account_type,
-        provider_credential_hash, provider_first_attempt_at,
-        provider_snapshot_expires_at, retry_content_snapshot
-      ) VALUES (
-        ${fx.tenantOne}, 'orphan@example.test', 'noreply@example.test', 'Subject orphan',
-        'integration_test', 'transactional', 'sent', now(),
-        ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`},
-        ${`integration:${fx.tenantOne}:${runTag}:orphan`},
-        ${fx.sql.json({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
-        'platform_resend', ${providerCredentialHash}, now(), now() + interval '7 days',
-        ${fx.sql.json(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}
+      WITH inserted_log AS (
+        INSERT INTO public.email_log (
+          tenant_id, to_email, from_email, subject, template_id,
+          email_category, status, sent_at, resend_message_id, idempotency_key,
+          provider_first_attempt_at
+        ) VALUES (
+          ${fx.tenantOne}, 'orphan@example.test', 'noreply@example.test', 'Subject orphan',
+          'integration_test', 'transactional', 'sent', now(),
+          ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`}, now()
+        )
+        RETURNING id, tenant_id
       )
-      RETURNING id
+      INSERT INTO public.email_provider_dispatch (
+        email_log_id, tenant_id, provider_idempotency_key,
+        provider_request_body, provider_account_type, provider_credential_hash,
+        provider_first_attempt_at, provider_attempt_state,
+        provider_snapshot_expires_at, retry_content_snapshot
+      )
+      SELECT
+        inserted_log.id, inserted_log.tenant_id,
+        ${`integration:${fx.tenantOne}:${runTag}:orphan`},
+        ${JSON.stringify({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
+        'platform_resend', ${providerCredentialHash}, now(), 'ambiguous',
+        now() + interval '23 hours',
+        ${fx.sql.json(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}
+      FROM inserted_log
+      RETURNING email_log_id AS id
     `;
     if (!orphan) throw new Error("orphan seed returned no row");
     const healed = await finalizeEffects(fx.tenantOne, `${runTag}:orphan`, `resend-${runTag}-orphan`);
@@ -216,6 +251,96 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     expect(retryPayload).toHaveLength(0);
   }, 60000);
 
+  it("isolates queued provider PII and lets only rejected or unstarted rows be abandoned", async () => {
+    const key = `${runTag}:private-outbox`;
+    const payload = rpcPayload(key, "private-outbox");
+    const prepared = await fx.admin.rpc("prepare_idempotent_email_send_v2", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+      p_provider_idempotency_key: `integration:${fx.tenantOne}:${key}`,
+      p_provider_request_body: JSON.stringify({
+        from: "noreply@example.test",
+        to: "private-outbox@example.test",
+        subject: "Private outbox",
+        html: "<p>private</p>",
+      }),
+      p_provider_account_type: "platform_resend",
+      p_provider_credential_hash: providerCredentialHash,
+      p_log: payload.p_log,
+      p_retry_content: payload.p_retry_content,
+    });
+    if (prepared.error) throw new Error(prepared.error.message);
+    expect(prepared.data?.[0]).toMatchObject({
+      provider_attempt_state: "unstarted",
+      provider_request_body: expect.stringContaining("private-outbox@example.test"),
+    });
+
+    const [storage] = await fx.sql<{
+      legacy_body: string | null;
+      legacy_retry: unknown | null;
+      provider_request_body: string;
+      provider_attempt_state: string;
+      expires_at: Date;
+      created_at: Date;
+    }[]>`
+      SELECT
+        log.provider_request_body AS legacy_body,
+        log.retry_content_snapshot AS legacy_retry,
+        dispatch.provider_request_body,
+        dispatch.provider_attempt_state,
+        dispatch.provider_snapshot_expires_at AS expires_at,
+        dispatch.created_at
+      FROM public.email_log AS log
+      JOIN public.email_provider_dispatch AS dispatch
+        ON dispatch.email_log_id = log.id
+       AND dispatch.tenant_id = log.tenant_id
+      WHERE log.tenant_id = ${fx.tenantOne}
+        AND log.idempotency_key = ${key}
+    `;
+    expect(storage).toMatchObject({
+      legacy_body: null,
+      legacy_retry: null,
+      provider_attempt_state: "unstarted",
+    });
+    expect(storage!.expires_at.getTime() - storage!.created_at.getTime()).toBeLessThanOrEqual(23 * 60 * 60_000);
+
+    await expect(fx.sql.begin(async (tx) => {
+      await tx`SET LOCAL ROLE authenticated`;
+      await tx`SELECT provider_request_body FROM public.email_provider_dispatch LIMIT 1`;
+    })).rejects.toMatchObject({ code: "42501" });
+
+    const started = await fx.admin.rpc("start_idempotent_email_dispatch", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+    });
+    if (started.error) throw new Error(started.error.message);
+    const rejected = await fx.admin.rpc("mark_idempotent_email_dispatch_rejected", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+    });
+    if (rejected.error) throw new Error(rejected.error.message);
+    expect(rejected.data).toBe(true);
+    const recovery = await fx.admin.rpc("recover_idempotent_email_send", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+    });
+    if (recovery.error) throw new Error(recovery.error.message);
+    expect(recovery.data?.[0]).toMatchObject({ provider_attempt_state: "rejected" });
+
+    const abandoned = await fx.admin.rpc("abandon_unstarted_idempotent_email", {
+      p_tenant_id: fx.tenantOne,
+      p_idempotency_key: key,
+    });
+    if (abandoned.error) throw new Error(abandoned.error.message);
+    expect(abandoned.data).toBe(true);
+    const remaining = await fx.sql`
+      SELECT 1
+      FROM public.email_log
+      WHERE tenant_id = ${fx.tenantOne} AND idempotency_key = ${key}
+    `;
+    expect(remaining).toHaveLength(0);
+  }, 60000);
+
   it("serializes concurrent recovery so one log, retry row, and counter are recorded", async () => {
     const before = await fx.sql<{ count: number }[]>`
       SELECT email_sent_count::int AS count
@@ -226,7 +351,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     `;
     const key = `${runTag}:concurrent`;
     const payload = rpcPayload(key, "concurrent");
-    const { error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send", {
+    const { error: prepareError } = await fx.admin.rpc("prepare_idempotent_email_send_v2", {
       p_tenant_id: fx.tenantOne,
       p_idempotency_key: key,
       p_provider_idempotency_key: `integration:${fx.tenantOne}:${key}`,
@@ -262,7 +387,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     const unstartedKey = `${runTag}:abandon-unstarted`;
     const unstartedPayload = rpcPayload(unstartedKey, "abandon-unstarted");
     const { error: unstartedPrepareError } = await fx.admin.rpc(
-      "prepare_idempotent_email_send",
+      "prepare_idempotent_email_send_v2",
       {
         p_tenant_id: fx.tenantOne,
         p_idempotency_key: unstartedKey,
@@ -298,7 +423,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     const startedKey = `${runTag}:abandon-started`;
     const startedPayload = rpcPayload(startedKey, "abandon-started");
     const { error: startedPrepareError } = await fx.admin.rpc(
-      "prepare_idempotent_email_send",
+      "prepare_idempotent_email_send_v2",
       {
         p_tenant_id: fx.tenantOne,
         p_idempotency_key: startedKey,
@@ -328,15 +453,23 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     });
     if (startedAbandon.error) throw new Error(startedAbandon.error.message);
     expect(startedAbandon.data).toBe(false);
-    const startedRows = await fx.sql<{ status: string; provider_first_attempt_at: Date | null }[]>`
-      SELECT status, provider_first_attempt_at
-      FROM public.email_log
-      WHERE tenant_id = ${fx.tenantOne}
-        AND idempotency_key = ${startedKey}
+    const startedRows = await fx.sql<{
+      status: string;
+      provider_first_attempt_at: Date | null;
+      provider_attempt_state: string;
+    }[]>`
+      SELECT log.status, dispatch.provider_first_attempt_at, dispatch.provider_attempt_state
+      FROM public.email_log AS log
+      JOIN public.email_provider_dispatch AS dispatch
+        ON dispatch.email_log_id = log.id
+       AND dispatch.tenant_id = log.tenant_id
+      WHERE log.tenant_id = ${fx.tenantOne}
+        AND log.idempotency_key = ${startedKey}
     `;
     expect(startedRows).toHaveLength(1);
     expect(startedRows[0]).toMatchObject({ status: "queued" });
     expect(startedRows[0]?.provider_first_attempt_at).not.toBeNull();
+    expect(startedRows[0]?.provider_attempt_state).toBe("ambiguous");
   }, 60000);
 
   it("enforces tenant-scoped uniqueness while allowing another tenant and null keys", async () => {
@@ -376,7 +509,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
       "wrong-tenant-retry",
       retryOf,
     );
-    const wrongTenant = await fx.admin.rpc("prepare_idempotent_email_send", {
+    const wrongTenant = await fx.admin.rpc("prepare_idempotent_email_send_v2", {
       p_tenant_id: fx.tenantTwo,
       p_idempotency_key: `${runTag}:wrong-tenant-retry`,
       p_provider_idempotency_key: `integration:${fx.tenantTwo}:${runTag}:wrong-tenant-retry`,

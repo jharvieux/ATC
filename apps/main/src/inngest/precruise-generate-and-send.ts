@@ -123,7 +123,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
   // retries: 3 — #1582: buildAndSend throws on a transient send failure so
   // Inngest retries the whole run with backoff instead of silently losing it.
   { id: "precruise-generate-and-send", retries: 3, triggers: [{ event: "precruise/email.due" }] },
-  async ({ event }) => {
+  async ({ event, step }) => {
     validateInngestEvent("precruise/email.due", event.data);
     const parsed = PrecruiseEmailDuePayloadSchema.safeParse(event.data);
     if (!parsed.success) {
@@ -151,7 +151,11 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     if (recovery.status === "sent") {
       return;
     }
-    if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+    if (
+      recovery.status === "queued"
+      && recovery.providerAttemptState === "ambiguous"
+      && recovery.providerFirstAttemptAt
+    ) {
       await resumeStartedPrecruiseOutbox({
         svc,
         existing: existing!,
@@ -222,17 +226,20 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       }
       // ── Batched path: enqueue ONE structured-JSON Haiku request and
       // hand off to precruiseSendFromBatchResult on completion.
-      await enqueuePrecruiseBatchGeneration({
-        svc,
-        booking_id,
-        tenant_id,
-        phase,
-        emailCtx,
-        emailCtxId: existing?.id ?? null,
-        contentContextFingerprint,
-        ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
-        ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
-      });
+      await step.run(
+        `enqueue-batch:${phase}:${contentContextFingerprint}`,
+        () => enqueuePrecruiseBatchGeneration({
+          svc,
+          booking_id,
+          tenant_id,
+          phase,
+          emailCtx,
+          emailCtxId: existing?.id ?? null,
+          contentContextFingerprint,
+          ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
+          ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
+        }),
+      );
       console.info(`[precruise:batched] enqueued booking=${booking_id} phase=${phase}`);
       return;
     }
@@ -245,7 +252,10 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     ) {
       contentId = existing.id;
     } else {
-      const generatedContent = await generateContent(phase, emailCtx);
+      const generatedContent = await step.run(
+        `generate-direct:${phase}:${contentContextFingerprint}`,
+        () => generateContent(phase, emailCtx),
+      );
       if (existing) {
         let updateQuery = svc
           .from("pre_cruise_email_content")
@@ -320,7 +330,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     retries: 3,
     triggers: [{ event: "ai.batch_request.completed.precruise_generation" }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     validateInngestEvent("ai.batch_request.completed.precruise_generation", event.data);
     const parsed = PrecruiseBatchResultPayloadSchema.safeParse(event.data);
     if (!parsed.success) {
@@ -355,7 +365,11 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     if (recovery.status === "sent") {
       return;
     }
-    if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+    if (
+      recovery.status === "queued"
+      && recovery.providerAttemptState === "ambiguous"
+      && recovery.providerFirstAttemptAt
+    ) {
       await resumeStartedPrecruiseOutbox({
         svc,
         existing: existing!,
@@ -418,17 +432,20 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
         console.info(`[precruise:batch-result] context changed after send claim: booking=${booking_id} phase=${phase}`);
         return;
       }
-      await enqueuePrecruiseBatchGeneration({
-        svc,
-        booking_id,
-        tenant_id,
-        phase,
-        emailCtx,
-        emailCtxId: existing?.id ?? null,
-        contentContextFingerprint,
-        ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
-        ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
-      });
+      await step.run(
+        `reenqueue-batch:${phase}:${contentContextFingerprint}`,
+        () => enqueuePrecruiseBatchGeneration({
+          svc,
+          booking_id,
+          tenant_id,
+          phase,
+          emailCtx,
+          emailCtxId: existing?.id ?? null,
+          contentContextFingerprint,
+          ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
+          ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
+        }),
+      );
       console.info(`[precruise:batch-result] context changed; regenerated booking=${booking_id} phase=${phase}`);
       return;
     }
@@ -581,7 +598,11 @@ async function recoverExistingPrecruiseSend(args: {
   tenantId: string;
   bookingId: string;
   phase: Phase;
-}): Promise<{ status: "sent" | "missing" | "queued"; providerFirstAttemptAt?: string | null }> {
+}): Promise<{
+  status: "sent" | "missing" | "queued";
+  providerFirstAttemptAt?: string | null;
+  providerAttemptState?: "unstarted" | "ambiguous" | "rejected" | null;
+}> {
   const recovery = await recoverIdempotentEmail({
     db: args.svc,
     tenantId: args.tenantId,
@@ -614,6 +635,7 @@ async function recoverExistingPrecruiseSend(args: {
   return {
     status: "queued",
     providerFirstAttemptAt: recovery.provider_first_attempt_at ?? null,
+    providerAttemptState: recovery.provider_attempt_state ?? null,
   };
 }
 
@@ -644,7 +666,11 @@ async function abandonRecoveredPrecruiseOutbox(args: {
 
   const recovery = await recoverExistingPrecruiseSend(args);
   if (recovery.status === "sent") return false;
-  if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+  if (
+    recovery.status === "queued"
+    && recovery.providerAttemptState === "ambiguous"
+    && recovery.providerFirstAttemptAt
+  ) {
     await resumeStartedPrecruiseOutbox({
       svc: args.svc,
       existing: args.existing,
@@ -1060,8 +1086,9 @@ async function resumeStartedPrecruiseOutbox(args: {
       tenantId: args.tenantId,
       claimedAt,
     });
-    console.warn(`[precruise] provider replay window expired: booking=${args.bookingId} phase=${args.phase}`);
-    return;
+    throw new Error(
+      `[precruise] provider replay window expired; operator reconciliation required: booking=${args.bookingId} phase=${args.phase}`,
+    );
   }
 
   const tenant = await loadTenantForOutboxReplay({ svc: args.svc, tenantId: args.tenantId });

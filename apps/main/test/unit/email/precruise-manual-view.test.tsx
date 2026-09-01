@@ -3,6 +3,24 @@
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+const stateSetterTracker = vi.hoisted(() => ({ enabled: false, calls: 0 }));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useState: <T,>(initialState: T | (() => T)) => {
+      const [value, setValue] = actual.useState(initialState);
+      const trackedSetValue: typeof setValue = (next) => {
+        if (stateSetterTracker.enabled) stateSetterTracker.calls += 1;
+        setValue(next);
+      };
+      return [value, trackedSetValue] as const;
+    },
+  };
+});
+
 import { PreCruiseEmailsView } from "@/app/(tenant)/crm/pre-cruise-emails/_components/PreCruiseEmailsView";
 
 const BOOKING_ID = "22222222-2222-4222-8222-222222222222";
@@ -47,6 +65,8 @@ function installFetch(options: {
 }
 
 afterEach(() => {
+  stateSetterTracker.enabled = false;
+  stateSetterTracker.calls = 0;
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -124,13 +144,26 @@ describe("PreCruiseEmailsView", () => {
     expect((await screen.findByRole("status")).textContent).toContain("90 days email is queued to send now");
   });
 
+  it("tells the agent to review the booking when the recipient changed", async () => {
+    installFetch({
+      dispatchResponse: Promise.resolve(jsonResponse({ error: "recipient_changed" }, 409)),
+    });
+    render(<PreCruiseEmailsView />);
+
+    await screen.findByRole("option", { name: /Avery Quinn/ });
+    fireEvent.click(screen.getByRole("button", { name: "Send email now" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The booking's primary contact changed. Review the booking and try again.",
+    );
+  });
+
   it("lets an accepted dispatch finish after unmount without updating local state", async () => {
     let resolveDispatch!: (response: Response) => void;
     const dispatchResponse = new Promise<Response>((resolve) => {
       resolveDispatch = resolve;
     });
     const fetchMock = installFetch({ dispatchResponse });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { unmount } = render(<PreCruiseEmailsView />);
 
     await screen.findByRole("option", { name: /Avery Quinn/ });
@@ -140,6 +173,8 @@ describe("PreCruiseEmailsView", () => {
     });
 
     unmount();
+    stateSetterTracker.calls = 0;
+    stateSetterTracker.enabled = true;
     await act(async () => {
       resolveDispatch(jsonResponse({ ok: true }, 202));
       await dispatchResponse;
@@ -147,8 +182,7 @@ describe("PreCruiseEmailsView", () => {
 
     const postCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(postCall?.[1]?.signal).toBeUndefined();
-    expect(consoleError).not.toHaveBeenCalled();
-    consoleError.mockRestore();
+    expect(stateSetterTracker.calls).toBe(0);
   });
 
   it("ignores an older search response after a newer query invalidates it", async () => {

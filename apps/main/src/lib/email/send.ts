@@ -1,11 +1,10 @@
 // §23.1 / §23.6 / §23.7 — Unified email send helper.
 //
-// Flow:
-//   1. Check email_suppressions for (tenant_id, to_email, reason).
-//   2. Check rate limit per §23.6.
-//   3. Resolve from-address per tenant email_send_pattern (Pattern A / B).
-//   4. Call Resend API with the caller-provided HTML string.
-//   5. Write email_log row.
+// Unkeyed sends check policy, call Resend, then write their legacy log row.
+// Keyed sends check policy, prepare a durable outbox before Resend, and
+// atomically finalize the log, retry content, and usage after provider success.
+// Started keyed retries replay the stored provider request inside the provider's
+// idempotency window; the caller owns any feature-specific reconciliation guard.
 //
 // Rendering React email templates to HTML is the caller's responsibility.
 // Callers must use a dynamic import for react-dom/server to avoid bundler
@@ -18,7 +17,7 @@
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
 import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
@@ -82,9 +81,10 @@ export interface SendEmailInput {
   // opt into the tenant-scoped v1 key only when they have no legacy provider
   // attempts that must survive a rollout.
   providerIdempotencyKeyScope?: "legacy" | "tenant_scoped_v1";
-  // Caller-owned policy/state check that must run at the last possible
-  // boundary before the provider call. A false verdict is terminal for this
-  // invocation and does not create a log or invoke Resend.
+  // Caller-owned policy/state check that runs at the last possible boundary
+  // before the provider call. A false verdict never invokes Resend. Fresh
+  // keyed sends abandon their newly queued log; started replays retain it for
+  // reconciliation.
   beforeDispatch?: (context: { providerReplay: boolean }) => Promise<boolean | { allowed: boolean; reason?: string }>;
   // §23.7/#1611 — set to the ORIGINAL email_log id when this send is itself a
   // soft-bounce re-send. Two effects: the row is stamped email_log.retry_of so
@@ -110,15 +110,16 @@ export interface EmailSendResult {
 }
 
 const RESEND_API_URL = "https://api.resend.com/emails";
-const IDEMPOTENT_OUTBOX_COLUMNS =
-  "id, status, sent_at, resend_message_id, provider_first_attempt_at";
+
+type ProviderAttemptState = "unstarted" | "ambiguous" | "rejected";
 
 interface IdempotentOutboxRow {
-  id: string;
-  status: string;
+  email_log_id: string;
+  email_status: string;
   sent_at: string | null;
   resend_message_id: string | null;
   provider_first_attempt_at: string | null;
+  provider_attempt_state: ProviderAttemptState | null;
 }
 
 interface PreparedIdempotentEmail {
@@ -131,6 +132,7 @@ interface PreparedIdempotentEmail {
   provider_account_type: "platform_resend" | "tenant_resend";
   provider_credential_hash: string;
   provider_first_attempt_at: string | null;
+  provider_attempt_state: ProviderAttemptState;
   newly_queued: boolean;
 }
 
@@ -149,6 +151,7 @@ export interface IdempotentEmailRecovery {
   resend_message_id?: string | null;
   sent_at?: string | null;
   provider_first_attempt_at?: string | null;
+  provider_attempt_state?: ProviderAttemptState | null;
 }
 
 // Verified Resend sending domain is the `email.` subdomain (the apex is not
@@ -196,8 +199,10 @@ export function providerEmailIdempotencyKey(
   return `atc:${tenantId}:${digest}`;
 }
 
-function providerCredentialHash(apiKey: string): string {
-  return createHash("sha256").update(apiKey).digest("hex");
+function providerCredentialHash(apiKey: string, idempotencyKey: string): string {
+  return createHmac("sha256", apiKey)
+    .update(`atc-email-provider-credential-binding-v1:${idempotencyKey}`)
+    .digest("hex");
 }
 
 async function readIdempotentOutbox(args: {
@@ -205,16 +210,14 @@ async function readIdempotentOutbox(args: {
   tenantId: string;
   idempotencyKey: string;
 }): Promise<IdempotentOutboxRow | null> {
-  return await safeAwait(
-    args.db
-      .from("email_log")
-      .select(IDEMPOTENT_OUTBOX_COLUMNS)
-      .eq("tenant_id", args.tenantId)
-      .eq("idempotency_key", args.idempotencyKey)
-      .limit(1)
-      .maybeSingle(),
-    "email_log.read.idempotent_outbox",
-  ) as IdempotentOutboxRow | null;
+  const rows = await safeAwait(
+    args.db.rpc("recover_idempotent_email_send", {
+      p_tenant_id: args.tenantId,
+      p_idempotency_key: args.idempotencyKey,
+    }),
+    "recover_idempotent_email_send",
+  );
+  return (rows as IdempotentOutboxRow[] | null)?.[0] ?? null;
 }
 
 async function finalizeIdempotentEmail(args: {
@@ -262,9 +265,10 @@ export async function recoverIdempotentEmail(args: {
   if (!outbox.sent_at) {
     return {
       status: "queued",
-      email_log_id: outbox.id,
+      email_log_id: outbox.email_log_id,
       resend_message_id: outbox.resend_message_id,
       provider_first_attempt_at: outbox.provider_first_attempt_at,
+      provider_attempt_state: outbox.provider_attempt_state,
     };
   }
 
@@ -355,7 +359,10 @@ async function fetchProvider(args: {
   apiKey: string;
   body: string;
   providerIdempotencyKey?: string;
-}): Promise<{ status: "sent"; resendMessageId: string } | { status: "failed"; reason: string }> {
+}): Promise<
+  | { status: "sent"; resendMessageId: string }
+  | { status: "failed"; reason: string; outcome: "rejected" | "ambiguous" }
+> {
   try {
     const res = await fetch(RESEND_API_URL, {
       method: "POST",
@@ -368,21 +375,73 @@ async function fetchProvider(args: {
     });
     if (!res.ok) {
       recordVendorFailure("resend", `${res.status}`);
-      return { status: "failed", reason: `resend_${res.status}` };
+      // Resend uses 409 for a concurrent request with the same key, whose
+      // delivery outcome is not yet known to this caller.
+      return {
+        status: "failed",
+        reason: `resend_${res.status}`,
+        outcome: res.status === 409 ? "ambiguous" : "rejected",
+      };
     }
 
     const body = await res.json() as { id?: string };
     if (!body.id) {
       recordVendorFailure("resend", "missing_message_id");
-      return { status: "failed", reason: "resend_missing_message_id" };
+      return {
+        status: "failed",
+        reason: "resend_missing_message_id",
+        outcome: "ambiguous",
+      };
     }
     recordVendorSuccess("resend");
     return { status: "sent", resendMessageId: body.id };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     recordVendorFailure("resend", reason);
-    return { status: "failed", reason: `resend_throw: ${String(error)}` };
+    return {
+      status: "failed",
+      reason: `resend_throw: ${String(error)}`,
+      outcome: "ambiguous",
+    };
   }
+}
+
+async function settleIdempotentProviderFailure(args: {
+  db: SupabaseClient;
+  tenantId: string;
+  idempotencyKey: string;
+  emailLogId: string;
+  provider: Extract<Awaited<ReturnType<typeof fetchProvider>>, { status: "failed" }>;
+}): Promise<EmailSendResult> {
+  if (args.provider.outcome === "rejected") {
+    const marked = await safeAwait(
+      args.db.rpc("mark_idempotent_email_dispatch_rejected", {
+        p_tenant_id: args.tenantId,
+        p_idempotency_key: args.idempotencyKey,
+      }),
+      "mark_idempotent_email_dispatch_rejected",
+    );
+    if (marked !== true) {
+      const recovered = await recoverIdempotentEmail({
+        db: args.db,
+        tenantId: args.tenantId,
+        idempotencyKey: args.idempotencyKey,
+      });
+      if (recovered.status === "sent") {
+        return {
+          status: "sent",
+          email_log_id: recovered.email_log_id ?? null,
+          resend_message_id: recovered.resend_message_id ?? null,
+        };
+      }
+    }
+  }
+
+  return {
+    status: "failed",
+    reason: args.provider.reason,
+    email_log_id: args.emailLogId,
+  };
 }
 
 export async function resumeIdempotentEmail(args: {
@@ -403,7 +462,11 @@ export async function resumeIdempotentEmail(args: {
       resend_message_id: recovered.resend_message_id ?? null,
     };
   }
-  if (recovered.status !== "queued" || !recovered.provider_first_attempt_at) {
+  if (
+    recovered.status !== "queued"
+    || recovered.provider_attempt_state !== "ambiguous"
+    || !recovered.provider_first_attempt_at
+  ) {
     return { status: "failed", reason: "started_idempotent_outbox_not_found" };
   }
 
@@ -420,7 +483,7 @@ export async function resumeIdempotentEmail(args: {
   if (dispatch.provider_account_type !== args.tenant.email_send_pattern) {
     return { status: "failed", reason: "provider_account_changed" };
   }
-  if (dispatch.provider_credential_hash !== providerCredentialHash(credential.apiKey)) {
+  if (dispatch.provider_credential_hash !== providerCredentialHash(credential.apiKey, args.idempotencyKey)) {
     return { status: "failed", reason: "provider_credential_changed" };
   }
   const provider = await fetchProvider({
@@ -428,7 +491,15 @@ export async function resumeIdempotentEmail(args: {
     body: dispatch.provider_request_body,
     providerIdempotencyKey: dispatch.provider_idempotency_key,
   });
-  if (provider.status === "failed") return { status: "failed", reason: provider.reason };
+  if (provider.status === "failed") {
+    return settleIdempotentProviderFailure({
+      db: args.db,
+      tenantId: args.tenant.id,
+      idempotencyKey: args.idempotencyKey,
+      emailLogId: dispatch.email_log_id,
+      provider,
+    });
+  }
 
   const finalized = await finalizeIdempotentEmail({
     db: args.db,
@@ -461,7 +532,7 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
       resend_message_id: recovered.resend_message_id ?? null,
     };
   }
-  const providerReplay = Boolean(existingOutbox?.provider_first_attempt_at);
+  const providerReplay = existingOutbox?.provider_attempt_state === "ambiguous";
 
   // §25.10 — Staging outbound isolation. When STAGING_MODE=true and
   // TEST_OVERRIDE_EMAIL is set, redirect ALL outbound email to the test
@@ -477,13 +548,17 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     if (category === "marketing") suppressionReasons.push("unsubscribe_marketing");
     if (category === "travel_news") suppressionReasons.push("unsubscribe_travel_news");
 
-    const { data: suppressions } = await db
-      .from("email_suppressions")
-      .select("reason")
-      .eq("tenant_id", tenant.id)
-      .eq("email_address", to)
-      .in("reason", suppressionReasons)
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    const suppressions = await safeAwait(
+      db
+        .from("email_suppressions")
+        .select("reason")
+        .eq("tenant_id", tenant.id)
+        .eq("email_address", to)
+        .in("reason", suppressionReasons)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        .limit(suppressionReasons.length),
+      "email_suppressions.read.send",
+    ) as Array<{ reason: string }> | null;
 
     if (suppressions && suppressions.length > 0) {
       const firstSuppression = suppressions[0] as { reason: string } | undefined;
@@ -516,12 +591,14 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
   });
   const credential = resolveResendApiKey(tenant);
   if (!credential.ok) return { status: "failed", reason: credential.reason };
-  const credentialHash = providerCredentialHash(credential.apiKey);
+  const credentialHash = input.idempotencyKey
+    ? providerCredentialHash(credential.apiKey, input.idempotencyKey)
+    : null;
 
   if (input.idempotencyKey) {
     const expiresAt = new Date(Date.now() + RETRY_CONTENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const rows = await safeAwait(
-      db.rpc("prepare_idempotent_email_send", {
+      db.rpc("prepare_idempotent_email_send_v2", {
         p_tenant_id: tenant.id,
         p_idempotency_key: input.idempotencyKey,
         p_provider_idempotency_key: providerEmailIdempotencyKey(
@@ -560,10 +637,10 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
           contact_id: input.contact_id ?? null,
         },
       }),
-      "prepare_idempotent_email_send",
+      "prepare_idempotent_email_send_v2",
     );
     const prepared = (rows as PreparedIdempotentEmail[] | null)?.[0];
-    if (!prepared) throw new Error("prepare_idempotent_email_send returned no row");
+    if (!prepared) throw new Error("prepare_idempotent_email_send_v2 returned no row");
     if (prepared.sent_at) {
       const recovered = await recoverIdempotentEmail({
         db,
@@ -583,9 +660,10 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
       return { status: "failed", reason: "provider_credential_changed", email_log_id: prepared.email_log_id };
     }
 
-    const verdict = await runBeforeDispatch(input.beforeDispatch, Boolean(prepared.provider_first_attempt_at));
+    const preparedReplay = prepared.provider_attempt_state === "ambiguous";
+    const verdict = await runBeforeDispatch(input.beforeDispatch, preparedReplay);
     if (!verdict.allowed) {
-      if (!prepared.provider_first_attempt_at) {
+      if (!preparedReplay) {
         await abandonUnstartedIdempotentEmail({
           db,
           tenantId: tenant.id,
@@ -612,7 +690,13 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
       providerIdempotencyKey: dispatch.provider_idempotency_key,
     });
     if (provider.status === "failed") {
-      return { status: "failed", reason: provider.reason, email_log_id: prepared.email_log_id };
+      return settleIdempotentProviderFailure({
+        db,
+        tenantId: tenant.id,
+        idempotencyKey: input.idempotencyKey,
+        emailLogId: prepared.email_log_id,
+        provider,
+      });
     }
 
     const finalized = await finalizeIdempotentEmail({
