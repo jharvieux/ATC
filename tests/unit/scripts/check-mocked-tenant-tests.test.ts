@@ -153,6 +153,10 @@ describe("raw Postgres migration provenance", () => {
   const reviewedBookingsPolicy = "CREATE POLICY bookings_select_policy ON public.bookings\n" +
     "  FOR SELECT\n" +
     "  USING (auth_user_in_tenant(tenant_id));";
+  const reconstructedUuidEq = "CREATE OR REPLACE FUNCTION pg_catalog.uuid_eq(uuid, uuid) " +
+    "RETURNS boolean AS 'uuid_eq' LANGUAGE internal IMMUTABLE STRICT PARALLEL SAFE;";
+  const reconstructedUuidCmp = "CREATE OR REPLACE FUNCTION pg_catalog.uuid_cmp(uuid, uuid) " +
+    "RETURNS integer AS 'uuid_cmp' LANGUAGE internal IMMUTABLE STRICT PARALLEL SAFE;";
 
   it("derives base-table relation kinds without accepting view or catalog-backed lookalikes", () => {
     const provenance = derive(`
@@ -455,10 +459,241 @@ describe("raw Postgres migration provenance", () => {
   });
 
   it.each([
+    ["SUPERUSER", "ALTER ROLE authenticated SUPERUSER;"],
+    ["ordered BYPASSRLS", "ALTER USER authenticated WITH LOGIN NOSUPERUSER BYPASSRLS;"],
+    ["quoted comment-separated role", "ALTER/*probe*/ USER \"authenticated\" WITH BYPASSRLS;"],
+    ["service-role RLS removal", "ALTER ROLE service_role NOBYPASSRLS;"],
+    ["dangerous final option", "ALTER ROLE authenticated NOBYPASSRLS BYPASSRLS;"],
+    ["unresolved current role", "ALTER ROLE CURRENT_USER BYPASSRLS;"],
+    ["relevant role rename", "ALTER ROLE authenticated RENAME TO replaced_authenticated;"],
+    ["relevant role drop", "DROP USER authenticated;"],
+    ["relevant role second in drop list", "DROP ROLE reporting_user, authenticated;"],
+    ["resolved current role", "SET ROLE authenticated; ALTER ROLE CURRENT_USER BYPASSRLS;"],
+  ])("rejects reviewed provenance after %s authority mutation", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_role_authority.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["authenticated authority restoration", "ALTER ROLE authenticated BYPASSRLS SUPERUSER; ALTER USER authenticated NOSUPERUSER NOBYPASSRLS;"],
+    ["ordered baseline final options", "ALTER ROLE authenticated BYPASSRLS SUPERUSER NOSUPERUSER NOBYPASSRLS;"],
+    ["service-role authority restoration", "ALTER USER service_role NOBYPASSRLS; ALTER ROLE service_role NOSUPERUSER BYPASSRLS;"],
+    ["idempotent baseline authority", "ALTER ROLE authenticated NOSUPERUSER NOBYPASSRLS; ALTER ROLE service_role NOSUPERUSER BYPASSRLS;"],
+    ["unrelated role authority", "ALTER USER reporting_user SUPERUSER BYPASSRLS;"],
+    ["quoted keyword role authority", "ALTER ROLE \"CURRENT_USER\" BYPASSRLS; ALTER ROLE \"ALL\" SUPERUSER;"],
+  ])("accepts reviewed provenance after exact %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_role_authority_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["ALTER USER", "ALTER USER authenticated SET search_path = private, public;"],
+    ["role/database crossed by role reset", "ALTER ROLE authenticated IN DATABASE postgres SET search_path = private, public; ALTER ROLE authenticated RESET search_path;"],
+    ["database crossed by another database reset", "ALTER DATABASE postgres SET search_path = private, public; ALTER DATABASE template1 RESET search_path;"],
+    ["system crossed by role-all reset", "ALTER SYSTEM SET search_path = private, public; ALTER ROLE ALL RESET search_path;"],
+    ["role-all crossed by system reset", "ALTER ROLE ALL SET search_path = private, public; ALTER SYSTEM RESET search_path;"],
+  ])("rejects reviewed provenance when a %s setting remains effective", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_runtime_scope.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["role/database", "ALTER USER authenticated IN DATABASE postgres SET search_path = private, public; ALTER ROLE authenticated IN DATABASE postgres RESET ALL;"],
+    ["database via role-all alias", "ALTER ROLE ALL IN DATABASE postgres SET search_path = private, public; ALTER DATABASE postgres RESET search_path;"],
+    ["system", "ALTER SYSTEM SET search_path = private, public; ALTER SYSTEM RESET search_path;"],
+    ["role-all", "ALTER ROLE ALL SET search_path = private, public; ALTER ROLE ALL RESET ALL;"],
+    ["unrelated persistent scope", "ALTER USER reporting_user SET search_path = private, public;"],
+  ])("accepts reviewed provenance after same-scope %s cleanup", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_runtime_scope_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["SET ROLE", "SET ROLE private_creator;"],
+    ["SET LOCAL ROLE", "SET LOCAL ROLE private_creator;"],
+    ["string SET ROLE", "SET ROLE 'private_creator';"],
+    ["SET SESSION AUTHORIZATION", "SET SESSION AUTHORIZATION 'private_creator';"],
+  ])("binds $user to the effective identity after %s", (_shape, identitySql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_session_identity.sql",
+        sql: `
+          CREATE ROLE private_creator;
+          CREATE SCHEMA private_creator;
+          CREATE OPERATOR CLASS private_creator.evil_uuid_ops FOR TYPE uuid USING btree AS
+            OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid),
+            OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);
+          ${identitySql}
+          SET search_path = "$user", public;
+          CREATE INDEX bookings_private_creator_probe ON public.bookings USING btree (id evil_uuid_ops);
+        `,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["RESET ROLE", "SET ROLE private_creator; RESET ROLE;"],
+    ["SET ROLE NONE", "SET SESSION ROLE private_creator; SET ROLE NONE;"],
+    ["RESET SESSION AUTHORIZATION", "SET SESSION AUTHORIZATION private_creator; RESET SESSION AUTHORIZATION;"],
+  ])("restores $user before index creation with %s", (_shape, identitySql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_session_identity_control.sql",
+        sql: `
+          CREATE ROLE private_creator;
+          CREATE SCHEMA private_creator;
+          CREATE OPERATOR CLASS private_creator.evil_uuid_ops FOR TYPE uuid USING btree AS
+            OPERATOR 1 pg_catalog.< (uuid, uuid), OPERATOR 3 pg_catalog.= (uuid, uuid),
+            OPERATOR 5 pg_catalog.> (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);
+          ${identitySql}
+          SET search_path = "$user", public;
+          CREATE INDEX bookings_builtin_identity_probe ON public.bookings USING btree (id uuid_ops);
+        `,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["UUID equality implementation replacement", "CREATE OR REPLACE FUNCTION pg_catalog.uuid_eq(uuid, uuid) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT false $$;"],
+    ["UUID equality attribute alteration", "ALTER FUNCTION pg_catalog.uuid_eq(uuid, uuid) LEAKPROOF;"],
+    ["unqualified UUID comparison alteration", "ALTER FUNCTION uuid_cmp(uuid, uuid) NOT LEAKPROOF;"],
+    ["attribute alteration followed by guessed inverse", "ALTER FUNCTION pg_catalog.uuid_eq(uuid, uuid) NOT LEAKPROOF; ALTER FUNCTION pg_catalog.uuid_eq(uuid, uuid) LEAKPROOF;"],
+    ["UUID equality implementation drop", "DROP FUNCTION pg_catalog.uuid_eq(uuid, uuid) CASCADE;"],
+    ["unqualified UUID equality drop", "DROP FUNCTION uuid_eq(uuid, uuid) CASCADE;"],
+    ["creation-path UUID equality replacement", "SET search_path = pg_catalog, public; CREATE OR REPLACE FUNCTION uuid_eq(uuid, uuid) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT false $$;"],
+    ["UUID opclass comparison replacement", "CREATE OR REPLACE FUNCTION pg_catalog.uuid_cmp(uuid, uuid) RETURNS integer LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT 0 $$;"],
+    ["UUID opclass comparison drop", "DROP FUNCTION pg_catalog.uuid_cmp(uuid, uuid) CASCADE;"],
+    ["text equality alteration", "ALTER FUNCTION pg_catalog.texteq(text, text) NOT LEAKPROOF;"],
+    ["case-insensitive text comparison drop", "DROP FUNCTION pg_catalog.texticlike(text, text) CASCADE;"],
+    ["date equality alteration", "ALTER FUNCTION pg_catalog.date_eq(date, date) VOLATILE;"],
+    ["UUID sort-support alteration", "ALTER FUNCTION pg_catalog.uuid_sortsupport(internal) PARALLEL RESTRICTED;"],
+    ["btree equality-image drop", "DROP FUNCTION pg_catalog.btequalimage(oid) CASCADE;"],
+    ["unknown catalog routine creation", "CREATE FUNCTION pg_catalog.unknown_guard_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["quoted catalog procedure replacement", "CREATE OR REPLACE PROCEDURE \"pg_catalog\".unknown_guard_procedure() LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["catalog aggregate creation", "CREATE AGGREGATE pg_catalog.unknown_guard_aggregate(integer) (SFUNC = pg_catalog.int4pl, STYPE = integer);"],
+    ["catalog creation through SET SCHEMA", "SET SCHEMA 'pg_catalog'; CREATE FUNCTION unknown_guard_path_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["catalog creation through set_config", "SELECT set_config('search_path', 'pg_catalog, public', false); CREATE FUNCTION unknown_guard_config_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["unresolved creation path", "SELECT set_config('search_path', current_setting('search_path'), false); CREATE FUNCTION unknown_guard_dynamic_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["routine alias without signature", "ALTER ROUTINE pg_catalog.uuid_eq RENAME TO unknown_guard_uuid_eq;"],
+    ["catalog destination schema", "CREATE FUNCTION public.unknown_guard_move_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; ALTER FUNCTION public.unknown_guard_move_probe() SET SCHEMA pg_catalog;"],
+    ["catalog procedure second in drop list", "DROP PROCEDURE public.unrelated(), pg_catalog.unknown_guard_procedure() CASCADE;"],
+    ["extension catalog routine membership", "ALTER EXTENSION plpgsql DROP FUNCTION pg_catalog.unknown_guard_probe();"],
+    ["unparsed Unicode catalog identifier", String.raw`CREATE FUNCTION U&\"pg\005fcatalog\".unknown_guard_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;`],
+    ["UUID equality second in drop list", "DROP FUNCTION public.unrelated(), pg_catalog.uuid_eq(uuid, uuid) CASCADE;"],
+    ["reviewed equality operator second in drop list", "DROP OPERATOR public.## (uuid, uuid), pg_catalog.= (uuid, uuid) CASCADE;"],
+    ["reviewed primary index second in drop list", "DROP INDEX public.unrelated_idx, public.bookings_pkey CASCADE;"],
+    ["synthetic equality reconstruction missing catalog attributes", reconstructedUuidEq],
+    ["synthetic comparison reconstruction missing catalog attributes", reconstructedUuidCmp],
+    ["replacement followed by synthetic equality reconstruction", `CREATE OR REPLACE FUNCTION pg_catalog.uuid_eq(uuid, uuid) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT false $$; ${reconstructedUuidEq}`],
+    ["replacement followed by synthetic comparison reconstruction", `CREATE OR REPLACE FUNCTION pg_catalog.uuid_cmp(uuid, uuid) RETURNS integer LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT 0 $$; ${reconstructedUuidCmp}`],
+    ["synthetic equality followed by malicious replacement", `${reconstructedUuidEq} CREATE OR REPLACE FUNCTION pg_catalog.uuid_eq(uuid, uuid) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT false $$;`],
+    ["drop and routine-only recreation", `DROP FUNCTION pg_catalog.uuid_cmp(uuid, uuid) CASCADE; ${reconstructedUuidCmp}`],
+  ])("rejects reviewed provenance after %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_catalog_routine.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["text comparison", "ALTER FUNCTION pg_catalog.texticlike(text, text) NOT LEAKPROOF;"],
+    ["date equality", "DROP FUNCTION pg_catalog.date_eq(date, date) CASCADE;"],
+    ["unknown catalog routine", "CREATE FUNCTION pg_catalog.unknown_rag_guard_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["vector drop/recreation", "DROP EXTENSION vector CASCADE; CREATE EXTENSION IF NOT EXISTS vector;"],
+    ["vector alteration/drop/recreation", "ALTER EXTENSION vector UPDATE; DROP EXTENSION vector CASCADE; CREATE EXTENSION IF NOT EXISTS vector;"],
+    ["pg_trgm drop/recreation", "DROP EXTENSION pg_trgm CASCADE; CREATE EXTENSION IF NOT EXISTS pg_trgm;"],
+  ])("rejects RAG provenance after %s catalog mutation", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("rag"),
+      { file: "zzzz_catalog_routine.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["table:public.knowledge_chunks", "rpc:public.match_region_itinerary_chunks"],
+      provenance,
+    )).toBe(false);
+  });
+
+  it.each([
+    ["unrelated public routine", "CREATE OR REPLACE FUNCTION public.catalog_name_probe(bigint, bigint) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT $1 = $2 $$;"],
+    ["unrelated private routine", "CREATE SCHEMA private; CREATE FUNCTION private.catalog_name_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["unrelated public routine lifecycle", "CREATE FUNCTION public.catalog_lifecycle_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; ALTER FUNCTION public.catalog_lifecycle_probe() VOLATILE; DROP FUNCTION public.catalog_lifecycle_probe();"],
+    ["private-path routine creation", "CREATE SCHEMA private; SET search_path = private, public; CREATE FUNCTION catalog_path_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["case-distinct quoted schema routine", "CREATE SCHEMA \"PG_CATALOG\"; CREATE FUNCTION \"PG_CATALOG\".catalog_name_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["unqualified public routine", "CREATE FUNCTION uuid_eq(uuid, uuid) RETURNS boolean LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT false $$;"],
+    ["unrelated drop lists", "DROP FUNCTION public.unrelated(), public.also_unrelated(uuid); DROP OPERATOR public.## (uuid, uuid); DROP INDEX public.unrelated_idx; DROP ROLE reporting_user, reporting_admin;"],
+  ])("accepts reviewed provenance after %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_catalog_routine_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it("does not claim a PostgreSQL version or reconstruct core routine DDL", () => {
+    const detector = readFileSync(path.join(ROOT, "scripts/check-mocked-tenant-tests.ts"), "utf8");
+    expect(detector).not.toMatch(/postgresql-\d+|CREATE OR REPLACE FUNCTION pg_catalog\.uuid_(?:eq|cmp)|LANGUAGE internal/);
+  });
+
+  it("accepts a fully removed custom operator dependency graph", () => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_catalog_graph_cleanup.sql",
+        sql: `
+          CREATE FUNCTION public.evil_uuid_eq(uuid, uuid) RETURNS boolean
+            LANGUAGE sql IMMUTABLE AS $$ SELECT true $$;
+          CREATE OPERATOR public.## (
+            LEFTARG = uuid, RIGHTARG = uuid, PROCEDURE = public.evil_uuid_eq
+          );
+          CREATE OPERATOR CLASS public.evil_uuid_ops FOR TYPE uuid USING btree AS
+            OPERATOR 3 public.## (uuid, uuid), FUNCTION 1 pg_catalog.uuid_cmp(uuid, uuid);
+          CREATE INDEX bookings_evil_graph_probe ON public.bookings USING btree (id public.evil_uuid_ops);
+          DROP INDEX public.bookings_evil_graph_probe;
+          DROP OPERATOR CLASS public.evil_uuid_ops USING btree;
+          DROP OPERATOR public.## (uuid, uuid);
+          DROP FUNCTION public.evil_uuid_eq(uuid, uuid);
+        `,
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
     ["relevant operator", "CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq);"],
     ["relevant cast", "DROP CAST (uuid AS text);"],
     ["built-in type shadow", "CREATE DOMAIN public.uuid AS text;"],
     ["new extension", "CREATE EXTENSION IF NOT EXISTS hstore;"],
+    ["extension create/drop cycle", "CREATE EXTENSION IF NOT EXISTS hstore; DROP EXTENSION hstore;"],
+    ["catalog-schema extension create/drop cycle", "CREATE EXTENSION hstore SCHEMA pg_catalog; DROP EXTENSION hstore;"],
+    ["catalog extension drop/recreate/drop cycle", "DROP EXTENSION plpgsql CASCADE; CREATE EXTENSION plpgsql; DROP EXTENSION plpgsql CASCADE;"],
+    ["dynamic catalog DDL in DO", "DO $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$;"],
+    ["dynamic catalog DDL through called procedure", "CREATE PROCEDURE public.catalog_mutator() LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; CALL public.catalog_mutator();"],
+    ["dynamic catalog DDL through selected function", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT public.catalog_mutator();"],
+    ["wrong-signature private shadow before catalog ALTER", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION private.uuid_eq(integer, integer) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$; ALTER FUNCTION uuid_eq(uuid, uuid) VOLATILE;"],
+    ["wrong-signature private shadow before catalog DROP", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION private.uuid_eq(integer, integer) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$; DROP FUNCTION uuid_eq(uuid, uuid);"],
+    ["dynamic catalog DDL through SELECT FROM", "CREATE FUNCTION public.catalog_mutator() RETURNS SETOF integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN NEXT 1; END $body$; SELECT * FROM public.catalog_mutator();"],
+    ["dynamic catalog DDL through SELECT predicate", "CREATE FUNCTION public.catalog_mutator() RETURNS boolean LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN true; END $body$; SELECT 1 WHERE public.catalog_mutator();"],
+    ["dynamic catalog DDL through quoted routine call", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT public.\"catalog_mutator\"();"],
+    ["dynamic function after rename", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; ALTER FUNCTION public.catalog_mutator() RENAME TO renamed_catalog_mutator; SELECT public.renamed_catalog_mutator();"],
+    ["dynamic procedure after schema move", "CREATE SCHEMA private; CREATE PROCEDURE public.catalog_mutator() LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; ALTER PROCEDURE public.catalog_mutator() SET SCHEMA private; CALL private.catalog_mutator();"],
     ["reviewed schema rename", "ALTER SCHEMA public RENAME TO app_public;"],
     ["unknown ownership cascade", "DROP OWNED BY authenticated CASCADE;"],
     ["unknown ownership reassignment", "REASSIGN OWNED BY postgres TO authenticated;"],
@@ -586,7 +821,6 @@ describe("raw Postgres migration provenance", () => {
     ["relevant operator cleanup", "CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); DROP OPERATOR public.= (uuid, uuid);"],
     ["operator cleanup", "CREATE OPERATOR public.## (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq); DROP OPERATOR public.## (uuid, uuid);"],
     ["cast cleanup", "CREATE TYPE public.effect_source AS ENUM ('x'); CREATE CAST (public.effect_source AS text) WITH INOUT AS IMPLICIT; DROP CAST (public.effect_source AS text);"],
-    ["extension cleanup", "CREATE EXTENSION IF NOT EXISTS hstore; DROP EXTENSION hstore;"],
     ["unrelated types and cast", "CREATE TYPE public.effect_source AS ENUM ('x'); CREATE TYPE public.effect_target AS ENUM ('y'); CREATE CAST (public.effect_source AS public.effect_target) WITH INOUT;"],
     ["unrelated-schema operator", "CREATE SCHEMA private; CREATE OPERATOR private.= (LEFTARG = uuid, RIGHTARG = uuid, FUNCTION = pg_catalog.uuid_eq);"],
     ["unrelated-schema type shadow", "CREATE SCHEMA private; CREATE DOMAIN private.uuid AS text;"],
@@ -710,6 +944,43 @@ describe("raw Postgres migration provenance", () => {
     expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
   });
 
+  it.each([
+    ["ALTER", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; ALTER FUNCTION f() VOLATILE;"],
+    ["DROP", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; DROP FUNCTION f();"],
+    ["exact overload ALTER", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; CREATE FUNCTION f(integer) RETURNS integer LANGUAGE sql AS $$ SELECT $1 $$; ALTER FUNCTION f() VOLATILE;"],
+    ["exact overload DROP", "CREATE SCHEMA private; SET search_path=private,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; CREATE FUNCTION f(integer) RETURNS integer LANGUAGE sql AS $$ SELECT $1 $$; DROP FUNCTION f();"],
+    ["uninvoked dynamic routine", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT COALESCE(1, 1);"],
+    ["call-shaped quoted alias", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT 1 AS \"public.catalog_mutator()\";"],
+    ["qualified call-shaped quoted column", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT x.\"public.catalog_mutator()\" FROM (SELECT 1 AS \"public.catalog_mutator()\") x;"],
+    ["unqualified call-shaped quoted alias", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT 1 AS \"catalog_mutator()\";"],
+    ["escaped call-shaped quoted alias", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT 1 AS \"public.catalog_mutator()\"\"quoted\";"],
+    ["renamed-schema creation", "CREATE SCHEMA private; ALTER SCHEMA private RENAME TO private2; SET search_path=private2,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
+    ["other-database role path", "ALTER ROLE authenticated IN DATABASE template1 SET search_path=private,public;"],
+    ["private same-name index drop", "CREATE SCHEMA private; CREATE TABLE private.other(id uuid); CREATE INDEX bookings_pkey ON private.other(id); SET search_path=private,public; DROP INDEX bookings_pkey;"],
+  ])("accepts reviewed provenance after proven non-catalog %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_non_catalog_control.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it("does not carry catalog taint across derivations or targets", () => {
+    const tainted = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_dynamic.sql", sql: "DO $$ BEGIN EXECUTE 'CREATE FUNCTION pg_catalog.probe() RETURNS int LANGUAGE sql AS ''SELECT 1'''; END $$;" },
+    ]);
+    const freshMain = derivePostgresMigrationProvenance(repoMigrations("main"));
+    const freshRag = derivePostgresMigrationProvenance(repoMigrations("rag"));
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], tainted)).toBe(false);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], freshMain)).toBe(true);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["table:public.knowledge_chunks", "rpc:public.match_region_itinerary_chunks"],
+      freshRag,
+    )).toBe(true);
+  });
+
   it("ignores catalog mutation text in comments, strings, identifiers, and dollar bodies", () => {
     const provenance = derivePostgresMigrationProvenance([
       ...repoMigrations("main"),
@@ -717,12 +988,14 @@ describe("raw Postgres migration provenance", () => {
         file: "zzzz_inert.sql",
         sql: `
           -- ALTER ROUTINE public.auth_user_in_tenant(uuid) SET search_path = private;
+          -- ALTER FUNCTION pg_catalog.texteq(text, text) NOT LEAKPROOF;
           SELECT 'CREATE OPERATOR public.= (LEFTARG = uuid, RIGHTARG = uuid)';
+          SELECT 'DROP FUNCTION pg_catalog.texticlike(text, text) CASCADE';
           SELECT 'CREATE ACCESS METHOD evil TYPE INDEX HANDLER pg_catalog.bthandler';
           CREATE TABLE public."ALTER TABLE public.bookings OWNER TO attacker" (id uuid);
           CREATE FUNCTION public.inert_catalog_text() RETURNS text LANGUAGE plpgsql AS $body$
           BEGIN
-            RETURN 'CREATE OPERATOR CLASS public.uuid_ops DEFAULT FOR TYPE uuid USING btree';
+            RETURN 'CREATE FUNCTION pg_catalog.unknown_guard_probe() RETURNS integer';
           END;
           $body$;
         `,
