@@ -52,10 +52,8 @@ const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
 const READ_ONLY_POSTGRES_FUNCTIONS = new Set(["public.match_region_itinerary_chunks"]);
-const POSTGRES_PARENTHESIZED_SYNTAX = new Set([
-  "AND", "AS", "BY", "EXISTS", "FILTER", "FROM", "HAVING", "IN", "JOIN", "LATERAL", "LIMIT", "MATERIALIZED",
-  "NOT", "OFFSET", "ON", "OR", "OVER", "SELECT", "UNION", "USING", "WHEN", "WHERE", "WITHIN",
-]);
+const READ_ONLY_POSTGRES_VALUE_EXPRESSIONS = new Set(["COALESCE", "GREATEST", "LEAST", "NULLIF", "ROW"]);
+const POSTGRES_TIME_VALUE_EXPRESSIONS = new Set(["CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP"]);
 
 const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
 
@@ -2953,14 +2951,133 @@ class LocalFlowEngine {
       "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
     ]);
     if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return undefined;
+    const tokenDepths: number[] = [];
+    let tokenDepth = 0;
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      if (tokens[cursor]!.text === ")") tokenDepth = Math.max(0, tokenDepth - 1);
+      tokenDepths[cursor] = tokenDepth;
+      if (tokens[cursor]!.text === "(") tokenDepth += 1;
+    }
+    const hasPriorSyntax = (
+      cursor: number,
+      matches: (before: number) => boolean,
+      stops: readonly string[] = [],
+    ) => {
+      const atDepth = tokenDepths[cursor];
+      for (let before = cursor - 1; before >= 0; before -= 1) {
+        if (tokenDepths[before] !== atDepth || tokens[before]!.kind !== "word") continue;
+        if (matches(before)) return true;
+        if (stops.some((keyword) => isKeyword(tokens[before], keyword))) return false;
+      }
+      return false;
+    };
+    const insideCase: boolean[] = [];
+    const caseCountByDepth = new Map<number, number>();
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      const atDepth = tokenDepths[cursor]!;
+      if (isKeyword(tokens[cursor], "END")) {
+        caseCountByDepth.set(atDepth, Math.max(0, (caseCountByDepth.get(atDepth) ?? 0) - 1));
+      }
+      insideCase[cursor] = (caseCountByDepth.get(atDepth) ?? 0) > 0;
+      if (isKeyword(tokens[cursor], "CASE")) {
+        caseCountByDepth.set(atDepth, (caseCountByDepth.get(atDepth) ?? 0) + 1);
+      }
+    }
+    const firstWord = tokens.findIndex((token) => token.kind === "word");
     for (let cursor = 0; cursor < tokens.length - 1; cursor += 1) {
       const functionName = tokens[cursor];
       if (!isName(functionName) || tokens[cursor + 1]?.text !== "(") continue;
-      if (functionName.kind === "word" && POSTGRES_PARENTHESIZED_SYNTAX.has(functionName.text.toUpperCase())) continue;
-      const schema = tokens[cursor - 1]?.text === "." && isName(tokens[cursor - 2])
-        ? `${tokens[cursor - 2]!.text.toLowerCase()}.`
-        : "";
-      if (!READ_ONLY_POSTGRES_FUNCTIONS.has(`${schema}${functionName.text.toLowerCase()}`)) return undefined;
+      const schemaName = tokens[cursor - 1]?.text === "." && isName(tokens[cursor - 2])
+        ? tokens[cursor - 2]!.text.toLowerCase()
+        : undefined;
+      if (schemaName) {
+        if (!READ_ONLY_POSTGRES_FUNCTIONS.has(`${schemaName}.${functionName.text.toLowerCase()}`)) return undefined;
+        continue;
+      }
+      if (functionName.kind === "quotedIdentifier") return undefined;
+      const keyword = functionName.text.toUpperCase();
+      const previous = tokens[cursor - 1];
+      const innerHead = tokens[cursor + 2];
+      const closing = tokens.findIndex(
+        (token, after) => after > cursor + 1 && token.text === ")" && tokenDepths[after] === tokenDepths[cursor + 1],
+      );
+      const queryHasFromBefore = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "FROM") || isKeyword(tokens[before], "JOIN"),
+        ["SELECT", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
+      );
+      const queryHasSelectBefore = hasPriorSyntax(cursor, (before) => isKeyword(tokens[before], "SELECT"));
+      const queryIsInPredicate = hasPriorSyntax(
+        cursor,
+        (before) => ["WHERE", "HAVING", "ON"].some((candidate) => isKeyword(tokens[before], candidate)),
+        ["SELECT", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
+      );
+      const queryIsInGroupBy = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "BY") && isKeyword(tokens[before - 1], "GROUP"),
+        ["SELECT", "WHERE", "HAVING", "ORDER", "LIMIT", "OFFSET"],
+      );
+      const queryIsInWindowClause = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "WINDOW"),
+        ["SELECT", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET"],
+      );
+      const cteColumnList =
+        (isKeyword(previous, "WITH") ||
+          (isKeyword(previous, "RECURSIVE") && isKeyword(tokens[cursor - 2], "WITH")) ||
+          previous?.text === ",") &&
+        closing >= 0 &&
+        isKeyword(tokens[closing + 1], "AS");
+      const relationAliasColumnList =
+        (isName(previous) || previous?.text === ")") &&
+        !["AS", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
+        queryHasFromBefore;
+      const expressionEnd = isName(previous) || previous?.text === ")";
+      const groupedQueryOperand =
+        ["FROM", "JOIN", "LATERAL", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
+        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"));
+      const groupedExpression =
+        expressionEnd && (
+          (keyword === "WHERE" && queryHasFromBefore) ||
+          (keyword === "HAVING" && queryHasSelectBefore) ||
+          (["AND", "OR"].includes(keyword) && queryIsInPredicate)
+        );
+      const querySelect =
+        keyword === "SELECT" &&
+        (cursor === firstWord || previous?.text === "(" || previous?.text === ")");
+      const cteBody =
+        keyword === "AS" &&
+        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH") || (innerHead?.kind === "word" && mutating.has(innerHead.text.toUpperCase())));
+      const windowDefinition = keyword === "AS" && queryIsInWindowClause;
+      const syntax =
+        READ_ONLY_POSTGRES_VALUE_EXPRESSIONS.has(keyword) ||
+        POSTGRES_TIME_VALUE_EXPRESSIONS.has(keyword) ||
+        cteColumnList ||
+        relationAliasColumnList ||
+        groupedQueryOperand ||
+        groupedExpression ||
+        querySelect ||
+        cteBody ||
+        windowDefinition ||
+        (keyword === "ARRAY" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (["ANY", "ALL", "SOME"].includes(keyword) && expressionEnd &&
+          (isKeyword(innerHead, "ARRAY") || isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (keyword === "CASE") ||
+        (["WHEN", "THEN", "ELSE"].includes(keyword) && insideCase[cursor]) ||
+        (["CUBE", "ROLLUP"].includes(keyword) && queryIsInGroupBy) ||
+        (keyword === "SETS" && isKeyword(previous, "GROUPING")) ||
+        (["FIRST", "NEXT"].includes(keyword) && isKeyword(previous, "FETCH")) ||
+        (keyword === "BETWEEN" && expressionEnd) ||
+        (keyword === "ZONE" && isKeyword(previous, "TIME") && isKeyword(tokens[cursor - 2], "AT")) ||
+        (keyword === "IN" && (expressionEnd || isKeyword(previous, "NOT"))) ||
+        (keyword === "EXISTS" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (keyword === "ON" && (isKeyword(previous, "DISTINCT") || queryHasFromBefore)) ||
+        (keyword === "BY" && (isKeyword(previous, "GROUP") || isKeyword(previous, "ORDER"))) ||
+        (keyword === "MATERIALIZED" && isKeyword(previous, "AS")) ||
+        (keyword === "USING" && queryHasFromBefore) ||
+        (["LIMIT", "OFFSET"].includes(keyword) && queryHasSelectBefore) ||
+        keyword === "NOT";
+      if (!syntax) return undefined;
     }
     let depth = 0;
     const topLevelFrom: number[] = [];

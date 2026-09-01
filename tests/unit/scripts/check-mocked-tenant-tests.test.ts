@@ -559,9 +559,42 @@ describe("RLS integration", () => {
     )).toBeUndefined();
   });
 
+  it.each([
+    ["ANY array comparison", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])"],
+    ["ALL array comparison", "SELECT id FROM public.bookings WHERE id = ALL (ARRAY['booking-a'])"],
+    ["SOME array comparison", "SELECT id FROM public.bookings WHERE id = SOME (ARRAY['booking-a'])"],
+    ["CASE grouping", "SELECT id FROM public.bookings WHERE CASE WHEN true THEN (id IS NOT NULL) ELSE (id IS NULL) END"],
+    ["simple CASE operand grouping", "SELECT id FROM public.bookings WHERE CASE (id) WHEN ('booking-a') THEN (true) ELSE (true) END"],
+    ["row constructors", "SELECT id FROM public.bookings WHERE ROW(id) = ROW('booking-a')"],
+    ["array subquery constructor", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY(SELECT id FROM public.bookings))"],
+    ["CUBE grouping", "SELECT id FROM public.bookings GROUP BY CUBE (id)"],
+    ["ROLLUP grouping", "SELECT id FROM public.bookings GROUP BY ROLLUP (id)"],
+    ["GROUPING SETS", "SELECT id FROM public.bookings GROUP BY GROUPING SETS ((id), ())"],
+    ["COALESCE value expression", "SELECT COALESCE(id, id) AS id FROM public.bookings"],
+    ["NULLIF value expression", "SELECT NULLIF(id, 'unrelated') AS id FROM public.bookings"],
+    ["GREATEST value expression", "SELECT GREATEST(id, id) AS id FROM public.bookings"],
+    ["LEAST value expression", "SELECT LEAST(id, id) AS id FROM public.bookings"],
+    ["CTE column aliases", "WITH visible(id) AS (SELECT id FROM public.bookings) SELECT id FROM visible"],
+    ["table column aliases", "SELECT booking.id FROM public.bookings booking(id)"],
+    ["derived-table column aliases", "SELECT visible.id FROM (SELECT id FROM public.bookings) visible(id)"],
+    ["parenthesized INTERSECT operand", "SELECT id FROM public.bookings INTERSECT (SELECT id FROM public.bookings)"],
+    ["parenthesized EXCEPT operand", "SELECT id FROM public.bookings EXCEPT (SELECT id FROM public.bookings)"],
+    ["FETCH FIRST count", "SELECT id FROM public.bookings FETCH FIRST (1) ROWS ONLY"],
+    ["FETCH NEXT count", "SELECT id FROM public.bookings FETCH NEXT (1) ROWS ONLY"],
+    ["grouped BETWEEN operands", "SELECT id FROM public.bookings WHERE id BETWEEN ('a') AND ('z')"],
+    ["AT TIME ZONE operand", "SELECT id FROM public.bookings WHERE CURRENT_TIMESTAMP AT TIME ZONE ('UTC') IS NOT NULL"],
+    ["time precision", "SELECT id FROM public.bookings WHERE CURRENT_TIME(3) IS NOT NULL AND CURRENT_TIMESTAMP(3) IS NOT NULL AND LOCALTIME(3) IS NOT NULL AND LOCALTIMESTAMP(3) IS NOT NULL"],
+    ["DISTINCT ON expression", "SELECT DISTINCT ON (id) id FROM public.bookings"],
+    ["WINDOW definition", "SELECT id FROM public.bookings WINDOW booking_window AS (PARTITION BY id)"],
+    ["LIMIT and OFFSET expressions", "SELECT id FROM public.bookings LIMIT (1) OFFSET (0)"],
+    ["EXISTS subquery", "SELECT id FROM public.bookings WHERE EXISTS (SELECT 1 FROM public.bookings visible WHERE visible.id = id)"],
+  ])("accepts Postgres %s syntax without treating it as a function", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toBeUndefined();
+  });
+
   it("accepts the verified read-only region-matching Postgres function", () => {
     expect(postgresAnnotationErrorFor(
-      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched JOIN public.bookings booking ON true`',
+      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched(related_chunk_id) JOIN public.bookings booking ON true`',
       "",
       "rpc:public.match_region_itinerary_chunks,table:public.bookings",
     )).toBeUndefined();
@@ -617,6 +650,46 @@ describe("RLS integration", () => {
       'async () => sql`SELECT booking.id FROM public.bookings booking CROSS JOIN LATERAL public.increment_weather_usage() effect`',
       "",
       "rpc:public.increment_weather_usage,table:public.bookings",
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a schema-qualified function whose quoted name resembles SQL syntax", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT id, public."ROW"(id) FROM public.bookings`',
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["unqualified FILTER", "filter(id)"],
+    ["unqualified OVER", "over(id)"],
+    ["qualified FILTER", "public.filter(id)"],
+    ["qualified OVER", "public.over(id)"],
+    ["qualified SELECT", "public.select(id)"],
+    ["qualified WHERE", "public.where(id)"],
+    ["qualified WITHIN", "public.within(id)"],
+    ["qualified MATERIALIZED", "public.materialized(id)"],
+    ["qualified newly accepted ANY", "public.any(id)"],
+    ["qualified newly accepted ROW", "public.row(id)"],
+    ["quoted ROW", '"row"(id)'],
+    ["qualified quoted ANY", 'public."any"(id)'],
+  ])("rejects a Postgres %s callable shape", (_shape, call) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${call} FROM public.bookings\``,
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects an unknown set-returning function inside ROWS FROM", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.bookings booking, ROWS FROM (unknown_srf(booking.id)) effect`',
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["aggregate FILTER", "unknown_aggregate(id) FILTER (WHERE id IS NOT NULL)"],
+    ["ordered-set aggregate", "unknown_aggregate(id) WITHIN GROUP (ORDER BY id)"],
+  ])("rejects an unknown Postgres %s", (_shape, expression) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${expression} FROM public.bookings\``,
     )).toMatch(/mutation witness/);
   });
 

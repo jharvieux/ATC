@@ -484,6 +484,50 @@ regress(
   pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.match_region_itinerary_chunks"),
   postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE)`"),
 );
+for (const [shape, statement] of [
+  ["ANY array comparison", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])"],
+  ["ANY subquery comparison", "SELECT id FROM public.bookings WHERE id = ANY (SELECT id FROM public.bookings)"],
+  ["CASE expression grouping", "SELECT id FROM public.bookings WHERE CASE WHEN true THEN (id IS NOT NULL) ELSE (id IS NULL) END"],
+  ["simple CASE operand grouping", "SELECT id FROM public.bookings WHERE CASE (id) WHEN ('booking-a') THEN (true) ELSE (true) END"],
+  ["ROW value constructors", "SELECT id FROM public.bookings WHERE ROW(id) = ROW('booking-a')"],
+  ["ARRAY subquery constructor", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY(SELECT id FROM public.bookings))"],
+  ["CUBE grouping", "SELECT id FROM public.bookings GROUP BY CUBE (id)"],
+  ["ROLLUP grouping", "SELECT id FROM public.bookings GROUP BY ROLLUP (id)"],
+  ["GROUPING SETS", "SELECT id FROM public.bookings GROUP BY GROUPING SETS ((id), ())"],
+  ["CTE column aliases", "WITH visible(id) AS (SELECT id FROM public.bookings) SELECT id FROM visible"],
+  ["derived-table column aliases", "SELECT visible.id FROM (SELECT id FROM public.bookings) visible(id)"],
+  ["parenthesized set operand", "SELECT id FROM public.bookings INTERSECT (SELECT id FROM public.bookings)"],
+  ["FETCH count", "SELECT id FROM public.bookings FETCH FIRST (1) ROWS ONLY"],
+  ["BETWEEN operands", "SELECT id FROM public.bookings WHERE id BETWEEN ('a') AND ('z')"],
+  ["AT TIME ZONE operand", "SELECT id FROM public.bookings WHERE CURRENT_TIMESTAMP AT TIME ZONE ('UTC') IS NOT NULL"],
+  ["time precision", "SELECT id FROM public.bookings WHERE LOCALTIMESTAMP(3) IS NOT NULL"],
+  ["WINDOW definition", "SELECT id FROM public.bookings WINDOW booking_window AS (PARTITION BY id)"],
+  ["LIMIT expression", "SELECT id FROM public.bookings LIMIT (1)"],
+] as const) {
+  regress(
+    "sql:parenthesized-syntax",
+    shape,
+    "safe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`${statement}\``),
+  );
+}
+for (const [shape, call] of [
+  ["unqualified FILTER call", "filter(id)"],
+  ["qualified FILTER call", "public.filter(id)"],
+  ["qualified OVER call", "public.over(id)"],
+  ["qualified WHERE call", "public.where(id)"],
+  ["qualified ANY call", "public.any(id)"],
+  ["quoted ROW call", '"row"(id)'],
+] as const) {
+  regress(
+    "sql:keyword-call-ambiguity",
+    shape,
+    "unsafe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`SELECT id, ${call} FROM public.bookings\``),
+  );
+}
 
 regress(
   "postgres:helper-return",
