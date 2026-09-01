@@ -13,6 +13,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
   getTenantByCustomDomain: vi.fn(),
+  getCurrentIndexingTenantByCustomDomain: vi.fn(),
   getTenantByAuthUserId: vi.fn(),
   getTenantById: vi.fn(),
   getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantBySlug: mocks.getTenantBySlug,
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+  getCurrentIndexingTenantByCustomDomain:
+    mocks.getCurrentIndexingTenantByCustomDomain,
   getTenantByAuthUserId: mocks.getTenantByAuthUserId,
   getTenantById: mocks.getTenantById,
 }));
@@ -64,6 +67,14 @@ function makeReq(opts: { host: string; pathname?: string; headers?: Record<strin
 describe("proxy()", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getCurrentIndexingTenantByCustomDomain.mockImplementation(
+      async (hostname: string) => {
+        const tenant = await mocks.getTenantByCustomDomain(hostname);
+        return tenant
+          ? { ...tenant, tier_code: tenant.tenant_type ?? null }
+          : null;
+      },
+    );
     mocks.getClaims.mockResolvedValue({ data: null, error: null });
     process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
     process.env.PLATFORM_DOMAIN_REGEX = "^atc-([a-z0-9-]+)\\.ai-travelconcierge\\.com$";
@@ -1020,6 +1031,7 @@ describe("proxy()", () => {
       mocks.getTenantBySlug.mockResolvedValue(null);
       mocks.getTenantByCustomDomain.mockResolvedValue(
         payingTenant({
+          tenant_type: "sub_agency",
           custom_domain: "harborlighttravel.com",
           custom_domain_status: "verified",
           search_indexing_enabled: true,
@@ -1029,6 +1041,44 @@ describe("proxy()", () => {
       const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
 
       expect(res.headers.get("X-Robots-Tag")).toBeNull();
+    });
+
+    it("marks a downgraded custom domain noindex even when its opt-in remains set", async () => {
+      const tenant = payingTenant({
+        tenant_type: "sub_agency",
+        custom_domain: "harborlighttravel.com",
+        custom_domain_status: "verified",
+        search_indexing_enabled: true,
+      });
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(tenant);
+      mocks.getCurrentIndexingTenantByCustomDomain.mockResolvedValue({
+        ...tenant,
+        tier_code: "sub_pro",
+      });
+
+      const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    });
+
+    it("fails closed when the current tier lookup fails", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({
+          tenant_type: "sub_agency",
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: true,
+        }),
+      );
+      mocks.getCurrentIndexingTenantByCustomDomain.mockRejectedValue(
+        new Error("tier lookup unavailable"),
+      );
+
+      const res = await proxy(makeReq({ host: "harborlighttravel.com" }));
+
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
     });
 
     it("keeps an opted-in but unverified custom domain noindex", async () => {

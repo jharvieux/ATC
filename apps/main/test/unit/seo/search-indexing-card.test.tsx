@@ -61,4 +61,52 @@ describe("SearchIndexingCard", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
+
+  it("shows the error state when the save request is rejected", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          agency_eligible: true,
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: false,
+        }),
+      )
+      .mockRejectedValueOnce(new Error("network_unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SearchIndexingCard />);
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Allow search engines to index this custom domain",
+      }),
+    );
+
+    expect(await screen.findByText("network_unavailable")).toBeTruthy();
+  });
+
+  it("shows the error state when the save response is not JSON", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          agency_eligible: true,
+          custom_domain: "harborlighttravel.com",
+          custom_domain_status: "verified",
+          search_indexing_enabled: false,
+        }),
+      )
+      .mockResolvedValueOnce(new Response("upstream unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SearchIndexingCard />);
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Allow search engines to index this custom domain",
+      }),
+    );
+
+    expect(await screen.findByText("save_failed")).toBeTruthy();
+  });
 });

@@ -1,7 +1,9 @@
 import "server-only";
 
-import { getTenantByCustomDomain } from "@/lib/tenancy/resolve-tenant";
+import { getCurrentIndexingTenantByCustomDomain } from "@/lib/tenancy/resolve-tenant";
 import { isIndexableHost, normalizeHost, siteOrigin } from "@/lib/seo/site";
+
+const AGENCY_TIERS = new Set(["sub_agency", "byo_agency"]);
 
 export interface IndexingTarget {
   kind: "platform" | "tenant";
@@ -31,12 +33,14 @@ export async function resolveIndexingTarget(
   }
 
   try {
-    const tenant = await getTenantByCustomDomain(hostname);
+    const tenant = await getCurrentIndexingTenantByCustomDomain(hostname);
     if (
       tenant?.status !== "active" ||
       tenant.custom_domain !== hostname ||
       tenant.custom_domain_status !== "verified" ||
-      tenant.search_indexing_enabled !== true
+      tenant.search_indexing_enabled !== true ||
+      !tenant.tier_code ||
+      !AGENCY_TIERS.has(tenant.tier_code)
     ) {
       return null;
     }

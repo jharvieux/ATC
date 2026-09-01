@@ -599,10 +599,15 @@ export function SearchIndexingCard() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ search_indexing_enabled: enabled }),
       });
-      const data = (await res.json()) as {
+      let data: {
         error?: string;
         search_indexing_enabled?: boolean;
       };
+      try {
+        data = (await res.json()) as typeof data;
+      } catch {
+        throw new Error("save_failed");
+      }
       if (!res.ok) {
         setError(data.error ?? "save_failed");
         return;
@@ -615,6 +620,10 @@ export function SearchIndexingCard() {
                 data.search_indexing_enabled ?? enabled,
             }
           : current,
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "save_failed",
       );
     } finally {
       setSaving(false);
