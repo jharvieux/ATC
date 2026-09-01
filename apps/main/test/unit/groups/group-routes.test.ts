@@ -190,6 +190,7 @@ describe("GET /api/groups/[id]", () => {
     expect(body.invitation_counts).toEqual({ booked: 2, pending: 1, not_going: 1 });
   });
 
+  // @rls-covered-by resources=table:public.groups target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies groups: userB cannot SELECT tenantA rows
   it("returns 404 for a missing/RLS-hidden group (same shape as cross-tenant)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({ data: null, error: null });
     const res = await DETAIL_GET(getReq(), PARAMS);
@@ -273,6 +274,7 @@ describe("POST /api/groups/[id]/members", () => {
     expect(res.status).toBe(400);
   });
 
+  // @rls-covered-by resources=table:public.groups target=apps/main/test/integration/rls.test.ts#RLS integration unit-scope companion policies groups: userB cannot SELECT tenantA rows
   it("returns 404 when the group isn't visible (same shape as cross-tenant)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({ data: null, error: null });
     const res = await MEMBERS_POST(

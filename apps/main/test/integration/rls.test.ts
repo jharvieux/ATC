@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -26,8 +27,9 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DB_URL = process.env.SUPABASE_DB_URL;
 
 const haveSupabase = Boolean(SUPABASE_URL && ANON_KEY && SERVICE_KEY && DB_URL);
-
-const describeIf = haveSupabase ? describe : describe.skip;
+if (process.env.MAIN_RLS_DB_REQUIRED === "true" && !haveSupabase) {
+  throw new Error("MAIN_RLS_DB_REQUIRED=true but the live Supabase test credentials are incomplete");
+}
 
 // Random prefix scopes all fixtures to this test run; afterAll uses it to
 // clean up even if intermediate assertions fail.
@@ -66,7 +68,7 @@ async function authedClient(
   return client;
 }
 
-describeIf("RLS integration", () => {
+describe.skipIf(!haveSupabase)("RLS integration", () => {
   beforeAll(async () => {
     const admin = createClient(SUPABASE_URL!, SERVICE_KEY!, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -171,13 +173,14 @@ describeIf("RLS integration", () => {
 
   it("user in tenant A cannot SELECT rows from tenant B", async () => {
     const clientA = await authedClient(fx.userA.email, fx.userA.password);
-    const { data, error } = await clientA
-      .from("users")
-      .select("id, tenant_id")
-      .eq("tenant_id", fx.tenantB.id);
-
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    await assertIsolationQuery({
+      query: () => clientA
+        .from("users")
+        .select("id, tenant_id")
+        .eq("tenant_id", fx.tenantB.id),
+      allowedIds: [],
+      deniedIds: [fx.userB.rowId],
+    });
   });
 
   it("user in suspended tenant CAN SELECT but CANNOT INSERT", async () => {
@@ -258,6 +261,89 @@ describeIf("RLS integration", () => {
     expect(remaining.length).toBe(0);
   });
 
+  it("#2037 — only the service-role orphan-purge RPC can delete aged help sessions", async () => {
+    const oldStartedAt = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+    const recentStartedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+    const seededIds: string[] = [];
+
+    const seedSession = async (startedAt: string): Promise<string> => {
+      const [session] = await fx.sql<{ id: string }[]>`
+        INSERT INTO public.help_sessions (tenant_id, user_id, session_type, source_surface, started_at)
+        VALUES (${fx.tenantA.id}, ${fx.userA.rowId}, 'help', 'admin', ${startedAt})
+        RETURNING id
+      `;
+      if (!session) throw new Error("#2037 help-session fixture insert failed");
+      seededIds.push(session.id);
+      return session.id;
+    };
+
+    try {
+      const oldOrphanId = await seedSession(oldStartedAt);
+      const oldBugId = await seedSession(oldStartedAt);
+      const oldFeatureId = await seedSession(oldStartedAt);
+      const recentOrphanId = await seedSession(recentStartedAt);
+
+      await fx.sql`
+        INSERT INTO public.bug_submissions (help_session_id, tenant_id, submitter_user_id, source_type)
+        VALUES (${oldBugId}, ${fx.tenantA.id}, ${fx.userA.rowId}, 'tenant_admin')
+      `;
+      await fx.sql`
+        INSERT INTO public.feature_requests (help_session_id, tenant_id, submitter_user_id, source_type)
+        VALUES (${oldFeatureId}, ${fx.tenantA.id}, ${fx.userA.rowId}, 'tenant_admin')
+      `;
+
+      await expect(
+        fx.sql.begin(async (tx) => {
+          await tx`SET LOCAL ROLE service_role`;
+          await tx`SELECT set_config('request.jwt.claims', '{"role":"authenticated"}', true)`;
+          await tx`
+            SELECT public.purge_orphaned_help_sessions(${cutoff}, 1000)
+          `;
+        }),
+      ).rejects.toSatisfy((error: unknown) => (error as { code?: string }).code === "42501");
+
+      const afterRejectedCall = await fx.sql<{ id: string }[]>`
+        SELECT id FROM public.help_sessions WHERE id = ${oldOrphanId}
+      `;
+      expect(afterRejectedCall).toEqual([{ id: oldOrphanId }]);
+
+      const purged = await fx.admin.rpc("purge_orphaned_help_sessions", {
+        p_cutoff: cutoff,
+        p_limit: 1000,
+      });
+      expect(purged.error).toBeNull();
+      expect(purged.data).toBe(1);
+
+      const remaining = await fx.sql<{ id: string }[]>`
+        SELECT id FROM public.help_sessions
+        WHERE id IN (${oldOrphanId}, ${oldBugId}, ${oldFeatureId}, ${recentOrphanId})
+      `;
+      expect(remaining.map((row) => row.id).sort()).toEqual(
+        [oldBugId, oldFeatureId, recentOrphanId].sort(),
+      );
+
+      const directDelete = await fx.admin.from("help_sessions").delete().eq("id", recentOrphanId);
+      expect(directDelete.error).not.toBeNull();
+      expect(directDelete.error?.code).toBe("42501");
+
+      const privileges = await fx.sql<{ grantee: string }[]>`
+        SELECT grantee
+        FROM information_schema.routine_privileges
+        WHERE routine_schema = 'public'
+          AND routine_name = 'purge_orphaned_help_sessions'
+          AND privilege_type = 'EXECUTE'
+          AND grantee IN ('PUBLIC', 'anon', 'authenticated', 'service_role')
+        ORDER BY grantee
+      `;
+      expect(privileges).toEqual([{ grantee: "service_role" }]);
+    } finally {
+      await fx.sql`DELETE FROM public.feature_requests WHERE help_session_id = ANY(${seededIds})`;
+      await fx.sql`DELETE FROM public.bug_submissions WHERE help_session_id = ANY(${seededIds})`;
+      await fx.sql`DELETE FROM public.help_sessions WHERE id = ANY(${seededIds})`;
+    }
+  });
+
   // ── BP05 domain tables ────────────────────────────────────────────────────
   // One cross-tenant isolation check per new table. Also verifies that
   // suspended-tenant users can SELECT but cannot INSERT on conversations,
@@ -267,6 +353,7 @@ describeIf("RLS integration", () => {
     let convAId: string;
     let convSuspId: string;
     let bookingAId: string;
+    let commissionAId: string;
 
     beforeAll(async () => {
       if (!fx) return;
@@ -305,7 +392,7 @@ describeIf("RLS integration", () => {
       bookingAId = bookingA.id;
 
       // commissions (tenantA, references bookingAId)
-      await sql`
+      const [commission] = await sql<{ id: string }[]>`
         INSERT INTO public.commissions (
           tenant_id, booking_id,
           commissionable_fare_cents, commission_rate, platform_split_rate,
@@ -317,7 +404,10 @@ describeIf("RLS integration", () => {
           10000, 0,
           8000, 2000, 8000
         )
+        RETURNING id
       `;
+      if (!commission) throw new Error("commission A insert failed");
+      commissionAId = commission.id;
 
       // subcontractors (tenantA)
       await sql`
@@ -365,12 +455,14 @@ describeIf("RLS integration", () => {
 
     it("conversations: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("conversations")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("conversations")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [convAId],
+      });
     });
 
     it("conversations: suspended user CANNOT SELECT or INSERT (auth_user_can_access_conversation requires active status)", async () => {
@@ -404,12 +496,14 @@ describeIf("RLS integration", () => {
 
     it("bookings: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("bookings")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("bookings")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [bookingAId],
+      });
     });
 
     it("bookings: userA CAN SELECT own tenant row", async () => {
@@ -424,12 +518,14 @@ describeIf("RLS integration", () => {
 
     it("commissions: userB cannot SELECT tenantA rows", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
-      const { data, error } = await clientB
-        .from("commissions")
-        .select("id")
-        .eq("tenant_id", fx.tenantA.id);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("commissions")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [commissionAId],
+      });
     });
 
     it("subcontractors: userB cannot SELECT tenantA rows", async () => {
@@ -480,6 +576,197 @@ describeIf("RLS integration", () => {
         .is("tenant_id", null);
       expect(error).toBeNull();
       expect(data).toEqual([]);
+    });
+  });
+
+  describe("unit-scope companion policies", () => {
+    let customerMemoryAId: string;
+    let anonymousSessionAId: string;
+    let groupAId: string;
+    let forumAId: string;
+    let forumThreadAId: string;
+    let importQueueAId: string;
+    let bookingAId: string;
+    let tripResourceAId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, userA } = fx;
+
+      const [customerMemory] = await sql<{ id: string }[]>`
+        INSERT INTO public.customer_memories (tenant_id, user_id, notes_freeform)
+        VALUES (${tenantA.id}, ${userA.rowId}, 'unit-scope companion fixture')
+        RETURNING id
+      `;
+      if (!customerMemory) throw new Error("customer memory insert failed");
+      customerMemoryAId = customerMemory.id;
+
+      const [anonymousSession] = await sql<{ id: string }[]>`
+        INSERT INTO public.anonymous_sessions (tenant_id, last_active_at)
+        VALUES (${tenantA.id}, NOW())
+        RETURNING id
+      `;
+      if (!anonymousSession) throw new Error("anonymous session insert failed");
+      anonymousSessionAId = anonymousSession.id;
+
+      const [group] = await sql<{ id: string }[]>`
+        INSERT INTO public.groups (
+          tenant_id, coordinator_user_id, cruise_line, ship_name,
+          sailing_date, departure_port
+        ) VALUES (
+          ${tenantA.id}, ${userA.rowId}, 'Test Line', 'Test Ship',
+          CURRENT_DATE + 30, 'Test Port'
+        )
+        RETURNING id
+      `;
+      if (!group) throw new Error("group insert failed");
+      groupAId = group.id;
+
+      const [forum] = await sql<{ id: string }[]>`
+        INSERT INTO public.forums (group_id, tenant_id)
+        VALUES (${groupAId}, ${tenantA.id})
+        RETURNING id
+      `;
+      if (!forum) throw new Error("forum insert failed");
+      forumAId = forum.id;
+
+      const [thread] = await sql<{ id: string }[]>`
+        INSERT INTO public.forum_threads (
+          forum_id, tenant_id, created_by_user_id, title
+        ) VALUES (
+          ${forumAId}, ${tenantA.id}, ${userA.rowId}, 'Companion RLS thread'
+        )
+        RETURNING id
+      `;
+      if (!thread) throw new Error("forum thread insert failed");
+      forumThreadAId = thread.id;
+
+      const [importQueue] = await sql<{ id: string }[]>`
+        INSERT INTO public.import_queue (tenant_id, import_path, source_ref)
+        VALUES (${tenantA.id}, 'manual', ${RUN_TAG + '-import'})
+        RETURNING id
+      `;
+      if (!importQueue) throw new Error("import queue insert failed");
+      importQueueAId = importQueue.id;
+
+      const [booking] = await sql<{ id: string }[]>`
+        INSERT INTO public.bookings (tenant_id, booking_type, status)
+        VALUES (${tenantA.id}, 'cruise', 'draft')
+        RETURNING id
+      `;
+      if (!booking) throw new Error("companion booking insert failed");
+      bookingAId = booking.id;
+
+      const [tripResource] = await sql<{ id: string }[]>`
+        INSERT INTO public.trip_resources (
+          tenant_id, booking_id, access_token, status
+        ) VALUES (
+          ${tenantA.id}, ${bookingAId}, ${RUN_TAG + '-resource-token'}, 'draft'
+        )
+        RETURNING id
+      `;
+      if (!tripResource) throw new Error("trip resource insert failed");
+      tripResourceAId = tripResource.id;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, userA } = fx;
+      await sql`DELETE FROM public.trip_resources WHERE id = ${tripResourceAId}`;
+      await sql`DELETE FROM public.bookings WHERE id = ${bookingAId}`;
+      await sql`DELETE FROM public.import_queue WHERE id = ${importQueueAId}`;
+      await sql`DELETE FROM public.forum_threads WHERE id = ${forumThreadAId}`;
+      await sql`DELETE FROM public.forums WHERE id = ${forumAId}`;
+      await sql`DELETE FROM public.groups WHERE id = ${groupAId}`;
+      await sql`DELETE FROM public.anonymous_sessions WHERE id = ${anonymousSessionAId}`;
+      await sql`
+        DELETE FROM public.customer_memories
+        WHERE tenant_id = ${tenantA.id} AND user_id = ${userA.rowId}
+      `;
+    }, 30000);
+
+    it("customer_memories: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("customer_memories")
+          .select("id")
+          .eq("tenant_id", fx.tenantA.id),
+        allowedIds: [],
+        deniedIds: [customerMemoryAId],
+      });
+    });
+
+    it("anonymous_sessions: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("anonymous_sessions")
+          .select("id")
+          .eq("id", anonymousSessionAId),
+        allowedIds: [],
+        deniedIds: [anonymousSessionAId],
+      });
+    });
+
+    it("groups: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("groups")
+          .select("id")
+          .eq("id", groupAId),
+        allowedIds: [],
+        deniedIds: [groupAId],
+      });
+    });
+
+    it("forums: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("forums")
+          .select("id")
+          .eq("id", forumAId),
+        allowedIds: [],
+        deniedIds: [forumAId],
+      });
+    });
+
+    it("forum_threads: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("forum_threads")
+          .select("id")
+          .eq("id", forumThreadAId),
+        allowedIds: [],
+        deniedIds: [forumThreadAId],
+      });
+    });
+
+    it("import_queue: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("import_queue")
+          .select("id")
+          .eq("id", importQueueAId),
+        allowedIds: [],
+        deniedIds: [importQueueAId],
+      });
+    });
+
+    it("trip_resources: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      await assertIsolationQuery({
+        query: () => clientB
+          .from("trip_resources")
+          .select("id")
+          .eq("id", tripResourceAId),
+        allowedIds: [],
+        deniedIds: [tripResourceAId],
+      });
     });
   });
 
@@ -539,12 +826,14 @@ describeIf("RLS integration", () => {
 
     it("§12.1: userA cannot SELECT tenantB contact (contactBId)", async () => {
       const clientA = await authedClient(fx.userA.email, fx.userA.password);
-      const { data, error } = await clientA
-        .from("contacts")
-        .select("id")
-        .eq("id", contactBId);
-      expect(error).toBeNull();
-      expect(data).toEqual([]);
+      await assertIsolationQuery({
+        query: () => clientA
+          .from("contacts")
+          .select("id")
+          .eq("id", contactBId),
+        allowedIds: [],
+        deniedIds: [contactBId],
+      });
     });
 
     it("§12.2: duplicate contact_relationship edge is rejected (UNIQUE 23505)", async () => {
@@ -648,6 +937,64 @@ describeIf("RLS integration", () => {
       });
       expect(outsider.error).toBeNull();
       expect(outsider.data).toBe(false);
+    });
+  });
+
+  describe("#2072 help-docs storage tenant isolation", () => {
+    const objectName = `${RUN_TAG}.pdf`;
+
+    beforeAll(async () => {
+      const uploads = await Promise.all([
+        fx.admin.storage
+          .from("help-docs")
+          .upload(`tenant_${fx.tenantA.id}/help-docs/${objectName}`, new Blob(["tenant-a"], { type: "application/pdf" }), {
+            contentType: "application/pdf",
+            upsert: true,
+          }),
+        fx.admin.storage
+          .from("help-docs")
+          .upload(`tenant_${fx.tenantB.id}/help-docs/${objectName}`, new Blob(["tenant-b"], { type: "application/pdf" }), {
+            contentType: "application/pdf",
+            upsert: true,
+          }),
+      ]);
+      for (const upload of uploads) expect(upload.error).toBeNull();
+    });
+
+    afterAll(async () => {
+      if (!fx) return;
+      const cleanup = await fx.admin.storage.from("help-docs").remove([
+        `tenant_${fx.tenantA.id}/help-docs/${objectName}`,
+        `tenant_${fx.tenantB.id}/help-docs/${objectName}`,
+      ]);
+      expect(cleanup.error).toBeNull();
+    });
+
+    it("keeps the help-docs bucket private", async () => {
+      const { data: bucket, error } = await fx.admin.storage.getBucket("help-docs");
+
+      expect(error).toBeNull();
+      expect(bucket?.public).toBe(false);
+    });
+
+    it("allows an authenticated user to list own-tenant exports", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const result = await clientA.storage
+        .from("help-docs")
+        .list(`tenant_${fx.tenantA.id}/help-docs`, { search: objectName });
+
+      expect(result.error).toBeNull();
+      expect(result.data?.map((object) => object.name)).toContain(objectName);
+    });
+
+    it("denies an authenticated user access to cross-tenant exports", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const result = await clientA.storage
+        .from("help-docs")
+        .list(`tenant_${fx.tenantB.id}/help-docs`, { search: objectName });
+
+      expect(result.error).toBeNull();
+      expect(result.data).toEqual([]);
     });
   });
 });

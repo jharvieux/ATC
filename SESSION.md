@@ -1,23 +1,23 @@
-# Session state — last updated 2026-08-10 17:00 CDT
+# Session state — last updated 2026-08-31 15:10 CDT
 
 ## Just completed
-- Investigated failed GitHub jobs and merged the CI/dependency repairs in PR #2081.
-- Discarded the redundant local `AGENTS.md` RTK addition; `AGENTS.md` remains unchanged.
-- Removed the obsolete untracked Memtrace `.codex/config.toml`; no Memtrace configuration or license material was committed.
-- Added portable shared Codex hooks and the pre-PR reviewer definition in PR #2085.
-- Hardened the hooks for Codex `apply_patch` payloads, fail-loud lint execution, macOS case aliases, and protected MEMORY/spec paths.
-- Added 23 focused hook/config regression tests; full `pnpm verify`, both audit agents, required CI, security checks, and Vercel previews passed.
-- Squash-merged PR #2085 into `dev` as `fc98605a` and deleted the feature branch.
+- Merged PR #2107 into `dev` as squash commit `7778961120cc0d58531f954ff6f235780926f60b` and removed the clean temporary feature worktree/branches.
+- Redesigned the T-90, T-30, T-7, and T-1 pre-cruise emails with a professional editorial layout, stronger hierarchy, branded content cards and CTAs, production-wired T-30 specialty experiences, and the required T-1 carry-on warning.
+- Added the agent/tenant-owner **Pre-cruise emails** menu workflow for send-now and chosen-time scheduling, with action-specific permissions, tenant/current-state validation, once-per-phase/idempotent delivery, booking-status rechecks, and fail-closed async UI behavior.
+- Final exact head `c69796991d8ea800d91795f90dde9d320775e669` passed `pnpm verify` under Node 24 (6,906 app tests and 201 RAG tests; live schema-drift checks explicitly skipped without local DB URLs), all hosted CI/security/E2E/integration/cross-tenant checks, current D-091 and pre-PR audit markers, and independent exact-head acceptance (709 focused tests).
+- Added D-371 for the deliberate direct-manual versus batched-automatic delivery split. Filed #2108 for the bounded census's non-blocking pre-cruise consistency/lifecycle hardening and #2109 for the high-severity `extract-zip` Dependabot alert GitHub reported during push.
 
 ## In flight
-- Nothing in flight — clean checkpoint
+Nothing in flight — clean checkpoint.
 
 ## Next step
-- After the operator completes #2044 and #2079, rerun `supabase-advisor-check` and `contracts-canary` respectively.
+Await user direction. Do not resume the paused issue sweep unless the user explicitly asks; when resumed, continue from PR #2094 as recorded below.
 
 ## Blocked on user
-- #2044: create a Supabase PAT with `database:read` + `advisors_read`, add it as repository Actions secret `SUPABASE_ACCESS_TOKEN`, and rerun `supabase-advisor-check`.
-- #2079: enable Stripe Connect for the test platform behind `STRIPE_TEST_SECRET_KEY` (or rotate to a Connect-enabled test key), then rerun `contracts-canary`.
+- The issue sweep remains intentionally paused. On explicit resume: update PR #2094 from `origin/dev`, re-verify its exact head, then run fresh D-091/pre-PR audits and independent acceptance before merge; continue with #2100, fold-ins #2095/#2096/#2098/#2099, and finally #2022 alone.
 
 ## Open questions
-- #2080 tracks the residual moderate `@opentelemetry/core` audit advisory; no compatible patched 1.x line exists, and a forced 2.x override creates an invalid peer graph.
+- #2108 tracks pre-cruise contact/content invalidation, final pre-send revalidation, exactly-once local side effects, and post-unmount completion hardening.
+- #2109 tracks the open high-severity `extract-zip` symlink-traversal dependency advisory.
+- Portable sweep skill sync-token is 11 while the repo copy is 2; #2090 tracks reconciliation.
+- #2080 remains deferred pending a compatible OpenTelemetry parent release.

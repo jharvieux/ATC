@@ -83,6 +83,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Preflight critical isolation credentials
+        id: isolation-preflight
+        # Keep the nightly's report-first posture: capture a missing-secret
+        # failure so the final step can open the operator-visible issue instead
+        # of aborting here and silently skipping that reporting path.
+        run: |
+          set +e
+          pnpm tsx scripts/check-critical-rag-db.ts
+          STATUS=$?
+          echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Reset main test DB before apply (#1660 / #1896)
         id: reset-main
         # Same reset-then-apply as deploy.yml's rls-snapshot-diff: rebuild the
@@ -332,9 +344,10 @@ jobs:
           exit 0
 
       - name: Open issue on failure
-        if: steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0' || steps.reset-rag.outputs.reset_status != '0' || steps.reset-main.outputs.reset_main_status != '0' || steps.migrate-main.outputs.exit_status != '0' || steps.seed-tier2.outputs.seed_status != '0'
+        if: steps.isolation-preflight.outputs.exit_status != '0' || steps.vitest.outputs.exit_status != '0' || steps.vitest-rag.outputs.exit_status != '0' || steps.rag-migrate.outputs.exit_status != '0' || steps.reset-rag.outputs.reset_status != '0' || steps.reset-main.outputs.reset_main_status != '0' || steps.migrate-main.outputs.exit_status != '0' || steps.seed-tier2.outputs.seed_status != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISOLATION_PREFLIGHT_STATUS: ${{ steps.isolation-preflight.outputs.exit_status }}
           MAIN_STATUS: ${{ steps.vitest.outputs.exit_status }}
           MAIN_RESET_STATUS: ${{ steps.reset-main.outputs.reset_main_status }}
           MAIN_MIGRATE_STATUS: ${{ steps.migrate-main.outputs.exit_status }}
@@ -374,6 +387,11 @@ jobs:
             MAIN_SECTION="### apps/main"$'\n\n'"$(cat nightly-failing-list.md)"$'\n'"$(cat nightly-unhandled-section.md)"
           else
             MAIN_SECTION=""
+          fi
+          if [ "$ISOLATION_PREFLIGHT_STATUS" != "0" ]; then
+            ISOLATION_PREFLIGHT_SECTION="### Critical isolation credential preflight FAILED"$'\n\n'"At least one main Supabase API/DB credential or the RAG DB URL is missing. The RLS suites can skip without complete credentials, so this run is not valid isolation evidence. Check the preflight step's error for the exact missing names."
+          else
+            ISOLATION_PREFLIGHT_SECTION=""
           fi
           # A failed main test DB reset (#1961) means the DB was never rebuilt,
           # so the migrate, Tier-2 seed, and main suite below it were skipped.
@@ -459,6 +477,7 @@ jobs:
           **Run**: $RUN_URL
 
           **Failing tests**:
+          $ISOLATION_PREFLIGHT_SECTION
           $MAIN_SECTION
           $MAIN_RESET_SECTION
           $MAIN_MIGRATE_SECTION

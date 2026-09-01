@@ -217,8 +217,8 @@ describe("#2002 rotation — platform-settings-reconcile signer", () => {
   });
 });
 
-describe("#1885 — platform-settings-reconcile error isolation", () => {
-  it("pins ACTUAL behavior: one key's DB write failure rejects the whole sweep (no per-key isolation)", async () => {
+describe("#1885 — platform-settings-reconcile failure propagation", () => {
+  it("pins ACTUAL behavior: one key's DB write failure rejects the whole sweep", async () => {
     // mapWithConcurrency (apps/rag/src/lib/async/with-concurrency.ts) has no
     // per-item try/catch — a single fn() rejection fails the shared
     // Promise.all, so the entire reconcile throws instead of returning a

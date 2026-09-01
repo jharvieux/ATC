@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   sendEmailResult: { status: "sent" as string, reason: null as string | null },
+  sendEmailArgs: [] as Array<Record<string, unknown>>,
   updateCalls: [] as Array<{ table: string; payload: unknown }>,
 }));
 
@@ -31,7 +32,10 @@ vi.mock("@/lib/email/template-resolve", () => ({
 }));
 
 vi.mock("@/lib/email/send", () => ({
-  sendEmail: async () => mocks.sendEmailResult,
+  sendEmail: async (args: Record<string, unknown>) => {
+    mocks.sendEmailArgs.push(args);
+    return mocks.sendEmailResult;
+  },
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
     "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
@@ -54,7 +58,7 @@ function makeSvc() {
 }
 
 const EMAIL_CTX = {
-  booking: { id: "booking-1" },
+  booking: { id: "booking-1", primary_contact_id: "contact-1" },
   toEmail: "traveler@example.com",
   tenant: { id: "tenant-1", legal_name: "Test Agency" },
   branding: {},
@@ -75,6 +79,7 @@ const EMAIL_CTX = {
 
 beforeEach(() => {
   mocks.sendEmailResult = { status: "sent", reason: null };
+  mocks.sendEmailArgs = [];
   mocks.updateCalls = [];
 });
 
@@ -108,6 +113,11 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
     expect(mocks.updateCalls).toHaveLength(1);
     expect(mocks.updateCalls[0]?.table).toBe("pre_cruise_email_content");
     expect(mocks.updateCalls[0]?.payload).toHaveProperty("sent_at");
+    expect(mocks.sendEmailArgs[0]).toMatchObject({
+      contact_id: "contact-1",
+      related_booking_id: "booking-1",
+      idempotencyKey: "pre_cruise:booking-1:t_90",
+    });
   });
 
   it.each(["suppressed", "rate_limited"])(

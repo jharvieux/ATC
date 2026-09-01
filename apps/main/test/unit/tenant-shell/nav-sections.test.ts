@@ -107,6 +107,7 @@ describe("sidebarSectionsForRole", () => {
       const hrefs = sidebarHrefsFor(role);
       expect(hrefs).toContain("/crm/contacts");
       expect(hrefs).toContain("/crm/bookings");
+      expect(hrefs).toContain("/crm/pre-cruise-emails");
       expect(hrefs).toContain("/groups");
     }
   });
@@ -114,6 +115,7 @@ describe("sidebarSectionsForRole", () => {
   it("viewers do not see workspace CRM or Group Bookings in the sidebar", () => {
     const hrefs = sidebarHrefsFor("viewer");
     expect(hrefs).not.toContain("/crm/contacts");
+    expect(hrefs).not.toContain("/crm/pre-cruise-emails");
     expect(hrefs).not.toContain("/groups");
   });
 

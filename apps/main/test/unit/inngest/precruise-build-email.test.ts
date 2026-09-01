@@ -112,10 +112,12 @@ describe("buildEmail — destination_image rendering", () => {
       ...BASE_CTX,
       generatedContent: {
         reservation_reminders: [], checkin_window: "c",
-        final_payment_note: null, personalized_recommendations: [], pack_inspiration: "p",
+        final_payment_note: null, personalized_recommendations: [],
+        specialty_experiences: ["Chef-led market tour"], pack_inspiration: "p",
       },
     });
     expect(html).toContain(CARIBBEAN_URL_FRAGMENT);
+    expect(html).toContain("Chef-led market tour");
   });
 
   it("T-7: omits image block when destinationImage is null", async () => {

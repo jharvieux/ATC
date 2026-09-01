@@ -92,7 +92,7 @@ describe("/api/ingest/reference — related_asset_ids validation", () => {
     expect(json.missing).toContain("22222222-2222-2222-2222-222222222222");
   });
 
-  it("rejects with 400 when a referenced asset is tenant-scope", async () => {
+  it("rejects with 400 when a referenced asset is tenant-owned", async () => {
     mockAssets = [
       { asset_id: "11111111-1111-1111-1111-111111111111", scope: "global" },
       { asset_id: "22222222-2222-2222-2222-222222222222", scope: "tenant" },

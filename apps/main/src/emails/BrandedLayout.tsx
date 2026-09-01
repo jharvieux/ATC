@@ -1,13 +1,5 @@
-// §16.8 — Branded email layout.
-// Email clients don't support CSS custom properties, so all colors are inlined.
-// This component is rendered to HTML by the email-send adapter (Resend).
-//
-// React Email is not yet installed; this returns a JSX tree that can be
-// serialized via ReactDOMServer.renderToStaticMarkup OR a string template
-// fallback used by the email-send helper.
-//
-// The Next.js `<Head />` / `<Image />` rules don't apply to email templates;
-// email clients require raw <head> and <img> tags.
+// Email clients require raw HTML elements and inline styles; Next's Head/Image
+// abstractions would produce markup that many inboxes cannot render reliably.
 /* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
 
 import * as React from "react";
@@ -22,9 +14,6 @@ export interface BrandedLayoutProps {
     slogan?: string | null;
   };
   tenant_legal_name: string;
-  // Typed string, but mailing_address is JSONB and some callers pass the raw
-  // object. Coerced defensively below so a missed call site can never 500 the
-  // render — this is the single choke point every branded email passes through.
   tenant_business_address: string;
   unsubscribe_url: string;
   children: React.ReactNode;
@@ -44,38 +33,38 @@ export function BrandedLayout(props: BrandedLayoutProps): React.ReactElement {
         <meta charSet="utf-8" />
         <title>{props.tenant_legal_name}</title>
       </head>
-      <body style={{ margin: 0, fontFamily: "Arial, sans-serif", backgroundColor: "#f6f6f6", color: "#222" }}>
-        <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#f6f6f6" }}>
+      <body style={{ margin: 0, backgroundColor: "#edf2f4", color: "#243447", fontFamily: "Arial, sans-serif" }}>
+        <table role="presentation" width="100%" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#edf2f4" }}>
           <tbody>
             <tr>
-              <td align="center" style={{ padding: "24px 0" }}>
-                <table role="presentation" width="600" cellSpacing={0} cellPadding={0} style={{ backgroundColor: "#ffffff", borderRadius: 8, overflow: "hidden", maxWidth: 600 }}>
+              <td align="center" style={{ padding: "32px 12px" }}>
+                <table role="presentation" width="600" cellSpacing={0} cellPadding={0} style={{ width: "100%", maxWidth: 600, backgroundColor: "#ffffff" }}>
                   <tbody>
-                    {/* Header */}
                     <tr>
-                      <td style={{ padding: 24, borderBottom: `4px solid ${accent}` }}>
+                      <td style={{ height: 6, backgroundColor: accent, fontSize: 1, lineHeight: "1px" }}>&nbsp;</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "26px 32px 22px 32px", borderBottom: "1px solid #dce5ea" }}>
                         {props.branding.logo_url ? (
-                          <img src={props.branding.logo_url} alt={props.tenant_legal_name} style={{ maxHeight: 60, display: "block" }} />
+                          <img src={props.branding.logo_url} alt={props.tenant_legal_name} style={{ display: "block", maxHeight: 56, maxWidth: 230 }} />
                         ) : (
-                          <h1 style={{ margin: 0, color: primary, fontSize: 22 }}>{props.tenant_legal_name}</h1>
+                          <p style={{ margin: 0, color: primary, fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 24, fontWeight: 700, lineHeight: 1.2 }}>{props.tenant_legal_name}</p>
                         )}
                         {props.branding.slogan ? (
-                          <p style={{ margin: "8px 0 0 0", color: "#666", fontSize: 14 }}>{props.branding.slogan}</p>
+                          <p style={{ margin: "8px 0 0 0", color: "#64748b", fontSize: 12, letterSpacing: 0.4, lineHeight: 1.5 }}>{props.branding.slogan}</p>
                         ) : null}
                       </td>
                     </tr>
-                    {/* Body */}
                     <tr>
-                      <td style={{ padding: "24px 32px", lineHeight: 1.6, fontSize: 15 }}>{props.children}</td>
+                      <td style={{ padding: "30px 32px 34px 32px", fontSize: 15, lineHeight: 1.65 }}>{props.children}</td>
                     </tr>
-                    {/* Footer (CAN-SPAM: legal name + address + unsubscribe) */}
                     <tr>
-                      <td style={{ padding: "16px 32px", backgroundColor: "#fafafa", borderTop: "1px solid #eee", fontSize: 12, color: "#888" }}>
+                      <td style={{ padding: "20px 32px 24px 32px", backgroundColor: "#f7fafc", borderTop: "1px solid #dce5ea", color: "#64748b", fontSize: 12, lineHeight: 1.55 }}>
                         <p style={{ margin: 0 }}>
                           {props.tenant_legal_name} · {businessAddress}
                         </p>
                         <p style={{ margin: "8px 0 0 0" }}>
-                          <a href={props.unsubscribe_url} style={{ color: "#888" }}>Unsubscribe</a>
+                          <a href={props.unsubscribe_url} style={{ color: "#526577", textDecoration: "underline" }}>Unsubscribe</a>
                           {" · "}
                           <span>Powered by AI Travel Concierge</span>
                         </p>

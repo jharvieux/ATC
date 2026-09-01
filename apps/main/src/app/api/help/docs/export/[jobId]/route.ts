@@ -13,12 +13,6 @@ export async function GET(req: Request, props: { params: Promise<{ jobId: string
   const params = await props.params;
   try {
     const { ctx } = await assertPermission(req, { resource: "help_docs", action: "read" });
-    // §11.2.2 tenant-scoped surface: help_doc_versions row is owned by the
-    // tenant; Supabase Storage's `help-docs` bucket needs a tenant-scoped
-    // SELECT policy so the tenantClient can sign the URL.
-    // OPERATOR FOLLOW-UP: create the `help-docs` bucket with policy
-    // `(bucket_id='help-docs' AND auth_user_in_tenant((storage.foldername(name))[1]::uuid))`
-    // — documented in MEMORY D-067.
     const db = tenantClient(ctx);
     const { data, error } = await db
       .from("help_doc_versions")

@@ -158,6 +158,9 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("bookings.resources", "read"),
   key("bookings.resources", "create"),
   key("bookings.resources", "update"),
+  // §23.4 — staff can manually dispatch or schedule the pre-cruise series.
+  key("precruise_emails", "send"),
+  key("precruise_emails", "schedule"),
   // Quotes (#1173 — quotes:read and options sub-resource absent from matrix)
   key("quotes", "read"),
   key("quotes", "accept"),
