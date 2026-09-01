@@ -396,16 +396,16 @@ These apply to any application with strict tenant isolation requirements — not
 
 ### 21. Cross-Tenant Probe
 
-**What it does:** Black-box security test. Authenticates as Tenant B, then attempts to access resources belonging to Tenant A on every API route. Any 2xx response indicates a cross-tenant data leak.
+**What it does:** Always enumerates every deployed `/api/**` route. With a compatible host, the black-box security test authenticates as Tenant B, verifies that B can read its own exact seeded booking, then probes Tenant A resources. Matching seeded dynamic families target a known Tenant A resource; other 2xx JSON responses are inspected for all exact Tenant A fixture identifiers. Known-resource 2xx, leaked identifiers, unreadable 2xx evidence, and 5xx responses fail. The health and same-tenant positive controls prevent wrong-host, wrong-database, and blanket-denial false acceptance.
 
 **Implementation:**
 - `tests/security/cross-tenant-probe.test.ts` — route enumerator + fixture-based probe
 - `tests/security/cross-tenant-allowlist.json` — routes that legitimately return 2xx without tenant auth (public endpoints)
 - Runs in CI as the `Cross-Tenant Probe` step
 
-**Current state:** The route enumeration (filesystem check) runs on every PR. The full DB-backed probe (real tenant JWTs + seeded data) requires `CROSS_TENANT_FIXTURES=true` + a dedicated test Supabase project (blocked on #386).
+**Current state:** The uninterrupted RLS holder rebuilds the main and RAG test databases and always runs route enumeration. Main/RAG live acceptance remains mandatory for human CI. Until #1913 provisions a compatible test-DB-bound host, an absent app host produces an explicit `host-unavailable` receipt that claims no live cross-tenant acceptance. Dependabot has a separate secret-less exemption. When live mode is configured, the event SHA attests the checked-out probe and rebuilt test databases, while the shared application host revision remains explicitly unverified outside the release staging health-SHA check.
 
-**New project notes:** The concept applies to any multi-tenant app — implement it even if the full fixture setup comes later. Starting with the route enumeration (are the right routes even in the allowlist?) provides immediate value.
+**New project notes:** The concept applies to any multi-tenant app. Enumeration alone is useful, but it is not live isolation evidence: require a real-host sentinel, route-appropriate seeded identifiers, fail-closed response evidence, and explicit provenance boundaries before claiming acceptance.
 
 **Applicability signals:**
 - Multiple tenants share the same database
@@ -539,7 +539,7 @@ pnpm verify = typecheck + lint + test + slop-check + check:auth-error +
 
 **Implementation:** `.github/workflows/nightly-full-test.yml`
 
-**Critical prerequisite:** The nightly suite must point at a dedicated test Supabase project, not the production project. Once customer data exists in production, running destructive crons against it would be catastrophic. See issue #386 for the migration plan.
+**Critical safeguard:** D-257 provisioned the dedicated test/staging Supabase project and issue #386 is complete. The nightly suite must continue to use the `SUPABASE_TEST_*` credentials for that project, never production credentials; its destructive crons make that boundary non-negotiable.
 
 **New project notes:** Apply to any project where some integration tests are too slow or too destructive for PR CI. The dedicated-test-project requirement is non-negotiable once real data exists.
 
@@ -619,8 +619,7 @@ These are quality processes that exist in intent but aren't fully implemented:
 
 | Gap | Issue | What's Missing | Blocked On |
 |-----|-------|----------------|------------|
-| Cross-Tenant Probe (full) | #384 item 1 | Real tenant fixture setup (`setupCrossTenantFixtures()`) | #386 (dedicated test DB) |
+| Cross-Tenant Probe (live host) | #1913 | Test-DB-bound `APP_BASE_URL` that passes health and tenant-B own-booking controls | Operator provisioning |
 | E2E test bodies | #384 item 3 | 28 placeholder `test.skip` specs | Product prioritization |
-| Nightly test on dedicated DB | #386 | Dedicated test Supabase project | Operator provisioning |
 | Contracts canary live | #473 | `STRIPE_TEST_SECRET_KEY` + `ANTHROPIC_API_KEY_TEST` GitHub secrets | Operator provisioning |
 | S5852 SonarCloud false positives | #594 | 33 hotspots need manual "Safe" marking | SonarCloud UI review |

@@ -4,6 +4,43 @@ Newest entries on top.
 
 ---
 
+## D-379 — 2026-09-01 — Require positive host evidence before live cross-tenant acceptance
+
+**Decision.** Main and RAG exact-revision live acceptance remains mandatory, while the cross-tenant test always runs route enumeration. If no compatible test-DB-bound application host is configured, CI records `host-unavailable` and explicitly claims no live cross-tenant acceptance. Live mode may run only after `/api/health` returns a concrete application revision and tenant B successfully reads its own seeded booking with the exact expected ID; only then may the tenant-B token probe tenant-A resources. This supersedes [[D-378]] only for the current shared-host activation boundary. Issue #1913 tracks provisioning the compatible host, and #2122 tracks broader hosted-revision attestation.
+
+**Why.**
+- The hosted #2098 run proved that `APP_STAGING_URL` is not configured, while the candidate staging hostname returned 404 for `/api/health` and its response policy referenced the production Supabase project.
+- A probe that observes only 401/403/404 denials can falsely pass against the wrong application or database even when its wrong-tenant checks never reached seeded data.
+- Route enumeration remains useful static coverage, but it is not evidence that tenant isolation worked over a live application boundary.
+
+**Rejected.**
+- *Hard-code the existing staging hostname.* Rejected because it is not a compatible test-DB-bound host and would send test credentials to an endpoint that cannot prove the intended database boundary.
+- *Fail all main/RAG acceptance until a live app host exists.* Rejected because #1913 separately tracks the disabled hosted probe; exact-revision database acceptance and route enumeration remain valuable and enforceable now.
+- *Treat enumeration or blanket denial responses as live acceptance.* Rejected because neither proves the request reached the expected application, database, tenant, or seeded record.
+
+**Related artifacts.** Issue #2098, follow-ups #1913 and #2122, `.github/workflows/deploy.yml`, `tests/security/cross-tenant-probe.test.ts`, `tests/unit/workflows/deploy-test-db-provenance.test.ts`, [[D-378]].
+
+---
+
+## D-378 — 2026-09-01 — Bind shared database acceptance to exact revisions
+
+**Decision.** Main/RAG test-database acceptance runs in one uninterrupted, non-cancelling `shared-test-db` holder, while release copy-through-staging consumption runs in a second holder in the same group. Required status names are fail-closed exact-SHA receipts; non-release cross-tenant runs attest probe code and rebuilt databases but explicitly leave the shared hosted-app revision unverified. The `/api/health` sentinel, route-family fixture IDs, and fail-closed 2xx evidence prevent wrong-host, all-404, and unrelated-resource laundering.
+
+**Why.**
+- Separate producer and consumer jobs released the shared lock between revision establishment and acceptance, allowing another branch to reset or migrate the database first.
+- Cancelling an active reset or staging holder can leave shared state partially rebuilt, so active holders are preserved even though GitHub may supersede the older pending run when a third arrives.
+- A mutable shared application URL cannot honestly prove it runs the event SHA, and probing non-API paths or accepting blanket 404s produced false confidence rather than live isolation evidence.
+
+**Rejected.**
+- *Give every database job the same concurrency group.* Rejected because the lock is released between jobs, leaving the original interleaving seam.
+- *Cancel the active holder for newer revisions.* Rejected because cancellation can strand partially mutated shared state; a superseded pending run must instead be rerun and its receipt fails closed.
+- *Attribute the shared host to the event SHA without deployment evidence.* Rejected because only release staging verifies its existing health response against `GITHUB_SHA`; broader per-event and production/RAG hosted attestation remains tracked by #2122.
+- *Treat every 2xx as a leak or every 404 as safe.* Rejected because legitimate tenant-B collections can return 2xx, while wrong paths and hosts can return blanket 404s; route-matched fixtures and response evidence distinguish these cases.
+
+**Related artifacts.** Issue #2098, follow-up #2122, `.github/workflows/deploy.yml`, `scripts/enumerate-api-routes.ts`, `tests/security/cross-tenant-probe.test.ts`, `tests/security/fixtures/cross-tenant-setup.ts`, `tests/unit/workflows/deploy-test-db-provenance.test.ts`.
+
+---
+
 ## D-377 — 2026-09-01 — Enforce Node 24 at pnpm's repository-wide load boundary
 
 **Decision.** Every pnpm command in this repository loads `.pnpmfile.mjs`, which reuses the strict Node 24 runtime validator and throws before command dispatch when the active runtime is unsupported. This supersedes [[D-376]] only for its initial `devEngines.runtime` plus primary-script allowlist mechanism; the Node 24 runtime contract remains unchanged.

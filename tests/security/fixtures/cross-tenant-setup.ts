@@ -1,8 +1,8 @@
 /**
  * Cross-tenant fixture setup — §4.1.3 / issue #708
  *
- * Creates two isolated tenants (A and B), each with one user, and seeds
- * a conversation and a booking owned by each tenant.
+ * Creates two isolated tenants (A and B), each with one user, and seeds a
+ * contact, conversation, and booking owned by each tenant.
  *
  * Idempotent: safe to call multiple times; existing rows are reused via upsert.
  * Deterministic UUIDs ensure re-runs never accumulate orphan fixtures.
@@ -23,8 +23,44 @@ export interface TenantFixture {
   userId: string;
   /** JWT session token for this user */
   sessionToken: string;
-  /** Resource IDs owned by this tenant, keyed by route paramName ("id") */
-  resourceIds: Record<string, string>;
+  /** Seeded row IDs that must never appear in the other tenant's responses. */
+  knownIds: string[];
+  resourceIds: TenantResourceIds;
+}
+
+export interface TenantResourceIds {
+  booking: string;
+  conversation: string;
+  contact: string;
+}
+
+export interface TenantSeedIds {
+  tenantId: string;
+  userPubId: string;
+  bookingId: string;
+  convId: string;
+  contactId: string;
+}
+
+export function tenantFixtureEvidence(
+  seed: TenantSeedIds,
+  authUserId: string,
+): Pick<TenantFixture, "knownIds" | "resourceIds"> {
+  return {
+    knownIds: [
+      seed.tenantId,
+      seed.userPubId,
+      authUserId,
+      seed.bookingId,
+      seed.convId,
+      seed.contactId,
+    ],
+    resourceIds: {
+      booking: seed.bookingId,
+      conversation: seed.convId,
+      contact: seed.contactId,
+    },
+  };
 }
 
 export interface CrossTenantFixtures {
@@ -44,12 +80,7 @@ const CONV_B_ID = "bbbb0000-0000-0000-0003-000000000001";
 const CONTACT_A_ID = "aaaa0000-0000-0000-0004-000000000001";
 const CONTACT_B_ID = "bbbb0000-0000-0000-0004-000000000001";
 
-interface FixtureSpec {
-  tenantId: string;
-  userPubId: string;
-  bookingId: string;
-  convId: string;
-  contactId: string;
+interface FixtureSpec extends TenantSeedIds {
   email: string;
   password: string;
   slug: string;
@@ -247,16 +278,13 @@ export async function setupCrossTenantFixtures(
       tenantId: TENANT_A_ID,
       userId: USER_A_PUB_ID,
       sessionToken: sessionA.data.session.access_token,
-      // All dynamic API routes use [id] as the paramName. The booking ID is used as
-      // the generic resource ID. Routes expecting a different resource type (conversation,
-      // quote) will get 404 — acceptable to the probe (only 2xx/5xx are failures).
-      resourceIds: { id: BOOKING_A_ID },
+      ...tenantFixtureEvidence(SPECS[0], authAId),
     },
     tenantB: {
       tenantId: TENANT_B_ID,
       userId: USER_B_PUB_ID,
       sessionToken: sessionB.data.session.access_token,
-      resourceIds: { id: BOOKING_B_ID },
+      ...tenantFixtureEvidence(SPECS[1], authBId),
     },
   };
 }

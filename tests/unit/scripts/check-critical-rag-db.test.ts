@@ -162,13 +162,13 @@ describe("deploy workflow wiring", () => {
     );
   });
 
-  it("keeps live isolation suites in the serialized integration job", () => {
-    const integrationJob = workflow.slice(workflow.indexOf("\n  integration-tests-critical:"), workflow.indexOf("\n  contract-tests:"));
-    expect(integrationJob).toContain("concurrency:\n      group: shared-test-db\n      cancel-in-progress: false");
-    expect(integrationJob).toContain("SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}");
-    expect(integrationJob).toContain("SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
-    expect(integrationJob).toContain("pnpm vitest run apps/main/test/integration/rls.test.ts");
-    expect(integrationJob).toContain("test/integration/retrieval-scope-isolation.test.ts");
+  it("keeps live isolation suites in the reset-and-apply provenance holder", () => {
+    const provenanceHolder = workflow.slice(workflow.indexOf("\n  rls-snapshot-diff:"), workflow.indexOf("\n  integration-tests-critical:"));
+    expect(provenanceHolder).toContain("concurrency:\n      group: shared-test-db\n      cancel-in-progress: false");
+    expect(provenanceHolder).toContain("SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}");
+    expect(provenanceHolder).toContain("SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
+    expect(provenanceHolder).toContain("pnpm vitest run apps/main/test/integration/rls.test.ts");
+    expect(provenanceHolder).toContain("test/integration/retrieval-scope-isolation.test.ts");
   });
 
   it("reports missing API or DB credentials from scheduled and manual nightly runs", () => {

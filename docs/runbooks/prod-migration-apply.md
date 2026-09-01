@@ -21,10 +21,15 @@ Migrations are applied to prod by the `deploy-production` job in
 2. The push triggers `deploy.yml`. All CI gates run (typecheck, lint, test,
    secret-scan, cve-scan, rls-snapshot-diff, cross-tenant-probe, contract-tests).
 3. `deploy-production` waits on **all** of those gates directly (#1349). If any
-   gate fails, prod is blocked. The staging jobs (`db-copy`, `deploy-staging`)
-   are an **optional** pre-prod layer — gated by `STAGING_PIPELINE_ENABLED`
-   (currently `false`, #533). When staging is off they're skipped and do **not**
-   block prod; when it's on and staging fails, prod **is** blocked.
+   gate fails, prod is blocked. The staging path is an **optional** pre-prod
+   layer gated by `STAGING_PIPELINE_ENABLED` (currently `false`, #533). When
+   enabled, `db-copy` holds the non-cancelling `shared-test-db` lock continuously
+   from production copy through staging migration, Vercel deployment, E2E, and
+   the health check that proves the hosted commit equals the release SHA.
+   `deploy-staging` is an always-run exact-SHA receipt: it preserves the required
+   status name and fails when the holder fails, is cancelled, or reports stale
+   provenance. When staging is off both jobs are skipped and do **not** block
+   prod; when it is on and either fails, prod **is** blocked.
 4. `deploy-production` reaches the `production` environment gate and **pauses for
    operator approval**.
 5. On approval it runs, in order:

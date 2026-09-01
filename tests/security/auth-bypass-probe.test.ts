@@ -125,6 +125,12 @@ const PUBLIC_ROUTE_ALLOWLIST: Array<{ pattern: RegExp; reason: string }> = [
       "§22.9 — returns NEXT_PUBLIC_SUPABASE_URL + anon key so the browser extension can " +
       "bootstrap auth. Both values are already in the JS bundle; no secrets are disclosed.",
   },
+  {
+    pattern: /\/api\/inngest\/route\.ts$/,
+    reason:
+      "Inngest SDK-managed control plane: cloud GET/POST validate Inngest signatures; " +
+      "PUT performs SDK out-of-band registration, not a tenant-resource operation.",
+  },
 ];
 
 function findAuthTokensInSource(filePath: string): string[] {
@@ -207,6 +213,16 @@ describe("§30.8 auth-bypass static probe", () => {
           `\nRemove the stale entries so the allowlist stays a true map of public surface.`,
       );
     }
+  });
+
+  it("limits the Inngest exemption to its SDK-managed control-plane route", () => {
+    const route = join(API_ROOT, "inngest", "route.ts");
+    expect(allowlistReason(route)).toMatch(
+      /cloud GET\/POST validate Inngest signatures.*PUT performs SDK out-of-band registration/,
+    );
+    expect(
+      PUBLIC_ROUTE_ALLOWLIST.filter((entry) => entry.pattern.test(relative(REPO_ROOT, route))),
+    ).toHaveLength(1);
   });
 });
 

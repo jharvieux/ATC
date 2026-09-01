@@ -17,6 +17,8 @@ session; keep it lean.
 
 ## Entries
 
+- D-379 — 2026-09-01 — Main/RAG exact-revision live acceptance remains mandatory, but absent compatible app hosting yields explicit cross-tenant enumeration-only `host-unavailable`; live mode requires concrete health plus tenant-B own-booking evidence before tenant-A probes (#2098; #1913 provisions the host, #2122 attests hosted revisions; refs D-378)
+- D-378 — 2026-09-01 — Shared main/RAG acceptance and release staging consumption use two uninterrupted non-cancelling holders in one shared-DB group; exact-SHA receipts fail closed, shared-host provenance stays explicit, and `/api` health/fixture evidence prevents false acceptance (issue #2098; #2122 tracks broader hosted SHA attestation)
 - D-377 — 2026-09-01 — Every pnpm command loads a shared fail-closed Node 24 validator through `.pnpmfile.mjs`, covering secondary scripts and install/add entrypoints including `--ignore-scripts`; this supersedes D-376's initial `devEngines.runtime` plus eight-script allowlist mechanism, not its Node 24 contract
 - D-376 — 2026-09-01 — Node 24.x remains the local, CI, and Vercel runtime contract until Vercel supports a newer major and a compatibility upgrade is verified; login shells activate `.nvmrc`, and checked-in primary workflows fail immediately instead of continuing after an engine warning
 - D-375 — 2026-09-01 — Keyed email sends use a service-role-only durable provider outbox, exact request/key replay for ambiguous outcomes within 23 hours, and atomic log/retry-content/usage finalization; pre-cruise binds the reviewed recipient and rechecks live eligibility/context, while tenant-scoped provider keys remain staged in #2115 (PR #2116; refs D-371)
