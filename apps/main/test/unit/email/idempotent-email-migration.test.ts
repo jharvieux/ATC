@@ -5,6 +5,10 @@ const migration = readFileSync(
   "apps/main/supabase/migrations/20260831210837_precruise_send_claim.sql",
   "utf8",
 );
+const dispatchStartCorrection = readFileSync(
+  "apps/main/supabase/migrations/20260901053127_fix_email_dispatch_start_ambiguity.sql",
+  "utf8",
+);
 
 function functionBody(name: string): string {
   const match = migration.match(
@@ -45,5 +49,18 @@ describe("idempotent email outbox migration", () => {
       "idempotent_effects_recorded_at = v_now",
     );
     expect(migration).toContain("email_log_tenant_idempotency_key_uidx");
+  });
+
+  it("qualifies dispatch-start columns that collide with table return variables", () => {
+    expect(dispatchStartCorrection).toContain("target.provider_first_attempt_at");
+    expect(dispatchStartCorrection).toContain(
+      "target.provider_snapshot_expires_at",
+    );
+    expect(dispatchStartCorrection).toContain(
+      "target.provider_first_attempt_at IS NULL",
+    );
+    expect(dispatchStartCorrection).not.toContain(
+      "AND provider_first_attempt_at IS NULL",
+    );
   });
 });
