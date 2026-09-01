@@ -202,7 +202,7 @@ jobs:
 
       - name: Run workflow wiring tests
         if: needs.detect-changes.outputs.workflows_only == 'true'
-        run: pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts
+        run: pnpm vitest run tests/unit/scripts/check-critical-rag-db.test.ts tests/unit/workflows/deploy-test-db-provenance.test.ts
 
       - name: Require critical isolation test databases for workflow-only changes
         if: needs.detect-changes.outputs.workflows_only == 'true'
@@ -320,12 +320,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes]
     if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
-    # Serialize every job that touches the shared test DB (this repo's single
-    # main + rag CI databases) so no two runs — across PRs, dev pushes,
-    # merge-queue builds, and the nightly suite — reset/push/read it at the
-    # same time. cancel-in-progress: false is deliberate: cancelling a run
-    # mid-reset would leave the DB half-rebuilt for the next holder. Also
-    # mitigates #1904 (nightly RAG push vs a concurrent dev-merge push).
+    # This is the single uninterrupted provenance holder for the shared main
+    # and RAG test DBs. Reset, exact-revision migration apply, snapshot checks,
+    # and every live acceptance suite stay in this one job: separate jobs with
+    # the same concurrency group release the lock between them, allowing a
+    # different revision to reset the DB before the first revision's tests.
+    # cancel-in-progress: false is deliberate: cancelling mid-reset would leave
+    # the DB half-rebuilt for the next holder. Also mitigates #1904 (nightly RAG
+    # push vs a concurrent dev-merge push).
     #
     # KNOWN LIMITATION: a GitHub concurrency group keeps only ONE pending run
     # per group; if a third run is queued while one is running and one pending,
@@ -337,13 +339,23 @@ jobs:
     concurrency:
       group: shared-test-db
       cancel-in-progress: false
+    outputs:
+      verified_sha: ${{ steps.revision-provenance.outputs.verified_sha }}
+      acceptance_mode: ${{ steps.revision-provenance.outputs.acceptance_mode }}
     permissions:
       contents: read
       # issues: write — the dev-push drift backstop below opens/reuses a tracked issue.
       issues: write
     env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
       SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+      APP_BASE_URL: ${{ secrets.APP_STAGING_URL }}
+      CROSS_TENANT_FIXTURES: "true"
+      STRIPE_SECRET_KEY: sk_test_ci-placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -395,8 +407,7 @@ jobs:
         # docs/runbooks/migrations.md §4. Runs AFTER the ledger collision
         # pre-check above (which reads the live pre-reset ledger) and BEFORE the
         # push. Guarded by URL presence + CONFIRM_TEST_DB_RESET, so a
-        # secret-less run (Dependabot) skips gracefully. RAG is not reset here —
-        # deploy.yml never pushes the RAG DB (see PR body follow-up).
+        # secret-less run (Dependabot) skips gracefully.
         env:
           CONFIRM_TEST_DB_RESET: "true"
           # Distinctly-named target var (#1896 audit): the reset script reads
@@ -421,11 +432,26 @@ jobs:
           fi
           npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
 
-      - name: Check RLS drift (fail on PR, release/*, and merge_group)
+      - name: Reset RAG test DB before apply (#1914)
+        env:
+          CONFIRM_TEST_DB_RESET: "true"
+          RESET_TARGET_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+        run: pnpm db:reset:ci -- --target=rag
+
+      - name: Apply RAG app migrations to test DB
+        working-directory: apps/rag
+        run: |
+          if [ -z "$SUPABASE_RAG_DB_URL" ]; then
+            echo "SUPABASE_RAG_DB_URL not set — skipping migration apply (Dependabot or missing secret)"
+            exit 0
+          fi
+          npx supabase db push --include-all --db-url "$SUPABASE_RAG_DB_URL"
+
+      - name: Check RLS drift (fail on PR, release/*, merge_group, and manual dispatch)
         # merge_group included so the queue actually verifies drift — without it
         # this step skips on a queue build and the required RLS Snapshot Diff
         # check would pass green without ever comparing the snapshot (#1896).
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/')
         env:
           # Dependabot-triggered runs don't receive repo secrets, so the
           # DB URLs above are empty and no target can be checked. Allow the
@@ -481,10 +507,10 @@ jobs:
       # The old pre-migration prod gate here was REMOVED: it compared prod BEFORE the
       # release's own migrations applied (deploy-production is downstream), so it
       # false-failed every new-table release. See #1349 for the prod migration-apply path.
-      - name: Check grants drift (fail on PR, release/*, and merge_group — vs test DB)
+      - name: Check grants drift (fail on PR, release/*, merge_group, and manual dispatch — vs test DB)
         # merge_group included for the same reason as the RLS drift step above:
         # the queue must verify grants drift, not skip it (#1896).
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || startsWith(github.ref, 'refs/heads/release/')
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/')
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
@@ -496,75 +522,31 @@ jobs:
       # Grants drift on dev push is now reported by the consolidated
       # "Report snapshot/grants drift on dev" step above (it runs grants:check too).
 
-  integration-tests-critical:
-    name: Integration Tests (RLS + RAG Scope + Payments)
-    runs-on: ubuntu-latest
-    # Same shared-test-DB serialization as rls-snapshot-diff: this job's RLS,
-    # RAG-scope, and Stripe-webhook suites write ephemeral rows into the main
-    # and RAG test DBs, so it must not run while another run is resetting or
-    # pushing either one. Within one run
-    # it can't contend with rls-snapshot-diff anyway (needs it), but across runs
-    # the group serializes it. See rls-snapshot-diff's concurrency note.
-    concurrency:
-      group: shared-test-db
-      cancel-in-progress: false
-    # Depends on rls-snapshot-diff rather than running in parallel with it so
-    # this job reuses THAT job's already-applied migrations on the shared test
-    # DB instead of racing a second `supabase db push` against the same
-    # supabase_migrations.schema_migrations ledger (the shared-test-DB hazard
-    # in docs/runbooks/migrations.md). needs: cascades the doc-only-PR skip
-    # from detect-changes/rls-snapshot-diff automatically; the explicit `if:`
-    # below matches this file's convention (see cross-tenant-probe) rather
-    # than relying on that implicit cascade alone.
-    needs: [detect-changes, rls-snapshot-diff]
-    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
-    # #1797: the RLS + Stripe-webhook integration suites previously ran
-    # nightly only (nightly-full-test.yml), so a PR regression in tenant
-    # isolation or payment-webhook handling could merge green and only
-    # surface the next morning on dev. #1797 left the mechanism open
-    # ("Options to consider..."), so this is the minimal version: ONLY the
-    # RLS + payments suites the issue title names, not the full DB-backed set
-    # (proxy, chat-limit-concurrency, transfer-reversal,
-    # import-promote-atomicity) that also nightly-only-skip — bounding
-    # CI-minutes cost on every PR. See the PR body for the runtime estimate
-    # (unmeasured — this job needs live test-DB secrets this sandboxed
-    # worktree doesn't have) and for whether to add this job to dev's
-    # required-status-checks list.
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
-      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
-      # Placeholders are fine: the stripe-webhook suite self-signs events with
-      # STRIPE_WEBHOOK_SECRET and the handler verifies with the same value
-      # (pure HMAC, no live Stripe API call) — same posture as nightly-full-test.yml.
-      STRIPE_SECRET_KEY: sk_test_ci-placeholder
-      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: ".nvmrc"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Require the critical isolation test databases
         id: isolation-db-preflight
         env:
           # Use the PR author, not github.actor: a human can rerun a Dependabot
-          # PR, but GitHub still withholds repository secrets from that PR. The
-          # preflight requires all four main credentials plus the RAG DB URL on
-          # every other event before either evidence-bearing suite can run.
+          # PR, but GitHub still withholds repository secrets from that PR.
           ISOLATION_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: pnpm tsx scripts/check-critical-rag-db.ts
+
+      - name: Require live cross-tenant probe inputs
+        id: cross-tenant-preflight
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$APP_BASE_URL" ] && [ "$CROSS_TENANT_FIXTURES" = "true" ]; then
+            echo "run_cross_tenant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "run_cross_tenant=false" >> "$GITHUB_OUTPUT"
+            echo "Dependabot pull request has no live cross-tenant credentials; retaining the explicit secret-less exemption."
+            exit 0
+          fi
+          echo "::error::Live cross-tenant acceptance requires NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, APP_BASE_URL, and CROSS_TENANT_FIXTURES=true."
+          exit 1
 
       - name: Run main RLS integration suite
         if: steps.isolation-db-preflight.outputs.run_main_rls == 'true'
@@ -578,16 +560,79 @@ jobs:
       - name: Run seeded RAG scope integration suite
         if: steps.isolation-db-preflight.outputs.run_rag_scope == 'true'
         env:
-          # The suite throws rather than describe.skip if this evidence-bearing
-          # invocation ever reaches it without the preflighted connection.
           RAG_SCOPE_DB_REQUIRED: "true"
         run: pnpm -C apps/rag exec vitest run test/integration/retrieval-scope-isolation.test.ts
 
       - name: Run ledger routine-identity PostgreSQL fixtures
-        # Uses the same SUPABASE_DB_URL test target already migrated and
-        # serialized by this job. The fixture rolls back every DDL change;
-        # absent secrets make its describeIf guard skip for Dependabot.
         run: pnpm vitest run tests/integration/scripts/check-ledger-objects-db.test.ts
+
+      - name: Run cross-tenant probe
+        if: steps.cross-tenant-preflight.outputs.run_cross_tenant == 'true'
+        run: pnpm test:cross-tenant
+
+      - name: Record revision provenance
+        id: revision-provenance
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MAIN_MODE: ${{ steps.isolation-db-preflight.outputs.run_main_rls }}
+          RAG_MODE: ${{ steps.isolation-db-preflight.outputs.run_rag_scope }}
+          CROSS_TENANT_MODE: ${{ steps.cross-tenant-preflight.outputs.run_cross_tenant }}
+        run: |
+          checked_out_sha=$(git rev-parse HEAD)
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Revision provenance mismatch: checkout=$checked_out_sha event=$GITHUB_SHA"
+            exit 1
+          fi
+          if [ "$MAIN_MODE" = "true" ] && [ "$RAG_MODE" = "true" ] && [ "$CROSS_TENANT_MODE" = "true" ]; then
+            echo "acceptance_mode=live" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "acceptance_mode=dependabot-exempt" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Required live acceptance modes were not established: main=$MAIN_MODE rag=$RAG_MODE cross_tenant=$CROSS_TENANT_MODE"
+            exit 1
+          fi
+          echo "verified_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  integration-tests-critical:
+    name: Integration Tests (RLS + RAG Scope + Payments)
+    runs-on: ubuntu-latest
+    # Required-context receipt. The evidence-bearing suites run inside
+    # rls-snapshot-diff's uninterrupted holder; this job fails if that holder
+    # does not attest the exact event SHA.
+    needs: [detect-changes, rls-snapshot-diff]
+    if: |
+      always() &&
+      (needs.detect-changes.result != 'success' ||
+        ((github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') &&
+          needs.detect-changes.outputs.workflows_only != 'true'))
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      DETECT_RESULT: ${{ needs.detect-changes.result }}
+      HOLDER_RESULT: ${{ needs.rls-snapshot-diff.result }}
+      EXPECTED_SHA: ${{ github.sha }}
+      VERIFIED_SHA: ${{ needs.rls-snapshot-diff.outputs.verified_sha }}
+      ACCEPTANCE_MODE: ${{ needs.rls-snapshot-diff.outputs.acceptance_mode }}
+    steps:
+      - name: Verify exact tested revision
+        run: |
+          if [ "$DETECT_RESULT" != "success" ] || [ "$HOLDER_RESULT" != "success" ]; then
+            echo "::error::Required dependency failed or was cancelled: detect=$DETECT_RESULT holder=$HOLDER_RESULT"
+            exit 1
+          fi
+          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+            exit 1
+          fi
+          if [ "$ACCEPTANCE_MODE" = "live" ]; then
+            echo "Live integration acceptance passed for $VERIFIED_SHA."
+          elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "Dependabot secret-less exemption recorded for $VERIFIED_SHA; no live integration acceptance is claimed."
+          else
+            echo "::error::Unexpected acceptance mode: ${ACCEPTANCE_MODE:-missing}"
+            exit 1
+          fi
 
   contract-tests:
     name: Contract Tests
@@ -615,36 +660,48 @@ jobs:
   cross-tenant-probe:
     name: Cross-Tenant Probe
     runs-on: ubuntu-latest
-    needs: [detect-changes, typecheck, lint, test, secret-scan]
-    if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    # Required-context receipt for the probe executed inside the uninterrupted
+    # shared-DB holder. Keep the non-DB CI dependencies that historically gate
+    # this status, and fail if the holder did not test this exact event SHA.
+    needs: [detect-changes, typecheck, lint, test, secret-scan, rls-snapshot-diff]
+    if: |
+      always() &&
+      (needs.detect-changes.result != 'success' ||
+        ((github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') &&
+          needs.detect-changes.outputs.workflows_only != 'true'))
     env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
-      # APP_BASE_URL must point at the deployed Next.js app (e.g. preview URL),
-      # NOT the Supabase project URL. See issue #563.
-      APP_BASE_URL: ${{ secrets.APP_STAGING_URL }}
-      # Activates the live cross-tenant fixture probe. All three secrets above must
-      # resolve to non-empty strings for the probe to execute; if any is empty,
-      # FIXTURES_AVAILABLE evaluates to false and the suite falls back to
-      # enumeration-only mode (see tests/security/cross-tenant-probe.test.ts).
-      CROSS_TENANT_FIXTURES: "true"
+      EVENT_NAME: ${{ github.event_name }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      DETECT_RESULT: ${{ needs.detect-changes.result }}
+      TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+      LINT_RESULT: ${{ needs.lint.result }}
+      TEST_RESULT: ${{ needs.test.result }}
+      SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+      HOLDER_RESULT: ${{ needs.rls-snapshot-diff.result }}
+      EXPECTED_SHA: ${{ github.sha }}
+      VERIFIED_SHA: ${{ needs.rls-snapshot-diff.outputs.verified_sha }}
+      ACCEPTANCE_MODE: ${{ needs.rls-snapshot-diff.outputs.acceptance_mode }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: ".nvmrc"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run cross-tenant probe
-        run: pnpm test:cross-tenant
+      - name: Verify exact tested revision
+        run: |
+          for result in "$DETECT_RESULT" "$TYPECHECK_RESULT" "$LINT_RESULT" "$TEST_RESULT" "$SECRET_SCAN_RESULT" "$HOLDER_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::Required dependency failed, was skipped, or was cancelled: detect=$DETECT_RESULT typecheck=$TYPECHECK_RESULT lint=$LINT_RESULT test=$TEST_RESULT secret_scan=$SECRET_SCAN_RESULT holder=$HOLDER_RESULT"
+              exit 1
+            fi
+          done
+          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+            exit 1
+          fi
+          if [ "$ACCEPTANCE_MODE" = "live" ]; then
+            echo "Live cross-tenant acceptance passed for $VERIFIED_SHA."
+          elif [ "$ACCEPTANCE_MODE" = "dependabot-exempt" ] && [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "Dependabot secret-less exemption recorded for $VERIFIED_SHA; no live cross-tenant acceptance is claimed."
+          else
+            echo "::error::Unexpected acceptance mode: ${ACCEPTANCE_MODE:-missing}"
+            exit 1
+          fi
 
   # ============================================================
   # atc-rag beta deploy (#1829) — runs on dev-merge only, gated by
@@ -700,6 +757,11 @@ jobs:
     # Skipped until staging DB is provisioned. Set STAGING_PIPELINE_ENABLED=true
     # repo variable to activate. See issue #533.
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
+    concurrency:
+      group: shared-test-db
+      cancel-in-progress: false
+    outputs:
+      verified_sha: ${{ steps.staging-provenance.outputs.verified_sha }}
     needs:
       [
         typecheck,
@@ -715,6 +777,11 @@ jobs:
     env:
       PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
       DB_URL: ${{ secrets.DB_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      TEST_OVERRIDE_EMAIL: ${{ secrets.TEST_OVERRIDE_EMAIL }}
+      TEST_OVERRIDE_PHONE: ${{ secrets.TEST_OVERRIDE_PHONE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -888,30 +955,6 @@ jobs:
             echo '::notice::Realtime publication membership restored onto staging.'
           fi
 
-  # ============================================================
-  # Staging block — deploy + E2E + smoke (job 6)
-  # Runs only on push to release/* branches
-  # ============================================================
-
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
-    needs: [db-copy]
-    environment:
-      name: staging
-      url: https://staging.ai-travelconcierge.com
-    env:
-      DB_URL: ${{ secrets.DB_URL }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      TEST_OVERRIDE_EMAIL: ${{ secrets.TEST_OVERRIDE_EMAIL }}
-      TEST_OVERRIDE_PHONE: ${{ secrets.TEST_OVERRIDE_PHONE }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -972,6 +1015,47 @@ jobs:
         run: |
           sleep 20
           curl -f https://staging.ai-travelconcierge.com/api/health
+
+      - name: Record staging revision provenance
+        id: staging-provenance
+        run: |
+          checked_out_sha=$(git rev-parse HEAD)
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Staging revision provenance mismatch: checkout=$checked_out_sha event=$GITHUB_SHA"
+            exit 1
+          fi
+          echo "verified_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  # ============================================================
+  # Staging receipt — preserves the required status name (job 6)
+  # The shared-DB holder above performs the deployment and live checks.
+  # ============================================================
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      startsWith(github.ref, 'refs/heads/release/') &&
+      vars.STAGING_PIPELINE_ENABLED == 'true'
+    needs: [db-copy]
+    env:
+      HOLDER_RESULT: ${{ needs.db-copy.result }}
+      EXPECTED_SHA: ${{ github.sha }}
+      VERIFIED_SHA: ${{ needs.db-copy.outputs.verified_sha }}
+    steps:
+      - name: Verify exact staged revision
+        run: |
+          if [ "$HOLDER_RESULT" != "success" ]; then
+            echo "::error::Staging holder failed, was skipped, or was cancelled: holder=$HOLDER_RESULT"
+            exit 1
+          fi
+          if [ -z "$VERIFIED_SHA" ] || [ "$VERIFIED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::Revision provenance missing or stale: expected=$EXPECTED_SHA verified=${VERIFIED_SHA:-missing}"
+            exit 1
+          fi
+          echo "Staging acceptance passed for $VERIFIED_SHA."
 
   # ============================================================
   # Production block — deploy + smoke + tag + auto-merge (job 7)
