@@ -396,14 +396,14 @@ These apply to any application with strict tenant isolation requirements — not
 
 ### 21. Cross-Tenant Probe
 
-**What it does:** Black-box security test. Authenticates as Tenant B, then exercises every deployed `/api/**` route. Matching seeded dynamic families target a known Tenant A resource; other 2xx JSON responses are inspected for all exact Tenant A fixture identifiers. Known-resource 2xx, leaked identifiers, unreadable 2xx evidence, and 5xx responses fail. A concrete `/api/health` sentinel prevents wrong-host/all-404 false acceptance.
+**What it does:** Always enumerates every deployed `/api/**` route. With a compatible host, the black-box security test authenticates as Tenant B, verifies that B can read its own exact seeded booking, then probes Tenant A resources. Matching seeded dynamic families target a known Tenant A resource; other 2xx JSON responses are inspected for all exact Tenant A fixture identifiers. Known-resource 2xx, leaked identifiers, unreadable 2xx evidence, and 5xx responses fail. The health and same-tenant positive controls prevent wrong-host, wrong-database, and blanket-denial false acceptance.
 
 **Implementation:**
 - `tests/security/cross-tenant-probe.test.ts` — route enumerator + fixture-based probe
 - `tests/security/cross-tenant-allowlist.json` — routes that legitimately return 2xx without tenant auth (public endpoints)
 - Runs in CI as the `Cross-Tenant Probe` step
 
-**Current state:** The uninterrupted RLS holder rebuilds the main and RAG test databases, creates deterministic two-tenant fixtures, and runs the live probe when its required secrets are present. Human CI paths fail if live main/RAG/cross-tenant modes are absent; Dependabot has an explicit secret-less exemption that claims no live acceptance. The event SHA attests the checked-out probe and rebuilt test databases, while the shared application host revision remains explicitly unverified outside the release staging health-SHA check.
+**Current state:** The uninterrupted RLS holder rebuilds the main and RAG test databases and always runs route enumeration. Main/RAG live acceptance remains mandatory for human CI. Until #1913 provisions a compatible test-DB-bound host, an absent app host produces an explicit `host-unavailable` receipt that claims no live cross-tenant acceptance. Dependabot has a separate secret-less exemption. When live mode is configured, the event SHA attests the checked-out probe and rebuilt test databases, while the shared application host revision remains explicitly unverified outside the release staging health-SHA check.
 
 **New project notes:** The concept applies to any multi-tenant app. Enumeration alone is useful, but it is not live isolation evidence: require a real-host sentinel, route-appropriate seeded identifiers, fail-closed response evidence, and explicit provenance boundaries before claiming acceptance.
 
@@ -619,7 +619,7 @@ These are quality processes that exist in intent but aren't fully implemented:
 
 | Gap | Issue | What's Missing | Blocked On |
 |-----|-------|----------------|------------|
-| Cross-Tenant Probe (full) | #384 item 1 | Real tenant fixture setup (`setupCrossTenantFixtures()`) | #386 (dedicated test DB) |
+| Cross-Tenant Probe (live host) | #1913 | Test-DB-bound `APP_BASE_URL` that passes health and tenant-B own-booking controls | Operator provisioning |
 | E2E test bodies | #384 item 3 | 28 placeholder `test.skip` specs | Product prioritization |
 | Nightly test on dedicated DB | #386 | Dedicated test Supabase project | Operator provisioning |
 | Contracts canary live | #473 | `STRIPE_TEST_SECRET_KEY` + `ANTHROPIC_API_KEY_TEST` GitHub secrets | Operator provisioning |
