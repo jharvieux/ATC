@@ -435,6 +435,163 @@ regress("sql:read-only", "read followed by destructive statement", "unsafe", poi
 regress("sql:read-only", "plain SELECT remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings`"));
 regress("sql:read-only", "SELECT with trailing semicolon", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM public.bookings;`"));
 regress("sql:read-only", "read-only SELECT CTE remains a proof query", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible`"));
+regress(
+  "sql:function-effects",
+  "schema-qualified mutator in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "repository mutator in nested scalar expression",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, (SELECT public.increment_weather_usage()) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "schema-qualified mutator in read CTE",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`WITH effect AS MATERIALIZED (SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings) SELECT id FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "effectful builtins in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, nextval('booking_sequence'), set_config('app.tenant_id', 'other', false), pg_advisory_lock(42) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "mutating function as matching RPC resource",
+  "unsafe",
+  pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.increment_customer_chat_count"),
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT * FROM public.increment_customer_chat_count(NULL, NULL, 30)`"),
+);
+regress(
+  "sql:function-effects",
+  "unknown unqualified function in SELECT list",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id, unknown_effect(id) FROM public.bookings`"),
+);
+regress(
+  "sql:function-effects",
+  "verified read-only RPC remains a proof query",
+  "safe",
+  pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.match_region_itinerary_chunks"),
+  postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE)`"),
+);
+for (const [shape, statement] of [
+  ["ANY array comparison", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])"],
+  ["ANY subquery comparison", "SELECT id FROM public.bookings WHERE id = ANY (SELECT id FROM public.bookings)"],
+  ["CASE expression grouping", "SELECT id FROM public.bookings WHERE CASE WHEN true THEN (id IS NOT NULL) ELSE (id IS NULL) END"],
+  ["simple CASE operand grouping", "SELECT id FROM public.bookings WHERE CASE (id) WHEN ('booking-a') THEN (true) ELSE (true) END"],
+  ["ROW value constructors", "SELECT id FROM public.bookings WHERE ROW(id) = ROW('booking-a')"],
+  ["ARRAY subquery constructor", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY(SELECT id FROM public.bookings))"],
+  ["CUBE grouping", "SELECT id FROM public.bookings GROUP BY CUBE (id)"],
+  ["ROLLUP grouping", "SELECT id FROM public.bookings GROUP BY ROLLUP (id)"],
+  ["GROUPING SETS", "SELECT id FROM public.bookings GROUP BY GROUPING SETS ((id), ())"],
+  ["CTE column aliases", "WITH visible(id) AS (SELECT id FROM public.bookings) SELECT id FROM visible"],
+  ["derived-table column aliases", "SELECT visible.id FROM (SELECT id FROM public.bookings) visible(id)"],
+  ["parenthesized set operand", "SELECT id FROM public.bookings INTERSECT (SELECT id FROM public.bookings)"],
+  ["FETCH count", "SELECT id FROM public.bookings FETCH FIRST (1) ROWS ONLY"],
+  ["BETWEEN operands", "SELECT id FROM public.bookings WHERE id BETWEEN ('a') AND ('z')"],
+  ["AT TIME ZONE operand", "SELECT id FROM public.bookings WHERE CURRENT_TIMESTAMP AT TIME ZONE ('UTC') IS NOT NULL"],
+  ["time precision", "SELECT id FROM public.bookings WHERE LOCALTIMESTAMP(3) IS NOT NULL"],
+  ["WINDOW definition", "SELECT id FROM public.bookings WINDOW booking_window AS (PARTITION BY id)"],
+  ["LIMIT expression", "SELECT id FROM public.bookings LIMIT (1)"],
+] as const) {
+  regress(
+    "sql:parenthesized-syntax",
+    shape,
+    "safe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`${statement}\``),
+  );
+}
+for (const [shape, call] of [
+  ["unqualified FILTER call", "filter(id)"],
+  ["qualified FILTER call", "public.filter(id)"],
+  ["qualified OVER call", "public.over(id)"],
+  ["qualified WHERE call", "public.where(id)"],
+  ["qualified ANY call", "public.any(id)"],
+  ["quoted ROW call", '"row"(id)'],
+] as const) {
+  regress(
+    "sql:keyword-call-ambiguity",
+    shape,
+    "unsafe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`SELECT id, ${call} FROM public.bookings\``),
+  );
+}
+
+regress(
+  "postgres:helper-return",
+  "local helper preserves imported factory provenance",
+  "safe",
+  pointerUnit,
+  postgresTarget("function makeSql() { return pgFactory(DB_URL!); } const sql = makeSql();")
+    .replace('import postgres from "postgres";', 'import { default as pgFactory } from "postgres";'),
+);
+regress(
+  "postgres:helper-return",
+  "fake helper cannot borrow provenance from inert import",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("function makeSql() { return (() => Promise.resolve([])) as never; } const sql = makeSql();"),
+);
+regress(
+  "postgres:helper-return",
+  "branch-ambiguous helper fails closed",
+  "unsafe",
+  pointerUnit,
+  postgresTarget("function makeSql() { if (process.env.FAKE) return (() => Promise.resolve([])) as never; return postgres(DB_URL!); } const sql = makeSql();"),
+);
+
+for (const [mutation, operation, successOnly] of [
+  ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("id")', 'db.from("bookings").insert([{ id: "allowed" }])'],
+  ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")', 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed")'],
+  ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("id")', 'db.from("bookings").delete().eq("id", "allowed")'],
+  ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("id")', 'db.from("bookings").upsert([{ id: "allowed" }])'],
+] as const) {
+  regress(
+    "mutation:affected-rows",
+    `${mutation} omits the declared denied attempt`,
+    "unsafe",
+    pointerUnit,
+    supabaseTarget("const db = createClient(DB_URL!, \"key\");", operation)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]'),
+  );
+  regress("mutation:success-only", `${mutation} without affected IDs`, "unsafe", pointerUnit, supabaseTarget("const db = createClient(DB_URL!, \"key\");", successOnly));
+  regress(
+    "mutation:fake-receiver",
+    `${mutation} affected IDs from fake receiver`,
+    "unsafe",
+    pointerUnit,
+    supabaseTarget("createClient(DB_URL!, \"key\"); const db = fake;", operation),
+  );
+}
+
+for (const [mutation, operation] of [
+  ["INSERT", 'async () => { const { error } = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+  ["UPDATE", '() => { const ids = ["allowed", "booking-a"]; return db.from("bookings").update({ status: "updated" }).in("id", ids).select("id"); }'],
+  ["DELETE", '() => { const ids = ["allowed", "booking-a"]; return db.from("bookings").delete().in("id", ids).select("id"); }'],
+  ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+] as const) {
+  regress(
+    "mutation:attempted-effects",
+    `${mutation} proves allowed and denied attempts`,
+    "safe",
+    pointerUnit,
+    supabaseTarget("const db = createClient(DB_URL!, \"key\");", "placeholder")
+      .replace("query: () => placeholder", `query: ${operation}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]'),
+  );
+}
 
 regress(
   "effects:unknown-loop",

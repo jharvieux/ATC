@@ -112,13 +112,26 @@ describe("notes route", () => {
 });
 `;
 
-const annotationErrorFor = (coverageTarget: string): string | undefined => {
+const annotationErrorFor = (coverageTarget: string, resources = RLS_RESOURCE): string | undefined => {
   const source = claimTest(`vi.mock("@supabase/supabase-js");`).replace(
     '  it("enforces tenant isolation on the list query", async () => {});',
-    `  ${pointer()}\n  it("enforces tenant isolation on the list query", async () => {});`,
+    `  ${pointer(RLS_TEST, resources)}\n  it("enforces tenant isolation on the list query", async () => {});`,
   );
   return findMockedTenantTests(F, source, new Map([[RLS_FILE, coverageTarget]]))[0]?.annotationError;
 };
+
+const postgresAnnotationErrorFor = (query: string, setup = "", resources = RLS_RESOURCE): string | undefined => annotationErrorFor(`
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    ${setup}
+    await assertIsolationQuery({ query: ${query}, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`, resources);
 
 describe("findMockedTenantTests", () => {
   it("flags an isolation-claiming test in a file that mocks @supabase/*", () => {
@@ -516,6 +529,252 @@ describe("RLS integration", () => {
     expect(findMockedTenantTests(F, source, new Map([[RLS_FILE, postgresCoverage]]))).toEqual([]);
   });
 
+  it("accepts a locally defined helper returning an aliased Postgres factory client", () => {
+    const helperCoverage = `
+import { default as pgFactory } from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+function makeTenantClient() { return pgFactory(DB_URL!); }
+const helper = makeTenantClient;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = helper();
+    const query = sql;
+    await assertIsolationQuery({ query: () => query\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toBeUndefined();
+  });
+
+  it("accepts additional proven read-only Postgres statements", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => { await sql`SELECT id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }',
+    )).toBeUndefined();
+  });
+
+  it("accepts a resource-free Postgres SELECT before the proof query", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => { await sql`SELECT 1`; return sql`SELECT id FROM public.bookings`; }',
+    )).toBeUndefined();
+  });
+
+  it.each([
+    ["ANY array comparison", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])"],
+    ["ALL array comparison", "SELECT id FROM public.bookings WHERE id = ALL (ARRAY['booking-a'])"],
+    ["SOME array comparison", "SELECT id FROM public.bookings WHERE id = SOME (ARRAY['booking-a'])"],
+    ["CASE grouping", "SELECT id FROM public.bookings WHERE CASE WHEN true THEN (id IS NOT NULL) ELSE (id IS NULL) END"],
+    ["simple CASE operand grouping", "SELECT id FROM public.bookings WHERE CASE (id) WHEN ('booking-a') THEN (true) ELSE (true) END"],
+    ["row constructors", "SELECT id FROM public.bookings WHERE ROW(id) = ROW('booking-a')"],
+    ["array subquery constructor", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY(SELECT id FROM public.bookings))"],
+    ["CUBE grouping", "SELECT id FROM public.bookings GROUP BY CUBE (id)"],
+    ["ROLLUP grouping", "SELECT id FROM public.bookings GROUP BY ROLLUP (id)"],
+    ["GROUPING SETS", "SELECT id FROM public.bookings GROUP BY GROUPING SETS ((id), ())"],
+    ["COALESCE value expression", "SELECT COALESCE(id, id) AS id FROM public.bookings"],
+    ["NULLIF value expression", "SELECT NULLIF(id, 'unrelated') AS id FROM public.bookings"],
+    ["GREATEST value expression", "SELECT GREATEST(id, id) AS id FROM public.bookings"],
+    ["LEAST value expression", "SELECT LEAST(id, id) AS id FROM public.bookings"],
+    ["CTE column aliases", "WITH visible(id) AS (SELECT id FROM public.bookings) SELECT id FROM visible"],
+    ["table column aliases", "SELECT booking.id FROM public.bookings booking(id)"],
+    ["derived-table column aliases", "SELECT visible.id FROM (SELECT id FROM public.bookings) visible(id)"],
+    ["parenthesized INTERSECT operand", "SELECT id FROM public.bookings INTERSECT (SELECT id FROM public.bookings)"],
+    ["parenthesized EXCEPT operand", "SELECT id FROM public.bookings EXCEPT (SELECT id FROM public.bookings)"],
+    ["FETCH FIRST count", "SELECT id FROM public.bookings FETCH FIRST (1) ROWS ONLY"],
+    ["FETCH NEXT count", "SELECT id FROM public.bookings FETCH NEXT (1) ROWS ONLY"],
+    ["grouped BETWEEN operands", "SELECT id FROM public.bookings WHERE id BETWEEN ('a') AND ('z')"],
+    ["AT TIME ZONE operand", "SELECT id FROM public.bookings WHERE CURRENT_TIMESTAMP AT TIME ZONE ('UTC') IS NOT NULL"],
+    ["time precision", "SELECT id FROM public.bookings WHERE CURRENT_TIME(3) IS NOT NULL AND CURRENT_TIMESTAMP(3) IS NOT NULL AND LOCALTIME(3) IS NOT NULL AND LOCALTIMESTAMP(3) IS NOT NULL"],
+    ["DISTINCT ON expression", "SELECT DISTINCT ON (id) id FROM public.bookings"],
+    ["WINDOW definition", "SELECT id FROM public.bookings WINDOW booking_window AS (PARTITION BY id)"],
+    ["LIMIT and OFFSET expressions", "SELECT id FROM public.bookings LIMIT (1) OFFSET (0)"],
+    ["EXISTS subquery", "SELECT id FROM public.bookings WHERE EXISTS (SELECT 1 FROM public.bookings visible WHERE visible.id = id)"],
+  ])("accepts Postgres %s syntax without treating it as a function", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toBeUndefined();
+  });
+
+  it("accepts the verified read-only region-matching Postgres function", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched(related_chunk_id) JOIN public.bookings booking ON true`',
+      "",
+      "rpc:public.match_region_itinerary_chunks,table:public.bookings",
+    )).toBeUndefined();
+  });
+
+  it.each([
+    ["projected after the proof ID", 'async () => sql`SELECT id, public.increment_customer_chat_count(id, id, 30) AS side_effect FROM public.bookings`', ""],
+    ["projected before the proof ID", 'async () => sql`SELECT public.increment_customer_chat_count(id, id, 30) AS side_effect, id FROM public.bookings`', ""],
+    ["through a tag alias", 'async () => queryDb`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`', "const queryDb = sql;"],
+    ["through a local helper", "async () => readAndMutate()", 'const readAndMutate = () => sql`SELECT id, public.increment_customer_chat_count(id, id, 30) FROM public.bookings`;'],
+    ["inside a read CTE", 'async () => sql`WITH effect AS MATERIALIZED (SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings) SELECT id FROM public.bookings`', ""],
+    ["before a returned saved SELECT", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings`; return selected; }', ""],
+    ["on a branch before a returned SELECT", 'async () => { if (process.env.MUTATE) await sql`SELECT public.increment_customer_chat_count(id, id, 30) FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+  ])("rejects a schema-qualified Postgres function %s", (_shape, query, setup) => {
+    expect(postgresAnnotationErrorFor(query, setup)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["in a SELECT list", "SELECT id, public.increment_weather_usage() FROM public.bookings"],
+    ["in a WHERE clause", "SELECT id FROM public.bookings WHERE public.increment_weather_usage() IS NOT NULL"],
+    ["in an ORDER BY clause", "SELECT id FROM public.bookings ORDER BY public.increment_weather_usage()"],
+    ["in a nested scalar SELECT", "SELECT id, (SELECT public.increment_weather_usage()) FROM public.bookings"],
+  ])("rejects a repository mutator %s", (_shape, statement) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["nextval", "nextval('booking_sequence')"],
+    ["setval", "setval('booking_sequence', 2)"],
+    ["set_config", "set_config('app.tenant_id', 'other', false)"],
+    ["advisory lock", "pg_advisory_lock(42)"],
+    ["transaction advisory lock", "pg_advisory_xact_lock(42)"],
+    ["sleep", "pg_sleep(1)"],
+    ["dblink execution", "dblink_exec('DELETE FROM public.bookings')"],
+    ["unknown aggregate", "unknown_aggregate(id)"],
+    ["unknown window function", "unknown_window(id) OVER ()"],
+  ])("rejects the effectful Postgres %s function in a SELECT", (_shape, call) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${call} FROM public.bookings\``,
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a mutating Postgres function used as the query resource", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT * FROM public.increment_customer_chat_count(NULL, NULL, 30)`',
+      "",
+      "rpc:public.increment_customer_chat_count",
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a mutating Postgres function used as a lateral resource", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.bookings booking CROSS JOIN LATERAL public.increment_weather_usage() effect`',
+      "",
+      "rpc:public.increment_weather_usage,table:public.bookings",
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a schema-qualified function whose quoted name resembles SQL syntax", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT id, public."ROW"(id) FROM public.bookings`',
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["unqualified FILTER", "filter(id)"],
+    ["unqualified OVER", "over(id)"],
+    ["qualified FILTER", "public.filter(id)"],
+    ["qualified OVER", "public.over(id)"],
+    ["qualified SELECT", "public.select(id)"],
+    ["qualified WHERE", "public.where(id)"],
+    ["qualified WITHIN", "public.within(id)"],
+    ["qualified MATERIALIZED", "public.materialized(id)"],
+    ["qualified newly accepted ANY", "public.any(id)"],
+    ["qualified newly accepted ROW", "public.row(id)"],
+    ["quoted ROW", '"row"(id)'],
+    ["qualified quoted ANY", 'public."any"(id)'],
+  ])("rejects a Postgres %s callable shape", (_shape, call) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${call} FROM public.bookings\``,
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects an unknown set-returning function inside ROWS FROM", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.bookings booking, ROWS FROM (unknown_srf(booking.id)) effect`',
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["aggregate FILTER", "unknown_aggregate(id) FILTER (WHERE id IS NOT NULL)"],
+    ["ordered-set aggregate", "unknown_aggregate(id) WITHIN GROUP (ORDER BY id)"],
+  ])("rejects an unknown Postgres %s", (_shape, expression) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => sql\`SELECT id, ${expression} FROM public.bookings\``,
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'sql`INSERT INTO public.bookings (id) VALUES (\'booking-a\')`'],
+    ["UPDATE", 'sql`UPDATE public.bookings SET status = \'changed\'`'],
+    ["DELETE", 'sql`DELETE FROM public.bookings`'],
+    ["UPSERT-equivalent", 'sql`INSERT INTO public.bookings (id) VALUES (\'booking-a\') ON CONFLICT (id) DO UPDATE SET status = \'changed\'`'],
+    ["MERGE", 'sql`MERGE INTO public.bookings USING public.contacts ON false WHEN NOT MATCHED THEN INSERT DEFAULT VALUES`'],
+    ["CALL", 'sql`CALL public.refresh_bookings()`'],
+    ["DDL", 'sql`CREATE TABLE public.bookings_copy AS SELECT * FROM public.bookings`'],
+    ["writable CTE", 'sql`WITH changed AS (DELETE FROM public.bookings RETURNING id) SELECT id FROM changed`'],
+    ["multi-statement", 'sql`SELECT id FROM public.bookings; DELETE FROM public.bookings`'],
+  ])("rejects a %s Postgres operation before a returned SELECT", (_shape, mutation) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => { await ${mutation}; return sql\`SELECT id FROM public.bookings\`; }`,
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["a saved SELECT followed by mutation", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`UPDATE public.bookings SET status = \'changed\'`; return selected; }', ""],
+    ["a branch mutation", 'async () => { if (process.env.MUTATE) await sql`DELETE FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+    ["an aliased helper mutation", 'async () => { await mutate(); return sql`SELECT id FROM public.bookings`; }', 'const query = sql; const mutate = () => query`INSERT INTO public.bookings (id) VALUES (\'booking-a\')`;'],
+    ["a Promise.all mutation", 'async () => { await Promise.all([sql`DELETE FROM public.bookings`, sql`SELECT id FROM public.bookings`]); return sql`SELECT id FROM public.bookings`; }', ""],
+    ["an unsupported dynamic statement", 'async () => { await sql.unsafe(statement); return sql`SELECT id FROM public.bookings`; }', "const statement = process.env.SQL!;"],
+  ])("rejects Postgres SELECT laundering after %s", (_shape, query, setup) => {
+    expect(postgresAnnotationErrorFor(query, setup)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["fake return despite inert real imports", "function makeTenantClient() { return (() => Promise.resolve([])) as never; }"],
+    ["helper reassignment", "let makeTenantClient = () => postgres(DB_URL!); makeTenantClient = () => (() => Promise.resolve([])) as never;"],
+    ["branch-ambiguous return", "function makeTenantClient() { if (process.env.USE_FAKE) return (() => Promise.resolve([])) as never; return postgres(DB_URL!); }"],
+    ["shadowed factory", "function makeTenantClient(postgres = () => (() => Promise.resolve([]))) { return postgres(DB_URL!); }"],
+  ])("rejects a Postgres helper with a %s", (_shape, helper) => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+${helper}
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = makeTenantClient();
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a helper-returned Postgres client overwritten before its query", () => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const makeTenantClient = () => postgres(DB_URL!);
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    let sql = makeTenantClient();
+    sql = (() => Promise.resolve([])) as never;
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("rejects a helper-returned Postgres client mocked at instance level", () => {
+    const helperCoverage = `
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+import { vi } from "vitest";
+const DB_URL = process.env.SUPABASE_DB_URL;
+const makeTenantClient = () => postgres(DB_URL!);
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = makeTenantClient();
+    vi.mocked(sql).mockImplementation(() => Promise.resolve([]));
+    await assertIsolationQuery({ query: () => sql\`SELECT id FROM public.bookings\`, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`;
+    expect(annotationErrorFor(helperCoverage)).toMatch(/mocks the Postgres client receiver at instance level/);
+  });
+
   it.each([
     ["compound assignment", "sql += fake;"],
     ["logical assignment", "sql &&= fake;"],
@@ -576,6 +835,255 @@ describe("RLS integration", () => {
 })(() => (() => Promise.resolve([])));
 `;
     expect(annotationErrorFor(postgresCoverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const deniedId = "booking-a"; const deniedRows = [{ id: deniedId }]; const { error } = await db.from("bookings").insert(deniedRows).select("id"); if (error?.code !== "42501") throw new Error("expected denied insert"); const allowedRows = [{ id: "allowed" }]; return db.from("bookings").insert(allowedRows).select("id"); }'],
+    ["UPDATE", '() => { const attemptedIds = ["allowed", "booking-a"]; return db.from("bookings").update({ status: "updated" }).in("id", attemptedIds).select("id"); }'],
+    ["DELETE", '() => { const attemptedIds = ["allowed", "booking-a"]; return db.from("bookings").delete().in("id", attemptedIds).select("id"); }'],
+    ["UPSERT", 'async () => { const deniedId = "booking-a"; const deniedRows = [{ id: deniedId }]; const denied = await db.from("bookings").upsert(deniedRows).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denied upsert"); const allowedRows = [{ id: "allowed" }]; return db.from("bookings").upsert(allowedRows).select("id"); }'],
+  ])("accepts %s evidence that returns affected row IDs from a proven receiver", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  const helperMutationCases = [
+    ["UPDATE", 'const patch = { status: "updated" };', 'db.from("bookings").update(patch).in("id", ids).select("id")'],
+    ["DELETE", "", 'db.from("bookings").delete().in("id", ids).select("id")'],
+  ] as const;
+
+  it.each(helperMutationCases)("accepts a single exact %s helper mutation", (_mutation, setup, operation) => {
+    const query = `() => { ${setup} const mutate = (ids: string[]) => ${operation}; return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  it.each(helperMutationCases)("rejects an ignored %s helper mutation before an authoritative call", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; await mutate(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects repeated identical valid %s helper mutations", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; await mutate(["allowed", "booking-a"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects repeated %s mutations through a helper alias", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; const alias = mutate; await alias(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(helperMutationCases)("rejects a branch-conditional earlier %s helper mutation", (_mutation, setup, operation) => {
+    const query = `async () => { ${setup} const mutate = (ids: string[]) => ${operation}; if (process.env.RUN_MUTATION) await mutate(["unrelated"]); return mutate(["allowed", "booking-a"]); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["absent options", "", ""],
+    ["an inline static id conflict target", "", ', { onConflict: "id" }'],
+    ["an aliased static id conflict target", 'const options = { onConflict: "id" };', ", options"],
+    ["a single-assignment const alias chain", 'const original = { onConflict: "id" }; const forwarded = original; const options = forwarded;', ", options"],
+    ["a locally inspected static id target", 'const options = { onConflict: "id" }; function inspect(value: { onConflict: string }) { return value.onConflict; } inspect(options);', ", options"],
+  ])("accepts UPSERT evidence with %s", (_shape, setup, options) => {
+    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }]${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]${options}).select("id"); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toBeUndefined();
+  });
+
+  it.each([
+    ["an alternate conflict key", 'const options = { onConflict: "external_ref" };'],
+    ["a composite conflict key", 'const options = { onConflict: "id,tenant_id" };'],
+    ["a dynamic conflict key", "const options = { onConflict: process.env.CONFLICT_KEY };"],
+    ["unresolved options", "const options = getOptions();"],
+    ["branch-ambiguous options", 'const options = process.env.USE_ID ? { onConflict: "id" } : { onConflict: "external_ref" };'],
+    ["a reassigned options alias", 'let options = { onConflict: "id" }; options = { onConflict: "external_ref" };'],
+    ["an overwritten conflict key", 'const options = { onConflict: "external_ref" }; options.onConflict = "id";'],
+    ["a restored original binding", 'const original = { onConflict: "id" }; let options = original; options = { onConflict: "external_ref" }; options = original;'],
+    ["an alias overwritten away and back", 'const original = { onConflict: "id" }; let options = original; let alias = options; alias = { onConflict: "external_ref" }; alias = options;', "alias"],
+    ["a branch overwrite followed by fresh restoration", 'let options = { onConflict: "id" }; if (process.env.USE_EXTERNAL) options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
+    ["an external binding restored to a fresh id target", 'let options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
+    ["a tainted alias chain", 'const original = { onConflict: "id" }; let options = original; options = { onConflict: "external_ref" }; options = original; const forwarded = options; const finalOptions = forwarded;', "finalOptions"],
+    ["Object.setPrototypeOf", 'const options = { onConflict: "id" }; Object.setPrototypeOf(options, { onConflict: "external_ref" });'],
+    ["Reflect.setPrototypeOf through an alias", 'const options = { onConflict: "id" }; const alias = options; Reflect.setPrototypeOf(alias, { onConflict: "external_ref" });'],
+    ["a prototype literal", 'const options = { __proto__: { onConflict: "external_ref" } };'],
+    ["Object.create with an inherited conflict target", 'const options = Object.create({ onConflict: "external_ref" });'],
+    ["a __proto__ assignment", 'const options = { onConflict: "id" }; options.__proto__ = { onConflict: "external_ref" };'],
+    ["defineProperty", 'const options = { onConflict: "id" }; Object.defineProperty(options, "onConflict", { value: "external_ref" });'],
+    ["a resolved local prototype mutator", 'const options = { onConflict: "id" }; function mutate(value: object) { Object.setPrototypeOf(value, { onConflict: "external_ref" }); } mutate(options);'],
+    ["an unresolved mutator", 'const options = { onConflict: "id" }; mutateOptions(options);'],
+    ["a branch-local alias prototype mutation", 'const options = { onConflict: "id" }; const alias = options; if (process.env.MUTATE) Object.setPrototypeOf(alias, { onConflict: "external_ref" });'],
+  ])("rejects UPSERT evidence with %s", (_shape, setup, options = "options") => {
+    const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }], ${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }], ${options}).select("id"); }`;
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (!denied.error) throw new Error("expected an error"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s denial probes that do not prove an RLS policy error", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("id")'],
+  ])("rejects %s evidence that never attempts the declared denied ID", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "unrelated" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPDATE", '() => db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "unrelated"]).select("id")'],
+    ["DELETE", '() => db.from("bookings").delete().in("id", ["allowed", "unrelated"]).select("id")'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "unrelated" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s evidence that attempts an unrelated ID instead of the denied ID", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "booking-a"]).neq("id", "booking-a").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().in("id", ["allowed", "booking-a"]).neq("id", "booking-a").select("id")'],
+  ])("rejects %s evidence whose later filter removes the denied attempt", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["allowed"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "booking-a" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "booking-a").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "unrelated").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "booking-a" }]).select("id")'],
+  ])("rejects %s evidence with no declared allowed effect", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'async () => { const denied = await db.from("bookings").insert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").insert([{ id: "allowed" }]).select("id"); }'],
+    ["UPDATE", '() => db.from("bookings").update({ status: "updated" }).in("id", ["allowed", "booking-a"]).select("id")'],
+    ["DELETE", '() => db.from("bookings").delete().in("id", ["allowed", "booking-a"]).select("id")'],
+    ["UPSERT", 'async () => { const denied = await db.from("bookings").upsert([{ id: "booking-a" }]).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]).select("id"); }'],
+  ])("rejects %s evidence whose declared returned IDs do not match the attempted allowed effect", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace('query: () => db.from("bookings").select("id")', `query: ${query}`)
+      .replace("allowedIds: []", 'allowedIds: ["other"]');
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  const mutationLaunderingCases = [
+    ["INSERT", 'db.from("bookings").insert([{ id: "booking-a" }]).select("id")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "unrelated").select("id")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "unrelated").select("id")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "booking-a" }]).select("id")'],
+  ] as const;
+
+  it.each(mutationLaunderingCases)("rejects an ignored %s before a returned canonical SELECT", (_mutation, mutation) => {
+    const query = `async () => { await ${mutation}; return db.from("bookings").select("id"); }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(mutationLaunderingCases)("rejects a saved canonical SELECT followed by an unrelated %s", (_mutation, mutation) => {
+    const query = `async () => { const selected = db.from("bookings").select("id"); await ${mutation}; return selected; }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each(mutationLaunderingCases)("rejects a branch-conditional aliased %s before a returned SELECT", (_mutation, mutation) => {
+    const query = `async () => { const mutate = () => ${mutation}; if (process.env.RUN_MUTATION) await mutate(); return db.from("bookings").select("id"); }`;
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }])'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }])'],
+  ])("rejects success-only %s results without affected-row evidence", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none|mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'db.from("bookings").insert([{ id: "allowed" }]).select("status")'],
+    ["UPDATE", 'db.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("status")'],
+    ["DELETE", 'db.from("bookings").delete().eq("id", "allowed").select("status")'],
+    ["UPSERT", 'db.from("bookings").upsert([{ id: "allowed" }]).select("status")'],
+  ])("rejects %s results that do not return affected IDs", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE.replace(
+      'query: () => db.from("bookings").select("id")',
+      `query: () => ${query}`,
+    );
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none|mutation witness/);
+  });
+
+  it.each([
+    ["INSERT", 'fake.from("bookings").insert([{ id: "allowed" }]).select("id")'],
+    ["UPDATE", 'fake.from("bookings").update({ status: "updated" }).eq("id", "allowed").select("id")'],
+    ["DELETE", 'fake.from("bookings").delete().eq("id", "allowed").select("id")'],
+    ["UPSERT", 'fake.from("bookings").upsert([{ id: "allowed" }]).select("id")'],
+  ])("rejects %s evidence from a fake receiver despite inert real-DB imports", (_mutation, query) => {
+    const coverage = REAL_DB_COVERAGE
+      .replace(
+        '    const db = createClient("https://db.example.test", "anon-key");',
+        "    createClient(\"https://db.example.test\", \"anon-key\");\n    const fake = {} as never;",
+      )
+      .replace('query: () => db.from("bookings").select("id")', `query: () => ${query}`);
+    expect(annotationErrorFor(coverage)).toMatch(/resource mismatch.*queried none/);
+  });
+
+  it("preserves canonical SELECT evidence while mutation evidence is distinguished", () => {
+    expect(annotationErrorFor(REAL_DB_COVERAGE)).toBeUndefined();
   });
 
   it("rejects a real from call nested under an unrelated select chain", () => {

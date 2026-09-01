@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-373 — 2026-09-01 — Tenant-isolation mutation witnesses bind declared IDs to proven attempted and affected IDs: UPDATE/DELETE target the exact allowed+denied union, INSERT/UPSERT split an observed denied 42501 probe from the allowed effect, any extra mutation prevents SELECT laundering, and helper-returned Postgres clients require fail-closed imported-factory provenance (issues #2095/#2096)
 - D-372 — 2026-09-01 — Verified custom domains for currently eligible Agency tenants may explicitly opt into indexing; false remains the default, platform subdomains stay permanently noindex, crawler eligibility rechecks live domain/tier/setting fail-closed, and tenant robots/sitemaps are no-store so disable or downgrade is immediate (PR #2100; supersedes D-368 only for custom domains)
 - D-371 — 2026-08-31 — Manual pre-cruise T-90/T-30/T-7/T-1 sends and chosen-time schedules use direct generation for predictable timing; automatic T-90/T-30/T-7 remain batched and every delivery rechecks confirmed status (PR #2107; refs D-107/D-118)
 - D-370 — 2026-07-31 — Seam-secret rotation sets FINAL for #2002 (supersedes queued service-JWT); CRON_SECRET stays boot-required (Vercel builds the cron Bearer from it — _CURRENT-only config silently kills all 9 crons); MAIN_APP_ADMIN_API_KEY boot-required on main, Preview holds a random placeholder (PRs #2068/#2070/#2071)

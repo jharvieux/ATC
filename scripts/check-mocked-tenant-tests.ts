@@ -51,6 +51,9 @@ const COVERAGE_POINTER_FORMAT = /^@rls-covered-by resources=([^\s]+) target=([^\
 const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
+const READ_ONLY_POSTGRES_FUNCTIONS = new Set(["public.match_region_itinerary_chunks"]);
+const READ_ONLY_POSTGRES_VALUE_EXPRESSIONS = new Set(["COALESCE", "GREATEST", "LEAST", "NULLIF", "ROW"]);
+const POSTGRES_TIME_VALUE_EXPRESSIONS = new Set(["CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP"]);
 
 const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
 
@@ -215,8 +218,26 @@ interface MockControlLifecycle {
   receivers: Set<FlowAtom>;
 }
 
+type MutationKind = "insert" | "update" | "delete" | "upsert";
+
+interface MutationAttempt {
+  kind: MutationKind;
+  operation: FlowAtom;
+  resources: Set<string>;
+  attemptedIds?: Set<string>;
+  intentInvalid: boolean;
+}
+
+interface MutationWitnessEvidence {
+  kind: MutationKind;
+  mode: "combined" | "split";
+  allowedAttemptIds: string[];
+  deniedAttemptIds: string[];
+}
+
 interface FlowState {
   cells: Map<ts.Symbol, Set<FlowAtom>>;
+  reassignedCells: Set<ts.Symbol>;
   members: Map<FlowAtom, Map<string, Set<FlowAtom>>>;
   dirty: Set<FlowAtom>;
   outcome: FlowOutcome;
@@ -232,6 +253,9 @@ interface FlowState {
   allocationSerial: number;
   unsupportedReasons: Set<string>;
   unsupported: boolean;
+  mutationAttempts: Map<FlowAtom, MutationAttempt>;
+  observedDeniedMutationOperations: Set<FlowAtom>;
+  witnessMutationSignatures: Set<string>;
 }
 
 interface FlowEvaluation {
@@ -248,10 +272,13 @@ interface TestFlowProof {
   unsupported: boolean;
   normalPathWithoutWitness: boolean;
   witnessCall?: ts.CallExpression;
+  mutationEvidence?: MutationWitnessEvidence;
+  mutationEvidenceInvalid: boolean;
 }
 
 const UNKNOWN_ATOM = "unknown";
 const UNDEFINED_ATOM = "undefined";
+const REASSIGNED_BINDING_ATOM = "binding:reassigned";
 const ORIGINAL_LOADER_ATOM = "loader:original";
 const ORIGINAL_MODULE_ATOM = "module:original";
 const SUPABASE_FACTORY_ATOM = "factory:supabase";
@@ -279,8 +306,15 @@ class LocalFlowEngine {
   private readonly controlOwners = new Map<FlowAtom, Set<FlowAtom>>();
   private readonly controlMethods = new Map<FlowAtom, string>();
   private readonly literalValues = new Map<FlowAtom, string>();
+  private readonly stringLiteralAtoms = new Set<FlowAtom>();
   private readonly ambiguousLiteralAtoms = new Set<FlowAtom>();
+  private readonly overwrittenObjectAtoms = new Set<FlowAtom>();
+  private readonly unsafeOptionAtoms = new Set<FlowAtom>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  private readonly invalidPostgresOperations = new Set<FlowAtom>();
+  // Keep attempted mutation IDs separate from returned rows: both are required to prove tenant isolation.
+  private readonly mutationResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  private readonly mutationErrorTargets = new Map<FlowAtom, FlowAtom>();
   private readonly executedWitnessCalls = new Set<ts.CallExpression>();
   private allocationFrame: FlowAtom | undefined;
   private lexicalFrame: FlowAtom | undefined;
@@ -344,6 +378,7 @@ class LocalFlowEngine {
   private cloneState(state: FlowState): FlowState {
     return {
       cells: new Map([...state.cells].map(([symbol, value]) => [symbol, new Set(value)])),
+      reassignedCells: new Set(state.reassignedCells),
       members: new Map(
         [...state.members].map(([atom, members]) => [
           atom,
@@ -393,12 +428,25 @@ class LocalFlowEngine {
       allocationSerial: state.allocationSerial,
       unsupportedReasons: new Set(state.unsupportedReasons),
       unsupported: state.unsupported,
+      mutationAttempts: new Map(
+        [...state.mutationAttempts].map(([atom, attempt]) => [
+          atom,
+          {
+            ...attempt,
+            resources: new Set(attempt.resources),
+            ...(attempt.attemptedIds ? { attemptedIds: new Set(attempt.attemptedIds) } : {}),
+          },
+        ]),
+      ),
+      observedDeniedMutationOperations: new Set(state.observedDeniedMutationOperations),
+      witnessMutationSignatures: new Set(state.witnessMutationSignatures),
     };
   }
 
   private emptyState(): FlowState {
     return {
       cells: new Map(),
+      reassignedCells: new Set(),
       members: new Map(),
       dirty: new Set(),
       outcome: "normal",
@@ -414,6 +462,9 @@ class LocalFlowEngine {
       allocationSerial: 0,
       unsupportedReasons: new Set(),
       unsupported: false,
+      mutationAttempts: new Map(),
+      observedDeniedMutationOperations: new Set(),
+      witnessMutationSignatures: new Set(),
     };
   }
 
@@ -431,6 +482,7 @@ class LocalFlowEngine {
     return (
       left.outcome === right.outcome &&
       sameMap(left.cells, right.cells, sameSet) &&
+      sameSet(left.reassignedCells, right.reassignedCells) &&
       sameMap(left.members, right.members, (a, b) => sameMap(a, b, sameSet)) &&
       sameSet(left.dirty, right.dirty) &&
       sameSet(left.returned, right.returned) &&
@@ -458,7 +510,18 @@ class LocalFlowEngine {
       ) &&
       left.allocationSerial === right.allocationSerial &&
       sameSet(left.unsupportedReasons, right.unsupportedReasons) &&
-      left.unsupported === right.unsupported
+      left.unsupported === right.unsupported &&
+      sameMap(left.mutationAttempts, right.mutationAttempts, (a, b) =>
+        a.kind === b.kind &&
+        a.operation === b.operation &&
+        a.intentInvalid === b.intentInvalid &&
+        sameSet(a.resources, b.resources) &&
+        (a.attemptedIds === undefined
+          ? b.attemptedIds === undefined
+          : b.attemptedIds !== undefined && sameSet(a.attemptedIds, b.attemptedIds))
+      ) &&
+      sameSet(left.observedDeniedMutationOperations, right.observedDeniedMutationOperations) &&
+      sameSet(left.witnessMutationSignatures, right.witnessMutationSignatures)
     );
   }
 
@@ -490,7 +553,14 @@ class LocalFlowEngine {
       return this.values(UNDEFINED_ATOM);
     }
     if (node.text === "Promise" && !sourceDeclaration) return this.values(NATIVE_PROMISE_ATOM);
-    if (symbol) return new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
+    if (symbol) {
+      const value = new Set(state.cells.get(symbol) ?? [UNKNOWN_ATOM]);
+      if (
+        state.reassignedCells.has(symbol) &&
+        [...value].some((atom) => atom.startsWith("object:") || atom === REASSIGNED_BINDING_ATOM)
+      ) value.add(REASSIGNED_BINDING_ATOM);
+      return value;
+    }
     if (node.text === "vi" || node.text === "jest") return this.values(`framework:${node.text}`);
     return this.values(UNKNOWN_ATOM);
   }
@@ -544,7 +614,10 @@ class LocalFlowEngine {
 
   private literalAtom(node: ts.Expression): FlowAtom {
     const atom = this.atom("literal", node);
-    if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) this.literalValues.set(atom, node.text);
+    if (ts.isStringLiteralLike(node)) {
+      this.literalValues.set(atom, node.text);
+      this.stringLiteralAtoms.add(atom);
+    } else if (ts.isNumericLiteral(node)) this.literalValues.set(atom, node.text);
     else if (node.kind === ts.SyntaxKind.TrueKeyword) this.literalValues.set(atom, "true");
     else if (node.kind === ts.SyntaxKind.FalseKeyword) this.literalValues.set(atom, "false");
     else if (node.kind === ts.SyntaxKind.NullKeyword) this.literalValues.set(atom, "null");
@@ -556,6 +629,99 @@ class LocalFlowEngine {
     if ([...value].some((atom) => this.ambiguousLiteralAtoms.has(atom))) return undefined;
     const keys = new Set([...value].map((atom) => this.literalValues.get(atom)));
     return keys.size === 1 && !keys.has(undefined) ? [...keys][0] : undefined;
+  }
+
+  private stringValues(value: FlowValue): Set<string> | undefined {
+    if (!value.size || [...value].some((atom) => !this.stringLiteralAtoms.has(atom) || this.ambiguousLiteralAtoms.has(atom))) {
+      return undefined;
+    }
+    return new Set([...value].map((atom) => this.literalValues.get(atom)!));
+  }
+
+  private arrayStringValues(state: FlowState, value: FlowValue): Set<string> | undefined {
+    const strings = new Set<string>();
+    for (const array of value) {
+      const length = this.arrayLength(state, array);
+      if (length === undefined) return undefined;
+      for (let index = 0; index < length; index += 1) {
+        const item = state.members.get(array)?.get(String(index));
+        const literals = item && this.stringValues(item);
+        if (!literals) return undefined;
+        for (const literal of literals) strings.add(literal);
+      }
+    }
+    return strings;
+  }
+
+  private mutationRowIds(state: FlowState, value: FlowValue): Set<string> | undefined {
+    const rows: FlowAtom[] = [];
+    for (const atom of value) {
+      const length = this.arrayLength(state, atom);
+      if (length === undefined) rows.push(atom);
+      else {
+        for (let index = 0; index < length; index += 1) {
+          const item = state.members.get(atom)?.get(String(index));
+          if (!item || item.size !== 1) return undefined;
+          rows.push(...item);
+        }
+      }
+    }
+    if (!rows.length) return undefined;
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const id = state.members.get(row)?.get("id");
+      const literals = id && this.stringValues(id);
+      if (!literals) return undefined;
+      for (const literal of literals) ids.add(literal);
+    }
+    return ids;
+  }
+
+  private constrainMutationIds(attempt: MutationAttempt, ids: ReadonlySet<string>): void {
+    attempt.attemptedIds = attempt.attemptedIds === undefined
+      ? new Set(ids)
+      : new Set([...attempt.attemptedIds].filter((id) => ids.has(id)));
+  }
+
+  private applyMutationFilter(
+    state: FlowState,
+    attempt: MutationAttempt,
+    member: string,
+    args: readonly FlowValue[],
+  ): void {
+    if (attempt.kind === "insert" || attempt.kind === "upsert") {
+      attempt.intentInvalid = true;
+      return;
+    }
+    if (member === "eq" || member === "in") {
+      const columns = this.stringValues(args[0] ?? this.values(UNKNOWN_ATOM));
+      if (!columns || columns.size !== 1 || !columns.has("id")) {
+        attempt.intentInvalid = true;
+        return;
+      }
+      const ids = member === "eq"
+        ? this.stringValues(args[1] ?? this.values(UNKNOWN_ATOM))
+        : this.arrayStringValues(state, args[1] ?? this.values(UNKNOWN_ATOM));
+      if (!ids || !ids.size) attempt.intentInvalid = true;
+      else this.constrainMutationIds(attempt, ids);
+      return;
+    }
+    if (member === "match") {
+      const objects = args[0] ?? this.values(UNKNOWN_ATOM);
+      for (const object of objects) {
+        const members = state.members.get(object);
+        if (!members || members.size !== 1 || !members.has("id")) {
+          attempt.intentInvalid = true;
+          continue;
+        }
+        const id = state.members.get(object)?.get("id");
+        const ids = this.stringValues(id);
+        if (!ids || !ids.size) attempt.intentInvalid = true;
+        else this.constrainMutationIds(attempt, ids);
+      }
+      return;
+    }
+    attempt.intentInvalid = true;
   }
 
   private memberKey(node: ts.Node | undefined, state: FlowState, value?: FlowValue): string | undefined {
@@ -576,6 +742,14 @@ class LocalFlowEngine {
       }
       if (receiver.startsWith("client:postgres:") || receiver === ORIGINAL_LOADER_ATOM) {
         state.dirty.add(receiver);
+      }
+    }
+  }
+
+  private markUnsafeOptions(values: readonly FlowValue[]): void {
+    for (const value of values) {
+      for (const atom of value) {
+        if (atom.startsWith("object:")) this.unsafeOptionAtoms.add(atom);
       }
     }
   }
@@ -621,6 +795,7 @@ class LocalFlowEngine {
     value: FlowValue,
   ): void {
     for (const receiver of receivers) {
+      if (receiver.startsWith("object:")) this.overwrittenObjectAtoms.add(receiver);
       if (receiver === NATIVE_PROMISE_ATOM) {
         const members = state.members.get(receiver) ?? new Map<string, Set<FlowAtom>>();
         const key = member ?? "@unknown";
@@ -685,6 +860,8 @@ class LocalFlowEngine {
   ): FlowState[] {
     const expression = unwrapExpression(target);
     if (ts.isIdentifier(expression)) {
+      const symbol = this.symbol(expression);
+      if (symbol) state.reassignedCells.add(symbol);
       this.setCell(state, expression, value);
       return [state];
     }
@@ -792,7 +969,8 @@ class LocalFlowEngine {
       for (const element of bindings.elements) {
         const imported = element.propertyName?.text ?? element.name.text;
         let atom = UNKNOWN_ATOM;
-        if (module === "@supabase/supabase-js" && imported === "createClient") atom = SUPABASE_FACTORY_ATOM;
+        if (module === "postgres" && imported === "default") atom = POSTGRES_FACTORY_ATOM;
+        else if (module === "@supabase/supabase-js" && imported === "createClient") atom = SUPABASE_FACTORY_ATOM;
         else if (module === "vitest" && ["vi", "vitest"].includes(imported)) atom = `framework:${imported}`;
         else if (module === "vitest" && ["beforeAll", "beforeEach", "afterAll", "afterEach"].includes(imported)) {
           atom = `framework:${imported}`;
@@ -898,11 +1076,35 @@ class LocalFlowEngine {
         }
         continue;
       }
+      if (receiver.startsWith("client:postgres:") && member) {
+        const method = this.atom("postgres-operation", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
       if (receiver.startsWith("query:supabase:") && member && ["select", "insert", "update", "delete", "upsert"].includes(member)) {
         const method = this.atom("supabase-operation", node);
         this.memberTargets.set(method, { receiver: new Set([receiver]), member });
         value.add(method);
         continue;
+      }
+      if (receiver.startsWith("result:query:") && member === "error") {
+        const attempt = state.mutationAttempts.get(receiver);
+        if (attempt && this.queryResourcesByAtom.has(receiver)) {
+          const error = this.atom("mutation-error", node);
+          this.mutationErrorTargets.set(error, attempt.operation);
+          value.add(error);
+          continue;
+        }
+      }
+      if (member === "code") {
+        const operation = this.mutationErrorTargets.get(receiver);
+        if (operation) {
+          const code = this.atom("mutation-error-code", node);
+          this.mutationErrorTargets.set(code, operation);
+          value.add(code);
+          continue;
+        }
       }
       if (
         receiver.startsWith("result:query:") &&
@@ -934,6 +1136,12 @@ class LocalFlowEngine {
         ].includes(member)
       ) {
         const method = this.atom("supabase-chain", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
+      if (receiver.startsWith("result:query:") && member === "select" && this.mutationResourcesByAtom.has(receiver)) {
+        const method = this.atom("supabase-mutation-select", node);
         this.memberTargets.set(method, { receiver: new Set([receiver]), member });
         value.add(method);
         continue;
@@ -980,6 +1188,7 @@ class LocalFlowEngine {
       atom.startsWith("apply:") ||
       atom.startsWith("bind:") ||
       atom.startsWith("supabase-") ||
+      atom.startsWith("postgres-operation:") ||
       atom.startsWith("configure:") ||
       atom.startsWith("promise-member:") ||
       atom.startsWith("generator-next:")
@@ -1527,6 +1736,48 @@ class LocalFlowEngine {
     });
   }
 
+  private mutationWitnessSignature(
+    state: FlowState,
+    beforeOperations: ReadonlySet<FlowAtom>,
+    finalAtom: FlowAtom,
+  ): string | undefined {
+    const attempts = new Map<FlowAtom, MutationAttempt>();
+    for (const attempt of state.mutationAttempts.values()) {
+      if (!beforeOperations.has(attempt.operation)) attempts.set(attempt.operation, attempt);
+    }
+    const final = state.mutationAttempts.get(finalAtom);
+    if (!final) return attempts.size ? JSON.stringify({ invalid: true }) : undefined;
+    const invalid = () => JSON.stringify({ invalid: true, kind: final.kind });
+    if (final.intentInvalid || !final.attemptedIds?.size || !attempts.has(final.operation)) return invalid();
+    if (final.kind === "update" || final.kind === "delete") {
+      if (attempts.size !== 1) return invalid();
+      const attempted = [...final.attemptedIds].sort();
+      return JSON.stringify({
+        kind: final.kind,
+        mode: "combined",
+        allowedAttemptIds: attempted,
+        deniedAttemptIds: attempted,
+      } satisfies MutationWitnessEvidence);
+    }
+    if (attempts.size !== 2) return invalid();
+    const denied = [...attempts.values()].find((attempt) => attempt.operation !== final.operation);
+    if (
+      !denied ||
+      denied.kind !== final.kind ||
+      denied.intentInvalid ||
+      !denied.attemptedIds?.size ||
+      denied.resources.size !== final.resources.size ||
+      [...denied.resources].some((resource) => !final.resources.has(resource)) ||
+      !state.observedDeniedMutationOperations.has(denied.operation)
+    ) return invalid();
+    return JSON.stringify({
+      kind: final.kind,
+      mode: "split",
+      allowedAttemptIds: [...final.attemptedIds].sort(),
+      deniedAttemptIds: [...denied.attemptedIds].sort(),
+    } satisfies MutationWitnessEvidence);
+  }
+
   private invokeAtoms(
     callees: FlowValue,
     args: readonly FlowValue[],
@@ -1688,6 +1939,16 @@ class LocalFlowEngine {
         continue;
       }
       const memberTarget = this.memberTargets.get(callee);
+      if (
+        callee.startsWith("client:postgres:") ||
+        (callee.startsWith("postgres-operation:") &&
+          [...(memberTarget?.receiver ?? [])].some((receiver) => receiver.startsWith("client:postgres:")))
+      ) {
+        this.invalidPostgresOperations.add(this.atom("postgres-invalid", call));
+        this.recordMayThrow(branch);
+        results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        continue;
+      }
       if (callee.startsWith("configure:")) {
         const method = this.controlMethods.get(callee);
         const owners = this.controlOwners.get(callee) ?? this.values(UNKNOWN_ATOM);
@@ -1792,17 +2053,84 @@ class LocalFlowEngine {
         }
         continue;
       }
+      if (callee.startsWith("supabase-mutation-select:")) {
+        if (call.arguments.length !== 1 || this.literalText(call.arguments[0]) !== "id") {
+          results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+          continue;
+        }
+        const result = this.atom("result:query", call);
+        const resources = new Set<string>();
+        const attempts: MutationAttempt[] = [];
+        for (const mutation of memberTarget?.receiver ?? []) {
+          for (const resource of this.mutationResourcesByAtom.get(mutation) ?? []) resources.add(resource);
+          const candidate = branch.mutationAttempts.get(mutation);
+          if (candidate) attempts.push(candidate);
+        }
+        const operations = new Set(attempts.map((attempt) => attempt.operation));
+        const attempt = operations.size === 1 ? attempts[0] : undefined;
+        this.queryResourcesByAtom.set(result, resources);
+        if (attempt) {
+          branch.mutationAttempts.set(result, {
+            ...attempt,
+            resources: new Set(attempt.resources),
+            ...(attempt.attemptedIds ? { attemptedIds: new Set(attempt.attemptedIds) } : {}),
+          });
+        }
+        results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });
+        continue;
+      }
       if (memberTarget && memberTarget.member && ["select", "insert", "update", "delete", "upsert"].includes(memberTarget.member)) {
         const result = this.atom("result:query", call);
         const resources = new Set<string>();
         for (const query of memberTarget.receiver) {
           for (const resource of this.queryResourcesByAtom.get(query) ?? []) resources.add(resource);
         }
-        this.queryResourcesByAtom.set(result, resources);
+        if (memberTarget.member === "select") this.queryResourcesByAtom.set(result, resources);
+        else {
+          const kind = memberTarget.member as MutationKind;
+          this.mutationResourcesByAtom.set(result, resources);
+          const attemptedIds = kind === "insert" || kind === "upsert"
+            ? this.mutationRowIds(branch, args[0] ?? this.values(UNKNOWN_ATOM))
+            : undefined;
+          const repeatedOperation = branch.mutationAttempts.has(result);
+          let upsertOptionsValid = true;
+          const options = args[1];
+          if (kind === "upsert" && options && !(options.size === 1 && options.has(UNDEFINED_ATOM))) {
+            for (const option of options) {
+              const members = branch.members.get(option);
+              const onConflict = members?.get("onConflict");
+              const targets = onConflict && this.stringValues(onConflict);
+              if (
+                !option.startsWith("object:") ||
+                this.overwrittenObjectAtoms.has(option) ||
+                this.unsafeOptionAtoms.has(option) ||
+                !members ||
+                members.has("@all") ||
+                members.has("@unknown") ||
+                members.has("__proto__") ||
+                (onConflict !== undefined && (!targets || targets.size !== 1 || !targets.has("id")))
+              ) upsertOptionsValid = false;
+            }
+          }
+          branch.mutationAttempts.set(result, {
+            kind,
+            operation: result,
+            resources: new Set(resources),
+            ...(attemptedIds ? { attemptedIds } : {}),
+            intentInvalid:
+              repeatedOperation ||
+              ((kind === "insert" || kind === "upsert") && !attemptedIds) ||
+              !upsertOptionsValid,
+          });
+        }
         results.push({ state: branch, value: resources.size ? this.values(result) : this.values(UNKNOWN_ATOM) });
         continue;
       }
       if (callee.startsWith("supabase-chain:")) {
+        for (const receiver of memberTarget?.receiver ?? []) {
+          const attempt = branch.mutationAttempts.get(receiver);
+          if (attempt && memberTarget?.member) this.applyMutationFilter(branch, attempt, memberTarget.member, args);
+        }
         results.push({ state: branch, value: new Set(memberTarget?.receiver ?? [UNKNOWN_ATOM]) });
         continue;
       }
@@ -1817,12 +2145,21 @@ class LocalFlowEngine {
         const queryValues = args[0]
           ? this.propertyFromValue(branch, args[0], "query")
           : this.values(UNKNOWN_ATOM);
+        const beforeOperations = new Set(
+          [...branch.mutationAttempts.values()].map((attempt) => attempt.operation),
+        );
+        const beforeInvalidPostgresOperations = new Set(this.invalidPostgresOperations);
         const queryResults = this.invokeAtoms(queryValues, [], branch, call, active, true, false);
         for (const queryResult of queryResults) {
           for (const atom of queryResult.value) {
             for (const resource of this.queryResourcesByAtom.get(atom) ?? []) {
               queryResult.state.witnessResources.add(resource);
             }
+            const mutationSignature = [...this.invalidPostgresOperations]
+              .some((operation) => !beforeInvalidPostgresOperations.has(operation))
+              ? JSON.stringify({ invalid: true })
+              : this.mutationWitnessSignature(queryResult.state, beforeOperations, atom);
+            if (mutationSignature) queryResult.state.witnessMutationSignatures.add(mutationSignature);
           }
           results.push({ state: queryResult.state, value: this.values(UNDEFINED_ATOM) });
         }
@@ -1898,6 +2235,7 @@ class LocalFlowEngine {
       if (ts.isIdentifier(call.expression) && call.expression.text === "eval") {
         this.markUnsupported(branch, "eval call");
       }
+      this.markUnsafeOptions(args);
       this.recordMayThrow(branch);
       for (const callbackAtom of this.callbacksInValues(branch, args)) {
         const callback = this.functions.get(callbackAtom);
@@ -2391,6 +2729,13 @@ class LocalFlowEngine {
     if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return false;
     const owner = call.expression.expression.text;
     const method = call.expression.name.text;
+    if (
+      (owner === "Object" || owner === "Reflect") &&
+      method === "setPrototypeOf"
+    ) {
+      this.markUnsafeOptions([args[0] ?? this.values(UNKNOWN_ATOM)]);
+      return true;
+    }
     if (owner === "Object" && method === "assign") {
       const targets = args[0] ?? this.values(UNKNOWN_ATOM);
       for (const source of args.slice(1)) {
@@ -2480,8 +2825,10 @@ class LocalFlowEngine {
           const branch = this.cloneState(input.state);
           if (atom.startsWith("client:postgres:") && !branch.dirty.has(atom)) {
             const resources = this.sqlResources(sql);
-            if (!resources.length) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
-            else {
+            if (!resources) {
+              this.invalidPostgresOperations.add(this.atom("postgres-invalid", expression));
+              results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+            } else {
               const result = this.atom("result:query", expression);
               this.queryResourcesByAtom.set(result, new Set(resources));
               results.push({ state: branch, value: this.values(result) });
@@ -2500,7 +2847,7 @@ class LocalFlowEngine {
     });
   }
 
-  private sqlResources(sql: string): string[] {
+  private sqlResources(sql: string): string[] | undefined {
     type SqlToken = { kind: "word" | "quotedIdentifier" | "punctuation"; text: string };
     const tokens: SqlToken[] = [];
     const punctuation = (text: string) => ({ kind: "punctuation" as const, text });
@@ -2534,7 +2881,7 @@ class LocalFlowEngine {
             index += 2;
           } else index += 1;
         }
-        if (depth !== 0) return [];
+        if (depth !== 0) return undefined;
         continue;
       }
       const escapeString = (char === "E" || char === "e") && next === "'";
@@ -2550,14 +2897,14 @@ class LocalFlowEngine {
             break;
           } else index += 1;
         }
-        if (!terminated) return [];
+        if (!terminated) return undefined;
         continue;
       }
       if (char === "$") {
         const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
         if (delimiter) {
           const end = sql.indexOf(delimiter, index + delimiter.length);
-          if (end < 0) return [];
+          if (end < 0) return undefined;
           index = end + delimiter.length;
           continue;
         }
@@ -2576,7 +2923,7 @@ class LocalFlowEngine {
             break;
           } else identifier += sql[index++]!;
         }
-        if (!terminated) return [];
+        if (!terminated) return undefined;
         tokens.push({ kind: "quotedIdentifier", text: identifier });
         continue;
       }
@@ -2589,21 +2936,149 @@ class LocalFlowEngine {
       if (char === "." || char === "(" || char === ")" || char === "," || char === ";") {
         if (char === "(") parenthesisDepth += 1;
         else if (char === ")") {
-          if (parenthesisDepth === 0) return [];
+          if (parenthesisDepth === 0) return undefined;
           parenthesisDepth -= 1;
         }
         tokens.push(punctuation(char));
       }
       index += 1;
     }
-    if (parenthesisDepth !== 0) return [];
+    if (parenthesisDepth !== 0) return undefined;
     const firstSemicolon = tokens.findIndex((token) => token.kind === "punctuation" && token.text === ";");
-    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return [];
+    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return undefined;
     const firstKeyword = tokens.find((token) => token.kind === "word")?.text.toUpperCase();
     const mutating = new Set([
       "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
     ]);
-    if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return [];
+    if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return undefined;
+    const tokenDepths: number[] = [];
+    let tokenDepth = 0;
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      if (tokens[cursor]!.text === ")") tokenDepth = Math.max(0, tokenDepth - 1);
+      tokenDepths[cursor] = tokenDepth;
+      if (tokens[cursor]!.text === "(") tokenDepth += 1;
+    }
+    const hasPriorSyntax = (
+      cursor: number,
+      matches: (before: number) => boolean,
+      stops: readonly string[] = [],
+    ) => {
+      const atDepth = tokenDepths[cursor];
+      for (let before = cursor - 1; before >= 0; before -= 1) {
+        if (tokenDepths[before] !== atDepth || tokens[before]!.kind !== "word") continue;
+        if (matches(before)) return true;
+        if (stops.some((keyword) => isKeyword(tokens[before], keyword))) return false;
+      }
+      return false;
+    };
+    const insideCase: boolean[] = [];
+    const caseCountByDepth = new Map<number, number>();
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      const atDepth = tokenDepths[cursor]!;
+      if (isKeyword(tokens[cursor], "END")) {
+        caseCountByDepth.set(atDepth, Math.max(0, (caseCountByDepth.get(atDepth) ?? 0) - 1));
+      }
+      insideCase[cursor] = (caseCountByDepth.get(atDepth) ?? 0) > 0;
+      if (isKeyword(tokens[cursor], "CASE")) {
+        caseCountByDepth.set(atDepth, (caseCountByDepth.get(atDepth) ?? 0) + 1);
+      }
+    }
+    const firstWord = tokens.findIndex((token) => token.kind === "word");
+    for (let cursor = 0; cursor < tokens.length - 1; cursor += 1) {
+      const functionName = tokens[cursor];
+      if (!isName(functionName) || tokens[cursor + 1]?.text !== "(") continue;
+      const schemaName = tokens[cursor - 1]?.text === "." && isName(tokens[cursor - 2])
+        ? tokens[cursor - 2]!.text.toLowerCase()
+        : undefined;
+      if (schemaName) {
+        if (!READ_ONLY_POSTGRES_FUNCTIONS.has(`${schemaName}.${functionName.text.toLowerCase()}`)) return undefined;
+        continue;
+      }
+      if (functionName.kind === "quotedIdentifier") return undefined;
+      const keyword = functionName.text.toUpperCase();
+      const previous = tokens[cursor - 1];
+      const innerHead = tokens[cursor + 2];
+      const closing = tokens.findIndex(
+        (token, after) => after > cursor + 1 && token.text === ")" && tokenDepths[after] === tokenDepths[cursor + 1],
+      );
+      const queryHasFromBefore = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "FROM") || isKeyword(tokens[before], "JOIN"),
+        ["SELECT", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
+      );
+      const queryHasSelectBefore = hasPriorSyntax(cursor, (before) => isKeyword(tokens[before], "SELECT"));
+      const queryIsInPredicate = hasPriorSyntax(
+        cursor,
+        (before) => ["WHERE", "HAVING", "ON"].some((candidate) => isKeyword(tokens[before], candidate)),
+        ["SELECT", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
+      );
+      const queryIsInGroupBy = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "BY") && isKeyword(tokens[before - 1], "GROUP"),
+        ["SELECT", "WHERE", "HAVING", "ORDER", "LIMIT", "OFFSET"],
+      );
+      const queryIsInWindowClause = hasPriorSyntax(
+        cursor,
+        (before) => isKeyword(tokens[before], "WINDOW"),
+        ["SELECT", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET"],
+      );
+      const cteColumnList =
+        (isKeyword(previous, "WITH") ||
+          (isKeyword(previous, "RECURSIVE") && isKeyword(tokens[cursor - 2], "WITH")) ||
+          previous?.text === ",") &&
+        closing >= 0 &&
+        isKeyword(tokens[closing + 1], "AS");
+      const relationAliasColumnList =
+        (isName(previous) || previous?.text === ")") &&
+        !["AS", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
+        queryHasFromBefore;
+      const expressionEnd = isName(previous) || previous?.text === ")";
+      const groupedQueryOperand =
+        ["FROM", "JOIN", "LATERAL", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
+        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"));
+      const groupedExpression =
+        expressionEnd && (
+          (keyword === "WHERE" && queryHasFromBefore) ||
+          (keyword === "HAVING" && queryHasSelectBefore) ||
+          (["AND", "OR"].includes(keyword) && queryIsInPredicate)
+        );
+      const querySelect =
+        keyword === "SELECT" &&
+        (cursor === firstWord || previous?.text === "(" || previous?.text === ")");
+      const cteBody =
+        keyword === "AS" &&
+        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH") || (innerHead?.kind === "word" && mutating.has(innerHead.text.toUpperCase())));
+      const windowDefinition = keyword === "AS" && queryIsInWindowClause;
+      const syntax =
+        READ_ONLY_POSTGRES_VALUE_EXPRESSIONS.has(keyword) ||
+        POSTGRES_TIME_VALUE_EXPRESSIONS.has(keyword) ||
+        cteColumnList ||
+        relationAliasColumnList ||
+        groupedQueryOperand ||
+        groupedExpression ||
+        querySelect ||
+        cteBody ||
+        windowDefinition ||
+        (keyword === "ARRAY" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (["ANY", "ALL", "SOME"].includes(keyword) && expressionEnd &&
+          (isKeyword(innerHead, "ARRAY") || isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (keyword === "CASE") ||
+        (["WHEN", "THEN", "ELSE"].includes(keyword) && insideCase[cursor]) ||
+        (["CUBE", "ROLLUP"].includes(keyword) && queryIsInGroupBy) ||
+        (keyword === "SETS" && isKeyword(previous, "GROUPING")) ||
+        (["FIRST", "NEXT"].includes(keyword) && isKeyword(previous, "FETCH")) ||
+        (keyword === "BETWEEN" && expressionEnd) ||
+        (keyword === "ZONE" && isKeyword(previous, "TIME") && isKeyword(tokens[cursor - 2], "AT")) ||
+        (keyword === "IN" && (expressionEnd || isKeyword(previous, "NOT"))) ||
+        (keyword === "EXISTS" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
+        (keyword === "ON" && (isKeyword(previous, "DISTINCT") || queryHasFromBefore)) ||
+        (keyword === "BY" && (isKeyword(previous, "GROUP") || isKeyword(previous, "ORDER"))) ||
+        (keyword === "MATERIALIZED" && isKeyword(previous, "AS")) ||
+        (keyword === "USING" && queryHasFromBefore) ||
+        (["LIMIT", "OFFSET"].includes(keyword) && queryHasSelectBefore) ||
+        keyword === "NOT";
+      if (!syntax) return undefined;
+    }
     let depth = 0;
     const topLevelFrom: number[] = [];
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
@@ -2629,7 +3104,7 @@ class LocalFlowEngine {
         tokens[cursor - 1]?.text !== "." &&
         isName(tokens[cursor + 1]) &&
         topLevelFrom.some((from) => from > cursor + 1)
-      ) return [];
+      ) return undefined;
     }
     for (let cursor = 0; cursor < tokens.length; cursor += 1) {
       const token = tokens[cursor]!;
@@ -2641,12 +3116,12 @@ class LocalFlowEngine {
           isKeyword(tokens[cursor + 2], "KEY") &&
           isKeyword(tokens[cursor + 3], "UPDATE")) ||
         (isKeyword(tokens[cursor + 1], "KEY") && isKeyword(tokens[cursor + 2], "SHARE"));
-      if (locking) return [];
+      if (locking) return undefined;
     }
     for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
       if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") continue;
       const bodyHead = tokens.slice(cursor + 2).find((candidate) => candidate.kind === "word");
-      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
+      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
     }
     if (firstKeyword === "WITH") {
       depth = 0;
@@ -2656,7 +3131,7 @@ class LocalFlowEngine {
         if (token.text === "(") {
           depth += 1;
           const bodyHead = tokens.slice(cursor + 1).find((candidate) => candidate.kind === "word");
-          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return [];
+          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
           continue;
         }
         if (token.text === ")") {
@@ -2666,13 +3141,13 @@ class LocalFlowEngine {
         if (depth !== 0) continue;
         if (token.kind !== "word") continue;
         const keyword = token.text.toUpperCase();
-        if (mutating.has(keyword)) return [];
+        if (mutating.has(keyword)) return undefined;
         if (keyword === "SELECT") {
           mainSelect = true;
           break;
         }
       }
-      if (!mainSelect) return [];
+      if (!mainSelect) return undefined;
     }
     const cteNames = new Set<string>();
     for (let start = 0; start < tokens.length; start += 1) {
@@ -2845,6 +3320,41 @@ class LocalFlowEngine {
     return states;
   }
 
+  private deniedErrorGuardOperations(expression: ts.Expression, state: FlowState): Set<FlowAtom> {
+    const condition = unwrapExpression(expression);
+    if (
+      !ts.isBinaryExpression(condition) ||
+      ![
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsToken,
+      ].includes(condition.operatorToken.kind)
+    ) {
+      return new Set();
+    }
+    const left = unwrapExpression(condition.left);
+    const right = unwrapExpression(condition.right);
+    const codeExpression = ts.isStringLiteralLike(left) && left.text === "42501"
+      ? condition.right
+      : ts.isStringLiteralLike(right) && right.text === "42501"
+        ? condition.left
+        : undefined;
+    if (!codeExpression) return new Set();
+    const evaluated = this.evaluateExpression(codeExpression, this.cloneState(state), new Set());
+    return new Set(
+      evaluated.flatMap((result) =>
+        [...result.value].flatMap((atom) => {
+          const operation = this.mutationErrorTargets.get(atom);
+          return operation ? [operation] : [];
+        })
+      ),
+    );
+  }
+
+  private isDirectThrow(statement: ts.Statement): boolean {
+    return ts.isThrowStatement(statement) ||
+      (ts.isBlock(statement) && statement.statements.length === 1 && ts.isThrowStatement(statement.statements[0]));
+  }
+
   private evaluateStatement(
     statement: ts.Statement,
     state: FlowState,
@@ -2918,6 +3428,17 @@ class LocalFlowEngine {
           return statement.elseStatement
             ? this.evaluateStatement(statement.elseStatement, condition.state, active)
             : [condition.state];
+        }
+        const deniedOperations = !statement.elseStatement && this.isDirectThrow(statement.thenStatement)
+          ? this.deniedErrorGuardOperations(statement.expression, condition.state)
+          : new Set<FlowAtom>();
+        if (deniedOperations.size) {
+          const normal = this.cloneState(condition.state);
+          for (const operation of deniedOperations) normal.observedDeniedMutationOperations.add(operation);
+          return [
+            ...this.evaluateStatement(statement.thenStatement, this.cloneState(condition.state), active),
+            normal,
+          ];
         }
         return [
           ...this.evaluateStatement(statement.thenStatement, this.cloneState(condition.state), active),
@@ -3359,6 +3880,7 @@ class LocalFlowEngine {
         queryResources: [],
         unsupported: true,
         normalPathWithoutWitness: true,
+        mutationEvidenceInvalid: false,
       };
     }
     const bases = this.globalStates(true);
@@ -3380,12 +3902,27 @@ class LocalFlowEngine {
       resourceSets.length > 0 && new Set(resourceSets).size === 1 && resourceSets[0]
         ? resourceSets[0].split(",")
         : [];
+    const mutationSignatureSets = normal.map((result) =>
+      [...result.state.witnessMutationSignatures].sort().join("\n"),
+    );
+    const mutationSignaturesConsistent =
+      mutationSignatureSets.length > 0 &&
+      normal.every((result) => result.state.witnessMutationSignatures.size <= 1) &&
+      new Set(mutationSignatureSets).size === 1;
+    const mutationSignature = mutationSignaturesConsistent ? mutationSignatureSets[0] : undefined;
+    const parsedMutation = mutationSignature
+      ? JSON.parse(mutationSignature) as MutationWitnessEvidence | { invalid: true }
+      : undefined;
     return {
       ...(dirtySupabase ? { mockedReceiver: "Supabase" as const } : dirtyPostgres ? { mockedReceiver: "Postgres" as const } : {}),
       mockedWitness: allStates.some((state) => state.dirty.has(WITNESS_ATOM)),
       ...(witnessCounts.length ? { witnessCount: Math.max(...witnessCounts) } : {}),
       ...(awaitedCounts.length ? { awaitedWitnessCount: Math.max(...awaitedCounts) } : {}),
       queryResources,
+      ...(parsedMutation && !("invalid" in parsedMutation) ? { mutationEvidence: parsedMutation } : {}),
+      mutationEvidenceInvalid:
+        mutationSignatureSets.some(Boolean) &&
+        (!mutationSignaturesConsistent || !parsedMutation || "invalid" in parsedMutation),
       unsupported: allStates.some((state) => state.unsupported),
       normalPathWithoutWitness:
         normal.length === 0 ||
@@ -4424,6 +4961,47 @@ function isolationWitnessError(
   }
   if (!deniedIds || !ts.isArrayLiteralExpression(deniedIds) || deniedIds.elements.length === 0) {
     return "isolation witness deniedIds must be a non-empty array literal";
+  }
+
+  if (proof.mutationEvidenceInvalid) {
+    return "mutation witness must prove authorized and denied attempted effects";
+  }
+  if (proof.mutationEvidence) {
+    const literalIds = (array: ts.ArrayLiteralExpression): string[] | undefined => {
+      const ids = array.elements.map((element) => {
+        if (ts.isSpreadElement(element)) return undefined;
+        const value = unwrapExpression(element);
+        return ts.isStringLiteralLike(value) ? value.text : undefined;
+      });
+      return ids.every((id): id is string => id !== undefined) ? ids : undefined;
+    };
+    const allowed = literalIds(allowedIds);
+    const denied = literalIds(deniedIds);
+    if (!allowed?.length || !denied?.length) {
+      return "mutation witness allowedIds and deniedIds must be non-empty string literals";
+    }
+    const allowedSet = new Set(allowed);
+    const deniedSet = new Set(denied);
+    if (
+      allowedSet.size !== allowed.length ||
+      deniedSet.size !== denied.length ||
+      [...allowedSet].some((id) => deniedSet.has(id))
+    ) {
+      return "mutation witness allowedIds and deniedIds must be unique and disjoint";
+    }
+    const sameIds = (actual: readonly string[], expected: ReadonlySet<string>) =>
+      actual.length === expected.size && actual.every((id) => expected.has(id));
+    if (proof.mutationEvidence.mode === "combined") {
+      const expected = new Set([...allowedSet, ...deniedSet]);
+      if (!sameIds(proof.mutationEvidence.allowedAttemptIds, expected)) {
+        return "mutation witness attempted IDs must exactly match allowedIds and deniedIds";
+      }
+    } else if (
+      !sameIds(proof.mutationEvidence.allowedAttemptIds, allowedSet) ||
+      !sameIds(proof.mutationEvidence.deniedAttemptIds, deniedSet)
+    ) {
+      return "mutation witness split attempts must exactly match allowedIds and deniedIds";
+    }
   }
 
   if (proof.unsupported) return "coverage test uses unsupported relevant flow or effect syntax";

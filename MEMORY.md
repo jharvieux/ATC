@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-373 — 2026-09-01 — Isolation mutation witnesses bind intent to effect
+
+**Decision.** A tenant-isolation mutation witness is authoritative only when static provenance proves both the IDs the test attempted to mutate and the affected IDs it observed. UPDATE and DELETE must target exactly the declared allowed-plus-denied ID set and return the allowed affected IDs through `.select("id")`. Because a mixed RLS INSERT or UPSERT fails atomically, those witnesses use a selected denied-only attempt with an explicitly observed PostgreSQL `42501` error followed by a distinct selected allowed-only effect. Any additional or incomplete mutation inside the witness callback invalidates the witness; returning or previously saving a canonical SELECT cannot launder unproved mutation effects. Local Postgres helpers inherit real-database provenance only through a proven imported factory flow, including named-default imports, with ambiguity, reassignment, shadowing, overwrite, and mocks failing closed.
+
+**Why.**
+- A successful mutation response or returned ID list does not prove that the test ever attempted the cross-tenant row named in its annotation.
+- Exact attempted-ID provenance makes allowed effects and denied effects part of the same falsifier instead of trusting annotation text that runtime behavior may never exercise.
+- INSERT and UPSERT need split probes because PostgreSQL aborts the whole mixed statement on the denied row; UPDATE and DELETE can prove row filtering with one exact combined target.
+- Mutation provenance must survive aliases, branches, helpers, and operation ordering, or a later SELECT can make a mutation-bearing callback look read-only.
+
+**Rejected.**
+- *Treat every proven-receiver mutation ending in `.select("id")` as evidence.* Rejected because allowed-only or unrelated mutations can pass while claiming an unattempted denied ID.
+- *Use one mixed INSERT or UPSERT for allowed and denied rows.* Rejected because atomic failure prevents that statement from also proving the allowed effect.
+- *Accept a canonical SELECT when another mutation in the callback is ignored.* Rejected because the read result can hide an unrelated or unproved mutation.
+- *Trust helper-returned query clients when the file merely imports the real database factory.* Rejected because an inert import does not establish receiver provenance.
+
+**Related artifacts.** Issues #2095 and #2096, `scripts/check-mocked-tenant-tests.ts`, `tests/unit/scripts/check-mocked-tenant-tests.test.ts`, `tests/unit/scripts/check-mocked-tenant-tests.census.test.ts`.
+
+---
+
 ## D-372 — 2026-09-01 — Verified Agency custom domains may opt into indexing
 
 **Decision.** A verified custom domain for a tenant currently on `sub_agency` or `byo_agency` may explicitly opt into search indexing; the setting remains false by default. Platform subdomains remain permanently noindex, crawler eligibility re-reads current tenant and tier state fail-closed on every request, and tenant/custom-domain robots and sitemap responses use `private, no-store` so a disable or tier downgrade takes effect on the next crawler request. This supersedes [[D-368]] only for its blanket custom-domain noindex rule.
