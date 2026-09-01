@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const BOOKING_ID = "22222222-2222-4222-8222-222222222222";
+const CONTACT_ID = "33333333-3333-4333-8333-333333333333";
 
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   booking: {
     id: "22222222-2222-4222-8222-222222222222",
     status: "confirmed",
-    primary_contact_id: "contact-1",
+    primary_contact_id: "33333333-3333-4333-8333-333333333333",
     sailing_date: "2027-05-01",
     groups: null,
   } as {
@@ -52,10 +53,17 @@ function queryFor(table: string) {
 }
 
 function request(body: unknown): Request {
+  const requestBody = body && typeof body === "object"
+    ? {
+        expected_contact_id: CONTACT_ID,
+        expected_contact_email: "traveler@example.com",
+        ...body,
+      }
+    : body;
   return new Request("https://tenant.example.com/api/precruise-emails/dispatch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 }
 
@@ -65,7 +73,7 @@ beforeEach(() => {
   mocks.booking = {
     id: BOOKING_ID,
     status: "confirmed",
-    primary_contact_id: "contact-1",
+    primary_contact_id: CONTACT_ID,
     sailing_date: "2027-05-01",
     groups: null,
   };
@@ -102,6 +110,8 @@ describe("POST /api/precruise-emails/dispatch", () => {
       tenant_id: TENANT_ID,
       phase: "t_30",
       via: "direct",
+      expected_contact_id: CONTACT_ID,
+      expected_contact_email: "traveler@example.com",
     });
     expect(mocks.send).toHaveBeenCalledWith({
       id: expect.stringMatching(/^manual-precruise:/),
@@ -188,6 +198,32 @@ describe("POST /api/precruise-emails/dispatch", () => {
 
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({ error: "recipient_missing" });
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("rejects dispatch when the reviewed primary contact is no longer current", async () => {
+    const response = await POST(request({
+      action: "send_now",
+      booking_id: BOOKING_ID,
+      phase: "t_7",
+      expected_contact_id: "44444444-4444-4444-8444-444444444444",
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "recipient_changed" });
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("rejects dispatch when the reviewed contact keeps the same ID but changes email", async () => {
+    const response = await POST(request({
+      action: "send_now",
+      booking_id: BOOKING_ID,
+      phase: "t_7",
+      expected_contact_email: "old-address@example.com",
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "recipient_changed" });
     expect(mocks.send).not.toHaveBeenCalled();
   });
 });

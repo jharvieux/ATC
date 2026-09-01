@@ -59,6 +59,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   dispatch_unavailable: "Email scheduling is temporarily unavailable. Please try again.",
   invalid_schedule_time: "Choose a time at least one minute from now and within the next year.",
   phase_already_sent: "That email has already been sent for this booking.",
+  recipient_changed: "The booking's primary contact changed. Review the booking and try again.",
   recipient_missing: "Add an email address to the booking's primary contact first.",
   sailing_date_missing: "Add a sailing date to this booking first.",
 };
@@ -74,6 +75,7 @@ function bookingLabel(booking: Booking): string {
 
 export function PreCruiseEmailsView() {
   const bookingLoadGeneration = useRef(0);
+  const mounted = useRef(true);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [query, setQuery] = useState("");
   const [bookingId, setBookingId] = useState("");
@@ -85,6 +87,13 @@ export function PreCruiseEmailsView() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [minScheduleValue, setMinScheduleValue] = useState("");
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const minSchedule = new Date(Date.now() + 5 * 60_000);
@@ -141,11 +150,16 @@ export function PreCruiseEmailsView() {
   const selectedBooking = bookings.find((booking) => booking.id === bookingId) ?? null;
 
   async function submit() {
-    if (loading || !selectedBooking || (delivery === "schedule" && !scheduleAt)) return;
+    if (
+      loading ||
+      !selectedBooking?.primary_contact?.email ||
+      (delivery === "schedule" && !scheduleAt)
+    ) return;
     const submittedBookingId = selectedBooking.id;
     const submittedPhase = phase;
     const submittedDelivery = delivery;
     const submittedScheduleAt = scheduleAt;
+    const submittedContact = selectedBooking.primary_contact;
     setSubmitting(true);
     setError(null);
     setSuccess(null);
@@ -157,10 +171,13 @@ export function PreCruiseEmailsView() {
           action: submittedDelivery,
           booking_id: submittedBookingId,
           phase: submittedPhase,
+          expected_contact_id: submittedContact.id,
+          expected_contact_email: submittedContact.email,
           ...(submittedDelivery === "schedule" ? { scheduled_for: new Date(submittedScheduleAt).toISOString() } : {}),
         }),
       });
       const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!mounted.current) return;
       if (!response.ok) {
         setError(ERROR_MESSAGES[body.error ?? ""] ?? "The email could not be queued. Please try again.");
         return;
@@ -172,9 +189,11 @@ export function PreCruiseEmailsView() {
           : `The ${timing} email is scheduled for ${new Date(submittedScheduleAt).toLocaleString()}.`,
       );
     } catch {
-      setError("The email could not be queued. Please check your connection and try again.");
+      if (mounted.current) {
+        setError("The email could not be queued. Please check your connection and try again.");
+      }
     } finally {
-      setSubmitting(false);
+      if (mounted.current) setSubmitting(false);
     }
   }
 

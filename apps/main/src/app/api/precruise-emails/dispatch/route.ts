@@ -19,11 +19,15 @@ const DispatchSchema = z.discriminatedUnion("action", [
     action: z.literal("send_now"),
     booking_id: z.string().uuid(),
     phase: PhaseSchema,
+    expected_contact_id: z.string().uuid(),
+    expected_contact_email: z.string().email(),
   }),
   z.object({
     action: z.literal("schedule"),
     booking_id: z.string().uuid(),
     phase: PhaseSchema,
+    expected_contact_id: z.string().uuid(),
+    expected_contact_email: z.string().email(),
     scheduled_for: z.string().datetime({ offset: true }),
   }),
 ]);
@@ -107,9 +111,16 @@ export async function POST(req: Request): Promise<Response> {
     .eq("id", booking.primary_contact_id)
     .maybeSingle();
   if (contactError) return dbErrorResponse(contactError);
-  const email = (contactData as { email: string | null } | null)?.email?.trim();
+  const contact = contactData as { email: string | null } | null;
+  const email = contact?.email?.trim();
   if (!email) {
     return Response.json({ error: "recipient_missing" }, { status: 422 });
+  }
+  if (
+    booking.primary_contact_id !== parsed.data.expected_contact_id ||
+    email.toLowerCase() !== parsed.data.expected_contact_email.trim().toLowerCase()
+  ) {
+    return Response.json({ error: "recipient_changed" }, { status: 409 });
   }
 
   const { data: existingData, error: existingError } = await db
@@ -131,6 +142,8 @@ export async function POST(req: Request): Promise<Response> {
     tenant_id: auth.ctx.tenant_id,
     phase: parsed.data.phase,
     via: "direct" as const,
+    expected_contact_id: parsed.data.expected_contact_id,
+    expected_contact_email: email,
   };
   validateInngestEvent("precruise/email.due", eventData);
 

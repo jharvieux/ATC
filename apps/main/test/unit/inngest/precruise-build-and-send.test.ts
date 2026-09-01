@@ -15,11 +15,42 @@
 // NOT throw (they are not transient errors — retrying won't help).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
+
+const CONTENT_CONTEXT_HASH = createHash("sha256")
+  .update(JSON.stringify({
+    contact_id: "contact-1",
+    recipient_email: "traveler@example.com",
+    customer_name: "Jordan",
+    cruise_line: "Test Cruise Line",
+    ship_name: "Test Ship",
+    sailing_date: "2026-09-01",
+    departure_port: null,
+    ports: [],
+  }))
+  .digest("hex");
 
 const mocks = vi.hoisted(() => ({
   sendEmailResult: { status: "sent" as string, reason: null as string | null },
   sendEmailArgs: [] as Array<Record<string, unknown>>,
   updateCalls: [] as Array<{ table: string; payload: unknown }>,
+  bookingStatus: "confirmed",
+  bookingContactId: "contact-1",
+  contactEmail: "traveler@example.com",
+  sailingDate: "2026-09-01",
+  claimed: false,
+  afterClaim: null as (() => void) | null,
+  beforeDispatchMutation: null as (() => void) | null,
+  operations: [] as string[],
+  tenantPaying: true,
+  providerCalls: 0,
+}));
+
+vi.mock("@/lib/billing/exclude-non-paying", () => ({
+  assertTenantStillPayingById: async () => ({
+    ok: mocks.tenantPaying,
+    ...(mocks.tenantPaying ? {} : { reason: "past_grace", days_since_non_paying: 31 }),
+  }),
 }));
 
 vi.mock("@/lib/sailings/sailing-itinerary", () => ({
@@ -33,9 +64,22 @@ vi.mock("@/lib/email/template-resolve", () => ({
 
 vi.mock("@/lib/email/send", () => ({
   sendEmail: async (args: Record<string, unknown>) => {
+    mocks.operations.push("sendEmail");
     mocks.sendEmailArgs.push(args);
+    mocks.beforeDispatchMutation?.();
+    const beforeDispatch = args.beforeDispatch as ((context: { providerReplay: boolean }) => Promise<boolean | { allowed: boolean; reason?: string }>) | undefined;
+    if (beforeDispatch) {
+      const verdict = await beforeDispatch({ providerReplay: false });
+      if (!(typeof verdict === "boolean" ? verdict : verdict.allowed)) {
+        return { status: "cancelled", reason: typeof verdict === "boolean" ? null : verdict.reason ?? null };
+      }
+    }
+    mocks.providerCalls++;
     return mocks.sendEmailResult;
   },
+  recoverIdempotentEmail: async () => ({ status: "missing" }),
+  resumeIdempotentEmail: async () => ({ status: "failed", reason: "not used" }),
+  abandonUnstartedIdempotentEmail: async () => true,
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
     "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
@@ -47,10 +91,62 @@ import { buildAndSend } from "@/inngest/precruise-generate-and-send";
 function makeSvc() {
   return {
     from(table: string) {
+      if (table === "bookings") {
+        return {
+          select() {
+            const chain = {
+              eq: () => chain,
+              maybeSingle: async () => ({
+                data: {
+                  status: mocks.bookingStatus,
+                  primary_contact_id: mocks.bookingContactId,
+                  cruise_line: "Test Cruise Line",
+                  ship_name: "Test Ship",
+                  sailing_date: mocks.sailingDate,
+                  departure_port: null,
+                  groups: null,
+                  contacts: {
+                    tenant_id: "tenant-1",
+                    first_name: "Jordan",
+                    email: mocks.contactEmail,
+                  },
+                },
+                error: null,
+              }),
+            };
+            mocks.operations.push("final-read");
+            return chain;
+          },
+        };
+      }
       return {
-        update(payload: unknown) {
+        update(payload: Record<string, unknown>) {
           mocks.updateCalls.push({ table, payload });
-          return { eq: async () => ({ data: null, error: null }) };
+          const chain = {
+            eq: () => chain,
+            is: () => chain,
+            or: () => chain,
+            select: async () => {
+              if (payload.send_claimed_at) {
+                if (mocks.claimed) return { data: [], error: null };
+                mocks.claimed = true;
+                mocks.operations.push("claim");
+                mocks.afterClaim?.();
+                return {
+                  data: [{
+                    send_claimed_at: payload.send_claimed_at,
+                    content_context_hash: CONTENT_CONTEXT_HASH,
+                    generated_content: {},
+                  }],
+                  error: null,
+                };
+              }
+              mocks.claimed = false;
+              mocks.operations.push("release-or-finalize");
+              return { data: [{ id: "content-1" }], error: null };
+            },
+          };
+          return chain;
         },
       };
     },
@@ -81,6 +177,16 @@ beforeEach(() => {
   mocks.sendEmailResult = { status: "sent", reason: null };
   mocks.sendEmailArgs = [];
   mocks.updateCalls = [];
+  mocks.bookingStatus = "confirmed";
+  mocks.bookingContactId = "contact-1";
+  mocks.contactEmail = "traveler@example.com";
+  mocks.sailingDate = "2026-09-01";
+  mocks.claimed = false;
+  mocks.afterClaim = null;
+  mocks.beforeDispatchMutation = null;
+  mocks.operations = [];
+  mocks.tenantPaying = true;
+  mocks.providerCalls = 0;
 });
 
 describe("buildAndSend — #1582 transient-failure retry semantics", () => {
@@ -91,12 +197,11 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         svc: makeSvc(),
         phase: "t_90",
         emailCtx: EMAIL_CTX,
-        generatedContent: {},
         contentId: "content-1",
       }),
     ).rejects.toThrow(/send failed/);
     // A failed send must never mark sent_at — the row stays retryable.
-    expect(mocks.updateCalls).toHaveLength(0);
+    expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
   });
 
   it("does not throw and persists sent_at when sendEmail succeeds", async () => {
@@ -106,18 +211,18 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
         svc: makeSvc(),
         phase: "t_90",
         emailCtx: EMAIL_CTX,
-        generatedContent: {},
         contentId: "content-1",
       }),
     ).resolves.toBeUndefined();
-    expect(mocks.updateCalls).toHaveLength(1);
-    expect(mocks.updateCalls[0]?.table).toBe("pre_cruise_email_content");
-    expect(mocks.updateCalls[0]?.payload).toHaveProperty("sent_at");
+    const sentUpdate = mocks.updateCalls.find((call) => "sent_at" in (call.payload as object));
+    expect(sentUpdate?.table).toBe("pre_cruise_email_content");
+    expect(sentUpdate?.payload).toHaveProperty("sent_at");
     expect(mocks.sendEmailArgs[0]).toMatchObject({
       contact_id: "contact-1",
       related_booking_id: "booking-1",
       idempotencyKey: "pre_cruise:booking-1:t_90",
     });
+    expect(mocks.sendEmailArgs[0]?.providerIdempotencyKeyScope).toBeUndefined();
   });
 
   it.each(["suppressed", "rate_limited"])(
@@ -129,12 +234,132 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
           svc: makeSvc(),
           phase: "t_90",
           emailCtx: EMAIL_CTX,
-          generatedContent: {},
           contentId: "content-1",
         }),
       ).resolves.toBeUndefined();
       // Not sent — sent_at must not be written either.
-      expect(mocks.updateCalls).toHaveLength(0);
+      expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
     },
   );
+
+  it("rechecks cancellation immediately before dispatch", async () => {
+    mocks.bookingStatus = "cancelled";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("releases the claim when the tenant becomes ineligible before dispatch", async () => {
+    mocks.tenantPaying = false;
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+    expect(mocks.operations).toEqual(["claim", "release-or-finalize"]);
+  });
+
+  it("claims first, then catches a booking/contact mutation in the one final read", async () => {
+    mocks.afterClaim = () => {
+      mocks.bookingContactId = "contact-2";
+      mocks.contactEmail = "new-recipient@example.com";
+    };
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+    expect(mocks.operations).toEqual(["claim", "final-read", "release-or-finalize"]);
+  });
+
+  it("rechecks the primary contact address immediately before dispatch", async () => {
+    mocks.contactEmail = "new-recipient@example.com";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("does not send rendered content after material trip details change", async () => {
+    mocks.sailingDate = "2026-09-08";
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_30",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(0);
+  });
+
+  it("allows only one concurrent consumer to invoke sendEmail for an existing row", async () => {
+    const svc = makeSvc();
+
+    await Promise.all([
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, contentId: "content-1" }),
+      buildAndSend({ svc, phase: "t_30", emailCtx: EMAIL_CTX, contentId: "content-1" }),
+    ]);
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+  });
+
+  it.each([
+    ["booking cancellation", () => { mocks.bookingStatus = "cancelled"; }],
+    ["recipient mutation", () => {
+      mocks.bookingContactId = "contact-2";
+      mocks.contactEmail = "new-recipient@example.com";
+    }],
+    ["payment ineligibility", () => { mocks.tenantPaying = false; }],
+  ])("blocks provider fetch when %s happens after rendering", async (_label, mutate) => {
+    mocks.beforeDispatchMutation = mutate;
+
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+    expect(mocks.providerCalls).toBe(0);
+    expect(mocks.updateCalls.filter((call) => "sent_at" in (call.payload as object))).toHaveLength(0);
+    expect(mocks.operations.at(-1)).toBe("release-or-finalize");
+  });
+
+  it("keeps the provider attempt epoch out of pre-cruise content", async () => {
+    await buildAndSend({
+      svc: makeSvc(),
+      phase: "t_7",
+      emailCtx: EMAIL_CTX,
+      contentId: "content-1",
+    });
+
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+    expect(mocks.providerCalls).toBe(1);
+    expect(
+      mocks.updateCalls.some(
+        ({ payload }) => "provider_first_attempt_at" in (payload as object),
+      ),
+    ).toBe(false);
+  });
 });

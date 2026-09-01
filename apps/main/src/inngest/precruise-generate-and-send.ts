@@ -16,13 +16,21 @@
 // content.
 
 import * as React from "react";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
-import { sendEmail, type SendEmailInput, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
+import {
+  abandonUnstartedIdempotentEmail,
+  recoverIdempotentEmail,
+  resumeIdempotentEmail,
+  sendEmail,
+  type SendEmailInput,
+  TENANT_BRANDING_COLUMNS,
+} from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
@@ -32,7 +40,7 @@ import { PreCruiseT30, type PreCruiseT30Props } from "@/emails/PreCruiseT30";
 import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
-import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
+import { safeAwait, safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { revalidateCompanionContent } from "@/lib/precruise/companion-content";
 import { getSailingItinerary } from "@/lib/sailings/sailing-itinerary";
 import { resolveDestinationRegion } from "@/lib/cruise-regions/classify";
@@ -53,7 +61,12 @@ const PrecruiseEmailDuePayloadSchema = z.object({
   tenant_id: z.string(),
   phase: PhaseEnum,
   via: z.enum(["direct", "batched"]).optional(),
-});
+  expected_contact_id: z.string().optional(),
+  expected_contact_email: z.string().email().optional(),
+}).refine(
+  (value) => Boolean(value.expected_contact_id) === Boolean(value.expected_contact_email),
+  { message: "expected contact id and email must be provided together" },
+);
 
 const PrecruiseBatchResultPayloadSchema = z.object({
   request_id: z.string(),
@@ -65,8 +78,25 @@ const PrecruiseBatchResultPayloadSchema = z.object({
     phase: PhaseEnum,
     email_ctx_id: z.string().nullable(),
     companion_page_url: z.string(),
-  }).nullable(),
+    content_context_hash: z.string().optional(),
+    expected_contact_id: z.string().optional(),
+    expected_contact_email: z.string().email().optional(),
+  }).refine(
+    (value) => Boolean(value.expected_contact_id) === Boolean(value.expected_contact_email),
+    { message: "expected contact id and email must be provided together" },
+  ).nullable(),
 });
+
+const SEND_CLAIM_TTL_MS = 30 * 60_000;
+const PROVIDER_REPLAY_CUTOFF_MS = 23 * 60 * 60_000;
+
+interface ExistingPrecruiseContent {
+  id: string;
+  sent_at?: string | null;
+  send_claimed_at?: string | null;
+  generated_content?: Record<string, unknown>;
+  content_context_hash?: string | null;
+}
 
 async function haikuGenerate(
   tenant_id: string,
@@ -93,20 +123,56 @@ export const precruiseGenerateAndSend = inngest.createFunction(
   // retries: 3 — #1582: buildAndSend throws on a transient send failure so
   // Inngest retries the whole run with backoff instead of silently losing it.
   { id: "precruise-generate-and-send", retries: 3, triggers: [{ event: "precruise/email.due" }] },
-  async ({ event }) => {
+  async ({ event, step }) => {
     validateInngestEvent("precruise/email.due", event.data);
     const parsed = PrecruiseEmailDuePayloadSchema.safeParse(event.data);
     if (!parsed.success) {
       console.error("[precruise-generate-and-send] invalid event payload: %s", parsed.error.message);
       return;
     }
-    const { booking_id, tenant_id, phase, via } = parsed.data;
+    const { booking_id, tenant_id, phase, via, expected_contact_id, expected_contact_email } = parsed.data;
 
     const svc = createServiceRoleClient();
+
+    // Recover local success before any regeneration or billing gate. A prior
+    // attempt may have committed the atomic email effects and crashed before
+    // stamping this companion row.
+    const { data: existingRaw } = await svc
+      .from("pre_cruise_email_content")
+      .select("id, sent_at, send_claimed_at, generated_content, content_context_hash")
+      .eq("booking_id", booking_id)
+      .eq("tenant_id", tenant_id)
+      .eq("email_phase", phase)
+      .maybeSingle();
+    const existing = existingRaw as ExistingPrecruiseContent | null;
+    const recovery = existing
+      ? await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })
+      : { status: "missing" as const };
+    if (recovery.status === "sent") {
+      return;
+    }
+    if (
+      recovery.status === "queued"
+      && recovery.providerAttemptState === "ambiguous"
+      && recovery.providerFirstAttemptAt
+    ) {
+      await resumeStartedPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+        providerFirstAttemptAt: recovery.providerFirstAttemptAt,
+      });
+      return;
+    }
 
     // §15.16 — Skip past-grace tenants (both paths).
     const paymentCheck = await assertTenantStillPayingById(svc, tenant_id);
     if (!paymentCheck.ok) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
       console.info(
         "[precruise] skipping past-grace tenant",
         { tenant_id, booking_id, phase, reason: paymentCheck.reason, days: paymentCheck.days_since_non_paying },
@@ -114,93 +180,142 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       return;
     }
 
-    // Idempotency: if already sent, skip (both paths).
-    const { data: existingRaw } = await svc
-      .from("pre_cruise_email_content")
-      .select("id, sent_at, generated_content")
-      .eq("booking_id", booking_id)
-      .eq("email_phase", phase)
-      .maybeSingle();
-    const existing = existingRaw as { id: string; sent_at?: string | null; generated_content?: Record<string, unknown> } | null;
-    if (existing?.sent_at) {
-      console.info(`[precruise] already sent: booking=${booking_id} phase=${phase}`);
+    // Resolve the full email context (shared by both paths).
+    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
+    if (!emailCtx) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      return;
+    }
+    if (
+      expected_contact_id && expected_contact_email &&
+      (emailCtx.booking.primary_contact_id !== expected_contact_id ||
+        normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
+    ) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      console.info(`[precruise] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
+      return;
+    }
+    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
+    if (recovery.status === "queued" && existing?.content_context_hash !== contentContextFingerprint) {
+      const canRegenerate = await abandonRecoveredPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+      });
+      if (!canRegenerate) return;
+    }
+
+    if (existing?.send_claimed_at) {
+      await buildAndSend({ svc, phase, emailCtx, contentId: existing.id });
       return;
     }
 
-    // Resolve the full email context (shared by both paths).
-    const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
-    if (!emailCtx) return; // already logged
-
     if (via === "batched") {
+      if (
+        existing?.generated_content &&
+        existing.content_context_hash === contentContextFingerprint
+      ) {
+        await buildAndSend({ svc, phase, emailCtx, contentId: existing.id });
+        return;
+      }
       // ── Batched path: enqueue ONE structured-JSON Haiku request and
       // hand off to precruiseSendFromBatchResult on completion.
-      const prompt = buildBatchedPrompt(phase, emailCtx);
-      await enqueueBatchRequest({
-        tenant_id,
-        purpose: "precruise_generation",
-        request_params: {
-          model: HAIKU_MODEL,
-          max_tokens: 2048, // wider than direct since it returns combined JSON
-          system: prompt.system,
-          messages: [{ role: "user", content: prompt.user }],
-          // #2009 — constrain the output to the phase schema so the
-          // consumer can JSON.parse without heuristics.
-          output_config: { format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS[phase] } },
-        },
-        caller_metadata: {
+      await step.run(
+        `enqueue-batch:${phase}:${contentContextFingerprint}`,
+        () => enqueuePrecruiseBatchGeneration({
+          svc,
           booking_id,
           tenant_id,
           phase,
-          email_ctx_id: existing?.id ?? null,
-          // Re-encode the parts of the email context the consumer needs
-          // without re-querying. Avoids a second round trip + races.
-          companion_page_url: emailCtx.companionPageUrl,
-        },
-        db: svc,
-      });
+          emailCtx,
+          emailCtxId: existing?.id ?? null,
+          contentContextFingerprint,
+          ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
+          ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
+        }),
+      );
       console.info(`[precruise:batched] enqueued booking=${booking_id} phase=${phase}`);
       return;
     }
 
     // ── Direct path: existing multi-call generation, render, send.
-    let generatedContent: Record<string, unknown>;
     let contentId: string | undefined;
-    if (existing?.generated_content) {
-      generatedContent = existing.generated_content;
+    if (
+      existing?.generated_content &&
+      existing.content_context_hash === contentContextFingerprint
+    ) {
       contentId = existing.id;
     } else {
-      generatedContent = await generateContent(phase, emailCtx);
-      const { data: inserted, error: insertError } = await svc
-        .from("pre_cruise_email_content")
-        .insert({
-          tenant_id,
-          booking_id,
-          contact_id: emailCtx.booking.primary_contact_id!,
-          email_phase: phase,
-          generated_content: generatedContent,
-          companion_page_url: emailCtx.companionPageUrl,
-        })
-        .select("id")
-        .single();
-      if (insertError?.code === "23505") {
-        // #1582: duplicate-event race — another run already claimed
-        // (booking_id, email_phase). Let that run own the send.
-        console.info(`[precruise] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
-        return;
+      const generatedContent = await step.run(
+        `generate-direct:${phase}:${contentContextFingerprint}`,
+        () => generateContent(phase, emailCtx),
+      );
+      if (existing) {
+        let updateQuery = svc
+          .from("pre_cruise_email_content")
+          .update({
+            contact_id: emailCtx.booking.primary_contact_id!,
+            generated_content: generatedContent,
+            content_context_hash: contentContextFingerprint,
+            companion_page_url: emailCtx.companionPageUrl,
+            generated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id)
+          .eq("tenant_id", tenant_id)
+          .is("sent_at", null)
+          .is("send_claimed_at", null);
+        updateQuery = existing.content_context_hash === null || existing.content_context_hash === undefined
+          ? updateQuery.is("content_context_hash", null)
+          : updateQuery.eq("content_context_hash", existing.content_context_hash);
+        const updated = await safeAwait(
+          updateQuery.select("id"),
+          "pre_cruise_email_content.update.regenerated",
+        );
+        if ((updated as Array<{ id: string }> | null)?.length !== 1) {
+          console.info(`[precruise] content changed while regenerating, skipping: booking=${booking_id} phase=${phase}`);
+          return;
+        }
+        contentId = existing.id;
+      } else {
+        const { data: inserted, error: insertError } = await svc
+          .from("pre_cruise_email_content")
+          .insert({
+            tenant_id,
+            booking_id,
+            contact_id: emailCtx.booking.primary_contact_id!,
+            email_phase: phase,
+            generated_content: generatedContent,
+            content_context_hash: contentContextFingerprint,
+            companion_page_url: emailCtx.companionPageUrl,
+          })
+          .select("id")
+          .single();
+        if (insertError?.code === "23505") {
+          // #1582: duplicate-event race — another run already claimed
+          // (booking_id, email_phase). Let that run own the send.
+          console.info(`[precruise] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
+          return;
+        }
+        if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
+        contentId = (inserted as { id: string } | null)?.id;
       }
-      if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
-      contentId = (inserted as { id: string } | null)?.id;
       // #1953 — the companion page caches this row by (booking_id, phase);
       // purge so a previously-cached "no content yet" render can't persist.
       revalidateCompanionContent(booking_id, phase);
     }
 
+    if (!contentId) throw new Error("pre-cruise content row did not return an id");
     await buildAndSend({
       svc,
       phase,
       emailCtx,
-      generatedContent,
-      ...(contentId ? { contentId } : {}),
+      contentId,
     });
   },
 );
@@ -215,7 +330,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     retries: 3,
     triggers: [{ event: "ai.batch_request.completed.precruise_generation" }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     validateInngestEvent("ai.batch_request.completed.precruise_generation", event.data);
     const parsed = PrecruiseBatchResultPayloadSchema.safeParse(event.data);
     if (!parsed.success) {
@@ -227,37 +342,118 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       console.error(`[precruise:batch-result] missing caller_metadata for request ${request_id}`);
       return;
     }
-    const { booking_id, phase } = caller_metadata;
-    const svc = createServiceRoleClient();
-
-    // Parse the schema-constrained JSON (see parseStructuredJson for why
-    // anything non-bare-JSON is rejected rather than sliced).
-    const generatedContent = parseStructuredJson(result_text);
-    if (!generatedContent) {
-      console.error(`[precruise:batch-result] failed to parse JSON for booking=${booking_id} phase=${phase}`);
+    if (caller_metadata.tenant_id !== tenant_id) {
+      console.error(`[precruise:batch-result] tenant mismatch for request ${request_id}`);
       return;
     }
+    const { booking_id, phase, expected_contact_id, expected_contact_email } = caller_metadata;
+    const svc = createServiceRoleClient();
 
-    // Idempotency check again — if a parallel direct fire already sent,
-    // don't double-send.
+    // Recover a provider success before parsing or regenerating. The batch
+    // completion may itself be a replay after local effects committed.
     const { data: existingRaw } = await svc
       .from("pre_cruise_email_content")
-      .select("id, sent_at")
+      .select("id, sent_at, send_claimed_at, generated_content, content_context_hash")
       .eq("booking_id", booking_id)
+      .eq("tenant_id", tenant_id)
       .eq("email_phase", phase)
       .maybeSingle();
-    const existing = existingRaw as { id: string; sent_at?: string | null } | null;
-    if (existing?.sent_at) {
-      console.info(`[precruise:batch-result] already sent: booking=${booking_id} phase=${phase}`);
+    const existing = existingRaw as ExistingPrecruiseContent | null;
+    const recovery = existing
+      ? await recoverExistingPrecruiseSend({ svc, existing, tenantId: tenant_id, bookingId: booking_id, phase })
+      : { status: "missing" as const };
+    if (recovery.status === "sent") {
+      return;
+    }
+    if (
+      recovery.status === "queued"
+      && recovery.providerAttemptState === "ambiguous"
+      && recovery.providerFirstAttemptAt
+    ) {
+      await resumeStartedPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+        providerFirstAttemptAt: recovery.providerFirstAttemptAt,
+      });
       return;
     }
 
     const emailCtx = await loadEmailContext({ svc, booking_id, tenant_id, phase });
-    if (!emailCtx) return;
+    if (!emailCtx) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      return;
+    }
+    if (
+      expected_contact_id && expected_contact_email &&
+      (emailCtx.booking.primary_contact_id !== expected_contact_id ||
+        normalizeEmail(emailCtx.toEmail) !== normalizeEmail(expected_contact_email))
+    ) {
+      if (recovery.status === "queued") {
+        await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
+      }
+      console.info(`[precruise:batch-result] reviewed recipient changed: booking=${booking_id} phase=${phase}`);
+      return;
+    }
+    const contentContextFingerprint = fingerprintEmailContext(emailCtx);
+    if (
+      recovery.status === "queued" &&
+      existing?.generated_content &&
+      existing.content_context_hash === contentContextFingerprint
+    ) {
+      await buildAndSend({ svc, phase, emailCtx, contentId: existing.id });
+      return;
+    }
+    if (recovery.status === "queued") {
+      const canRegenerate = await abandonRecoveredPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+      });
+      if (!canRegenerate) return;
+    }
+
+    // Parse the schema-constrained JSON (see parseStructuredJson for why
+    // anything non-bare-JSON is rejected rather than sliced).
+    const parsedGeneratedContent = parseStructuredJson(result_text);
+    if (!parsedGeneratedContent) {
+      console.error(`[precruise:batch-result] failed to parse JSON for booking=${booking_id} phase=${phase}`);
+      return;
+    }
+
+    if (caller_metadata.content_context_hash !== contentContextFingerprint) {
+      if (existing?.send_claimed_at) {
+        console.info(`[precruise:batch-result] context changed after send claim: booking=${booking_id} phase=${phase}`);
+        return;
+      }
+      await step.run(
+        `reenqueue-batch:${phase}:${contentContextFingerprint}`,
+        () => enqueuePrecruiseBatchGeneration({
+          svc,
+          booking_id,
+          tenant_id,
+          phase,
+          emailCtx,
+          emailCtxId: existing?.id ?? null,
+          contentContextFingerprint,
+          ...(expected_contact_id ? { expectedContactId: expected_contact_id } : {}),
+          ...(expected_contact_email ? { expectedContactEmail: expected_contact_email } : {}),
+        }),
+      );
+      console.info(`[precruise:batch-result] context changed; regenerated booking=${booking_id} phase=${phase}`);
+      return;
+    }
 
     // Insert the generated_content row (or update if already exists from
     // a partial prior run).
     let contentId: string | undefined = existing?.id;
+    let contentWritten = false;
     if (!contentId) {
       const { data: inserted, error: insertError } = await svc
         .from("pre_cruise_email_content")
@@ -266,7 +462,8 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
           booking_id,
           contact_id: emailCtx.booking.primary_contact_id!,
           email_phase: phase,
-          generated_content: generatedContent,
+          generated_content: parsedGeneratedContent,
+          content_context_hash: contentContextFingerprint,
           companion_page_url: caller_metadata.companion_page_url,
         })
         .select("id")
@@ -279,21 +476,46 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       }
       if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
       contentId = (inserted as { id: string } | null)?.id;
-    } else {
-      await safeAwait(
-        svc
-          .from("pre_cruise_email_content")
-          .update({ generated_content: generatedContent })
-          .eq("id", contentId),
+      contentWritten = true;
+    } else if (!(
+      existing?.generated_content &&
+      existing.content_context_hash === contentContextFingerprint
+    )) {
+      let updateQuery = svc
+        .from("pre_cruise_email_content")
+        .update({
+          contact_id: emailCtx.booking.primary_contact_id!,
+          generated_content: parsedGeneratedContent,
+          content_context_hash: contentContextFingerprint,
+          companion_page_url: emailCtx.companionPageUrl,
+          generated_at: new Date().toISOString(),
+        })
+        .eq("id", contentId)
+        .eq("tenant_id", tenant_id)
+        .is("sent_at", null)
+        .is("send_claimed_at", null);
+      updateQuery = existing?.content_context_hash === null || existing?.content_context_hash === undefined
+        ? updateQuery.is("content_context_hash", null)
+        : updateQuery.eq("content_context_hash", existing.content_context_hash);
+      const updated = await safeAwait(
+        updateQuery.select("id"),
         "pre_cruise_email_content.update.generated",
       );
+      if ((updated as Array<{ id: string }> | null)?.length !== 1) {
+        console.info(`[precruise:batch-result] content changed while regenerating, skipping: booking=${booking_id} phase=${phase}`);
+        return;
+      }
+      contentWritten = true;
     }
-    // #1953 — both branches above wrote generated_content; purge the
-    // companion page's (booking_id, phase) cache entry so a
-    // placeholder-phase render is never served after content lands.
-    revalidateCompanionContent(booking_id, phase);
+    if (contentWritten) revalidateCompanionContent(booking_id, phase);
 
-    await buildAndSend({ svc, phase, emailCtx, generatedContent, ...(contentId ? { contentId } : {}) });
+    if (!contentId) throw new Error("pre-cruise content row did not return an id");
+    await buildAndSend({
+      svc,
+      phase,
+      emailCtx,
+      contentId,
+    });
   },
 );
 
@@ -345,6 +567,173 @@ interface EmailCtx {
   companionPageUrl: string;
   unsubscribeUrl: string;
   layoutProps: Omit<BrandedLayoutProps, "children">;
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function fingerprintEmailContext(ctx: EmailCtx): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      contact_id: ctx.booking.primary_contact_id,
+      recipient_email: normalizeEmail(ctx.toEmail),
+      customer_name: ctx.customerName,
+      cruise_line: ctx.cruiseLine,
+      ship_name: ctx.shipName,
+      sailing_date: ctx.sailingDate,
+      departure_port: ctx.departurePort ?? null,
+      ports: ctx.ports,
+    }))
+    .digest("hex");
+}
+
+function precruiseIdempotencyKey(bookingId: string, phase: Phase): string {
+  return `pre_cruise:${bookingId}:${phase}`;
+}
+
+async function recoverExistingPrecruiseSend(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  existing: ExistingPrecruiseContent;
+  tenantId: string;
+  bookingId: string;
+  phase: Phase;
+}): Promise<{
+  status: "sent" | "missing" | "queued";
+  providerFirstAttemptAt?: string | null;
+  providerAttemptState?: "unstarted" | "ambiguous" | "rejected" | null;
+}> {
+  const recovery = await recoverIdempotentEmail({
+    db: args.svc,
+    tenantId: args.tenantId,
+    idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+  });
+
+  if (recovery.status === "sent") {
+    if (!args.existing.sent_at) {
+      await finalizeContentAsSent({
+        svc: args.svc,
+        contentId: args.existing.id,
+        tenantId: args.tenantId,
+        sentAt: recovery.sent_at ?? new Date().toISOString(),
+      });
+    }
+    console.info(`[precruise] recovered sent email: booking=${args.bookingId} phase=${args.phase}`);
+    return { status: "sent" };
+  }
+
+  // A stamped companion row is terminal even if its historical logical log is
+  // missing or incomplete. The shared recovery above still gets first chance
+  // to heal any durable keyed effects, but this path must never re-deliver.
+  if (args.existing.sent_at) {
+    console.info(`[precruise] already sent: booking=${args.bookingId} phase=${args.phase}`);
+    return { status: "sent" };
+  }
+
+  if (recovery.status === "missing") return { status: "missing" };
+
+  return {
+    status: "queued",
+    providerFirstAttemptAt: recovery.provider_first_attempt_at ?? null,
+    providerAttemptState: recovery.provider_attempt_state ?? null,
+  };
+}
+
+async function abandonRecoveredPrecruiseOutbox(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  existing: ExistingPrecruiseContent;
+  tenantId: string;
+  bookingId: string;
+  phase: Phase;
+}): Promise<boolean> {
+  const abandoned = await abandonUnstartedIdempotentEmail({
+    db: args.svc,
+    tenantId: args.tenantId,
+    idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+  });
+  if (abandoned) {
+    if (args.existing.send_claimed_at) {
+      await releaseContentClaim({
+        svc: args.svc,
+        contentId: args.existing.id,
+        tenantId: args.tenantId,
+        claimedAt: args.existing.send_claimed_at,
+      });
+      args.existing.send_claimed_at = null;
+    }
+    return true;
+  }
+
+  const recovery = await recoverExistingPrecruiseSend(args);
+  if (recovery.status === "sent") return false;
+  if (
+    recovery.status === "queued"
+    && recovery.providerAttemptState === "ambiguous"
+    && recovery.providerFirstAttemptAt
+  ) {
+    await resumeStartedPrecruiseOutbox({
+      svc: args.svc,
+      existing: args.existing,
+      tenantId: args.tenantId,
+      bookingId: args.bookingId,
+      phase: args.phase,
+      providerFirstAttemptAt: recovery.providerFirstAttemptAt,
+    });
+    return false;
+  }
+  if (recovery.status === "missing") {
+    if (!args.existing.send_claimed_at) return true;
+    await releaseContentClaim({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      claimedAt: args.existing.send_claimed_at,
+    });
+    args.existing.send_claimed_at = null;
+    return true;
+  }
+
+  throw new Error(
+    `[precruise] outbox abandon lost CAS without authoritative state booking=${args.bookingId} phase=${args.phase}`,
+  );
+}
+
+async function enqueuePrecruiseBatchGeneration(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  booking_id: string;
+  tenant_id: string;
+  phase: Phase;
+  emailCtx: EmailCtx;
+  emailCtxId: string | null;
+  contentContextFingerprint: string;
+  expectedContactId?: string;
+  expectedContactEmail?: string;
+}): Promise<void> {
+  const prompt = buildBatchedPrompt(args.phase, args.emailCtx);
+  await enqueueBatchRequest({
+    tenant_id: args.tenant_id,
+    purpose: "precruise_generation",
+    request_params: {
+      model: HAIKU_MODEL,
+      max_tokens: 2048,
+      system: prompt.system,
+      messages: [{ role: "user", content: prompt.user }],
+      output_config: {
+        format: { type: "json_schema", schema: PRECRUISE_OUTPUT_SCHEMAS[args.phase] },
+      },
+    },
+    caller_metadata: {
+      booking_id: args.booking_id,
+      tenant_id: args.tenant_id,
+      phase: args.phase,
+      email_ctx_id: args.emailCtxId,
+      companion_page_url: args.emailCtx.companionPageUrl,
+      content_context_hash: args.contentContextFingerprint,
+      ...(args.expectedContactId ? { expected_contact_id: args.expectedContactId } : {}),
+      ...(args.expectedContactEmail ? { expected_contact_email: args.expectedContactEmail } : {}),
+    },
+    db: args.svc,
+  });
 }
 
 // Exported for unit testing the data-access shape (the bookings→groups
@@ -467,14 +856,337 @@ export async function loadEmailContext(args: {
   };
 }
 
+async function emailContextStillCurrent(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  emailCtx: EmailCtx;
+}): Promise<boolean> {
+  const { svc, emailCtx } = args;
+  const { data: bookingData, error: bookingError } = await svc
+    .from("bookings")
+    .select(
+      "status, primary_contact_id, cruise_line, ship_name, sailing_date, departure_port, groups(cruise_line, ship_name, sailing_date, departure_port), contacts!primary_contact_id(tenant_id, first_name, email)",
+    )
+    .eq("id", emailCtx.booking.id)
+    .eq("tenant_id", emailCtx.tenant.id)
+    .maybeSingle();
+  if (bookingError) {
+    throw new SupabaseMutationError("precruise.final_state.booking_read", bookingError);
+  }
+  const booking = bookingData as {
+    status: string;
+    primary_contact_id: string | null;
+    cruise_line: string | null;
+    ship_name: string | null;
+    sailing_date: string | null;
+    departure_port: string | null;
+    contacts: Array<{
+      tenant_id: string;
+      first_name: string | null;
+      email: string | null;
+    }> | {
+      tenant_id: string;
+      first_name: string | null;
+      email: string | null;
+    } | null;
+    groups: Array<{
+      cruise_line: string | null;
+      ship_name: string | null;
+      sailing_date: string | null;
+      departure_port: string | null;
+    }> | {
+      cruise_line: string | null;
+      ship_name: string | null;
+      sailing_date: string | null;
+      departure_port: string | null;
+    } | null;
+  } | null;
+  if (
+    booking?.status !== "confirmed" ||
+    booking.primary_contact_id !== emailCtx.booking.primary_contact_id
+  ) {
+    console.info(`[precruise] final booking state changed: booking=${emailCtx.booking.id}`);
+    return false;
+  }
+
+  const contact = Array.isArray(booking.contacts) ? booking.contacts[0] : booking.contacts;
+  const groups = Array.isArray(booking.groups) ? booking.groups[0] : booking.groups;
+  if (
+    contact?.tenant_id !== emailCtx.tenant.id ||
+    !contact?.email ||
+    normalizeEmail(contact.email) !== normalizeEmail(emailCtx.toEmail) ||
+    (contact.first_name ?? "Traveler") !== emailCtx.customerName ||
+    (booking.cruise_line ?? groups?.cruise_line ?? "") !== emailCtx.cruiseLine ||
+    (booking.ship_name ?? groups?.ship_name ?? "your ship") !== emailCtx.shipName ||
+    (booking.sailing_date ?? groups?.sailing_date ?? "") !== emailCtx.sailingDate ||
+    (booking.departure_port ?? groups?.departure_port ?? undefined) !== emailCtx.departurePort
+  ) {
+    console.info(`[precruise] final email context changed: booking=${emailCtx.booking.id}`);
+    return false;
+  }
+  return true;
+}
+
+function providerReplayWindowExpired(firstAttemptAt: string | null): boolean {
+  if (!firstAttemptAt) return false;
+  const firstAttemptMs = Date.parse(firstAttemptAt);
+  const elapsed = Date.now() - firstAttemptMs;
+  return !Number.isFinite(firstAttemptMs) || elapsed < 0 || elapsed >= PROVIDER_REPLAY_CUTOFF_MS;
+}
+
+async function claimContentForSend(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  contentId: string;
+  tenantId: string;
+}): Promise<{
+  claimedAt: string;
+  contentContextHash: string | null;
+  generatedContent: Record<string, unknown>;
+} | null> {
+  const claimedAt = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - SEND_CLAIM_TTL_MS).toISOString();
+  const rows = await safeAwait(
+    args.svc
+      .from("pre_cruise_email_content")
+      .update({ send_claimed_at: claimedAt })
+      .eq("id", args.contentId)
+      .eq("tenant_id", args.tenantId)
+      .is("sent_at", null)
+      .or(`send_claimed_at.is.null,send_claimed_at.lt.${staleBefore}`)
+      .select("send_claimed_at, content_context_hash, generated_content"),
+    "pre_cruise_email_content.claim.send",
+  );
+  const claimed = (rows as Array<{
+    send_claimed_at: string;
+    content_context_hash: string | null;
+    generated_content: Record<string, unknown>;
+  }> | null)?.[0];
+  return claimed ? {
+    claimedAt: claimed.send_claimed_at,
+    contentContextHash: claimed.content_context_hash,
+    generatedContent: claimed.generated_content,
+  } : null;
+}
+
+async function releaseContentClaim(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  contentId: string;
+  tenantId: string;
+  claimedAt: string;
+}): Promise<void> {
+  await safeAwaitRowCount(
+    args.svc
+      .from("pre_cruise_email_content")
+      .update({ send_claimed_at: null })
+      .eq("id", args.contentId)
+      .eq("tenant_id", args.tenantId)
+      .eq("send_claimed_at", args.claimedAt)
+      .select("id"),
+    "pre_cruise_email_content.release.send_claim",
+    1,
+  );
+}
+
+async function finalizeContentAsSent(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  contentId: string;
+  tenantId: string;
+  sentAt: string;
+  claimedAt?: string;
+}): Promise<void> {
+  let updateQuery = args.svc
+    .from("pre_cruise_email_content")
+    .update({ sent_at: args.sentAt, send_claimed_at: null })
+    .eq("id", args.contentId)
+    .eq("tenant_id", args.tenantId)
+    .is("sent_at", null);
+  if (args.claimedAt) updateQuery = updateQuery.eq("send_claimed_at", args.claimedAt);
+  const rows = await safeAwait(
+    updateQuery.select("id"),
+    "pre_cruise_email_content.finalize.sent_at",
+  );
+  if ((rows as Array<{ id: string }> | null)?.length === 1) return;
+
+  const current = await safeAwait(
+    args.svc
+      .from("pre_cruise_email_content")
+      .select("sent_at")
+      .eq("id", args.contentId)
+      .eq("tenant_id", args.tenantId)
+      .limit(1)
+      .maybeSingle(),
+    "pre_cruise_email_content.verify.sent_at",
+  ) as { sent_at: string | null } | null;
+  if (!current?.sent_at) {
+    throw new Error("pre-cruise content finalization lost its claim");
+  }
+}
+
+async function loadTenantForOutboxReplay(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  tenantId: string;
+}): Promise<SendEmailInput["tenant"]> {
+  const tenant = await safeAwait(
+    args.svc
+      .from("tenants")
+      .select("id, legal_name, mailing_address")
+      .eq("id", args.tenantId)
+      .limit(1)
+      .maybeSingle(),
+    "precruise.replay.tenant",
+  ) as { id: string; legal_name: string | null; mailing_address: string | null } | null;
+  if (!tenant) throw new Error("pre-cruise replay tenant not found");
+
+  const branding = await safeAwait(
+    args.svc
+      .from("tenant_branding")
+      .select(TENANT_BRANDING_COLUMNS)
+      .eq("tenant_id", args.tenantId)
+      .limit(1)
+      .maybeSingle(),
+    "precruise.replay.branding",
+  ) as EmailCtx["branding"] | null;
+
+  return {
+    id: tenant.id,
+    legal_name: tenant.legal_name ?? "Travel Agency",
+    mailing_address: tenant.mailing_address,
+    email_send_pattern: (branding?.email_send_pattern ?? "platform_resend") as
+      | "platform_resend"
+      | "tenant_resend",
+    tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+    email_from_address: branding?.email_from_address ?? null,
+    email_from_name: branding?.email_from_name ?? null,
+    email_from_domain: branding?.email_from_domain ?? null,
+    email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
+  };
+}
+
+async function resumeStartedPrecruiseOutbox(args: {
+  svc: ReturnType<typeof createServiceRoleClient>;
+  existing: ExistingPrecruiseContent;
+  tenantId: string;
+  bookingId: string;
+  phase: Phase;
+  providerFirstAttemptAt: string;
+}): Promise<void> {
+  const claim = await claimContentForSend({
+    svc: args.svc,
+    contentId: args.existing.id,
+    tenantId: args.tenantId,
+  });
+  if (!claim) {
+    console.info(`[precruise] replay already claimed: booking=${args.bookingId} phase=${args.phase}`);
+    return;
+  }
+  const { claimedAt } = claim;
+  if (providerReplayWindowExpired(args.providerFirstAttemptAt)) {
+    await releaseContentClaim({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      claimedAt,
+    });
+    throw new Error(
+      `[precruise] provider replay window expired; operator reconciliation required: booking=${args.bookingId} phase=${args.phase}`,
+    );
+  }
+
+  const tenant = await loadTenantForOutboxReplay({ svc: args.svc, tenantId: args.tenantId });
+  let result;
+  try {
+    result = await resumeIdempotentEmail({
+      db: args.svc,
+      tenant,
+      idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
+      beforeDispatch: async ({ providerReplay }) => {
+        return providerReplay
+          ? { allowed: true }
+          : { allowed: false, reason: "provider_replay_state_missing" };
+      },
+    });
+  } catch (error) {
+    await releaseContentClaim({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      claimedAt,
+    });
+    throw error;
+  }
+
+  if (result.status === "sent") {
+    await finalizeContentAsSent({
+      svc: args.svc,
+      contentId: args.existing.id,
+      tenantId: args.tenantId,
+      sentAt: new Date().toISOString(),
+      claimedAt,
+    });
+    return;
+  }
+
+  await releaseContentClaim({
+    svc: args.svc,
+    contentId: args.existing.id,
+    tenantId: args.tenantId,
+    claimedAt,
+  });
+  if (result.status === "failed") {
+    throw new Error(
+      `[precruise] replay failed booking=${args.bookingId} phase=${args.phase} reason=${result.reason ?? "unknown"}`,
+    );
+  }
+}
+
 async function buildAndSend(args: {
   svc: ReturnType<typeof createServiceRoleClient>;
   phase: Phase;
   emailCtx: EmailCtx;
-  generatedContent: Record<string, unknown>;
-  contentId?: string;
+  contentId: string;
 }): Promise<void> {
-  const { svc, phase, emailCtx, generatedContent, contentId } = args;
+  const { svc, phase, emailCtx, contentId } = args;
+
+  const claim = await claimContentForSend({
+    svc,
+    contentId,
+    tenantId: emailCtx.tenant.id,
+  });
+  if (!claim) {
+    console.info(`[precruise] send already claimed: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
+  const { claimedAt, contentContextHash, generatedContent } = claim;
+
+  if (contentContextHash !== fingerprintEmailContext(emailCtx)) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    console.info(`[precruise] claimed content context is stale: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
+
+  let paymentCheck: Awaited<ReturnType<typeof assertTenantStillPayingById>>;
+  try {
+    paymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
+  if (!paymentCheck.ok) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    console.info(`[precruise] tenant became ineligible before send: booking=${emailCtx.booking.id} phase=${phase}`);
+    return;
+  }
+
+  let contextIsCurrent: boolean;
+  try {
+    contextIsCurrent = await emailContextStillCurrent({ svc, emailCtx });
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
+  if (!contextIsCurrent) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    return;
+  }
 
   let portInfo: PortInfo | null = null;
   if (phase === "t_1" && emailCtx.departurePort) {
@@ -583,29 +1295,49 @@ async function buildAndSend(args: {
     email_from_domain_verified_at: emailCtx.branding.email_from_domain_verified_at ?? null,
   };
 
-  const result = await sendEmail({
-    db: svc,
-    tenant: tenantInput,
-    to: emailCtx.toEmail,
-    subject,
-    template_id: `pre_cruise_${phase}`,
-    category: "pre_cruise",
-    html,
-    idempotencyKey: `pre_cruise:${emailCtx.booking.id}:${phase}`,
-    contact_id: emailCtx.booking.primary_contact_id!,
-    related_booking_id: emailCtx.booking.id,
-    ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
-    ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
-  });
+  let result;
+  try {
+    result = await sendEmail({
+      db: svc,
+      tenant: tenantInput,
+      to: emailCtx.toEmail,
+      subject,
+      template_id: `pre_cruise_${phase}`,
+      category: "pre_cruise",
+      html,
+      idempotencyKey: precruiseIdempotencyKey(emailCtx.booking.id, phase),
+      beforeDispatch: async ({ providerReplay }) => {
+        if (!providerReplay) {
+          const finalPaymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);
+          if (!finalPaymentCheck.ok) {
+            return { allowed: false, reason: "tenant_not_paying" };
+          }
+          if (!await emailContextStillCurrent({ svc, emailCtx })) {
+            return { allowed: false, reason: "email_context_changed" };
+          }
+        }
+        return { allowed: true };
+      },
+      contact_id: emailCtx.booking.primary_contact_id!,
+      related_booking_id: emailCtx.booking.id,
+      ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
+      ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
+    });
+  } catch (error) {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
+    throw error;
+  }
 
-  if (result.status === "sent" && contentId) {
-    await safeAwait(
-      svc
-        .from("pre_cruise_email_content")
-        .update({ sent_at: new Date().toISOString() })
-        .eq("id", contentId),
-      "pre_cruise_email_content.update.sent_at",
-    );
+  if (result.status === "sent") {
+    await finalizeContentAsSent({
+      svc,
+      contentId,
+      tenantId: emailCtx.tenant.id,
+      sentAt: new Date().toISOString(),
+      claimedAt,
+    });
+  } else {
+    await releaseContentClaim({ svc, contentId, tenantId: emailCtx.tenant.id, claimedAt });
   }
 
   console.info(

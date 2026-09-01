@@ -2,7 +2,25 @@
 
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+const stateSetterTracker = vi.hoisted(() => ({ enabled: false, calls: 0 }));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useState: <T,>(initialState: T | (() => T)) => {
+      const [value, setValue] = actual.useState(initialState);
+      const trackedSetValue: typeof setValue = (next) => {
+        if (stateSetterTracker.enabled) stateSetterTracker.calls += 1;
+        setValue(next);
+      };
+      return [value, trackedSetValue] as const;
+    },
+  };
+});
+
 import { PreCruiseEmailsView } from "@/app/(tenant)/crm/pre-cruise-emails/_components/PreCruiseEmailsView";
 
 const BOOKING_ID = "22222222-2222-4222-8222-222222222222";
@@ -13,7 +31,7 @@ const BOOKING = {
   ship_name: "Icon of the Seas",
   sailing_date: "2027-05-01",
   primary_contact: {
-    id: "contact-1",
+    id: "33333333-3333-4333-8333-333333333333",
     first_name: "Avery",
     last_name: "Quinn",
     email: "avery@example.com",
@@ -47,6 +65,8 @@ function installFetch(options: {
 }
 
 afterEach(() => {
+  stateSetterTracker.enabled = false;
+  stateSetterTracker.calls = 0;
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -79,6 +99,8 @@ describe("PreCruiseEmailsView", () => {
       action: "schedule",
       booking_id: BOOKING_ID,
       phase: "t_7",
+      expected_contact_id: BOOKING.primary_contact.id,
+      expected_contact_email: BOOKING.primary_contact.email,
       scheduled_for: new Date(localSchedule).toISOString(),
     });
     expect((await screen.findByRole("status")).textContent).toContain("7 days email is scheduled");
@@ -120,6 +142,47 @@ describe("PreCruiseEmailsView", () => {
 
     resolveDispatch(jsonResponse({ ok: true }, 202));
     expect((await screen.findByRole("status")).textContent).toContain("90 days email is queued to send now");
+  });
+
+  it("tells the agent to review the booking when the recipient changed", async () => {
+    installFetch({
+      dispatchResponse: Promise.resolve(jsonResponse({ error: "recipient_changed" }, 409)),
+    });
+    render(<PreCruiseEmailsView />);
+
+    await screen.findByRole("option", { name: /Avery Quinn/ });
+    fireEvent.click(screen.getByRole("button", { name: "Send email now" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The booking's primary contact changed. Review the booking and try again.",
+    );
+  });
+
+  it("lets an accepted dispatch finish after unmount without updating local state", async () => {
+    let resolveDispatch!: (response: Response) => void;
+    const dispatchResponse = new Promise<Response>((resolve) => {
+      resolveDispatch = resolve;
+    });
+    const fetchMock = installFetch({ dispatchResponse });
+    const { unmount } = render(<PreCruiseEmailsView />);
+
+    await screen.findByRole("option", { name: /Avery Quinn/ });
+    fireEvent.click(screen.getByRole("button", { name: "Send email now" }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
+    });
+
+    unmount();
+    stateSetterTracker.calls = 0;
+    stateSetterTracker.enabled = true;
+    await act(async () => {
+      resolveDispatch(jsonResponse({ ok: true }, 202));
+      await dispatchResponse;
+    });
+
+    const postCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(postCall?.[1]?.signal).toBeUndefined();
+    expect(stateSetterTracker.calls).toBe(0);
   });
 
   it("ignores an older search response after a newer query invalidates it", async () => {

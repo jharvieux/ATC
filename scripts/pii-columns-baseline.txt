@@ -40,6 +40,8 @@ main::cruise_ships.canonical_name::NAME?  (PII/low)
 main::customer_memories.preferences::OPAQUE_JSON_BLOB  (PII/low)
 main::email_log.from_email::EMAIL  (PII/high)
 main::email_log.to_email::EMAIL  (PII/high)
+# email_provider_dispatch is service-role-only; provider payloads become purge-eligible after 23h and the FK cascades with email_log erasure.
+main::email_provider_dispatch.email_log_id::EMAIL  (PII/high)
 main::email_retry_content.email_log_id::EMAIL  (PII/high)
 main::email_retry_content.to_email::EMAIL  (PII/high)
 main::email_suppressions.email_address::EMAIL  (PII/high)
