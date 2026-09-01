@@ -284,14 +284,15 @@ export async function abandonUnstartedIdempotentEmail(args: {
   db: SupabaseClient;
   tenantId: string;
   idempotencyKey: string;
-}): Promise<void> {
-  await safeAwait(
+}): Promise<boolean> {
+  const abandoned = await safeAwait(
     args.db.rpc("abandon_unstarted_idempotent_email", {
       p_tenant_id: args.tenantId,
       p_idempotency_key: args.idempotencyKey,
     }),
     "abandon_unstarted_idempotent_email",
   );
+  return abandoned === true;
 }
 
 function resolveResendApiKey(tenant: SendEmailInput["tenant"]):

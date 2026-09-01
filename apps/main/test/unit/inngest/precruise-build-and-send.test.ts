@@ -79,7 +79,7 @@ vi.mock("@/lib/email/send", () => ({
   },
   recoverIdempotentEmail: async () => ({ status: "missing" }),
   resumeIdempotentEmail: async () => ({ status: "failed", reason: "not used" }),
-  abandonUnstartedIdempotentEmail: async () => undefined,
+  abandonUnstartedIdempotentEmail: async () => true,
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
     "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
@@ -221,8 +221,8 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       contact_id: "contact-1",
       related_booking_id: "booking-1",
       idempotencyKey: "pre_cruise:booking-1:t_90",
-      providerIdempotencyKeyScope: "tenant_scoped_v1",
     });
+    expect(mocks.sendEmailArgs[0]?.providerIdempotencyKeyScope).toBeUndefined();
   });
 
   it.each(["suppressed", "rate_limited"])(

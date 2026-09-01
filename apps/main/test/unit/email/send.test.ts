@@ -5,7 +5,12 @@
 // vi.stubGlobal fetch mock so no real HTTP happens.
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { providerEmailIdempotencyKey, sendEmail, type SendEmailInput } from "@/lib/email/send";
+import {
+  abandonUnstartedIdempotentEmail,
+  providerEmailIdempotencyKey,
+  sendEmail,
+  type SendEmailInput,
+} from "@/lib/email/send";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const testHtml = "<p>Test email body</p>";
@@ -133,8 +138,9 @@ function makeDb({
         };
       }
       if (name === "abandon_unstarted_idempotent_email") {
-        if (!outboxStore.current?.provider_first_attempt_at) outboxStore.current = null;
-        return { data: true, error: null };
+        const abandoned = Boolean(outboxStore.current && !outboxStore.current.provider_first_attempt_at);
+        if (abandoned) outboxStore.current = null;
+        return { data: abandoned, error: null };
       }
       return { data: null, error: { message: `unexpected rpc ${name}` } };
     },
@@ -390,7 +396,43 @@ describe("sendEmail — §23", () => {
     expect(secondKey).toHaveLength(77);
   });
 
-  it("replays the queued provider bytes after provider success and local finalization failure", async () => {
+  it("returns whether the unstarted outbox CAS actually deleted a row", async () => {
+    const unstarted: MockOutboxStore = {
+      current: {
+        id: "log-1",
+        status: "queued",
+        sent_at: null,
+        resend_message_id: null,
+        provider_idempotency_key: "logical-key",
+        provider_request_body: "{}",
+        provider_account_type: "platform_resend",
+        provider_credential_hash: "a".repeat(64),
+        provider_first_attempt_at: null,
+      },
+    };
+    const started: MockOutboxStore = {
+      current: {
+        ...unstarted.current!,
+        provider_first_attempt_at: "2026-09-01T04:00:00.000Z",
+      },
+    };
+
+    await expect(abandonUnstartedIdempotentEmail({
+      db: makeDb({ outboxStore: unstarted }),
+      tenantId: "tenant-1",
+      idempotencyKey: "logical-key",
+    })).resolves.toBe(true);
+    expect(unstarted.current).toBeNull();
+
+    await expect(abandonUnstartedIdempotentEmail({
+      db: makeDb({ outboxStore: started }),
+      tenantId: "tenant-1",
+      idempotencyKey: "logical-key",
+    })).resolves.toBe(false);
+    expect(started.current?.provider_first_attempt_at).not.toBeNull();
+  });
+
+  it("keeps a stored raw pre-cruise key authoritative across a later scope change", async () => {
     const outboxStore: MockOutboxStore = { current: null };
     const rpcFailureCounts = { finalize_idempotent_email_send: 1 };
     const db = makeDb({
@@ -408,7 +450,6 @@ describe("sendEmail — §23", () => {
       category: "transactional",
       html: "<p>Original body</p>",
       idempotencyKey: "pre_cruise:booking-1:t_7",
-      providerIdempotencyKeyScope: "tenant_scoped_v1",
       beforeDispatch,
     };
 
@@ -423,7 +464,7 @@ describe("sendEmail — §23", () => {
       to: "changed@example.com",
       subject: "Changed subject",
       html: "<p>Changed body</p>",
-      providerIdempotencyKeyScope: "legacy",
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
     });
 
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
@@ -431,11 +472,7 @@ describe("sendEmail — §23", () => {
     expect(calls[1]?.[1]?.body).toBe(calls[0]?.[1]?.body);
     expect(
       (calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
-    ).toBe(providerEmailIdempotencyKey(
-      "tenant-1",
-      "pre_cruise:booking-1:t_7",
-      "tenant_scoped_v1",
-    ));
+    ).toBe("pre_cruise:booking-1:t_7");
     expect(
       (calls[1]?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
     ).toBe((calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"]);
@@ -470,7 +507,6 @@ describe("sendEmail — §23", () => {
       category: "transactional",
       html: testHtml,
       idempotencyKey: "pre_cruise:booking-1:t_7",
-      providerIdempotencyKeyScope: "tenant_scoped_v1",
     };
 
     await expect(sendEmail(input)).rejects.toThrow(/finalize_idempotent_email_send/);

@@ -197,8 +197,14 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     }
     const contentContextFingerprint = fingerprintEmailContext(emailCtx);
     if (recovery.status === "queued" && existing?.content_context_hash !== contentContextFingerprint) {
-      await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
-      existing!.send_claimed_at = null;
+      const canRegenerate = await abandonRecoveredPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+      });
+      if (!canRegenerate) return;
     }
 
     if (existing?.send_claimed_at) {
@@ -389,8 +395,14 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
       return;
     }
     if (recovery.status === "queued") {
-      await abandonRecoveredPrecruiseOutbox({ svc, existing: existing!, tenantId: tenant_id, bookingId: booking_id, phase });
-      existing!.send_claimed_at = null;
+      const canRegenerate = await abandonRecoveredPrecruiseOutbox({
+        svc,
+        existing: existing!,
+        tenantId: tenant_id,
+        bookingId: booking_id,
+        phase,
+      });
+      if (!canRegenerate) return;
     }
 
     // Parse the schema-constrained JSON (see parseStructuredJson for why
@@ -611,20 +623,53 @@ async function abandonRecoveredPrecruiseOutbox(args: {
   tenantId: string;
   bookingId: string;
   phase: Phase;
-}): Promise<void> {
-  await abandonUnstartedIdempotentEmail({
+}): Promise<boolean> {
+  const abandoned = await abandonUnstartedIdempotentEmail({
     db: args.svc,
     tenantId: args.tenantId,
     idempotencyKey: precruiseIdempotencyKey(args.bookingId, args.phase),
   });
-  if (args.existing.send_claimed_at) {
+  if (abandoned) {
+    if (args.existing.send_claimed_at) {
+      await releaseContentClaim({
+        svc: args.svc,
+        contentId: args.existing.id,
+        tenantId: args.tenantId,
+        claimedAt: args.existing.send_claimed_at,
+      });
+      args.existing.send_claimed_at = null;
+    }
+    return true;
+  }
+
+  const recovery = await recoverExistingPrecruiseSend(args);
+  if (recovery.status === "sent") return false;
+  if (recovery.status === "queued" && recovery.providerFirstAttemptAt) {
+    await resumeStartedPrecruiseOutbox({
+      svc: args.svc,
+      existing: args.existing,
+      tenantId: args.tenantId,
+      bookingId: args.bookingId,
+      phase: args.phase,
+      providerFirstAttemptAt: recovery.providerFirstAttemptAt,
+    });
+    return false;
+  }
+  if (recovery.status === "missing") {
+    if (!args.existing.send_claimed_at) return true;
     await releaseContentClaim({
       svc: args.svc,
       contentId: args.existing.id,
       tenantId: args.tenantId,
       claimedAt: args.existing.send_claimed_at,
     });
+    args.existing.send_claimed_at = null;
+    return true;
   }
+
+  throw new Error(
+    `[precruise] outbox abandon lost CAS without authoritative state booking=${args.bookingId} phase=${args.phase}`,
+  );
 }
 
 async function enqueuePrecruiseBatchGeneration(args: {
@@ -1234,7 +1279,6 @@ async function buildAndSend(args: {
       category: "pre_cruise",
       html,
       idempotencyKey: precruiseIdempotencyKey(emailCtx.booking.id, phase),
-      providerIdempotencyKeyScope: "tenant_scoped_v1",
       beforeDispatch: async ({ providerReplay }) => {
         if (!providerReplay) {
           const finalPaymentCheck = await assertTenantStillPayingById(svc, emailCtx.tenant.id);

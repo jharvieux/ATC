@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   recoveryCalls: 0,
   resumeCalls: 0,
   abandonCalls: 0,
+  startWinsOnAbandon: false,
+  generationCalls: 0,
   updatePayloads: [] as Array<Record<string, unknown>>,
   regenerationRace: null as "claimed" | "sent" | null,
   regenerationUpdateError: null as { code: string; message: string } | null,
@@ -53,7 +55,10 @@ vi.mock("@/lib/billing/exclude-non-paying", () => ({
 }));
 
 vi.mock("@/lib/ai/call-wrapper", () => ({
-  instrumentedClaudeCall: async () => ({ text: "unused" }),
+  instrumentedClaudeCall: async () => {
+    mocks.generationCalls++;
+    return { text: "unused" };
+  },
 }));
 
 vi.mock("@/lib/email/unsubscribe-token", () => ({
@@ -87,6 +92,12 @@ vi.mock("@/lib/email/send", () => ({
   },
   abandonUnstartedIdempotentEmail: async () => {
     mocks.abandonCalls++;
+    if (mocks.startWinsOnAbandon && mocks.logicalEmailLog) {
+      mocks.logicalEmailLog.provider_first_attempt_at = new Date().toISOString();
+      return false;
+    }
+    mocks.logicalEmailLog = null;
+    return true;
   },
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
@@ -282,6 +293,8 @@ beforeEach(() => {
   mocks.recoveryCalls = 0;
   mocks.resumeCalls = 0;
   mocks.abandonCalls = 0;
+  mocks.startWinsOnAbandon = false;
+  mocks.generationCalls = 0;
 });
 
 describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
@@ -370,6 +383,37 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
     expect(mocks.insertPayloads).toHaveLength(0);
     expect(mocks.updatePayloads).toContainEqual({ send_claimed_at: null });
     expect(mocks.existingContent.content_context_hash).not.toBe("stale-context");
+  });
+
+  it("re-reads and resumes when provider start wins the direct abandon CAS", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: "2026-09-01T04:00:00.000Z",
+      generated_content: { documentation_reminder: "authoritative queued copy" },
+      content_context_hash: "stale-context",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: null,
+    };
+    mocks.startWinsOnAbandon = true;
+
+    await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({
+      event: { data: { booking_id: "b1", tenant_id: "t1", phase: "t_90", via: "direct" } },
+    });
+
+    expect(mocks.abandonCalls).toBe(1);
+    expect(mocks.recoveryCalls).toBe(2);
+    expect(mocks.resumeCalls).toBe(1);
+    expect(mocks.generationCalls).toBe(0);
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.existingContent.generated_content).toEqual({
+      documentation_reminder: "authoritative queued copy",
+    });
+    expect(mocks.updatePayloads).not.toContainEqual({ send_claimed_at: null });
   });
 
   it("skips the send when the insert hits a 23505 unique violation", async () => {

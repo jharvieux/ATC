@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   recoveryCalls: 0,
   resumeCalls: 0,
   abandonCalls: 0,
+  startWinsOnAbandon: false,
   updatePayloads: [] as Array<Record<string, unknown>>,
   regenerationRace: null as "sent" | null,
   regenerationUpdateError: null as { code: string; message: string } | null,
@@ -94,6 +95,12 @@ vi.mock("@/lib/email/send", () => ({
   },
   abandonUnstartedIdempotentEmail: async () => {
     mocks.abandonCalls++;
+    if (mocks.startWinsOnAbandon && mocks.logicalEmailLog) {
+      mocks.logicalEmailLog.provider_first_attempt_at = new Date().toISOString();
+      return false;
+    }
+    mocks.logicalEmailLog = null;
+    return true;
   },
   TENANT_BRANDING_COLUMNS:
     "tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, " +
@@ -341,6 +348,7 @@ beforeEach(() => {
   mocks.recoveryCalls = 0;
   mocks.resumeCalls = 0;
   mocks.abandonCalls = 0;
+  mocks.startWinsOnAbandon = false;
   mocks.updatePayloads = [];
 });
 
@@ -420,6 +428,37 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.insertPayloads).toHaveLength(0);
     expect(mocks.batchEnqueueCalls).toHaveLength(0);
     expect(mocks.updatePayloads).toContainEqual({ send_claimed_at: null });
+  });
+
+  it("re-reads and resumes when provider start wins the batch abandon CAS", async () => {
+    mocks.existingContent = {
+      id: "content-1",
+      sent_at: null,
+      send_claimed_at: "2026-09-01T04:00:00.000Z",
+      generated_content: { summary: "authoritative queued copy" },
+      content_context_hash: "stale-context",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: null,
+    };
+    mocks.startWinsOnAbandon = true;
+    const event = makeEvent();
+    event.event.data.result_text = "not JSON because the started outbox wins first";
+
+    await runHandler(event);
+
+    expect(mocks.abandonCalls).toBe(1);
+    expect(mocks.recoveryCalls).toBe(2);
+    expect(mocks.resumeCalls).toBe(1);
+    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.batchEnqueueCalls).toHaveLength(0);
+    expect(mocks.existingContent.generated_content).toEqual({
+      summary: "authoritative queued copy",
+    });
+    expect(mocks.updatePayloads).not.toContainEqual({ send_claimed_at: null });
   });
 
   it("rejects caller metadata from a different tenant before reading content", async () => {
