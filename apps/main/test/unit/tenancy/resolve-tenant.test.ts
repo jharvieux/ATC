@@ -14,6 +14,9 @@ type MockRow = {
   tenant_type: string;
   status: string;
   custom_domain: string | null;
+  custom_domain_status: string;
+  search_indexing_enabled: boolean;
+  tier_definitions: { code: string } | { code: string }[] | null;
   subscription_status: string | null;
   non_paying_since: string | null;
   is_platform_internal: boolean;
@@ -61,6 +64,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 import {
   getTenantBySlug,
   getTenantByCustomDomain,
+  getCurrentIndexingTenantByCustomDomain,
   getTenantById,
   getTenantByAuthUserId,
 } from "@/lib/tenancy/resolve-tenant";
@@ -74,6 +78,9 @@ function makeRow(overrides: Partial<MockRow> = {}): MockRow {
     tenant_type: "agency",
     status: "active",
     custom_domain: null,
+    custom_domain_status: "none",
+    search_indexing_enabled: false,
+    tier_definitions: { code: "sub_pro" },
     subscription_status: "active",
     non_paying_since: null,
     is_platform_internal: false,
@@ -194,6 +201,69 @@ describe("getTenantByCustomDomain", () => {
   it("throws when the DB returns an error (fail-closed)", async () => {
     mockTenantsError = { message: "read replica timeout" };
     await expect(getTenantByCustomDomain("err.com")).rejects.toThrow("getTenantByCustomDomain");
+  });
+});
+
+describe("getCurrentIndexingTenantByCustomDomain", () => {
+  it("re-reads joined indexing and tier state on every enforcement lookup", async () => {
+    const hostname = "current-indexing.acme.com";
+    mockTenantsRow = makeRow({
+      custom_domain: hostname,
+      custom_domain_status: "verified",
+      search_indexing_enabled: true,
+      tier_definitions: { code: "sub_agency" },
+    });
+
+    const enabled = await getCurrentIndexingTenantByCustomDomain(hostname);
+
+    mockTenantsRow = makeRow({
+      custom_domain: hostname,
+      custom_domain_status: "verified",
+      search_indexing_enabled: false,
+      tier_definitions: { code: "sub_pro" },
+    });
+    const disabled = await getCurrentIndexingTenantByCustomDomain(hostname);
+
+    expect(enabled).toMatchObject({
+      search_indexing_enabled: true,
+      tier_code: "sub_agency",
+    });
+    expect(disabled).toMatchObject({
+      search_indexing_enabled: false,
+      tier_code: "sub_pro",
+    });
+    expect(
+      dbCallKeys.filter(
+        (key) => key === `tenants.custom_domain=${hostname}`,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it.each<
+    [string, MockRow["tier_definitions"], string | null]
+  >([
+    ["object", { code: "sub_agency" }, "sub_agency"],
+    ["array", [{ code: "byo_agency" }], "byo_agency"],
+    ["null", null, null],
+    ["empty array", [], null],
+  ])("normalizes the %s tier join shape", async (label, tier, expected) => {
+    const hostname = `tier-shape-${label.replace(" ", "-")}.acme.com`;
+    mockTenantsRow = makeRow({
+      custom_domain: hostname,
+      tier_definitions: tier,
+    });
+
+    const tenant = await getCurrentIndexingTenantByCustomDomain(hostname);
+
+    expect(tenant?.tier_code).toBe(expected);
+  });
+
+  it("throws on a failed current-state read", async () => {
+    mockTenantsError = { message: "tier join unavailable" };
+
+    await expect(
+      getCurrentIndexingTenantByCustomDomain("current-error.acme.com"),
+    ).rejects.toThrow("getCurrentIndexingTenantByCustomDomain");
   });
 });
 

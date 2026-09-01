@@ -19,6 +19,8 @@ export type Tenant = {
   tenant_type: string;
   status: string;
   custom_domain: string | null;
+  custom_domain_status: string;
+  search_indexing_enabled: boolean;
   // §15.16 — fields the middleware payment gate reads (PR #118 /
   // /lib/billing/payment-state.ts). Cached alongside the rest of the
   // tenant row so a payment-state lookup doesn't cost a second DB hit.
@@ -27,6 +29,17 @@ export type Tenant = {
   // #699 — ATC-owned tenants (e.g. "Booking", ATC's direct-customer
   // business) bypass the payment gate. The platform doesn't bill itself.
   is_platform_internal: boolean;
+};
+
+export type IndexingTenant = Pick<
+  Tenant,
+  | "id"
+  | "status"
+  | "custom_domain"
+  | "custom_domain_status"
+  | "search_indexing_enabled"
+> & {
+  tier_code: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -55,7 +68,7 @@ const idCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_M
 // Lookups
 // ---------------------------------------------------------------------------
 
-const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscription_status, non_paying_since, is_platform_internal";
+const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, custom_domain_status, search_indexing_enabled, subscription_status, non_paying_since, is_platform_internal";
 
 /**
  * Resolves a subdomain slug to a tenant.
@@ -168,4 +181,48 @@ export async function getTenantByCustomDomain(
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
   domainCache.set(hostname, tenant);
   return tenant;
+}
+
+/**
+ * Reads the current custom-domain indexing state without the tenant cache.
+ * Crawler enforcement must observe disables and tier downgrades immediately.
+ */
+export async function getCurrentIndexingTenantByCustomDomain(
+  hostname: string,
+): Promise<IndexingTenant | null> {
+  const db = createServiceRoleClient();
+  const { data, error } = await db
+    .from("tenants")
+    .select(
+      "id, status, custom_domain, custom_domain_status, search_indexing_enabled, tier_definitions!inner(code)",
+    )
+    .eq("custom_domain", hostname)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `getCurrentIndexingTenantByCustomDomain: ${error.message}`,
+    );
+  }
+  if (!data || data.status === "terminated") return null;
+
+  const tier = (
+    data as unknown as {
+      tier_definitions:
+        | { code?: string }
+        | { code?: string }[]
+        | null;
+    }
+  ).tier_definitions;
+
+  return {
+    id: data.id,
+    status: data.status,
+    custom_domain: data.custom_domain,
+    custom_domain_status: data.custom_domain_status,
+    search_indexing_enabled: data.search_indexing_enabled,
+    tier_code: Array.isArray(tier)
+      ? tier[0]?.code ?? null
+      : tier?.code ?? null,
+  };
 }

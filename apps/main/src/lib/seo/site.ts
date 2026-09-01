@@ -2,11 +2,9 @@
 // allowed to see. Both /robots.txt and /sitemap.xml read from here, so the
 // sitemap can never advertise a URL that robots.txt disallows.
 //
-// Indexing policy (D-368): only the platform primary domain is indexable.
-// Tenant subdomains and Agency-tier custom domains serve the same app shell
-// with agency branding — indexing them would compete with the platform
-// domain for the same queries and split link equity across hundreds of
-// near-duplicate hosts.
+// Indexing policy (D-368 + #2058): the platform primary domain is indexable;
+// a verified Agency custom domain may opt in. Platform tenant subdomains can
+// never opt in because indexing near-duplicates would split link equity.
 
 // Both helpers below read process.env directly rather than through env().
 // Not an oversight, and not worth "cleaning up": env() memoizes the parsed
@@ -24,14 +22,18 @@ export function siteOrigin(): string {
   return domain ? `https://${domain}` : "http://localhost:3000";
 }
 
+export function normalizeHost(host: string | null): string | null {
+  return host?.replace(/:\d+$/, "").toLowerCase() ?? null;
+}
+
 /**
  * True when this request arrived on the platform primary domain — the only
  * host we let crawlers index. Host header carries a port in local dev.
  */
 export function isIndexableHost(host: string | null): boolean {
-  const primary = process.env.PLATFORM_PRIMARY_DOMAIN;
+  const primary = process.env.PLATFORM_PRIMARY_DOMAIN?.toLowerCase();
   if (!primary) return false;
-  return host?.replace(/:\d+$/, "") === primary;
+  return normalizeHost(host) === primary;
 }
 
 /**
@@ -134,6 +136,10 @@ export const SITEMAP_ENTRIES: readonly SitemapEntry[] = [
   { path: "/legal/ai-disclaimer", changeFrequency: "yearly", priority: 0.3 },
   { path: "/legal/sub-processors", changeFrequency: "yearly", priority: 0.3 },
 ];
+
+/** Public tenant-host URLs. /travelers is platform-only and 404s here. */
+export const TENANT_SITEMAP_ENTRIES: readonly SitemapEntry[] =
+  SITEMAP_ENTRIES.filter((entry) => entry.path !== "/travelers");
 
 /** Per-agent profile pages, appended to SITEMAP_ENTRIES at request time. */
 export function agentSitemapEntries(slugs: readonly string[]): SitemapEntry[] {

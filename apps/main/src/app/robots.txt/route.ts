@@ -2,31 +2,32 @@
 // on every tenant subdomain, and on Agency-tier custom domains — a static
 // public/robots.txt would hand the same "index me" policy to all of them.
 //
-// Platform domain gets a real crawl policy; every other host gets a blanket
-// Disallow so tenant surfaces stay out of the index (D-368).
+// The platform domain and an opted-in verified custom domain get a real crawl
+// policy. Every platform subdomain and disabled custom domain gets a blanket
+// Disallow (D-368 + #2058).
 
 import {
   AI_CRAWLER_USER_AGENTS,
   DISALLOWED_PATHS,
-  isIndexableHost,
-  siteOrigin,
 } from "@/lib/seo/site";
+import { resolveIndexingTarget } from "@/lib/seo/resolve-indexing-target";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function textResponse(body: string): Response {
+function textResponse(body: string, cacheControl: string): Response {
   return new Response(body, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=86400",
+      "Cache-Control": cacheControl,
     },
   });
 }
 
 export async function GET(request: Request): Promise<Response> {
-  if (!isIndexableHost(request.headers.get("host"))) {
-    return textResponse("User-agent: *\nDisallow: /\n");
+  const target = await resolveIndexingTarget(request.headers.get("host"));
+  if (!target) {
+    return textResponse("User-agent: *\nDisallow: /\n", "private, no-store");
   }
 
   // No `Allow: /` anywhere: an absent rule already means "allowed", and
@@ -41,6 +42,9 @@ export async function GET(request: Request): Promise<Response> {
   return textResponse(
     `User-agent: *\n${disallow}\n\n` +
       `${aiCrawlers}\n` +
-      `Sitemap: ${siteOrigin()}/sitemap.xml\n`,
+      `Sitemap: ${target.origin}/sitemap.xml\n`,
+    target.kind === "platform"
+      ? "public, max-age=3600, s-maxage=86400"
+      : "private, no-store",
   );
 }
