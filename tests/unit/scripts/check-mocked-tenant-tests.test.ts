@@ -6,10 +6,16 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { findMockedTenantTests, loadBaseline, walk } from "../../../scripts/check-mocked-tenant-tests";
+import {
+  derivePostgresMigrationProvenance,
+  findMockedTenantTests,
+  loadBaseline,
+  postgresResourcesMatchReviewedProvenance,
+  walk,
+} from "../../../scripts/check-mocked-tenant-tests";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SCRIPT = path.join(ROOT, "scripts/check-mocked-tenant-tests.ts");
@@ -132,6 +138,180 @@ describe("RLS integration", () => {
   });
 });
 `, resources);
+
+describe("raw Postgres migration provenance", () => {
+  const derive = (...sql: string[]) => derivePostgresMigrationProvenance(
+    sql.map((contents, index) => ({ file: `${String(index + 1).padStart(4, "0")}.sql`, sql: contents })),
+  );
+  const repoMigrations = (target: "main" | "rag") => {
+    const dir = path.join(ROOT, "apps", target, "supabase", "migrations");
+    return readdirSync(dir)
+      .filter((file) => file.endsWith(".sql"))
+      .sort()
+      .map((file) => ({ file, sql: readFileSync(path.join(dir, file), "utf8") }));
+  };
+
+  it("derives base-table relation kinds without accepting view or catalog-backed lookalikes", () => {
+    const provenance = derive(`
+      CREATE TABLE public.base_rows (id uuid);
+      CREATE VIEW public.view_rows AS SELECT id FROM public.base_rows;
+      CREATE MATERIALIZED VIEW public.materialized_rows AS SELECT id FROM public.base_rows;
+      CREATE FOREIGN TABLE public.foreign_rows (id uuid) SERVER remote_server;
+      CREATE TABLE public.partitioned_rows (id uuid) PARTITION BY HASH (id);
+    `);
+    expect(Object.fromEntries(provenance.relations)).toEqual({
+      "public.base_rows": "table",
+      "public.foreign_rows": "foreign_table",
+      "public.materialized_rows": "materialized_view",
+      "public.partitioned_rows": "partitioned_table",
+      "public.view_rows": "view",
+    });
+  });
+
+  it("binds a function to its effective replacement, not unrelated migration bytes", () => {
+    const original = `CREATE FUNCTION public.read_rows(p_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT p_id $$;`;
+    const replaced = `CREATE OR REPLACE FUNCTION public.read_rows(p_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`;
+    const before = derive(original);
+    const unrelated = derive(original, "CREATE TABLE public.unrelated (id uuid);");
+    const after = derive(original, replaced);
+    const hash = before.functions.get("public.read_rows")?.get("uuid");
+    expect(hash).toBeDefined();
+    expect(unrelated.functions.get("public.read_rows")?.get("uuid")).toBe(hash);
+    expect(after.functions.get("public.read_rows")?.get("uuid")).not.toBe(hash);
+  });
+
+  it("retains overload identity and removes only the explicitly dropped signature", () => {
+    const overloaded = derive(`
+      CREATE FUNCTION public.read_rows(p_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT p_id $$;
+      CREATE FUNCTION public.read_rows(p_id text) RETURNS text LANGUAGE sql AS $$ SELECT p_id $$;
+    `);
+    expect([...overloaded.functions.get("public.read_rows")!.keys()].sort()).toEqual(["text", "uuid"]);
+    const resolved = derive(`
+      CREATE FUNCTION public.read_rows(p_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT p_id $$;
+      CREATE FUNCTION public.read_rows(p_id text) RETURNS text LANGUAGE sql AS $$ SELECT p_id $$;
+      DROP FUNCTION public.read_rows(text);
+    `);
+    expect([...resolved.functions.get("public.read_rows")!.keys()]).toEqual(["uuid"]);
+  });
+
+  it("tracks effective RLS and policy definitions while ignoring unrelated objects", () => {
+    const original = `
+      CREATE TABLE public.base_rows (id uuid);
+      ALTER TABLE public.base_rows ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY base_rows_select ON public.base_rows FOR SELECT USING (id IS NOT NULL);
+    `;
+    const before = derive(original);
+    const unrelated = derive(original, "CREATE TABLE public.unrelated (id uuid);");
+    const replaced = derive(original, `
+      DROP POLICY base_rows_select ON public.base_rows;
+      CREATE POLICY base_rows_select ON public.base_rows FOR SELECT USING (false);
+    `);
+    const policyHash = before.policies.get("public.base_rows")?.get("base_rows_select")?.definitionHash;
+    expect(before.rlsEnabled.get("public.base_rows")).toBe(true);
+    expect(unrelated.policies.get("public.base_rows")?.get("base_rows_select")?.definitionHash).toBe(policyHash);
+    expect(replaced.policies.get("public.base_rows")?.get("base_rows_select")?.definitionHash).not.toBe(policyHash);
+    expect(derive(original, "ALTER TABLE public.base_rows DISABLE ROW LEVEL SECURITY;").rlsEnabled.get("public.base_rows")).toBe(false);
+  });
+
+  it("does not derive objects from comments, strings, or function bodies", () => {
+    const provenance = derive(`
+      -- CREATE VIEW public.comment_view AS SELECT 1;
+      CREATE FUNCTION public.read_rows() RETURNS text LANGUAGE plpgsql AS $body$
+      BEGIN
+        RETURN 'CREATE FOREIGN TABLE public.string_rows (id uuid);';
+      END;
+      $body$;
+      CREATE TABLE public.base_rows (id uuid);
+    `);
+    expect([...provenance.relations]).toEqual([["public.base_rows", "table"]]);
+    expect([...provenance.functions.get("public.read_rows")!.keys()]).toEqual([""]);
+  });
+
+  it("fails closed on unterminated migration syntax", () => {
+    expect(() => derive("CREATE FUNCTION public.read_rows() RETURNS text AS $$ SELECT 1"))
+      .toThrow(/unterminated dollar-quoted/);
+  });
+
+  it("removes a reviewed relation name when the table is renamed", () => {
+    const provenance = derive(`
+      CREATE TABLE public.base_rows (id uuid);
+      ALTER TABLE public.base_rows ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.base_rows RENAME TO renamed_rows;
+    `);
+    expect(provenance.relations.has("public.base_rows")).toBe(false);
+    expect(provenance.relations.get("public.renamed_rows")).toBe("table");
+    expect(provenance.rlsEnabled.get("public.renamed_rows")).toBe(true);
+  });
+
+  it("removes every old relation key after multi-drop or schema transfer", () => {
+    const moved = derive(`
+      CREATE TABLE public.base_rows (id uuid);
+      ALTER TABLE public.base_rows SET SCHEMA private;
+    `);
+    expect([...moved.relations]).toEqual([["private.base_rows", "table"]]);
+    const dropped = derive(`
+      CREATE TABLE public.first_rows (id uuid);
+      CREATE TABLE public.second_rows (id uuid);
+      DROP TABLE public.first_rows, public.second_rows CASCADE;
+    `);
+    expect([...dropped.relations]).toEqual([]);
+  });
+
+  it.each([
+    ["view", "CREATE VIEW public.bookings AS SELECT NULL::uuid AS id"],
+    ["materialized view", "CREATE MATERIALIZED VIEW public.bookings AS SELECT NULL::uuid AS id"],
+    ["foreign table", "CREATE FOREIGN TABLE public.bookings (id uuid) SERVER remote_server"],
+    ["partitioned table", "CREATE TABLE public.bookings (id uuid) PARTITION BY HASH (id)"],
+  ])("rejects a reviewed table after its effective relation kind becomes %s", (_kind, replacement) => {
+    const migrations = repoMigrations("main");
+    const provenance = derivePostgresMigrationProvenance([
+      ...migrations,
+      { file: "zzzz_relation.sql", sql: `DROP TABLE public.bookings; ${replacement};` },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it("accepts reviewed objects across an unrelated migration", () => {
+    const migrations = repoMigrations("main");
+    const provenance = derivePostgresMigrationProvenance([
+      ...migrations,
+      { file: "zzzz_unrelated.sql", sql: "CREATE TABLE public.unrelated_provenance_probe (id uuid);" },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(true);
+  });
+
+  it.each([
+    ["RLS disable", "ALTER TABLE public.bookings DISABLE ROW LEVEL SECURITY;"],
+    ["SELECT policy replacement", "DROP POLICY bookings_select_policy ON public.bookings; CREATE POLICY bookings_select_policy ON public.bookings FOR SELECT USING (false);"],
+    ["SELECT rewrite rule", "CREATE RULE bookings_read_effect AS ON SELECT TO public.bookings DO INSTEAD NOTHING;"],
+    ["policy ambiguity", "ALTER POLICY bookings_select_policy ON public.bookings USING (false);"],
+    ["policy function replacement", "CREATE OR REPLACE FUNCTION public.auth_user_in_tenant(target_tenant_id uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;"],
+    ["policy function overload", "CREATE FUNCTION public.auth_user_in_tenant(target_tenant_id text) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;"],
+    ["policy function ALTER", "ALTER FUNCTION public.auth_user_in_tenant(uuid) RENAME TO replaced_auth_user_in_tenant;"],
+  ])("rejects reviewed table provenance after %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      { file: "zzzz_effect.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], provenance)).toBe(false);
+  });
+
+  it.each([
+    ["effective body replacement", "CREATE OR REPLACE FUNCTION public.match_region_itinerary_chunks(p_region_terms text[], p_port_terms text[], p_date_from date, p_date_to date, p_origin_port_terms text[] DEFAULT '{}', p_limit integer DEFAULT 12) RETURNS TABLE (related_chunk_id uuid, first_departure date) LANGUAGE sql AS $$ DELETE FROM public.itineraries RETURNING related_chunk_id, departure_date $$;"],
+    ["new overload", "CREATE FUNCTION public.match_region_itinerary_chunks(p_region_terms text[]) RETURNS TABLE (related_chunk_id uuid) LANGUAGE sql AS $$ SELECT NULL::uuid $$;"],
+    ["ambiguous ALTER", "ALTER FUNCTION public.match_region_itinerary_chunks(text[], text[], date, date, text[], integer) RENAME TO replaced_match_region_itinerary_chunks;"],
+  ])("rejects reviewed RPC provenance after %s", (_shape, sql) => {
+    const provenance = derivePostgresMigrationProvenance([
+      ...repoMigrations("rag"),
+      { file: "zzzz_effect.sql", sql },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["rpc:public.match_region_itinerary_chunks"],
+      provenance,
+    )).toBe(false);
+  });
+});
 
 describe("findMockedTenantTests", () => {
   it("flags an isolation-claiming test in a file that mocks @supabase/*", () => {
@@ -594,10 +774,66 @@ describe("RLS integration", () => {
 
   it("accepts the verified read-only region-matching Postgres function", () => {
     expect(postgresAnnotationErrorFor(
-      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched(related_chunk_id) JOIN public.bookings booking ON true`',
+      'async () => sql`SELECT kc.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched JOIN public.knowledge_chunks kc ON true`',
+      "",
+      "rpc:public.match_region_itinerary_chunks,table:public.knowledge_chunks",
+    )).toBeUndefined();
+  });
+
+  it("accepts a reviewed base-table query bound to effective policy and function definitions", () => {
+    expect(postgresAnnotationErrorFor('async () => sql`SELECT id FROM public.bookings`')).toBeUndefined();
+  });
+
+  it.each([
+    ["unreviewed operator", "SELECT id + id AS id FROM public.bookings", RLS_RESOURCE],
+    ["unreviewed JSON operator", "SELECT id FROM public.bookings WHERE metadata @> '{}'", RLS_RESOURCE],
+    ["unreviewed cast", "SELECT id::public.effectful_id AS id FROM public.bookings", RLS_RESOURCE],
+    ["materialized view", "SELECT tenant_id AS id FROM public.attribution_rollup", "table:public.attribution_rollup"],
+    ["unproven foreign relation", "SELECT id FROM public.remote_bookings", "table:public.remote_bookings"],
+    ["relation with unreviewed policy code", "SELECT id FROM public.policy_effect_rows", "table:public.policy_effect_rows"],
+    ["safe-RPC name with a wrong overload", "SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks()", "rpc:public.match_region_itinerary_chunks"],
+    ["catalog sampling method", "SELECT id FROM public.bookings TABLESAMPLE SYSTEM (10)", RLS_RESOURCE],
+    ["SQL/XML expression", "SELECT XMLPARSE(DOCUMENT '<booking/>') AS id FROM public.bookings", RLS_RESOURCE],
+    ["SQL/JSON expression", "SELECT JSON_OBJECT('id' VALUE id) AS id FROM public.bookings", RLS_RESOURCE],
+  ])("rejects raw Postgres %s without reviewed executable provenance", (_shape, statement, resources) => {
+    expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``, "", resources)).toMatch(/mutation witness/);
+  });
+
+  it.each(["VALUES (1)", "SHOW search_path", "TABLE public.bookings", "EXPLAIN SELECT id FROM public.bookings"])(
+    "pins unsupported resource-free/read grammar: %s",
+    (statement) => {
+      expect(postgresAnnotationErrorFor(`async () => sql\`${statement}\``)).toMatch(/mutation witness/);
+    },
+  );
+
+  it("does not let a reviewed query in another analysis authorize an unreviewed query", () => {
+    expect(postgresAnnotationErrorFor('async () => sql`SELECT id FROM public.bookings`')).toBeUndefined();
+    expect(postgresAnnotationErrorFor('async () => sql`SELECT id + id AS id FROM public.bookings`')).toMatch(/mutation witness/);
+    expect(postgresAnnotationErrorFor('async () => sql`SELECT id FROM public.bookings`')).toBeUndefined();
+  });
+
+  it("does not normalize semantic whitespace inside a reviewed SQL literal", () => {
+    expect(postgresAnnotationErrorFor(
+      "async () => sql`SELECT 'INTO  public.bookings_copy' AS note, id FROM public.bookings`",
+    )).toMatch(/mutation witness/);
+  });
+
+  it("rejects a query that combines reviewed objects from different database targets", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => sql`SELECT booking.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched JOIN public.bookings booking ON true`',
       "",
       "rpc:public.match_region_itinerary_chunks,table:public.bookings",
-    )).toBeUndefined();
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["unreviewed operator before a returned proof", 'async () => { await sql`SELECT id + id AS id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+    ["saved proof followed by an unreviewed view", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`SELECT tenant_id AS id FROM public.attribution_rollup`; return selected; }', ""],
+    ["branch-only unreviewed cast", 'async () => { if (process.env.EFFECT) await sql`SELECT id::public.effectful_id AS id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+    ["aliased helper for an unreviewed policy relation", 'async () => { await readEffect(); return sql`SELECT id FROM public.bookings`; }', 'const query = sql; const readEffect = () => query`SELECT id FROM public.policy_effect_rows`;'],
+    ["Promise.all sampling query", 'async () => { await Promise.all([sql`SELECT id FROM public.bookings TABLESAMPLE SYSTEM (10)`, sql`SELECT id FROM public.bookings`]); return sql`SELECT id FROM public.bookings`; }', ""],
+  ])("rejects provenance laundering through %s", (_shape, query, setup) => {
+    expect(postgresAnnotationErrorFor(query, setup)).toMatch(/mutation witness/);
   });
 
   it.each([

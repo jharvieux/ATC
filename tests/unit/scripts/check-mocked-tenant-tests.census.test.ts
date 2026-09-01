@@ -484,6 +484,55 @@ regress(
   pointerUnit.replace("resources=table:public.bookings", "resources=rpc:public.match_region_itinerary_chunks"),
   postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE)`"),
 );
+for (const [shape, statement, resource] of [
+  ["unreviewed operator", "SELECT id + id AS id FROM public.bookings", "table:public.bookings"],
+  ["unreviewed JSON operator", "SELECT id FROM public.bookings WHERE metadata @> '{}'", "table:public.bookings"],
+  ["unreviewed cast", "SELECT id::public.effectful_id AS id FROM public.bookings", "table:public.bookings"],
+  ["materialized view", "SELECT tenant_id AS id FROM public.attribution_rollup", "table:public.attribution_rollup"],
+  ["unproven foreign relation", "SELECT id FROM public.remote_bookings", "table:public.remote_bookings"],
+  ["relation with unreviewed policy code", "SELECT id FROM public.policy_effect_rows", "table:public.policy_effect_rows"],
+  ["safe-RPC name with wrong overload", "SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks()", "rpc:public.match_region_itinerary_chunks"],
+  ["catalog sampling method", "SELECT id FROM public.bookings TABLESAMPLE SYSTEM (10)", "table:public.bookings"],
+  ["SQL/XML expression", "SELECT XMLPARSE(DOCUMENT '<booking/>') AS id FROM public.bookings", "table:public.bookings"],
+  ["SQL/JSON expression", "SELECT JSON_OBJECT('id' VALUE id) AS id FROM public.bookings", "table:public.bookings"],
+] as const) {
+  regress(
+    "sql:executable-provenance",
+    shape,
+    "unsafe",
+    pointerUnit.replace("resources=table:public.bookings", `resources=${resource}`),
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`${statement}\``),
+  );
+}
+for (const [shape, query, setup] of [
+  ["unreviewed operator before proof", 'async () => { await sql`SELECT id + id AS id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+  ["saved proof then unreviewed view", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`SELECT tenant_id AS id FROM public.attribution_rollup`; return selected; }', ""],
+  ["branch-only unreviewed cast", 'async () => { if (process.env.EFFECT) await sql`SELECT id::public.effectful_id AS id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+  ["aliased helper for unreviewed policy", 'async () => { await readEffect(); return sql`SELECT id FROM public.bookings`; }', 'const query = sql; const readEffect = () => query`SELECT id FROM public.policy_effect_rows`;'],
+  ["Promise.all sampling query", 'async () => { await Promise.all([sql`SELECT id FROM public.bookings TABLESAMPLE SYSTEM (10)`, sql`SELECT id FROM public.bookings`]); return sql`SELECT id FROM public.bookings`; }', ""],
+] as const) {
+  regress(
+    "sql:provenance-laundering",
+    shape,
+    "unsafe",
+    pointerUnit,
+    postgresTarget(`const sql = postgres(DB_URL!); ${setup}`, query),
+  );
+}
+for (const statement of [
+  "VALUES (1)",
+  "SHOW search_path",
+  "TABLE public.bookings",
+  "EXPLAIN SELECT id FROM public.bookings",
+] as const) {
+  regress(
+    "sql:unsupported-read-grammar",
+    statement,
+    "unsafe",
+    pointerUnit,
+    postgresTarget("const sql = postgres(DB_URL!);", `sql\`${statement}\``),
+  );
+}
 for (const [shape, statement] of [
   ["ANY array comparison", "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])"],
   ["ANY subquery comparison", "SELECT id FROM public.bookings WHERE id = ANY (SELECT id FROM public.bookings)"],
@@ -736,6 +785,7 @@ regress("effects:recursive-child", "object computed name no-op", "safe", supabas
 regress("sql:typed-token", "quoted INTO identifier remains read-only", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT \"into\", id FROM public.bookings`"));
 regress("sql:typed-token", "unquoted INTO clause remains mutating", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id INTO public.bookings_copy FROM public.bookings`"));
 regress("sql:typed-token", "INTO alias remains contextual", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id AS into FROM public.bookings`"));
+regress("sql:reviewed-literal", "semantic literal whitespace cannot borrow a reviewed statement", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT 'INTO  public.bookings_copy' AS note, id FROM public.bookings`"));
 regress("sql:typed-token", "Postgres E-string hides mutation words", "safe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT E'quote\\\\' INTO public.copy' AS note, id FROM public.bookings`"));
 regress("sql:typed-token", "unterminated E-string fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT E'unterminated FROM public.bookings`"));
 regress("sql:typed-token", "unterminated quoted identifier fails closed", "unsafe", pointerUnit, postgresTarget("const sql = postgres(DB_URL!);", "sql`SELECT id FROM \"public.bookings`"));

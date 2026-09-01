@@ -31,10 +31,12 @@
 //
 // Usage: tsx scripts/check-mocked-tenant-tests.ts [testDir ...]
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
+import { parseRoutineEvents } from "./check-ledger-objects";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_FILE = path.join(ROOT, "scripts/mocked-tenant-tests-baseline.txt");
@@ -51,9 +53,542 @@ const COVERAGE_POINTER_FORMAT = /^@rls-covered-by resources=([^\s]+) target=([^\
 const COVERAGE_RESOURCE = /^(table|rpc):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/;
 const INTEGRATION_TEST_PATH = /^apps\/[^/]+\/test\/integration\/.+\.(test|spec)\.[cm]?[jt]sx?$/;
 const ISOLATION_WITNESS_PATH = "tests/helpers/isolation-witness";
-const READ_ONLY_POSTGRES_FUNCTIONS = new Set(["public.match_region_itinerary_chunks"]);
-const READ_ONLY_POSTGRES_VALUE_EXPRESSIONS = new Set(["COALESCE", "GREATEST", "LEAST", "NULLIF", "ROW"]);
-const POSTGRES_TIME_VALUE_EXPRESSIONS = new Set(["CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP"]);
+
+export type PostgresProvenanceTarget = "main" | "rag";
+type PostgresRelationKind = "table" | "partitioned_table" | "view" | "materialized_view" | "foreign_table";
+
+interface PostgresPolicyProvenance {
+  command: "all" | "select" | "insert" | "update" | "delete";
+  definitionHash: string;
+}
+
+export interface PostgresMigrationProvenance {
+  relations: ReadonlyMap<string, PostgresRelationKind>;
+  rlsEnabled: ReadonlyMap<string, boolean>;
+  policies: ReadonlyMap<string, ReadonlyMap<string, PostgresPolicyProvenance>>;
+  functions: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  rules: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  ambiguousPolicyTables: ReadonlySet<string>;
+  ambiguousFunctions: ReadonlySet<string>;
+}
+
+const SQL_IDENTIFIER = '(?:"(?:""|[^"])+"|[a-zA-Z_][a-zA-Z0-9_$]*)';
+const SQL_QUALIFIED_NAME = `${SQL_IDENTIFIER}(?:\\s*\\.\\s*${SQL_IDENTIFIER})?`;
+
+function unquotePostgresIdentifier(identifier: string): string {
+  return identifier.startsWith('"')
+    ? identifier.slice(1, -1).replace(/""/g, '"')
+    : identifier.toLowerCase();
+}
+
+function normalizedQualifiedName(name: string): string | undefined {
+  const match = new RegExp(`^(${SQL_IDENTIFIER})(?:\\s*\\.\\s*(${SQL_IDENTIFIER}))?$`).exec(name.trim());
+  if (!match) return undefined;
+  const schema = match[2] ? unquotePostgresIdentifier(match[1]!) : "public";
+  const object = unquotePostgresIdentifier(match[2] ?? match[1]!);
+  return `${schema}.${object}`;
+}
+
+function skipLeadingSqlTrivia(sql: string): number {
+  let index = 0;
+  while (index < sql.length) {
+    if (/\s/.test(sql[index]!)) {
+      index += 1;
+      continue;
+    }
+    if (sql.startsWith("--", index)) {
+      const newline = sql.indexOf("\n", index + 2);
+      index = newline < 0 ? sql.length : newline + 1;
+      continue;
+    }
+    if (sql.startsWith("/*", index)) {
+      let depth = 1;
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql.startsWith("/*", index)) {
+          depth += 1;
+          index += 2;
+        } else if (sql.startsWith("*/", index)) {
+          depth -= 1;
+          index += 2;
+        } else index += 1;
+      }
+      if (depth !== 0) return sql.length;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function migrationStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let index = 0;
+  while (index < sql.length) {
+    const char = sql[index]!;
+    const escapeString = (char === "e" || char === "E") && sql[index + 1] === "'";
+    if (char === "'" || char === '"' || escapeString) {
+      const quote = escapeString ? "'" : char;
+      index += escapeString ? 2 : 1;
+      let closed = false;
+      while (index < sql.length) {
+        if (quote === "'" && escapeString && sql[index] === "\\") index += Math.min(2, sql.length - index);
+        else if (sql[index] === quote && sql[index + 1] === quote) index += 2;
+        else if (sql[index] === quote) {
+          index += 1;
+          closed = true;
+          break;
+        } else index += 1;
+      }
+      if (!closed) throw new Error("unterminated quoted value in migration SQL");
+      continue;
+    }
+    if (sql.startsWith("--", index)) {
+      const newline = sql.indexOf("\n", index + 2);
+      index = newline < 0 ? sql.length : newline + 1;
+      continue;
+    }
+    if (sql.startsWith("/*", index)) {
+      let depth = 1;
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql.startsWith("/*", index)) {
+          depth += 1;
+          index += 2;
+        } else if (sql.startsWith("*/", index)) {
+          depth -= 1;
+          index += 2;
+        } else index += 1;
+      }
+      if (depth !== 0) throw new Error("unterminated block comment in migration SQL");
+      continue;
+    }
+    if (char === "$") {
+      const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
+      if (delimiter) {
+        const close = sql.indexOf(delimiter, index + delimiter.length);
+        if (close < 0) throw new Error("unterminated dollar-quoted value in migration SQL");
+        index = close + delimiter.length;
+        continue;
+      }
+    }
+    if (char === ";") {
+      const statement = sql.slice(start, index).trim();
+      if (statement) statements.push(statement.slice(skipLeadingSqlTrivia(statement)).trim());
+      start = index + 1;
+    }
+    index += 1;
+  }
+  const statement = sql.slice(start).trim();
+  if (statement) statements.push(statement.slice(skipLeadingSqlTrivia(statement)).trim());
+  return statements.filter(Boolean);
+}
+
+function definitionHash(sql: string): string {
+  return createHash("sha256").update(sql.replace(/\r\n?/g, "\n").trim()).digest("hex");
+}
+
+function normalizedRoutineSignature(types: readonly string[]): string {
+  return types
+    .map((type) => type.trim().replace(/\s+/g, " ").replace(/\s*\[\s*\]/g, "[]").toLowerCase())
+    .join(",");
+}
+
+/** Derives only executable object facts needed to validate reviewed raw-SQL witnesses. */
+export function derivePostgresMigrationProvenance(
+  migrations: readonly { file: string; sql: string }[],
+): PostgresMigrationProvenance {
+  const relations = new Map<string, PostgresRelationKind>();
+  const rlsEnabled = new Map<string, boolean>();
+  const policies = new Map<string, Map<string, PostgresPolicyProvenance>>();
+  const functions = new Map<string, Map<string, string>>();
+  const rules = new Map<string, Map<string, string>>();
+  const ambiguousPolicyTables = new Set<string>();
+  const ambiguousFunctions = new Set<string>();
+  const relationExpression = new RegExp(
+    `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(UNLOGGED)\\s+)?(MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE|VIEW|TABLE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
+    "i",
+  );
+  const dropRelationExpression = new RegExp(
+    `^DROP\\s+(?:MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE|VIEW|TABLE)\\s+(?:IF\\s+EXISTS\\s+)?([\\s\\S]+)$`,
+    "i",
+  );
+  const tableTailExpression = new RegExp(
+    `^ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
+    "i",
+  );
+  const createPolicyExpression = new RegExp(
+    `^CREATE\\s+POLICY\\s+(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
+    "i",
+  );
+  const dropPolicyExpression = new RegExp(
+    `^DROP\\s+POLICY\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_QUALIFIED_NAME})`,
+    "i",
+  );
+  const alterPolicyExpression = new RegExp(
+    `^ALTER\\s+POLICY\\s+${SQL_IDENTIFIER}\\s+ON\\s+(${SQL_QUALIFIED_NAME})`,
+    "i",
+  );
+  const createRuleExpression = new RegExp(
+    `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?RULE\\s+(${SQL_IDENTIFIER})[\\s\\S]*?\\bTO\\s+(${SQL_QUALIFIED_NAME})`,
+    "i",
+  );
+  const dropRuleExpression = new RegExp(
+    `^DROP\\s+RULE\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_QUALIFIED_NAME})`,
+    "i",
+  );
+
+  for (const migration of migrations) {
+    for (const statement of migrationStatements(migration.sql)) {
+      const relation = relationExpression.exec(statement);
+      if (relation) {
+        const name = normalizedQualifiedName(relation[3]!);
+        if (!name) continue;
+        const declaredKind = relation[2]!.replace(/\s+/g, " ").toUpperCase();
+        const kind: PostgresRelationKind = declaredKind === "MATERIALIZED VIEW"
+          ? "materialized_view"
+          : declaredKind === "FOREIGN TABLE"
+            ? "foreign_table"
+            : declaredKind === "VIEW"
+              ? "view"
+              : /\bPARTITION\s+BY\b/i.test(relation[4]!)
+                ? "partitioned_table"
+                : "table";
+        relations.set(name, kind);
+      }
+      const droppedRelation = dropRelationExpression.exec(statement);
+      if (droppedRelation) {
+        for (const candidate of droppedRelation[1]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "").split(",")) {
+          const name = normalizedQualifiedName(candidate);
+          if (!name) continue;
+          relations.delete(name);
+          rlsEnabled.delete(name);
+          policies.delete(name);
+          rules.delete(name);
+        }
+      }
+      const alteredTable = tableTailExpression.exec(statement);
+      if (alteredTable) {
+        const name = normalizedQualifiedName(alteredTable[1]!);
+        if (name) {
+          const tail = alteredTable[2]!;
+          if (/\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(tail)) rlsEnabled.set(name, true);
+          if (/\bDISABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(tail)) rlsEnabled.set(name, false);
+          const renamed = new RegExp(`^\\s*RENAME\\s+TO\\s+(${SQL_IDENTIFIER})`, "i").exec(tail);
+          const schemaChanged = new RegExp(`^\\s*SET\\s+SCHEMA\\s+(${SQL_IDENTIFIER})`, "i").exec(tail);
+          if (renamed || schemaChanged) {
+            const separator = name.indexOf(".");
+            const next = renamed
+              ? `${name.slice(0, separator)}.${unquotePostgresIdentifier(renamed[1]!)}`
+              : `${unquotePostgresIdentifier(schemaChanged![1]!)}.${name.slice(separator + 1)}`;
+            const kind = relations.get(name);
+            if (kind) relations.set(next, kind);
+            relations.delete(name);
+            if (rlsEnabled.has(name)) rlsEnabled.set(next, rlsEnabled.get(name)!);
+            rlsEnabled.delete(name);
+            if (policies.has(name)) policies.set(next, policies.get(name)!);
+            policies.delete(name);
+            if (rules.has(name)) rules.set(next, rules.get(name)!);
+            rules.delete(name);
+          }
+        }
+      }
+      const createdPolicy = createPolicyExpression.exec(statement);
+      if (createdPolicy) {
+        const table = normalizedQualifiedName(createdPolicy[2]!);
+        if (table) {
+          const name = unquotePostgresIdentifier(createdPolicy[1]!);
+          const command = /\bFOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE)\b/i.exec(createdPolicy[3]!)?.[1]?.toLowerCase() ?? "all";
+          const byName = policies.get(table) ?? new Map<string, PostgresPolicyProvenance>();
+          byName.set(name, { command: command as PostgresPolicyProvenance["command"], definitionHash: definitionHash(statement) });
+          policies.set(table, byName);
+        }
+      }
+      const droppedPolicy = dropPolicyExpression.exec(statement);
+      if (droppedPolicy) {
+        const table = normalizedQualifiedName(droppedPolicy[2]!);
+        if (table) policies.get(table)?.delete(unquotePostgresIdentifier(droppedPolicy[1]!));
+      }
+      const alteredPolicy = alterPolicyExpression.exec(statement);
+      if (alteredPolicy) {
+        const table = normalizedQualifiedName(alteredPolicy[1]!);
+        if (table) ambiguousPolicyTables.add(table);
+      }
+      const createdRule = createRuleExpression.exec(statement);
+      if (createdRule) {
+        const table = normalizedQualifiedName(createdRule[2]!);
+        if (table) {
+          const byName = rules.get(table) ?? new Map<string, string>();
+          byName.set(unquotePostgresIdentifier(createdRule[1]!), definitionHash(statement));
+          rules.set(table, byName);
+        }
+      }
+      const droppedRule = dropRuleExpression.exec(statement);
+      if (droppedRule) {
+        const table = normalizedQualifiedName(droppedRule[2]!);
+        if (table) rules.get(table)?.delete(unquotePostgresIdentifier(droppedRule[1]!));
+      }
+      for (const event of parseRoutineEvents(statement, migration.file)) {
+        const name = `${event.schema.toLowerCase()}.${event.name.toLowerCase()}`;
+        const signature = normalizedRoutineSignature(event.arguments.map((argument) =>
+          event.action === "drop" ? argument.typeCandidates[0]! : argument.typeCandidates.at(-1)!,
+        ));
+        if (event.action === "drop") functions.get(name)?.delete(signature);
+        else {
+          const overloads = functions.get(name) ?? new Map<string, string>();
+          overloads.set(signature, definitionHash(statement));
+          functions.set(name, overloads);
+        }
+      }
+      const alteredFunction = new RegExp(
+        `^ALTER\\s+FUNCTION\\s+(${SQL_QUALIFIED_NAME})\\s*\\(`,
+        "i",
+      ).exec(statement);
+      if (alteredFunction) {
+        const name = normalizedQualifiedName(alteredFunction[1]!);
+        if (name) ambiguousFunctions.add(name);
+      }
+    }
+  }
+  return { relations, rlsEnabled, policies, functions, rules, ambiguousPolicyTables, ambiguousFunctions };
+}
+
+function normalizePostgresSql(sql: string): string {
+  let normalized = "";
+  let index = 0;
+  let pendingSpace = false;
+  const append = (value: string): void => {
+    if (pendingSpace && normalized) normalized += " ";
+    normalized += value;
+    pendingSpace = false;
+  };
+  while (index < sql.length) {
+    const char = sql[index]!;
+    if (/\s/.test(char)) {
+      pendingSpace = true;
+      index += 1;
+      continue;
+    }
+    const escapeString = (char === "e" || char === "E") && sql[index + 1] === "'";
+    if (char === "'" || char === '"' || escapeString) {
+      const start = index;
+      const quote = escapeString ? "'" : char;
+      index += escapeString ? 2 : 1;
+      while (index < sql.length) {
+        if (quote === "'" && escapeString && sql[index] === "\\") index += Math.min(2, sql.length - index);
+        else if (sql[index] === quote && sql[index + 1] === quote) index += 2;
+        else if (sql[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      append(sql.slice(start, index));
+      continue;
+    }
+    if (char === "$") {
+      const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(sql.slice(index))?.[0];
+      if (delimiter) {
+        const start = index;
+        const close = sql.indexOf(delimiter, index + delimiter.length);
+        index = close < 0 ? sql.length : close + delimiter.length;
+        append(sql.slice(start, index));
+        continue;
+      }
+    }
+    append(char);
+    index += 1;
+  }
+  return normalized.trim();
+}
+
+// Raw witnesses are rare enough to review explicitly; executable object definitions are
+// hash-bound below, while unrelated migration bytes do not invalidate a reviewed statement.
+const REVIEWED_MAIN_POSTGRES_SQL = [
+  "SELECT id FROM public.bookings",
+  "SELECT id FROM public.bookings;",
+  "WITH visible AS (SELECT id FROM public.bookings) SELECT id FROM visible",
+  "SELECT 'INTO public.bookings_copy' AS note, id FROM public.bookings",
+  'SELECT "into", id FROM public.bookings',
+  "SELECT id AS into FROM public.bookings",
+  "SELECT E'quote\\' INTO public.copy' AS note, id FROM public.bookings",
+  'SELECT id FROM "public"."bookings"',
+  "SELECT id FROM ONLY public.bookings",
+  "SELECT visible.id FROM LATERAL (SELECT id FROM public.bookings) visible",
+  "SELECT id FROM public.bookings WHERE id IN (SELECT id FROM public.bookings)",
+  "SELECT id FROM public.bookings WHERE (id IS NOT NULL)",
+  "SELECT id FROM public.bookings WHERE id = ANY (ARRAY['booking-a'])",
+  "SELECT id FROM public.bookings WHERE id = ALL (ARRAY['booking-a'])",
+  "SELECT id FROM public.bookings WHERE id = SOME (ARRAY['booking-a'])",
+  "SELECT id FROM public.bookings WHERE id = ANY (SELECT id FROM public.bookings)",
+  "SELECT id FROM public.bookings WHERE CASE WHEN true THEN (id IS NOT NULL) ELSE (id IS NULL) END",
+  "SELECT id FROM public.bookings WHERE CASE (id) WHEN ('booking-a') THEN (true) ELSE (true) END",
+  "SELECT id FROM public.bookings WHERE ROW(id) = ROW('booking-a')",
+  "SELECT id FROM public.bookings WHERE id = ANY (ARRAY(SELECT id FROM public.bookings))",
+  "SELECT id FROM public.bookings GROUP BY CUBE (id)",
+  "SELECT id FROM public.bookings GROUP BY ROLLUP (id)",
+  "SELECT id FROM public.bookings GROUP BY GROUPING SETS ((id), ())",
+  "SELECT COALESCE(id, id) AS id FROM public.bookings",
+  "SELECT NULLIF(id, 'unrelated') AS id FROM public.bookings",
+  "SELECT GREATEST(id, id) AS id FROM public.bookings",
+  "SELECT LEAST(id, id) AS id FROM public.bookings",
+  "WITH visible(id) AS (SELECT id FROM public.bookings) SELECT id FROM visible",
+  "SELECT booking.id FROM public.bookings booking(id)",
+  "SELECT visible.id FROM (SELECT id FROM public.bookings) visible(id)",
+  "SELECT id FROM public.bookings INTERSECT (SELECT id FROM public.bookings)",
+  "SELECT id FROM public.bookings EXCEPT (SELECT id FROM public.bookings)",
+  "SELECT id FROM public.bookings FETCH FIRST (1) ROWS ONLY",
+  "SELECT id FROM public.bookings FETCH NEXT (1) ROWS ONLY",
+  "SELECT id FROM public.bookings WHERE id BETWEEN ('a') AND ('z')",
+  "SELECT id FROM public.bookings WHERE CURRENT_TIMESTAMP AT TIME ZONE ('UTC') IS NOT NULL",
+  "SELECT id FROM public.bookings WHERE CURRENT_TIME(3) IS NOT NULL AND CURRENT_TIMESTAMP(3) IS NOT NULL AND LOCALTIME(3) IS NOT NULL AND LOCALTIMESTAMP(3) IS NOT NULL",
+  "SELECT id FROM public.bookings WHERE LOCALTIMESTAMP(3) IS NOT NULL",
+  "SELECT DISTINCT ON (id) id FROM public.bookings",
+  "SELECT id FROM public.bookings WINDOW booking_window AS (PARTITION BY id)",
+  "SELECT id FROM public.bookings LIMIT (1) OFFSET (0)",
+  "SELECT id FROM public.bookings LIMIT (1)",
+  "SELECT id FROM public.bookings WHERE EXISTS (SELECT 1 FROM public.bookings visible WHERE visible.id = id)",
+] as const;
+
+const REVIEWED_RAG_POSTGRES_SQL = [
+  "SELECT related_chunk_id AS id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE)",
+  "SELECT kc.id FROM public.match_region_itinerary_chunks(ARRAY[]::text[], ARRAY[]::text[], CURRENT_DATE, CURRENT_DATE) matched JOIN public.knowledge_chunks kc ON true",
+  "SELECT asset_id AS id FROM public.rag_media_assets WHERE asset_id IN ( ? , ? , ? ) AND (scope = 'global' OR tenant_id = ? )",
+  "SELECT id FROM public.knowledge_chunks WHERE id IN ( ? , ? , ? ) AND (scope = 'global' OR tenant_id = ? )",
+  "SELECT kc.id FROM public.itineraries i JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id WHERE i.ship ILIKE ? AND i.departure_date = ? AND (kc.scope = 'global' OR kc.tenant_id = ? )",
+  "SELECT id FROM public.knowledge_chunks WHERE ship_or_property ILIKE ? AND category IN ('deck_intel', 'ship_intel') AND status = 'approved' AND superseded_by_chunk_id IS NULL AND embedding IS NOT NULL AND sell_by_at IS NULL AND (scope = 'global' OR tenant_id = ? )",
+  "SELECT kc.id FROM public.itineraries i JOIN public.knowledge_chunks kc ON kc.id = i.related_chunk_id WHERE i.departure_port ILIKE ? AND i.departure_date = ? AND (kc.scope = 'global' OR kc.tenant_id = ? )",
+  "SELECT kc.id FROM public.match_region_itinerary_chunks( ARRAY[ ? ]::text[], ARRAY[]::text[], ? ::date, ? ::date, ARRAY[]::text[], 12 ) matched JOIN public.knowledge_chunks kc ON kc.id = matched.related_chunk_id WHERE kc.scope = 'global' OR kc.tenant_id = ?",
+] as const;
+
+interface ReviewedPostgresSql {
+  target?: PostgresProvenanceTarget;
+  resources: readonly string[];
+}
+
+const REVIEWED_POSTGRES_SQL = new Map<string, ReviewedPostgresSql>([
+  ["SELECT 1", { resources: [] }],
+  ...REVIEWED_MAIN_POSTGRES_SQL.map((sql) => [
+    normalizePostgresSql(sql),
+    { target: "main" as const, resources: ["table:public.bookings"] },
+  ] as const),
+  ...REVIEWED_RAG_POSTGRES_SQL.map((sql, index) => [
+    normalizePostgresSql(sql),
+    {
+      target: "rag" as const,
+      resources: [
+        ["rpc:public.match_region_itinerary_chunks"],
+        ["rpc:public.match_region_itinerary_chunks", "table:public.knowledge_chunks"],
+        ["table:public.rag_media_assets"],
+        ["table:public.knowledge_chunks"],
+        ["table:public.itineraries", "table:public.knowledge_chunks"],
+        ["table:public.knowledge_chunks"],
+        ["table:public.itineraries", "table:public.knowledge_chunks"],
+        ["rpc:public.match_region_itinerary_chunks", "table:public.knowledge_chunks"],
+      ][index]!.sort(),
+    },
+  ] as const),
+]);
+
+interface ReviewedRelationProvenance {
+  selectPolicies: Readonly<Record<string, string>>;
+  functionDependencies?: readonly string[];
+}
+
+const REVIEWED_POSTGRES_RELATIONS: Readonly<Record<PostgresProvenanceTarget, Readonly<Record<string, ReviewedRelationProvenance>>>> = {
+  main: {
+    "public.bookings": {
+      selectPolicies: {
+        bookings_select_policy: "cb7d6cca52a1500a5e6ef8c69c81289e120d228c03989a8bb864e53f8a6a4eed",
+      },
+      functionDependencies: ["public.auth_user_in_tenant"],
+    },
+  },
+  rag: {
+    "public.itineraries": { selectPolicies: {} },
+    "public.knowledge_chunks": { selectPolicies: {} },
+    "public.rag_media_assets": {
+      selectPolicies: {
+        rag_media_assets_select: "a26e20481a252a561df5db1b7ca0f06ac7da348cc20045e662cd17fb87e823d9",
+      },
+    },
+  },
+};
+
+const REVIEWED_POSTGRES_FUNCTIONS: Readonly<Record<PostgresProvenanceTarget, Readonly<Record<string, { signature: string; definitionHash: string }>>>> = {
+  main: {
+    "public.auth_user_in_tenant": {
+      signature: "uuid",
+      definitionHash: "36349550fc50aeb0ec4e170211ef1b357fd8d567ec728f1c484fb580d8c76c02",
+    },
+  },
+  rag: {
+    "public.match_region_itinerary_chunks": {
+      signature: "text[],text[],date,date,text[],integer",
+      definitionHash: "c4fb79753b6e8ede85cb775e99eab2ce3a409a382814617672f9d7702a4b6b11",
+    },
+  },
+};
+
+const postgresMigrationProvenance = new Map<PostgresProvenanceTarget, PostgresMigrationProvenance | undefined>();
+
+function loadPostgresMigrationProvenance(target: PostgresProvenanceTarget): PostgresMigrationProvenance | undefined {
+  if (postgresMigrationProvenance.has(target)) return postgresMigrationProvenance.get(target);
+  try {
+    const dir = path.join(ROOT, "apps", target, "supabase", "migrations");
+    const provenance = derivePostgresMigrationProvenance(
+      fs.readdirSync(dir)
+        .filter((file) => file.endsWith(".sql"))
+        .sort()
+        .map((file) => ({ file, sql: fs.readFileSync(path.join(dir, file), "utf8") })),
+    );
+    postgresMigrationProvenance.set(target, provenance);
+    return provenance;
+  } catch {
+    postgresMigrationProvenance.set(target, undefined);
+    return undefined;
+  }
+}
+
+export function postgresResourcesMatchReviewedProvenance(
+  target: PostgresProvenanceTarget,
+  resources: readonly string[],
+  provenance: PostgresMigrationProvenance,
+): boolean {
+  const functions = new Set<string>();
+  for (const resource of resources) {
+    const [kind, name] = resource.split(":", 2) as ["table" | "rpc", string];
+    if (kind === "rpc") {
+      functions.add(name);
+      continue;
+    }
+    const review = REVIEWED_POSTGRES_RELATIONS[target][name];
+    if (!review || provenance.relations.get(name) !== "table" || provenance.rlsEnabled.get(name) !== true) return false;
+    if (provenance.ambiguousPolicyTables.has(name) || (provenance.rules.get(name)?.size ?? 0) > 0) return false;
+    const effectivePolicies = new Map(
+      [...(provenance.policies.get(name) ?? [])].filter(([, policy]) => policy.command === "all" || policy.command === "select"),
+    );
+    if (effectivePolicies.size !== Object.keys(review.selectPolicies).length) return false;
+    for (const [policy, hash] of Object.entries(review.selectPolicies)) {
+      if (effectivePolicies.get(policy)?.definitionHash !== hash) return false;
+    }
+    for (const dependency of review.functionDependencies ?? []) functions.add(dependency);
+  }
+  for (const name of functions) {
+    const review = REVIEWED_POSTGRES_FUNCTIONS[target][name];
+    const overloads = provenance.functions.get(name);
+    if (
+      !review || provenance.ambiguousFunctions.has(name) || !overloads || overloads.size !== 1 ||
+      overloads.get(review.signature) !== review.definitionHash
+    ) return false;
+  }
+  return true;
+}
+
+function postgresProvenanceMatchesReview(target: PostgresProvenanceTarget, resources: readonly string[]): boolean {
+  const provenance = loadPostgresMigrationProvenance(target);
+  return provenance ? postgresResourcesMatchReviewedProvenance(target, resources, provenance) : false;
+}
 
 const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
 
@@ -2848,6 +3383,9 @@ class LocalFlowEngine {
   }
 
   private sqlResources(sql: string): string[] | undefined {
+    const normalizedSql = normalizePostgresSql(sql);
+    const review = REVIEWED_POSTGRES_SQL.get(normalizedSql);
+    if (!review) return undefined;
     type SqlToken = { kind: "word" | "quotedIdentifier" | "punctuation"; text: string };
     const tokens: SqlToken[] = [];
     const punctuation = (text: string) => ({ kind: "punctuation" as const, text });
@@ -2944,212 +3482,8 @@ class LocalFlowEngine {
       index += 1;
     }
     if (parenthesisDepth !== 0) return undefined;
-    const firstSemicolon = tokens.findIndex((token) => token.kind === "punctuation" && token.text === ";");
-    if (firstSemicolon >= 0 && tokens.slice(firstSemicolon + 1).some((token) => token.text !== ";")) return undefined;
-    const firstKeyword = tokens.find((token) => token.kind === "word")?.text.toUpperCase();
-    const mutating = new Set([
-      "INSERT", "UPDATE", "DELETE", "MERGE", "CALL", "TRUNCATE", "ALTER", "DROP", "CREATE", "GRANT", "REVOKE", "COPY", "VACUUM", "DO",
-    ]);
-    if (firstKeyword !== "SELECT" && firstKeyword !== "WITH") return undefined;
-    const tokenDepths: number[] = [];
-    let tokenDepth = 0;
-    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      if (tokens[cursor]!.text === ")") tokenDepth = Math.max(0, tokenDepth - 1);
-      tokenDepths[cursor] = tokenDepth;
-      if (tokens[cursor]!.text === "(") tokenDepth += 1;
-    }
-    const hasPriorSyntax = (
-      cursor: number,
-      matches: (before: number) => boolean,
-      stops: readonly string[] = [],
-    ) => {
-      const atDepth = tokenDepths[cursor];
-      for (let before = cursor - 1; before >= 0; before -= 1) {
-        if (tokenDepths[before] !== atDepth || tokens[before]!.kind !== "word") continue;
-        if (matches(before)) return true;
-        if (stops.some((keyword) => isKeyword(tokens[before], keyword))) return false;
-      }
-      return false;
-    };
-    const insideCase: boolean[] = [];
-    const caseCountByDepth = new Map<number, number>();
-    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      const atDepth = tokenDepths[cursor]!;
-      if (isKeyword(tokens[cursor], "END")) {
-        caseCountByDepth.set(atDepth, Math.max(0, (caseCountByDepth.get(atDepth) ?? 0) - 1));
-      }
-      insideCase[cursor] = (caseCountByDepth.get(atDepth) ?? 0) > 0;
-      if (isKeyword(tokens[cursor], "CASE")) {
-        caseCountByDepth.set(atDepth, (caseCountByDepth.get(atDepth) ?? 0) + 1);
-      }
-    }
-    const firstWord = tokens.findIndex((token) => token.kind === "word");
-    for (let cursor = 0; cursor < tokens.length - 1; cursor += 1) {
-      const functionName = tokens[cursor];
-      if (!isName(functionName) || tokens[cursor + 1]?.text !== "(") continue;
-      const schemaName = tokens[cursor - 1]?.text === "." && isName(tokens[cursor - 2])
-        ? tokens[cursor - 2]!.text.toLowerCase()
-        : undefined;
-      if (schemaName) {
-        if (!READ_ONLY_POSTGRES_FUNCTIONS.has(`${schemaName}.${functionName.text.toLowerCase()}`)) return undefined;
-        continue;
-      }
-      if (functionName.kind === "quotedIdentifier") return undefined;
-      const keyword = functionName.text.toUpperCase();
-      const previous = tokens[cursor - 1];
-      const innerHead = tokens[cursor + 2];
-      const closing = tokens.findIndex(
-        (token, after) => after > cursor + 1 && token.text === ")" && tokenDepths[after] === tokenDepths[cursor + 1],
-      );
-      const queryHasFromBefore = hasPriorSyntax(
-        cursor,
-        (before) => isKeyword(tokens[before], "FROM") || isKeyword(tokens[before], "JOIN"),
-        ["SELECT", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
-      );
-      const queryHasSelectBefore = hasPriorSyntax(cursor, (before) => isKeyword(tokens[before], "SELECT"));
-      const queryIsInPredicate = hasPriorSyntax(
-        cursor,
-        (before) => ["WHERE", "HAVING", "ON"].some((candidate) => isKeyword(tokens[before], candidate)),
-        ["SELECT", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"],
-      );
-      const queryIsInGroupBy = hasPriorSyntax(
-        cursor,
-        (before) => isKeyword(tokens[before], "BY") && isKeyword(tokens[before - 1], "GROUP"),
-        ["SELECT", "WHERE", "HAVING", "ORDER", "LIMIT", "OFFSET"],
-      );
-      const queryIsInWindowClause = hasPriorSyntax(
-        cursor,
-        (before) => isKeyword(tokens[before], "WINDOW"),
-        ["SELECT", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET"],
-      );
-      const cteColumnList =
-        (isKeyword(previous, "WITH") ||
-          (isKeyword(previous, "RECURSIVE") && isKeyword(tokens[cursor - 2], "WITH")) ||
-          previous?.text === ",") &&
-        closing >= 0 &&
-        isKeyword(tokens[closing + 1], "AS");
-      const relationAliasColumnList =
-        (isName(previous) || previous?.text === ")") &&
-        !["AS", "WHERE", "HAVING", "ON", "GROUP", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
-        queryHasFromBefore;
-      const expressionEnd = isName(previous) || previous?.text === ")";
-      const groupedQueryOperand =
-        ["FROM", "JOIN", "LATERAL", "UNION", "INTERSECT", "EXCEPT"].includes(keyword) &&
-        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"));
-      const groupedExpression =
-        expressionEnd && (
-          (keyword === "WHERE" && queryHasFromBefore) ||
-          (keyword === "HAVING" && queryHasSelectBefore) ||
-          (["AND", "OR"].includes(keyword) && queryIsInPredicate)
-        );
-      const querySelect =
-        keyword === "SELECT" &&
-        (cursor === firstWord || previous?.text === "(" || previous?.text === ")");
-      const cteBody =
-        keyword === "AS" &&
-        (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH") || (innerHead?.kind === "word" && mutating.has(innerHead.text.toUpperCase())));
-      const windowDefinition = keyword === "AS" && queryIsInWindowClause;
-      const syntax =
-        READ_ONLY_POSTGRES_VALUE_EXPRESSIONS.has(keyword) ||
-        POSTGRES_TIME_VALUE_EXPRESSIONS.has(keyword) ||
-        cteColumnList ||
-        relationAliasColumnList ||
-        groupedQueryOperand ||
-        groupedExpression ||
-        querySelect ||
-        cteBody ||
-        windowDefinition ||
-        (keyword === "ARRAY" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
-        (["ANY", "ALL", "SOME"].includes(keyword) && expressionEnd &&
-          (isKeyword(innerHead, "ARRAY") || isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
-        (keyword === "CASE") ||
-        (["WHEN", "THEN", "ELSE"].includes(keyword) && insideCase[cursor]) ||
-        (["CUBE", "ROLLUP"].includes(keyword) && queryIsInGroupBy) ||
-        (keyword === "SETS" && isKeyword(previous, "GROUPING")) ||
-        (["FIRST", "NEXT"].includes(keyword) && isKeyword(previous, "FETCH")) ||
-        (keyword === "BETWEEN" && expressionEnd) ||
-        (keyword === "ZONE" && isKeyword(previous, "TIME") && isKeyword(tokens[cursor - 2], "AT")) ||
-        (keyword === "IN" && (expressionEnd || isKeyword(previous, "NOT"))) ||
-        (keyword === "EXISTS" && (isKeyword(innerHead, "SELECT") || isKeyword(innerHead, "WITH"))) ||
-        (keyword === "ON" && (isKeyword(previous, "DISTINCT") || queryHasFromBefore)) ||
-        (keyword === "BY" && (isKeyword(previous, "GROUP") || isKeyword(previous, "ORDER"))) ||
-        (keyword === "MATERIALIZED" && isKeyword(previous, "AS")) ||
-        (keyword === "USING" && queryHasFromBefore) ||
-        (["LIMIT", "OFFSET"].includes(keyword) && queryHasSelectBefore) ||
-        keyword === "NOT";
-      if (!syntax) return undefined;
-    }
-    let depth = 0;
-    const topLevelFrom: number[] = [];
-    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      if (tokens[cursor]!.text === "(") depth += 1;
-      else if (tokens[cursor]!.text === ")") depth = Math.max(0, depth - 1);
-      else if (depth === 0 && isKeyword(tokens[cursor], "FROM")) topLevelFrom.push(cursor);
-    }
-    depth = 0;
-    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      const token = tokens[cursor]!;
-      if (token.text === "(") {
-        depth += 1;
-        continue;
-      }
-      if (token.text === ")") {
-        depth = Math.max(0, depth - 1);
-        continue;
-      }
-      if (
-        depth === 0 &&
-        isKeyword(token, "INTO") &&
-        !isKeyword(tokens[cursor - 1], "AS") &&
-        tokens[cursor - 1]?.text !== "." &&
-        isName(tokens[cursor + 1]) &&
-        topLevelFrom.some((from) => from > cursor + 1)
-      ) return undefined;
-    }
-    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-      const token = tokens[cursor]!;
-      if (!isKeyword(token, "FOR")) continue;
-      const locking =
-        isKeyword(tokens[cursor + 1], "UPDATE") ||
-        isKeyword(tokens[cursor + 1], "SHARE") ||
-        (isKeyword(tokens[cursor + 1], "NO") &&
-          isKeyword(tokens[cursor + 2], "KEY") &&
-          isKeyword(tokens[cursor + 3], "UPDATE")) ||
-        (isKeyword(tokens[cursor + 1], "KEY") && isKeyword(tokens[cursor + 2], "SHARE"));
-      if (locking) return undefined;
-    }
-    for (let cursor = 0; cursor < tokens.length - 2; cursor += 1) {
-      if (!isKeyword(tokens[cursor], "AS") || tokens[cursor + 1]?.text !== "(") continue;
-      const bodyHead = tokens.slice(cursor + 2).find((candidate) => candidate.kind === "word");
-      if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
-    }
-    if (firstKeyword === "WITH") {
-      depth = 0;
-      let mainSelect = false;
-      for (let cursor = 1; cursor < tokens.length; cursor += 1) {
-        const token = tokens[cursor]!;
-        if (token.text === "(") {
-          depth += 1;
-          const bodyHead = tokens.slice(cursor + 1).find((candidate) => candidate.kind === "word");
-          if (bodyHead && mutating.has(bodyHead.text.toUpperCase())) return undefined;
-          continue;
-        }
-        if (token.text === ")") {
-          depth = Math.max(0, depth - 1);
-          continue;
-        }
-        if (depth !== 0) continue;
-        if (token.kind !== "word") continue;
-        const keyword = token.text.toUpperCase();
-        if (mutating.has(keyword)) return undefined;
-        if (keyword === "SELECT") {
-          mainSelect = true;
-          break;
-        }
-      }
-      if (!mainSelect) return undefined;
-    }
     const cteNames = new Set<string>();
+    let depth = 0;
     for (let start = 0; start < tokens.length; start += 1) {
       if (!isKeyword(tokens[start], "WITH")) continue;
       let cursor = start + 1;
@@ -3199,7 +3533,12 @@ class LocalFlowEngine {
       const kind = tokens[cursor + 1]?.text === "(" ? "rpc" : "table";
       resources.add(`${kind}:${schema.toLowerCase()}.${name.toLowerCase()}`);
     }
-    return [...resources].sort();
+    const resolved = [...resources].sort();
+    if (resolved.length !== review.resources.length || resolved.some((resource, at) => resource !== review.resources[at])) {
+      return undefined;
+    }
+    if (review.target && !postgresProvenanceMatchesReview(review.target, resolved)) return undefined;
+    return resolved;
   }
 
   private executeFunction(
