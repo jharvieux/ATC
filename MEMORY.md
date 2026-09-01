@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-380 — 2026-09-01 — Bind raw SQL witnesses to effective catalog provenance
+
+**Decision.** Raw Postgres isolation witnesses bind normalized SQL and expected resources to exact effective migration, catalog, and creation-time search-path provenance. Executable comments normalize as whitespace while strings, quoted identifiers, and dollar bodies remain inert; unknown, stale, or ambiguous relevant state fails closed.
+
+**Why.**
+- A syntactically read-only `SELECT` can invoke mutating functions or resolve operators, casts, policies, routines, and index operator classes through mutable catalog and search-path state.
+- Offline verification must remain deterministic when local and CI database URLs are intentionally absent.
+- Exact reviewed statements are rare and security-sensitive, so explicit re-review on relevant provenance changes is safer than broad inference.
+
+**Rejected.**
+- *Trust the tokenizer or SQL shape as effect proof.* Rejected because syntax alone cannot establish object identity, volatility, policy binding, or catalog resolution.
+- *Query a live database catalog for every witness.* Rejected because ordinary local and CI verification runs without database URLs and must fail deterministically rather than become environment-dependent.
+- *Hash the complete migration history.* Rejected because unrelated migrations would invalidate safe witnesses without improving proof of the objects and bindings they actually use.
+
+**Related artifacts.** Issue #2121, `scripts/check-mocked-tenant-tests.ts`, `tests/unit/scripts/check-mocked-tenant-tests.test.ts`, `tests/unit/scripts/check-mocked-tenant-tests.census.test.ts`, [[D-373]].
+
+---
+
 ## D-379 — 2026-09-01 — Require positive host evidence before live cross-tenant acceptance
 
 **Decision.** Main and RAG exact-revision live acceptance remains mandatory, while the cross-tenant test always runs route enumeration. If no compatible test-DB-bound application host is configured, CI records `host-unavailable` and explicitly claims no live cross-tenant acceptance. Live mode may run only after `/api/health` returns a concrete application revision and tenant B successfully reads its own seeded booking with the exact expected ID; only then may the tenant-B token probe tenant-A resources. This supersedes [[D-378]] only for the current shared-host activation boundary. Issue #1913 tracks provisioning the compatible host, and #2122 tracks broader hosted-revision attestation.
