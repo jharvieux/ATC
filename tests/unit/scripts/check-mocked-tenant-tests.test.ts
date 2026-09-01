@@ -120,6 +120,19 @@ const annotationErrorFor = (coverageTarget: string): string | undefined => {
   return findMockedTenantTests(F, source, new Map([[RLS_FILE, coverageTarget]]))[0]?.annotationError;
 };
 
+const postgresAnnotationErrorFor = (query: string, setup = ""): string | undefined => annotationErrorFor(`
+import postgres from "postgres";
+import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
+const DB_URL = process.env.SUPABASE_DB_URL;
+describe("RLS integration", () => {
+  it("bookings: userB cannot SELECT tenantA rows", async () => {
+    const sql = postgres(DB_URL!);
+    ${setup}
+    await assertIsolationQuery({ query: ${query}, allowedIds: [], deniedIds: ["booking-a"] });
+  });
+});
+`);
+
 describe("findMockedTenantTests", () => {
   it("flags an isolation-claiming test in a file that mocks @supabase/*", () => {
     const r = findMockedTenantTests(F, claimTest(`vi.mock("@supabase/supabase-js");`), EMPTY);
@@ -534,6 +547,38 @@ describe("RLS integration", () => {
     expect(annotationErrorFor(helperCoverage)).toBeUndefined();
   });
 
+  it("accepts additional proven read-only Postgres statements", () => {
+    expect(postgresAnnotationErrorFor(
+      'async () => { await sql`SELECT id FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }',
+    )).toBeUndefined();
+  });
+
+  it.each([
+    ["INSERT", 'sql`INSERT INTO public.bookings (id) VALUES (\'booking-a\')`'],
+    ["UPDATE", 'sql`UPDATE public.bookings SET status = \'changed\'`'],
+    ["DELETE", 'sql`DELETE FROM public.bookings`'],
+    ["UPSERT-equivalent", 'sql`INSERT INTO public.bookings (id) VALUES (\'booking-a\') ON CONFLICT (id) DO UPDATE SET status = \'changed\'`'],
+    ["MERGE", 'sql`MERGE INTO public.bookings USING public.contacts ON false WHEN NOT MATCHED THEN INSERT DEFAULT VALUES`'],
+    ["CALL", 'sql`CALL public.refresh_bookings()`'],
+    ["DDL", 'sql`CREATE TABLE public.bookings_copy AS SELECT * FROM public.bookings`'],
+    ["writable CTE", 'sql`WITH changed AS (DELETE FROM public.bookings RETURNING id) SELECT id FROM changed`'],
+    ["multi-statement", 'sql`SELECT id FROM public.bookings; DELETE FROM public.bookings`'],
+  ])("rejects a %s Postgres operation before a returned SELECT", (_shape, mutation) => {
+    expect(postgresAnnotationErrorFor(
+      `async () => { await ${mutation}; return sql\`SELECT id FROM public.bookings\`; }`,
+    )).toMatch(/mutation witness/);
+  });
+
+  it.each([
+    ["a saved SELECT followed by mutation", 'async () => { const selected = sql`SELECT id FROM public.bookings`; await sql`UPDATE public.bookings SET status = \'changed\'`; return selected; }', ""],
+    ["a branch mutation", 'async () => { if (process.env.MUTATE) await sql`DELETE FROM public.bookings`; return sql`SELECT id FROM public.bookings`; }', ""],
+    ["an aliased helper mutation", 'async () => { await mutate(); return sql`SELECT id FROM public.bookings`; }', 'const query = sql; const mutate = () => query`INSERT INTO public.bookings (id) VALUES (\'booking-a\')`;'],
+    ["a Promise.all mutation", 'async () => { await Promise.all([sql`DELETE FROM public.bookings`, sql`SELECT id FROM public.bookings`]); return sql`SELECT id FROM public.bookings`; }', ""],
+    ["an unsupported dynamic statement", 'async () => { await sql.unsafe(statement); return sql`SELECT id FROM public.bookings`; }', "const statement = process.env.SQL!;"],
+  ])("rejects Postgres SELECT laundering after %s", (_shape, query, setup) => {
+    expect(postgresAnnotationErrorFor(query, setup)).toMatch(/mutation witness/);
+  });
+
   it.each([
     ["fake return despite inert real imports", "function makeTenantClient() { return (() => Promise.resolve([])) as never; }"],
     ["helper reassignment", "let makeTenantClient = () => postgres(DB_URL!); makeTenantClient = () => (() => Promise.resolve([])) as never;"],
@@ -714,6 +759,7 @@ describe("RLS integration", () => {
     ["an inline static id conflict target", "", ', { onConflict: "id" }'],
     ["an aliased static id conflict target", 'const options = { onConflict: "id" };', ", options"],
     ["a single-assignment const alias chain", 'const original = { onConflict: "id" }; const forwarded = original; const options = forwarded;', ", options"],
+    ["a locally inspected static id target", 'const options = { onConflict: "id" }; function inspect(value: { onConflict: string }) { return value.onConflict; } inspect(options);', ", options"],
   ])("accepts UPSERT evidence with %s", (_shape, setup, options) => {
     const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }]${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }]${options}).select("id"); }`;
     const coverage = REAL_DB_COVERAGE
@@ -735,6 +781,15 @@ describe("RLS integration", () => {
     ["a branch overwrite followed by fresh restoration", 'let options = { onConflict: "id" }; if (process.env.USE_EXTERNAL) options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
     ["an external binding restored to a fresh id target", 'let options = { onConflict: "external_ref" }; options = { onConflict: "id" };'],
     ["a tainted alias chain", 'const original = { onConflict: "id" }; let options = original; options = { onConflict: "external_ref" }; options = original; const forwarded = options; const finalOptions = forwarded;', "finalOptions"],
+    ["Object.setPrototypeOf", 'const options = { onConflict: "id" }; Object.setPrototypeOf(options, { onConflict: "external_ref" });'],
+    ["Reflect.setPrototypeOf through an alias", 'const options = { onConflict: "id" }; const alias = options; Reflect.setPrototypeOf(alias, { onConflict: "external_ref" });'],
+    ["a prototype literal", 'const options = { __proto__: { onConflict: "external_ref" } };'],
+    ["Object.create with an inherited conflict target", 'const options = Object.create({ onConflict: "external_ref" });'],
+    ["a __proto__ assignment", 'const options = { onConflict: "id" }; options.__proto__ = { onConflict: "external_ref" };'],
+    ["defineProperty", 'const options = { onConflict: "id" }; Object.defineProperty(options, "onConflict", { value: "external_ref" });'],
+    ["a resolved local prototype mutator", 'const options = { onConflict: "id" }; function mutate(value: object) { Object.setPrototypeOf(value, { onConflict: "external_ref" }); } mutate(options);'],
+    ["an unresolved mutator", 'const options = { onConflict: "id" }; mutateOptions(options);'],
+    ["a branch-local alias prototype mutation", 'const options = { onConflict: "id" }; const alias = options; if (process.env.MUTATE) Object.setPrototypeOf(alias, { onConflict: "external_ref" });'],
   ])("rejects UPSERT evidence with %s", (_shape, setup, options = "options") => {
     const query = `async () => { ${setup} const denied = await db.from("bookings").upsert([{ id: "booking-a" }], ${options}).select("id"); if (denied.error?.code !== "42501") throw new Error("expected denial"); return db.from("bookings").upsert([{ id: "allowed" }], ${options}).select("id"); }`;
     const coverage = REAL_DB_COVERAGE

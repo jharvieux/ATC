@@ -306,7 +306,9 @@ class LocalFlowEngine {
   private readonly stringLiteralAtoms = new Set<FlowAtom>();
   private readonly ambiguousLiteralAtoms = new Set<FlowAtom>();
   private readonly overwrittenObjectAtoms = new Set<FlowAtom>();
+  private readonly unsafeOptionAtoms = new Set<FlowAtom>();
   private readonly queryResourcesByAtom = new Map<FlowAtom, Set<string>>();
+  private readonly invalidPostgresOperations = new Set<FlowAtom>();
   // Keep attempted mutation IDs separate from returned rows: both are required to prove tenant isolation.
   private readonly mutationResourcesByAtom = new Map<FlowAtom, Set<string>>();
   private readonly mutationErrorTargets = new Map<FlowAtom, FlowAtom>();
@@ -741,6 +743,14 @@ class LocalFlowEngine {
     }
   }
 
+  private markUnsafeOptions(values: readonly FlowValue[]): void {
+    for (const value of values) {
+      for (const atom of value) {
+        if (atom.startsWith("object:")) this.unsafeOptionAtoms.add(atom);
+      }
+    }
+  }
+
   private onceImplementationKeys(
     members: ReadonlyMap<string, Set<FlowAtom>> | undefined,
     member: string,
@@ -1063,6 +1073,12 @@ class LocalFlowEngine {
         }
         continue;
       }
+      if (receiver.startsWith("client:postgres:") && member) {
+        const method = this.atom("postgres-operation", node);
+        this.memberTargets.set(method, { receiver: new Set([receiver]), member });
+        value.add(method);
+        continue;
+      }
       if (receiver.startsWith("query:supabase:") && member && ["select", "insert", "update", "delete", "upsert"].includes(member)) {
         const method = this.atom("supabase-operation", node);
         this.memberTargets.set(method, { receiver: new Set([receiver]), member });
@@ -1169,6 +1185,7 @@ class LocalFlowEngine {
       atom.startsWith("apply:") ||
       atom.startsWith("bind:") ||
       atom.startsWith("supabase-") ||
+      atom.startsWith("postgres-operation:") ||
       atom.startsWith("configure:") ||
       atom.startsWith("promise-member:") ||
       atom.startsWith("generator-next:")
@@ -1919,6 +1936,16 @@ class LocalFlowEngine {
         continue;
       }
       const memberTarget = this.memberTargets.get(callee);
+      if (
+        callee.startsWith("client:postgres:") ||
+        (callee.startsWith("postgres-operation:") &&
+          [...(memberTarget?.receiver ?? [])].some((receiver) => receiver.startsWith("client:postgres:")))
+      ) {
+        this.invalidPostgresOperations.add(this.atom("postgres-invalid", call));
+        this.recordMayThrow(branch);
+        results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+        continue;
+      }
       if (callee.startsWith("configure:")) {
         const method = this.controlMethods.get(callee);
         const owners = this.controlOwners.get(callee) ?? this.values(UNKNOWN_ATOM);
@@ -2073,9 +2100,11 @@ class LocalFlowEngine {
               if (
                 !option.startsWith("object:") ||
                 this.overwrittenObjectAtoms.has(option) ||
+                this.unsafeOptionAtoms.has(option) ||
                 !members ||
                 members.has("@all") ||
                 members.has("@unknown") ||
+                members.has("__proto__") ||
                 (onConflict !== undefined && (!targets || targets.size !== 1 || !targets.has("id")))
               ) upsertOptionsValid = false;
             }
@@ -2116,13 +2145,17 @@ class LocalFlowEngine {
         const beforeOperations = new Set(
           [...branch.mutationAttempts.values()].map((attempt) => attempt.operation),
         );
+        const beforeInvalidPostgresOperations = new Set(this.invalidPostgresOperations);
         const queryResults = this.invokeAtoms(queryValues, [], branch, call, active, true, false);
         for (const queryResult of queryResults) {
           for (const atom of queryResult.value) {
             for (const resource of this.queryResourcesByAtom.get(atom) ?? []) {
               queryResult.state.witnessResources.add(resource);
             }
-            const mutationSignature = this.mutationWitnessSignature(queryResult.state, beforeOperations, atom);
+            const mutationSignature = [...this.invalidPostgresOperations]
+              .some((operation) => !beforeInvalidPostgresOperations.has(operation))
+              ? JSON.stringify({ invalid: true })
+              : this.mutationWitnessSignature(queryResult.state, beforeOperations, atom);
             if (mutationSignature) queryResult.state.witnessMutationSignatures.add(mutationSignature);
           }
           results.push({ state: queryResult.state, value: this.values(UNDEFINED_ATOM) });
@@ -2199,6 +2232,7 @@ class LocalFlowEngine {
       if (ts.isIdentifier(call.expression) && call.expression.text === "eval") {
         this.markUnsupported(branch, "eval call");
       }
+      this.markUnsafeOptions(args);
       this.recordMayThrow(branch);
       for (const callbackAtom of this.callbacksInValues(branch, args)) {
         const callback = this.functions.get(callbackAtom);
@@ -2692,6 +2726,13 @@ class LocalFlowEngine {
     if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return false;
     const owner = call.expression.expression.text;
     const method = call.expression.name.text;
+    if (
+      (owner === "Object" || owner === "Reflect") &&
+      method === "setPrototypeOf"
+    ) {
+      this.markUnsafeOptions([args[0] ?? this.values(UNKNOWN_ATOM)]);
+      return true;
+    }
     if (owner === "Object" && method === "assign") {
       const targets = args[0] ?? this.values(UNKNOWN_ATOM);
       for (const source of args.slice(1)) {
@@ -2781,8 +2822,10 @@ class LocalFlowEngine {
           const branch = this.cloneState(input.state);
           if (atom.startsWith("client:postgres:") && !branch.dirty.has(atom)) {
             const resources = this.sqlResources(sql);
-            if (!resources.length) results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
-            else {
+            if (!resources.length) {
+              this.invalidPostgresOperations.add(this.atom("postgres-invalid", expression));
+              results.push({ state: branch, value: this.values(UNKNOWN_ATOM) });
+            } else {
               const result = this.atom("result:query", expression);
               this.queryResourcesByAtom.set(result, new Set(resources));
               results.push({ state: branch, value: this.values(result) });
