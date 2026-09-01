@@ -4,6 +4,44 @@ Newest entries on top.
 
 ---
 
+## D-375 — 2026-09-01 — Atomic keyed email delivery uses a durable provider outbox
+
+**Decision.** Keyed email sends prepare a service-role-only provider outbox before dispatch, bind it to the effective provider account and credential, and preserve the exact serialized request plus literal provider idempotency key once an attempt starts. Successful delivery atomically finalizes the logical email log, retry content, and tenant usage counter; ambiguous outcomes replay the stored request only within a 23-hour safety window, while definitive rejection returns to current policy checks. Pre-cruise delivery additionally binds a manual dispatch to the reviewed contact ID and email, rechecks payment, confirmed booking, recipient, and trip context immediately before the provider call, and recovers a prior outcome before regenerating content.
+
+**Why.**
+- A timestamp lease or provider idempotency header alone cannot prevent duplicate delivery, logging, or accounting across process crashes and concurrent consumers.
+- Delayed manual sends must not silently retarget after a contact change, and stale generated prose must not overwrite content that another consumer has claimed or sent.
+- Persisting the provider request makes an ambiguous retry byte-identical instead of rendering a new variant after booking, branding, or recipient state changes.
+- The 23-hour cutoff stays inside Resend's 24-hour idempotency window and fails closed when delivery can no longer be retried safely.
+
+**Rejected.**
+- *Rely only on the pre-cruise claim timestamp and Resend idempotency key.* Rejected because local log, retry-content, and usage-counter side effects can still duplicate or become incomplete after a crash.
+- *Regenerate or re-render on every retry.* Rejected because an ambiguous provider outcome must replay the exact attempted payload rather than send a new variant.
+- *Persist provider credentials in the outbox.* Rejected because duplicating secrets into email delivery records expands credential exposure; the outbox stores only a one-way binding.
+- *Switch existing pre-cruise sends to tenant-scoped provider keys in the same rollout.* Rejected because an older raw-key attempt could retry under a different key inside the provider's deduplication window; staged migration remains tracked in #2115.
+
+**Related artifacts.** PR #2116, issue #2108, `apps/main/src/lib/email/send.ts`, `apps/main/src/inngest/precruise-generate-and-send.ts`, `apps/main/supabase/migrations/20260831210837_precruise_send_claim.sql`, `apps/main/supabase/migrations/20260901063425_isolate_email_provider_dispatch.sql`, issues #2112, #2115, #2118, and #2119, [[D-371]].
+
+---
+
+## D-374 — 2026-09-01 — Override Lighthouse Puppeteer to remove unpatched extract-zip
+
+**Decision.** Keep `@lhci/cli` 0.15.1 and Lighthouse 12.6.1, but apply the narrow pnpm override `lighthouse@12.6.1>puppeteer-core: 25.1.0`. The resolved dependency graph must contain no `extract-zip` package.
+
+**Why.**
+- The vulnerable chain ended at `extract-zip` 2.0.1, and every published `extract-zip` version was affected with no patched release available.
+- Upgrading only Lighthouse's Puppeteer dependency removed the vulnerable package while minimizing compatibility and tooling changes.
+- A real one-page LHCI collection with local headless Chrome and the full repository verification both passed on the overridden graph.
+
+**Rejected.**
+- *Pin `extract-zip` to another published version.* Rejected because no fixed version existed.
+- *Accept the advisory until an upstream release arrives.* Rejected because the vulnerable transitive dependency could be removed immediately without disabling Lighthouse CI.
+- *Broadly upgrade or replace LHCI and Lighthouse.* Rejected because the narrower Puppeteer override solved the vulnerability with less compatibility risk.
+
+**Related artifacts.** PR #2111, issue #2109, `package.json`, `pnpm-lock.yaml`.
+
+---
+
 ## D-373 — 2026-09-01 — Isolation mutation witnesses bind intent to effect
 
 **Decision.** A tenant-isolation mutation witness is authoritative only when static provenance proves both the IDs the test attempted to mutate and the affected IDs it observed. UPDATE and DELETE must target exactly the declared allowed-plus-denied ID set and return the allowed affected IDs through `.select("id")`. Because a mixed RLS INSERT or UPSERT fails atomically, those witnesses use a selected denied-only attempt with an explicitly observed PostgreSQL `42501` error followed by a distinct selected allowed-only effect. Any additional or incomplete mutation inside the witness callback invalidates the witness; returning or previously saving a canonical SELECT cannot launder unproved mutation effects. Local Postgres helpers inherit real-database provenance only through a proven imported factory flow, including named-default imports, with ambiguity, reassignment, shadowing, overwrite, and mocks failing closed.
