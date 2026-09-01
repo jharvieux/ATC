@@ -247,6 +247,80 @@ function argumentGroups(tokens: SqlToken[]): SqlToken[][] {
   return groups;
 }
 
+function closingParenthesis(tokens: SqlToken[], open: number): number | undefined {
+  let depth = 0;
+  for (let index = open; index < tokens.length; index += 1) {
+    if (tokens[index].value === "(") depth += 1;
+    else if (tokens[index].value === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return undefined;
+}
+
+function inlineTableMembers(
+  tokens: SqlToken[],
+  table: { schema: string; name: string },
+  migration: string,
+  put: (object: LedgerObject) => void,
+): void {
+  const tableAt = tokens.findIndex((token) => isKeyword(token, "table"));
+  const open = tokens.findIndex((token, index) => index > tableAt && token.value === "(");
+  if (tableAt < 0 || open < 0) return;
+  const close = closingParenthesis(tokens, open);
+  if (close === undefined) throw new Error(`unterminated CREATE TABLE definition for ${table.schema}.${table.name}`);
+
+  const tableConstraints = new Set(["constraint", "primary", "unique", "check", "foreign", "exclude", "like"]);
+  for (const definition of argumentGroups(tokens.slice(open + 1, close))) {
+    const first = definition[0];
+    if (isIdentifierToken(first) && !(first.kind === "word" && tableConstraints.has(first.value))) {
+      put({ kind: "column", schema: table.schema, name: first.value, parent: table.name, migration });
+    }
+
+    let depth = 0;
+    for (let index = 0; index < definition.length - 1; index += 1) {
+      const token = definition[index];
+      if (token.value === "(") depth += 1;
+      else if (token.value === ")") depth -= 1;
+      if (depth === 0 && isKeyword(token, "constraint") && isIdentifierToken(definition[index + 1])) {
+        put({
+          kind: "constraint",
+          schema: table.schema,
+          name: definition[index + 1].value,
+          parent: table.name,
+          migration,
+        });
+      }
+    }
+  }
+}
+
+function decodeEnumLabel(token: SqlToken): string {
+  if (token.kind !== "literal" || !token.raw.startsWith("'")) {
+    throw new Error(`unsupported enum label ${token.raw}; expected a standard string literal`);
+  }
+  return token.raw.slice(1, -1).replace(/''/g, "'");
+}
+
+function initialEnumValues(
+  tokens: SqlToken[],
+  type: { schema: string; name: string },
+  migration: string,
+  put: (object: LedgerObject) => void,
+): void {
+  const enumAt = tokens.findIndex((token) => isKeyword(token, "enum"));
+  if (enumAt < 0) return;
+  const open = tokens.findIndex((token, index) => index > enumAt && token.value === "(");
+  if (open < 0) throw new Error(`missing enum values for ${type.schema}.${type.name}`);
+  const close = closingParenthesis(tokens, open);
+  if (close === undefined) throw new Error(`unterminated enum values for ${type.schema}.${type.name}`);
+  for (const value of argumentGroups(tokens.slice(open + 1, close))) {
+    if (value.length !== 1) throw new Error(`unsupported enum value for ${type.schema}.${type.name}`);
+    put({ kind: "enum_value", schema: type.schema, name: decodeEnumLabel(value[0]), parent: type.name, migration });
+  }
+}
+
 function routineArguments(source: string, tokens: SqlToken[]): RoutineArgument[] {
   const output: RoutineArgument[] = [];
   for (const group of argumentGroups(tokens)) {
@@ -388,6 +462,8 @@ export function parseMigrations(
         const kind = match[1].toUpperCase().replace(/\s+/g, "_").toLowerCase() as ObjectKind;
         put({ kind, schema, name, migration: migration.version });
         if (kind === "table" && schema === "public") mentionedPublicTables.add(name);
+        if (kind === "table") inlineTableMembers(statement, { schema, name }, migration.version, put);
+        if (kind === "type") initialEnumValues(statement, { schema, name }, migration.version, put);
       });
       matches(new RegExp(`^DROP\\s+(TABLE|MATERIALIZED\\s+VIEW|VIEW|TYPE)\\s+(?:IF\\s+EXISTS\\s+)?(${QUALIFIED})`, "gi"), (match) => {
         const { schema, name } = qualifiedName(match[2]);
@@ -683,10 +759,10 @@ function parseArgs(argv: string[]): { target: Target | "all"; dbUrl: string | nu
   return { target: targetValue, dbUrl: inline ?? (index >= 0 ? argv[index + 1] : null) ?? null };
 }
 
-export async function checkTarget(target: Target, dbUrl: string | null): Promise<{ status: "ok" | "drift" | "skipped"; message: string }> {
+export async function checkTarget(target: Target, dbUrl: string | null): Promise<{ status: "ok" | "drift"; message: string }> {
   const envName = target === "main" ? "SUPABASE_DB_URL" : "SUPABASE_RAG_DB_URL";
   const resolvedUrl = dbUrl ?? process.env[envName] ?? null;
-  if (!resolvedUrl) return { status: "skipped", message: `[${target}] SKIPPED — ${envName} not set and --db-url not provided` };
+  if (!resolvedUrl) return { status: "drift", message: `[${target}] LEDGER CHECK FAILED — ${envName} not set and --db-url not provided` };
   const catalog = await catalogObjects(target, resolvedUrl);
   const divergence = reconcile(catalog.ledger, catalog.objects, catalog.publicTables);
   if (divergence.missing.length === 0 && divergence.outOfBandTables.length === 0) {

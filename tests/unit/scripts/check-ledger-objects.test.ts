@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   formatDivergence,
@@ -8,6 +11,9 @@ import {
   type RoutineArgument,
 } from "../../../scripts/check-ledger-objects";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const SCRIPT = path.join(ROOT, "scripts/check-ledger-objects.ts");
+
 function resolver(types: Record<string, number>): (argument: RoutineArgument) => Promise<number> {
   return async (argument) => {
     for (const candidate of argument.typeCandidates) {
@@ -16,6 +22,19 @@ function resolver(types: Record<string, number>): (argument: RoutineArgument) =>
     throw new Error(`unresolved test type: ${argument.declaration}`);
   };
 }
+
+describe("check-ledger-objects CLI", () => {
+  it("exits 1 when an explicitly selected target has no credentials", () => {
+    const result = spawnSync(process.execPath, ["--import", "tsx", SCRIPT, "--target=main"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, SUPABASE_DB_URL: "", SUPABASE_RAG_DB_URL: "" },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/SUPABASE_DB_URL not set/);
+  });
+});
 
 describe("parseRoutineEvents", () => {
   it("lexes modes, defaults, quoted types, and function bodies without inventing routines", () => {
@@ -109,6 +128,7 @@ describe("parseMigrations", () => {
     ` }]);
 
     expect(ledger.expected).toEqual([
+      { kind: "column", schema: "public", name: "id", parent: "kept", migration: "1" },
       { kind: "table", schema: "public", name: "kept", migration: "1" },
     ]);
   });
@@ -141,15 +161,19 @@ describe("parseMigrations", () => {
     ]);
 
     expect(ledger.expected).toEqual([
+      { kind: "column", schema: "public", name: "id", parent: "alpha", migration: "2" },
       { kind: "table", schema: "public", name: "alpha", migration: "2" },
     ]);
   });
 
-  it("tracks enum values and named schema objects without parsing CREATE TABLE columns", async () => {
+  it("tracks initial enum values and inline table members", async () => {
     const ledger = await materializeRoutineIdentities(parseMigrations([{ version: "7", sql: `
-      CREATE TYPE app.status AS ENUM ('new');
-      ALTER TYPE app.status ADD VALUE 'ready';
-      CREATE TABLE app.items (inner_column text);
+      CREATE TYPE app.status AS ENUM ('new', 'ready');
+      CREATE TABLE app.items (
+        inner_column text,
+        quota integer CONSTRAINT items_quota_check CHECK (quota >= 0),
+        CONSTRAINT items_inner_column_unique UNIQUE (inner_column)
+      );
       CREATE OR REPLACE VIEW app.current_items AS SELECT * FROM app.items;
       CREATE OR REPLACE FUNCTION app.refresh_items() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
     ` }]), resolver({}));
@@ -160,8 +184,35 @@ describe("parseMigrations", () => {
       { kind: "table", schema: "app", name: "items", migration: "7" },
       { kind: "type", schema: "app", name: "status", migration: "7" },
       { kind: "view", schema: "app", name: "current_items", migration: "7" },
+      { kind: "column", schema: "app", name: "inner_column", parent: "items", migration: "7" },
+      { kind: "column", schema: "app", name: "quota", parent: "items", migration: "7" },
+      { kind: "constraint", schema: "app", name: "items_quota_check", parent: "items", migration: "7" },
+      { kind: "constraint", schema: "app", name: "items_inner_column_unique", parent: "items", migration: "7" },
     ]));
-    expect(ledger.expected).not.toContainEqual(expect.objectContaining({ kind: "column", name: "inner_column" }));
+  });
+
+  it("reports removed inline table columns and named constraints", () => {
+    const ledger = parseMigrations([{ version: "7", sql: `
+      CREATE TABLE app.items (
+        id uuid,
+        CONSTRAINT items_pkey PRIMARY KEY (id)
+      );
+    ` }]);
+    const catalog = ledger.expected.filter((object) => object.kind !== "column" && object.kind !== "constraint");
+
+    expect(reconcile(ledger, catalog, []).missing).toEqual([
+      { kind: "column", schema: "app", name: "id", parent: "items", migration: "7" },
+      { kind: "constraint", schema: "app", name: "items_pkey", parent: "items", migration: "7" },
+    ]);
+  });
+
+  it("reports removed initial enum labels", () => {
+    const ledger = parseMigrations([{ version: "7", sql: "CREATE TYPE app.status AS ENUM ('new', 'ready');" }]);
+    const catalog = ledger.expected.filter((object) => object.kind !== "enum_value" || object.name !== "ready");
+
+    expect(reconcile(ledger, catalog, []).missing).toEqual([
+      { kind: "enum_value", schema: "app", name: "ready", parent: "status", migration: "7" },
+    ]);
   });
 
   it("keeps function overloads distinct and drops only the named signature", async () => {
@@ -227,7 +278,10 @@ describe("reconcile", () => {
     ` }]);
     const result = reconcile(
       ledger,
-      [{ kind: "table", schema: "public", name: "tenants" }],
+      [
+        { kind: "table", schema: "public", name: "tenants" },
+        { kind: "column", schema: "public", name: "id", parent: "tenants" },
+      ],
       ["tenants", "manual_table"],
     );
 
@@ -250,7 +304,10 @@ describe("reconcile", () => {
 
   it("turns green only when both missing and reverse-direction divergence are absent", () => {
     const ledger = parseMigrations([{ version: "1", sql: "CREATE TABLE public.tenants (id uuid);" }]);
-    expect(reconcile(ledger, [{ kind: "table", schema: "public", name: "tenants" }], ["tenants"]))
+    expect(reconcile(ledger, [
+      { kind: "table", schema: "public", name: "tenants" },
+      { kind: "column", schema: "public", name: "id", parent: "tenants" },
+    ], ["tenants"]))
       .toEqual({ missing: [], outOfBandTables: [] });
   });
 
