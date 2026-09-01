@@ -44,7 +44,6 @@ const mocks = vi.hoisted(() => ({
   operations: [] as string[],
   tenantPaying: true,
   providerCalls: 0,
-  providerFirstAttemptAt: null as string | null,
 }));
 
 vi.mock("@/lib/billing/exclude-non-paying", () => ({
@@ -136,16 +135,11 @@ function makeSvc() {
                 return {
                   data: [{
                     send_claimed_at: payload.send_claimed_at,
-                    provider_first_attempt_at: mocks.providerFirstAttemptAt,
                     content_context_hash: CONTENT_CONTEXT_HASH,
                     generated_content: {},
                   }],
                   error: null,
                 };
-              }
-              if (payload.provider_first_attempt_at) {
-                mocks.operations.push("provider-attempt");
-                return { data: [{ id: "content-1" }], error: null };
               }
               mocks.claimed = false;
               mocks.operations.push("release-or-finalize");
@@ -193,7 +187,6 @@ beforeEach(() => {
   mocks.operations = [];
   mocks.tenantPaying = true;
   mocks.providerCalls = 0;
-  mocks.providerFirstAttemptAt = null;
 });
 
 describe("buildAndSend — #1582 transient-failure retry semantics", () => {
@@ -228,6 +221,7 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       contact_id: "contact-1",
       related_booking_id: "booking-1",
       idempotencyKey: "pre_cruise:booking-1:t_90",
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
     });
   });
 
@@ -352,9 +346,7 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
     expect(mocks.operations.at(-1)).toBe("release-or-finalize");
   });
 
-  it("never re-enters the provider after the 23-hour replay cutoff", async () => {
-    mocks.providerFirstAttemptAt = new Date(Date.now() - 23 * 60 * 60_000).toISOString();
-
+  it("keeps the provider attempt epoch out of pre-cruise content", async () => {
     await buildAndSend({
       svc: makeSvc(),
       phase: "t_7",
@@ -362,8 +354,12 @@ describe("buildAndSend — #1582 transient-failure retry semantics", () => {
       contentId: "content-1",
     });
 
-    expect(mocks.sendEmailArgs).toHaveLength(0);
-    expect(mocks.providerCalls).toBe(0);
-    expect(mocks.operations).toEqual(["claim", "release-or-finalize"]);
+    expect(mocks.sendEmailArgs).toHaveLength(1);
+    expect(mocks.providerCalls).toBe(1);
+    expect(
+      mocks.updateCalls.some(
+        ({ payload }) => "provider_first_attempt_at" in (payload as object),
+      ),
+    ).toBe(false);
   });
 });

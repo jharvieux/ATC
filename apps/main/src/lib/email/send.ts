@@ -78,6 +78,10 @@ export interface SendEmailInput {
   // call, which would defeat the dedup. Optional: sends without one behave
   // exactly as before (no header sent).
   idempotencyKey?: string;
+  // Existing keyed callers retain their historical raw Resend key. Features
+  // opt into the tenant-scoped v1 key only when they have no legacy provider
+  // attempts that must survive a rollout.
+  providerIdempotencyKeyScope?: "legacy" | "tenant_scoped_v1";
   // Caller-owned policy/state check that must run at the last possible
   // boundary before the provider call. A false verdict is terminal for this
   // invocation and does not create a log or invoke Resend.
@@ -124,6 +128,8 @@ interface PreparedIdempotentEmail {
   resend_message_id: string | null;
   provider_idempotency_key: string | null;
   provider_request_body: string | null;
+  provider_account_type: "platform_resend" | "tenant_resend";
+  provider_credential_hash: string;
   provider_first_attempt_at: string | null;
   newly_queued: boolean;
 }
@@ -133,6 +139,7 @@ interface ProviderDispatch {
   provider_idempotency_key: string;
   provider_request_body: string;
   provider_account_type: "platform_resend" | "tenant_resend";
+  provider_credential_hash: string;
   provider_first_attempt_at: string;
 }
 
@@ -179,9 +186,18 @@ export function resolveFromAddress(args: {
   return PLATFORM_DEFAULT_FROM;
 }
 
-export function providerEmailIdempotencyKey(tenantId: string, logicalKey: string): string {
+export function providerEmailIdempotencyKey(
+  tenantId: string,
+  logicalKey: string,
+  scope: NonNullable<SendEmailInput["providerIdempotencyKeyScope"]> = "legacy",
+): string {
+  if (scope === "legacy") return logicalKey;
   const digest = createHash("sha256").update(logicalKey).digest("hex");
   return `atc:${tenantId}:${digest}`;
+}
+
+function providerCredentialHash(apiKey: string): string {
+  return createHash("sha256").update(apiKey).digest("hex");
 }
 
 async function readIdempotentOutbox(args: {
@@ -403,6 +419,9 @@ export async function resumeIdempotentEmail(args: {
   if (dispatch.provider_account_type !== args.tenant.email_send_pattern) {
     return { status: "failed", reason: "provider_account_changed" };
   }
+  if (dispatch.provider_credential_hash !== providerCredentialHash(credential.apiKey)) {
+    return { status: "failed", reason: "provider_credential_changed" };
+  }
   const provider = await fetchProvider({
     apiKey: credential.apiKey,
     body: dispatch.provider_request_body,
@@ -496,6 +515,7 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
   });
   const credential = resolveResendApiKey(tenant);
   if (!credential.ok) return { status: "failed", reason: credential.reason };
+  const credentialHash = providerCredentialHash(credential.apiKey);
 
   if (input.idempotencyKey) {
     const expiresAt = new Date(Date.now() + RETRY_CONTENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -503,9 +523,14 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
       db.rpc("prepare_idempotent_email_send", {
         p_tenant_id: tenant.id,
         p_idempotency_key: input.idempotencyKey,
-        p_provider_idempotency_key: providerEmailIdempotencyKey(tenant.id, input.idempotencyKey),
+        p_provider_idempotency_key: providerEmailIdempotencyKey(
+          tenant.id,
+          input.idempotencyKey,
+          input.providerIdempotencyKeyScope,
+        ),
         p_provider_request_body: providerRequestBody,
         p_provider_account_type: tenant.email_send_pattern,
+        p_provider_credential_hash: credentialHash,
         p_log: {
           to_email: to,
           from_email: fromAddr,
@@ -550,6 +575,12 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
         resend_message_id: recovered.resend_message_id ?? null,
       };
     }
+    if (prepared.provider_account_type !== tenant.email_send_pattern) {
+      return { status: "failed", reason: "provider_account_changed", email_log_id: prepared.email_log_id };
+    }
+    if (prepared.provider_credential_hash !== credentialHash) {
+      return { status: "failed", reason: "provider_credential_changed", email_log_id: prepared.email_log_id };
+    }
 
     const verdict = await runBeforeDispatch(input.beforeDispatch, Boolean(prepared.provider_first_attempt_at));
     if (!verdict.allowed) {
@@ -570,6 +601,9 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     });
     if (dispatch.provider_account_type !== tenant.email_send_pattern) {
       return { status: "failed", reason: "provider_account_changed", email_log_id: prepared.email_log_id };
+    }
+    if (dispatch.provider_credential_hash !== credentialHash) {
+      return { status: "failed", reason: "provider_credential_changed", email_log_id: prepared.email_log_id };
     }
     const provider = await fetchProvider({
       apiKey: credential.apiKey,

@@ -38,6 +38,7 @@ interface MockOutbox {
   provider_idempotency_key: string;
   provider_request_body: string;
   provider_account_type: "platform_resend" | "tenant_resend";
+  provider_credential_hash: string;
   provider_first_attempt_at: string | null;
 }
 
@@ -86,6 +87,7 @@ function makeDb({
             provider_idempotency_key: String(args.p_provider_idempotency_key),
             provider_request_body: String(args.p_provider_request_body),
             provider_account_type: String(args.p_provider_account_type) as MockOutbox["provider_account_type"],
+            provider_credential_hash: String(args.p_provider_credential_hash),
             provider_first_attempt_at: null,
           };
         }
@@ -97,6 +99,8 @@ function makeDb({
             resend_message_id: outboxStore.current.resend_message_id,
             provider_idempotency_key: outboxStore.current.provider_idempotency_key,
             provider_request_body: outboxStore.current.provider_request_body,
+            provider_account_type: outboxStore.current.provider_account_type,
+            provider_credential_hash: outboxStore.current.provider_credential_hash,
             provider_first_attempt_at: outboxStore.current.provider_first_attempt_at,
             newly_queued: outboxStore.current.provider_first_attempt_at === null,
           }],
@@ -112,6 +116,7 @@ function makeDb({
             provider_idempotency_key: outboxStore.current.provider_idempotency_key,
             provider_request_body: outboxStore.current.provider_request_body,
             provider_account_type: outboxStore.current.provider_account_type,
+            provider_credential_hash: outboxStore.current.provider_credential_hash,
             provider_first_attempt_at: outboxStore.current.provider_first_attempt_at,
           }],
           error: null,
@@ -311,9 +316,10 @@ describe("sendEmail — §23", () => {
     warn.mockRestore();
   });
 
-  it("forwards idempotencyKey as the Resend Idempotency-Key header when provided (#1580)", async () => {
+  it("preserves the exact raw provider key for legacy keyed callers", async () => {
     const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const db = makeDb({ rpcCalls });
+    const legacyKey = "group_invitation:invitation-1";
     await sendEmail({
       db,
       tenant: baseTenant,
@@ -322,13 +328,11 @@ describe("sendEmail — §23", () => {
       template_id: "test_template",
       category: "transactional",
       html: testHtml,
-      idempotencyKey: "pre_cruise:booking-1:t_7",
+      idempotencyKey: legacyKey,
     });
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     const headers = calls[0]?.[1]?.headers as Record<string, string>;
-    expect(headers["Idempotency-Key"]).toBe(
-      providerEmailIdempotencyKey("tenant-1", "pre_cruise:booking-1:t_7"),
-    );
+    expect(headers["Idempotency-Key"]).toBe(legacyKey);
     expect(rpcCalls.map((call) => call.name)).toEqual([
       "prepare_idempotent_email_send",
       "start_idempotent_email_dispatch",
@@ -338,7 +342,9 @@ describe("sendEmail — §23", () => {
       name: "prepare_idempotent_email_send",
       args: {
         p_tenant_id: "tenant-1",
-        p_idempotency_key: "pre_cruise:booking-1:t_7",
+        p_idempotency_key: legacyKey,
+        p_provider_idempotency_key: legacyKey,
+        p_provider_credential_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
         p_retry_content: { html: testHtml },
       },
     });
@@ -349,8 +355,8 @@ describe("sendEmail — §23", () => {
     });
   });
 
-  it("namespaces the provider key by tenant without truncating the logical key", async () => {
-    const logicalKey = `group_reminder:${"x".repeat(300)}`;
+  it("tenant-namespaces opted-in pre-cruise provider keys without truncation", async () => {
+    const logicalKey = "pre_cruise:booking-1:t_7";
     await sendEmail({
       db: makeDb(),
       tenant: baseTenant,
@@ -360,6 +366,7 @@ describe("sendEmail — §23", () => {
       category: "transactional",
       html: testHtml,
       idempotencyKey: logicalKey,
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
     });
     await sendEmail({
       db: makeDb(),
@@ -370,13 +377,14 @@ describe("sendEmail — §23", () => {
       category: "transactional",
       html: testHtml,
       idempotencyKey: logicalKey,
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
     });
 
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     const firstKey = (calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"];
     const secondKey = (calls[1]?.[1]?.headers as Record<string, string>)["Idempotency-Key"];
-    expect(firstKey).toBe(providerEmailIdempotencyKey("tenant-1", logicalKey));
-    expect(secondKey).toBe(providerEmailIdempotencyKey("tenant-2", logicalKey));
+    expect(firstKey).toBe(providerEmailIdempotencyKey("tenant-1", logicalKey, "tenant_scoped_v1"));
+    expect(secondKey).toBe(providerEmailIdempotencyKey("tenant-2", logicalKey, "tenant_scoped_v1"));
     expect(firstKey).not.toBe(secondKey);
     expect(firstKey).toHaveLength(77);
     expect(secondKey).toHaveLength(77);
@@ -400,6 +408,7 @@ describe("sendEmail — §23", () => {
       category: "transactional",
       html: "<p>Original body</p>",
       idempotencyKey: "pre_cruise:booking-1:t_7",
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
       beforeDispatch,
     };
 
@@ -414,11 +423,19 @@ describe("sendEmail — §23", () => {
       to: "changed@example.com",
       subject: "Changed subject",
       html: "<p>Changed body</p>",
+      providerIdempotencyKeyScope: "legacy",
     });
 
     const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[1]?.[1]?.body).toBe(calls[0]?.[1]?.body);
+    expect(
+      (calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe(providerEmailIdempotencyKey(
+      "tenant-1",
+      "pre_cruise:booking-1:t_7",
+      "tenant_scoped_v1",
+    ));
     expect(
       (calls[1]?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
     ).toBe((calls[0]?.[1]?.headers as Record<string, string>)["Idempotency-Key"]);
@@ -435,6 +452,35 @@ describe("sendEmail — §23", () => {
       status: "sent",
       resend_message_id: "resend-msg-123",
     });
+  });
+
+  it("fails closed when the effective credential changes before an outbox replay", async () => {
+    const outboxStore: MockOutboxStore = { current: null };
+    const db = makeDb({
+      outboxStore,
+      rpcFailureCounts: { finalize_idempotent_email_send: 1 },
+      rpcErrors: { finalize_idempotent_email_send: { message: "commit interrupted" } },
+    });
+    const input: SendEmailInput = {
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Stable request",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+      providerIdempotencyKeyScope: "tenant_scoped_v1",
+    };
+
+    await expect(sendEmail(input)).rejects.toThrow(/finalize_idempotent_email_send/);
+    process.env.RESEND_API_KEY = "re_rotated_key";
+
+    await expect(sendEmail(input)).resolves.toMatchObject({
+      status: "failed",
+      reason: "provider_credential_changed",
+    });
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
   });
 
   it("runs the caller guard at the final boundary and does not call Resend when it rejects", async () => {

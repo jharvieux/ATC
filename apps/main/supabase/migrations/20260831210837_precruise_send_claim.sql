@@ -11,8 +11,7 @@
 
 ALTER TABLE public.pre_cruise_email_content
   ADD COLUMN content_context_hash TEXT,
-  ADD COLUMN send_claimed_at TIMESTAMPTZ,
-  ADD COLUMN provider_first_attempt_at TIMESTAMPTZ;
+  ADD COLUMN send_claimed_at TIMESTAMPTZ;
 
 ALTER TABLE public.email_log
   ADD COLUMN idempotency_key TEXT,
@@ -20,6 +19,7 @@ ALTER TABLE public.email_log
   ADD COLUMN provider_idempotency_key TEXT,
   ADD COLUMN provider_request_body TEXT,
   ADD COLUMN provider_account_type TEXT,
+  ADD COLUMN provider_credential_hash TEXT,
   ADD COLUMN provider_first_attempt_at TIMESTAMPTZ,
   ADD COLUMN provider_snapshot_expires_at TIMESTAMPTZ,
   ADD COLUMN retry_content_snapshot JSONB,
@@ -30,6 +30,10 @@ ALTER TABLE public.email_log
   ADD CONSTRAINT email_log_provider_account_type_chk CHECK (
     provider_account_type IS NULL
     OR provider_account_type IN ('platform_resend', 'tenant_resend')
+  ),
+  ADD CONSTRAINT email_log_provider_credential_hash_chk CHECK (
+    provider_credential_hash IS NULL
+    OR provider_credential_hash ~ '^[0-9a-f]{64}$'
   );
 
 CREATE UNIQUE INDEX email_log_tenant_idempotency_key_uidx
@@ -45,6 +49,7 @@ CREATE OR REPLACE FUNCTION public.prepare_idempotent_email_send(
   p_provider_idempotency_key TEXT,
   p_provider_request_body TEXT,
   p_provider_account_type TEXT,
+  p_provider_credential_hash TEXT,
   p_log JSONB,
   p_retry_content JSONB DEFAULT NULL
 )
@@ -55,6 +60,8 @@ RETURNS TABLE (
   resend_message_id TEXT,
   provider_idempotency_key TEXT,
   provider_request_body TEXT,
+  provider_account_type TEXT,
+  provider_credential_hash TEXT,
   provider_first_attempt_at TIMESTAMPTZ,
   newly_queued BOOLEAN
 )
@@ -86,6 +93,10 @@ BEGIN
 
   IF p_provider_account_type NOT IN ('platform_resend', 'tenant_resend') THEN
     RAISE EXCEPTION 'provider account type is invalid';
+  END IF;
+
+  IF p_provider_credential_hash IS NULL OR p_provider_credential_hash !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'provider credential hash is invalid';
   END IF;
 
   IF v_retry_of IS NOT NULL AND NOT EXISTS (
@@ -122,6 +133,7 @@ BEGIN
     provider_idempotency_key,
     provider_request_body,
     provider_account_type,
+    provider_credential_hash,
     provider_snapshot_expires_at,
     retry_content_snapshot
   ) VALUES (
@@ -145,6 +157,7 @@ BEGIN
     p_provider_idempotency_key,
     p_provider_request_body,
     p_provider_account_type,
+    p_provider_credential_hash,
     v_now + INTERVAL '7 days',
     p_retry_content
   )
@@ -163,6 +176,8 @@ BEGIN
     email_log.resend_message_id,
     email_log.provider_idempotency_key,
     email_log.provider_request_body,
+    email_log.provider_account_type,
+    email_log.provider_credential_hash,
     email_log.provider_first_attempt_at,
     v_inserted
   FROM public.email_log
@@ -184,6 +199,7 @@ RETURNS TABLE (
   provider_idempotency_key TEXT,
   provider_request_body TEXT,
   provider_account_type TEXT,
+  provider_credential_hash TEXT,
   provider_first_attempt_at TIMESTAMPTZ
 )
 LANGUAGE plpgsql
@@ -196,6 +212,7 @@ DECLARE
   v_provider_key TEXT;
   v_provider_body TEXT;
   v_provider_account_type TEXT;
+  v_provider_credential_hash TEXT;
   v_first_attempt_at TIMESTAMPTZ;
   v_snapshot_expires_at TIMESTAMPTZ;
 BEGIN
@@ -204,6 +221,7 @@ BEGIN
     email_log.provider_idempotency_key,
     email_log.provider_request_body,
     email_log.provider_account_type,
+    email_log.provider_credential_hash,
     email_log.provider_first_attempt_at,
     provider_snapshot_expires_at
   INTO
@@ -211,6 +229,7 @@ BEGIN
     v_provider_key,
     v_provider_body,
     v_provider_account_type,
+    v_provider_credential_hash,
     v_first_attempt_at,
     v_snapshot_expires_at
   FROM public.email_log
@@ -246,6 +265,7 @@ BEGIN
     v_provider_key,
     v_provider_body,
     v_provider_account_type,
+    v_provider_credential_hash,
     v_first_attempt_at;
 END;
 $$;
@@ -446,9 +466,9 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
+REVOKE ALL ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
+GRANT EXECUTE ON FUNCTION public.prepare_idempotent_email_send(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB)
   TO service_role;
 
 REVOKE ALL ON FUNCTION public.start_idempotent_email_dispatch(UUID, TEXT)

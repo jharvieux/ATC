@@ -15,6 +15,21 @@ function functionBody(name: string): string {
 }
 
 describe("idempotent email outbox migration", () => {
+  it("keeps the immutable provider epoch and credential binding on email_log only", () => {
+    const precruiseAlter = migration.match(
+      /ALTER TABLE public\.pre_cruise_email_content[\s\S]*?;/,
+    )?.[0];
+    expect(precruiseAlter).toBeDefined();
+    expect(precruiseAlter).not.toContain("provider_first_attempt_at");
+    expect(migration).toContain("ADD COLUMN provider_credential_hash TEXT");
+    expect(functionBody("prepare_idempotent_email_send")).toContain(
+      "p_provider_credential_hash TEXT",
+    );
+    expect(functionBody("start_idempotent_email_dispatch")).toContain(
+      "email_log.provider_first_attempt_at",
+    );
+  });
+
   it("derives finalization timestamps and UTC accounting from one captured clock value", () => {
     const body = functionBody("finalize_idempotent_email_send");
     expect(body.match(/clock_timestamp\(\)/g)).toHaveLength(1);

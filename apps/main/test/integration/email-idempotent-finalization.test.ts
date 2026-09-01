@@ -5,13 +5,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const adminToken = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const dbUrl = process.env.SUPABASE_DB_URL;
 const describeIf = supabaseUrl && adminToken && dbUrl ? describe : describe.skip;
 const runTag = `email-finalize-${randomUUID().slice(0, 8)}`;
+const providerCredentialHash = createHash("sha256").update("integration-api-key").digest("hex");
 
 interface Fixtures {
   admin: SupabaseClient;
@@ -75,6 +76,7 @@ async function finalize(
       html: `<p>${suffix}</p>`,
     }),
     p_provider_account_type: "platform_resend",
+    p_provider_credential_hash: providerCredentialHash,
     p_log: payload.p_log,
     p_retry_content: payload.p_retry_content,
   });
@@ -177,14 +179,15 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
         tenant_id, to_email, from_email, subject, template_id,
         email_category, status, sent_at, resend_message_id, idempotency_key,
         provider_idempotency_key, provider_request_body, provider_account_type,
-        provider_first_attempt_at, provider_snapshot_expires_at, retry_content_snapshot
+        provider_credential_hash, provider_first_attempt_at,
+        provider_snapshot_expires_at, retry_content_snapshot
       ) VALUES (
         ${fx.tenantOne}, 'orphan@example.test', 'noreply@example.test', 'Subject orphan',
         'integration_test', 'transactional', 'sent', now(),
         ${`resend-${runTag}-orphan`}, ${`${runTag}:orphan`},
         ${`integration:${fx.tenantOne}:${runTag}:orphan`},
         ${JSON.stringify({ from: "noreply@example.test", to: "orphan@example.test", subject: "Subject orphan", html: "<p>orphan</p>" })},
-        'platform_resend', now(), now() + interval '7 days',
+        'platform_resend', ${providerCredentialHash}, now(), now() + interval '7 days',
         ${JSON.stringify(rpcPayload(`${runTag}:orphan`, "orphan").p_retry_content)}::jsonb
       )
       RETURNING id
@@ -229,6 +232,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
       p_provider_idempotency_key: `integration:${fx.tenantOne}:${key}`,
       p_provider_request_body: JSON.stringify({ from: "noreply@example.test", to: "concurrent@example.test", subject: "Subject concurrent", html: "<p>concurrent</p>" }),
       p_provider_account_type: "platform_resend",
+      p_provider_credential_hash: providerCredentialHash,
       p_log: payload.p_log,
       p_retry_content: payload.p_retry_content,
     });
@@ -302,6 +306,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
         html: "<p>wrong-tenant-retry</p>",
       }),
       p_provider_account_type: "platform_resend",
+      p_provider_credential_hash: providerCredentialHash,
       p_log: wrongTenantPayload.p_log,
       p_retry_content: wrongTenantPayload.p_retry_content,
     });

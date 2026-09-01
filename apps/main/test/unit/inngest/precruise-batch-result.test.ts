@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
     send_claimed_at: string | null;
     generated_content: Record<string, unknown>;
     content_context_hash?: string | null;
-    provider_first_attempt_at?: string | null;
   } | null,
   logicalEmailLog: null as { id: string; status: string; sent_at: string | null; provider_first_attempt_at?: string | null } | null,
   recoveryCalls: 0,
@@ -160,8 +159,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                 if (
                   "generated_content" in payload && mocks.existingContent &&
                   ((nullFilters.has("sent_at") && mocks.existingContent.sent_at) ||
-                    (nullFilters.has("send_claimed_at") && mocks.existingContent.send_claimed_at) ||
-                    (nullFilters.has("provider_first_attempt_at") && mocks.existingContent.provider_first_attempt_at))
+                    (nullFilters.has("send_claimed_at") && mocks.existingContent.send_claimed_at))
                 ) {
                   return { data: [], error: null };
                 }
@@ -182,7 +180,6 @@ vi.mock("@/lib/db/service-role-client", () => ({
                     ? payload.send_claimed_at
                       ? [{
                           send_claimed_at: payload.send_claimed_at,
-                          provider_first_attempt_at: mocks.existingContent?.provider_first_attempt_at ?? null,
                           content_context_hash:
                             mocks.existingContent?.content_context_hash ??
                             mocks.insertPayloads.at(-1)?.content_context_hash ??
@@ -380,7 +377,6 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
       id: "content-1",
       sent_at: null,
       send_claimed_at: null,
-      provider_first_attempt_at: "2026-08-31T22:00:00.000Z",
       generated_content: { summary: "authoritative provider copy" },
       content_context_hash: "context-before-provider",
     };
@@ -403,12 +399,11 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.updatePayloads.some((payload) => "sent_at" in payload)).toBe(true);
   });
 
-  it("abandons an unstarted stale outbox before parsing or regenerating", async () => {
+  it("abandons an unstarted stale outbox before regenerating and sending batch content", async () => {
     mocks.existingContent = {
       id: "content-1",
       sent_at: null,
       send_claimed_at: "2026-08-31T22:00:00.000Z",
-      provider_first_attempt_at: null,
       generated_content: { summary: "stale queued copy" },
       content_context_hash: "stale-context",
     };
@@ -418,13 +413,10 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
       sent_at: null,
       provider_first_attempt_at: null,
     };
-    const event = makeEvent();
-    event.event.data.result_text = "not json because stale recovery returns first";
-
-    await runHandler(event);
+    await runHandler(makeEvent());
 
     expect(mocks.abandonCalls).toBe(1);
-    expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.sendEmailCalls).toBe(1);
     expect(mocks.insertPayloads).toHaveLength(0);
     expect(mocks.batchEnqueueCalls).toHaveLength(0);
     expect(mocks.updatePayloads).toContainEqual({ send_claimed_at: null });
@@ -530,19 +522,25 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
     expect(mocks.existingContent.generated_content).toEqual({ summary: "winning prose" });
   });
 
-  it("does not overwrite batch content after a provider attempt fixed the keyed payload", async () => {
+  it("uses only the started outbox epoch to stop expired batch replay", async () => {
     mocks.existingContent = {
       id: "content-1",
       sent_at: null,
       send_claimed_at: null,
-      provider_first_attempt_at: "2026-08-31T20:00:00.000Z",
       generated_content: { summary: "provider-attempted prose" },
       content_context_hash: "stale",
+    };
+    mocks.logicalEmailLog = {
+      id: "log-1",
+      status: "queued",
+      sent_at: null,
+      provider_first_attempt_at: new Date(Date.now() - 23 * 60 * 60_000).toISOString(),
     };
 
     await runHandler(makeEvent());
 
     expect(mocks.sendEmailCalls).toBe(0);
+    expect(mocks.resumeCalls).toBe(0);
     expect(mocks.existingContent.generated_content).toEqual({ summary: "provider-attempted prose" });
   });
 
