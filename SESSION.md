@@ -1,24 +1,23 @@
-# Session state — last updated 2026-09-01 02:38 CDT
+# Session state — last updated 2026-09-01 02:56 CDT
 
 ## Just completed
 - Upgraded the global Vercel CLI from 59.0.0 to 59.10.0 and verified it under Node 24.
 - Merged PR #2111 into `dev`; the Lighthouse/Puppeteer override removed the unpatched `extract-zip` path and closed #2109.
-- Opened PR #2116 for #2108 on `feature/precruise-delivery-hardening` and completed the professional T-90/T-30/T-7/T-1 templates plus agent manual send/schedule workflow.
+- Merged PR #2116 into `dev` at `2ba1f5a581b0618043f979dad5cc77b0e1199967`, closing #2108. It delivers professional T-90/T-30/T-7/T-1 templates plus the agent manual send/schedule workflow.
 - Hardened manual recipient binding, final payment/booking/contact/context checks, concurrent claims, context-aware generation, provider recovery, atomic keyed-email accounting, HMAC credential binding, and durable Inngest generation/enqueue steps.
 - Moved transient provider request PII into a service-role-only outbox. Main RLS and grants snapshots report no drift, and the isolated live outbox/finalization fixture passes 5/5.
-- Full `pnpm verify` passed on pushed checkpoint `defefe0d38e8e5816180af731fe8231769e83bd9` under Node 24.15.0: 630 main files / 7,027 tests and 30 RAG files / 201 tests passed. Hosted CodeQL, E2E, guards/build, RLS snapshot, contract, cross-tenant, and integration checks also passed.
-- Independent acceptance passed on `defefe0d`; the D-091 audit was clean and posted its current hash-bound marker.
-- The pre-PR audit found three final evidence/wording gaps. The working tree now pins staging and capped-backlog outbox purge behavior, pins deterministic IDs for both scheduler variants and distinct cron runs, and describes provider PII as purge-eligible after 23 hours. The three focused suites pass 27/27.
-- Full `pnpm verify` also passes on that final audit repair under Node 24.15.0: 630 main files / 7,029 tests and 30 RAG files / 201 tests passed; all blocking guards are green and hosted schema drift is the only DB-URL-gated skip.
+- Full `pnpm verify` passed on merged source head `25d705211d191bfd0e42765fcde27729ac839307` under Node 24.15.0: 630 main files / 7,029 tests and 30 RAG files / 201 tests passed; hosted schema drift was the only DB-URL-gated local skip.
+- Exact-head acceptance and both independent audits passed; their hash-bound marker gate, CodeQL, E2E, guards/build, RLS snapshot, contract, cross-tenant, integration, test, lint, secret, and CVE checks all passed before merge.
+- Added intent coverage for staging/capped outbox purges and deterministic event IDs for both scheduler variants and distinct cron runs.
 - Restored the already-applied outbox migration byte-for-byte and put the catalog-comment accuracy correction in collision-safe append-only migration `20260901074338_clarify_email_provider_dispatch_retention.sql`.
 - Applied that comment-only migration to the disposable local Supabase ledger with `PGSSLMODE=disable` and verified the live table/column comments; no shared or hosted database was contacted.
 - Opened #2118 for the post-switchover contract migration and #2119 for the separate `email_log`/`email_suppressions` authenticated-access reconciliation.
 
 ## In flight
-- PR #2116 remains open in exact-head audit/finalization. Fresh acceptance, both hash-bound audits, the audit-gate rerun, and merge remain after the current checkpoint is verified and published.
+- Nothing in flight — clean checkpoint.
 
 ## Next step
-- Verify and publish the current checkpoint if needed, then rerun exact-head acceptance and both PR audits; after both markers post, rerun the audit gate and merge only when every required check is green.
+- Wait for the user's next request. Do not resume the paused issue sweep without an explicit instruction.
 
 ## Blocked on user
 - Awaiting approval to add two append-only MEMORY entries for the Lighthouse dependency override and atomic keyed-email finalization decisions.
