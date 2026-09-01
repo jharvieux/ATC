@@ -4,10 +4,10 @@
 - Kept the application, development, CI, and Vercel runtime contract on Node 24.x; Vercel does not yet list Node 26 for Builds or Functions.
 - Removed the stale Intel Homebrew initialization from `~/.zprofile`, loaded NVM in login shells, selected the nearest `.nvmrc` or the Node 24 default, and prevented duplicate NVM loading from `~/.zshrc`.
 - Verified ordinary login and interactive shells resolve Node 24.19.0 from NVM both inside the repository and from `/private/tmp`, without the former Homebrew startup warning.
-- Added `devEngines.runtime` plus `scripts/check-node-runtime.mjs`; primary development, build, test, lint, typecheck, and verification workflows now stop immediately unless the executing runtime is Node 24.x.
-- Added four intent tests covering Node 24 acceptance, Node 26 rejection with actionable recovery, malformed-version fail-closed behavior, and primary-workflow guard wiring.
-- Proved a forced Homebrew Node 26 `pnpm verify` exits at the runtime guard before typecheck, lint, or tests begin.
-- Added append-only decision D-376 and its MEMORY index mirror.
+- Added `.pnpmfile.mjs` plus `scripts/check-node-runtime.mjs`; every pnpm script and dependency-resolution command now stops at repository load unless the executing runtime is Node 24.x.
+- Added four intent tests covering Node 24 acceptance, Node 26 rejection with actionable recovery, malformed-version fail-closed behavior, and process-level rejection of a secondary script plus frozen `--ignore-scripts` installation.
+- Proved forced Homebrew Node 26 verification, secondary-script, and install entrypoints exit at the pnpmfile runtime guard before substantive work begins.
+- Added append-only decisions D-376 and D-377 with their MEMORY index mirrors; D-377 supersedes D-376's initial narrower enforcement mechanism.
 - Full `pnpm verify` passed under Node 24.19.0: 631 main files / 7,258 tests and 30 RAG files / 201 tests passed; main/RAG schema drift was explicitly skipped because database URLs are unset.
 
 ## In flight

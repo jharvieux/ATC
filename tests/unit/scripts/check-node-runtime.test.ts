@@ -1,13 +1,22 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { getNodeRuntimeError } from "../../../scripts/check-node-runtime.mjs";
 
-const packageJson = JSON.parse(
-  readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
-) as {
-  devEngines: { runtime: { name: string; version: string; onFail: string } };
-  scripts: Record<string, string>;
-};
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const node26Preload = fileURLToPath(new URL("../../fixtures/node-26-runtime.cjs", import.meta.url));
+
+function runPnpmAsNode26(args: string[]) {
+  return spawnSync("pnpm", args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NODE_OPTIONS: `--require=${node26Preload}`,
+    },
+    timeout: 10_000,
+  });
+}
 
 describe("getNodeRuntimeError", () => {
   it("accepts supported Node 24 patch releases", () => {
@@ -31,24 +40,17 @@ describe("getNodeRuntimeError", () => {
     }
   });
 
-  it("guards every primary repository workflow before work begins", () => {
-    expect(packageJson.devEngines.runtime).toEqual({
-      name: "node",
-      version: "24.x",
-      onFail: "error",
-    });
-
-    for (const script of [
-      "dev",
-      "build",
-      "lint",
-      "typecheck",
-      "test",
-      "test:watch",
-      "verify",
-      "verify:fast",
+  it("blocks secondary scripts and dependency operations before work under Node 26", () => {
+    for (const args of [
+      ["run", "lint:migrations", "--help"],
+      ["install", "--lockfile-only", "--frozen-lockfile", "--ignore-scripts"],
+      ["add", "--help"],
     ]) {
-      expect(packageJson.scripts[script], script).toMatch(/^pnpm check:node-runtime && /);
+      const result = runPnpmAsNode26(args);
+      expect(result.status, args.join(" ")).toBe(1);
+      expect(`${result.stdout}${result.stderr}`, args.join(" ")).toContain(
+        "Node.js 24.x is required; found v26.0.0.",
+      );
     }
   });
 });
