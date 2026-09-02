@@ -356,7 +356,7 @@ describe("precruiseGenerateAndSend — #1582 duplicate insert race", () => {
       id: "log-1",
       status: "queued",
       sent_at: null,
-      provider_first_attempt_at: "2026-08-31T22:00:00.100Z",
+      provider_first_attempt_at: new Date().toISOString(),
     };
 
     await (precruiseGenerateAndSend as unknown as (args: { event: { data: unknown } }) => Promise<void>)({

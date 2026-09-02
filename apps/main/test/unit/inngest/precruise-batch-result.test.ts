@@ -412,7 +412,7 @@ describe("precruiseSendFromBatchResult — #1582/#1676 duplicate insert race (ba
       id: "log-1",
       status: "queued",
       sent_at: null,
-      provider_first_attempt_at: "2026-08-31T22:00:00.100Z",
+      provider_first_attempt_at: new Date().toISOString(),
     };
     const event = makeEvent();
     event.event.data.result_text = "changed result is intentionally not parsed";
