@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          vercel deploy --token="$VERCEL_TOKEN" --yes 2>&1 | tee /tmp/vercel-deploy.log
+          vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1 2>&1 | tee /tmp/vercel-deploy.log
           deploy_status="${PIPESTATUS[0]}"
           beta_url="$(grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' /tmp/vercel-deploy.log | tail -1)"
           if [ "$deploy_status" -ne 0 ]; then

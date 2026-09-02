@@ -27,7 +27,7 @@ describe("RAG beta exact-revision deployment probe", () => {
     expect(source).toContain('[[ "$(git rev-parse HEAD)" != "$PROBE_EXPECTED_REVISION" ]]');
     expect(source).toContain('vercel project inspect --token="$VERCEL_TOKEN" --yes');
     expect(source).toContain(
-      'vercel deploy --token="$VERCEL_TOKEN" --yes 2>&1 | tee /tmp/vercel-deploy.log',
+      'vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1 2>&1 | tee /tmp/vercel-deploy.log',
     );
     expect(source).toContain('vercel inspect "$beta_url" --logs --token="$VERCEL_TOKEN"');
     expect(source).not.toContain("working-directory: apps/rag");
