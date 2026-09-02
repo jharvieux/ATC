@@ -943,7 +943,8 @@ export function derivePostgresMigrationProvenance(
           .exec(statement)
         : undefined;
       const routineLanguage = createsExecutableRoutine
-        ? new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "i").exec(statement)?.[1]
+        ? new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "i")
+          .exec(executableAnalysis.executableSql)?.[1]
         : undefined;
       const analysableRoutineLanguage = routineLanguage !== undefined &&
         ["sql", "plpgsql"].includes(unquotePostgresIdentifier(routineLanguage));
