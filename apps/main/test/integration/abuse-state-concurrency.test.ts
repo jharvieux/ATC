@@ -46,6 +46,7 @@ async function evaluationCount(dimension: string): Promise<number> {
     FROM public.usage_limit_state_evaluations
     WHERE tenant_id = ${tenantId}::uuid
       AND dimension = ${dimension}
+      AND pending
   `;
   return row?.n ?? 0;
 }
@@ -254,6 +255,115 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     expect(row?.email_volume_limit_state).toBe("soft1");
     expect(await eventCount("email_volume")).toBe(before + 1);
     expect(await evaluationCount("email_volume")).toBe(0);
+  });
+
+  it("recovers both sides of UTC midnight without coalescing daily email state", async () => {
+    const rangeStart = new Date(`${period.slice(1, 11)}T00:00:00.000Z`);
+    const oldDay = new Date(rangeStart.getTime() + 10 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const newDay = new Date(rangeStart.getTime() + 11 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const before = await eventCount("email_volume");
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_count = 4,
+          email_sent_today = 4,
+          email_sent_day_ref = ${oldDay}::date,
+          email_volume_limit_state = 'ok',
+          email_volume_state_changed_at = NULL
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid,
+      ${period}::daterange,
+      'email_volume',
+      1,
+      ${`${oldDay}T23:59:59.999Z`}::timestamptz
+    )`;
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid,
+      ${period}::daterange,
+      'email_volume',
+      1,
+      ${`${newDay}T00:00:00.001Z`}::timestamptz
+    )`;
+
+    let markers = await sql<{
+      evaluation_day: string;
+      evaluation_value: string;
+      evaluated_state: string;
+      pending: boolean;
+    }[]>`
+      SELECT
+        evaluation_day::text,
+        evaluation_value::text,
+        evaluated_state,
+        pending
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+        AND evaluation_day IN (${oldDay}::date, ${newDay}::date)
+      ORDER BY evaluation_day
+    `;
+    expect(markers).toEqual([
+      { evaluation_day: oldDay, evaluation_value: "5", evaluated_state: "ok", pending: true },
+      { evaluation_day: newDay, evaluation_value: "1", evaluated_state: "ok", pending: true },
+    ]);
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      false, NULL, ${oldDay}::date
+    )`;
+    expect(await eventCount("email_volume")).toBe(before + 1);
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      false, NULL, ${oldDay}::date
+    )`;
+    expect(await eventCount("email_volume")).toBe(before + 1);
+
+    const [currentBeforeRecovery] = await sql<{
+      email_sent_today: number;
+      email_sent_day_ref: string;
+      email_volume_limit_state: string;
+    }[]>`
+      SELECT email_sent_today, email_sent_day_ref::text, email_volume_limit_state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(currentBeforeRecovery).toEqual({
+      email_sent_today: 1,
+      email_sent_day_ref: newDay,
+      email_volume_limit_state: "ok",
+    });
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 1, 10, 20,
+      false, NULL, ${newDay}::date
+    )`;
+    expect(await eventCount("email_volume")).toBe(before + 2);
+
+    markers = await sql<{
+      evaluation_day: string;
+      evaluation_value: string;
+      evaluated_state: string;
+      pending: boolean;
+    }[]>`
+      SELECT
+        evaluation_day::text,
+        evaluation_value::text,
+        evaluated_state,
+        pending
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+        AND evaluation_day IN (${oldDay}::date, ${newDay}::date)
+      ORDER BY evaluation_day
+    `;
+    expect(markers).toEqual([
+      { evaluation_day: oldDay, evaluation_value: "5", evaluated_state: "soft1", pending: false },
+      { evaluation_day: newDay, evaluation_value: "1", evaluated_state: "soft1", pending: false },
+    ]);
   });
 
   it("classifies exact monthly boundaries and only downgrades when requested", async () => {

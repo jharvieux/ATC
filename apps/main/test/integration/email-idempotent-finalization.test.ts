@@ -166,6 +166,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
           WHERE evaluation.tenant_id = metrics.tenant_id
             AND evaluation.dimension = 'email_volume'
             AND evaluation.billing_period = metrics.billing_period
+            AND evaluation.pending
         ) AS markers
       FROM public.tenant_usage_metrics AS metrics
       WHERE metrics.tenant_id = ${fx.tenantTwo}
@@ -193,6 +194,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
           WHERE evaluation.tenant_id = metrics.tenant_id
             AND evaluation.dimension = 'email_volume'
             AND evaluation.billing_period = metrics.billing_period
+            AND evaluation.pending
         ) AS markers,
         (
           SELECT count(*)::int

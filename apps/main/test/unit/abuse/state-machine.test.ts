@@ -224,6 +224,37 @@ describe("outbox dispatch", () => {
     }));
   });
 
+  it("passes an email marker's original UTC day to the state RPC", async () => {
+    mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) => {
+      if (label === "usage_limit_state_evaluations.select.pending") {
+        return [{
+          tenant_id: TENANT.tenant_id,
+          dimension: "email_volume",
+          billing_period: "[2026-08-01,2026-09-01)",
+          evaluation_day: "2026-08-31",
+        }];
+      }
+      if (label === "tenants.select.usage_state_recovery") {
+        return [{
+          id: TENANT.tenant_id,
+          tier_id: null,
+          seat_count: 1,
+          billing_period: "monthly",
+        }];
+      }
+      if (label.endsWith("rpc.advance_state")) return [OUTBOX_ROW];
+      return null;
+    });
+
+    await expect(recoverPendingStateEvaluations(makeDb())).resolves.toBe(1);
+    expect(mocks.rpc).toHaveBeenCalledWith("advance_tenant_usage_state", expect.objectContaining({
+      p_tenant_id: TENANT.tenant_id,
+      p_dimension: "email_volume",
+      p_billing_period: "[2026-08-01,2026-09-01)",
+      p_evaluation_day: "2026-08-31",
+    }));
+  });
+
   it("bounds multi-row state recovery and propagates an evaluation failure", async () => {
     const evaluations = Array.from({ length: 12 }, (_, index) => ({
       tenant_id: `00000000-0000-0000-0001-${String(index).padStart(12, "0")}`,

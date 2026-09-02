@@ -37,6 +37,8 @@ export interface CheckTransitionInput {
   reason?: string;
   /** Recovery may finish an evaluation queued just before month rollover. */
   billing_period?: string;
+  /** Email recovery evaluates the UTC day captured with the counter mutation. */
+  evaluation_day?: string;
 }
 
 type RecoverableDimension = Exclude<AbuseDimension, "help_submission_rate">;
@@ -143,7 +145,8 @@ export async function recoverPendingStateEvaluations(
     db
       // d091-allow:service-role-tenant — bounded platform recovery scans durable evaluation markers across tenants; each state RPC is tenant-scoped.
       .from("usage_limit_state_evaluations")
-      .select("tenant_id, dimension, billing_period")
+      .select("tenant_id, dimension, billing_period, evaluation_day")
+      .eq("pending", true)
       .order("requested_at", { ascending: true })
       .order("tenant_id", { ascending: true })
       .limit(limit),
@@ -152,6 +155,7 @@ export async function recoverPendingStateEvaluations(
     tenant_id: string;
     dimension: RecoverableDimension;
     billing_period: string | null;
+    evaluation_day: string | null;
   }>;
   if (evaluations.length === 0) return 0;
 
@@ -221,6 +225,7 @@ export async function recoverPendingStateEvaluations(
       dimension: evaluation.dimension,
       promoted_chunks_count: promotedByTenant.get(evaluation.tenant_id) ?? 0,
       ...(evaluation.billing_period ? { billing_period: evaluation.billing_period } : {}),
+      ...(evaluation.evaluation_day ? { evaluation_day: evaluation.evaluation_day } : {}),
     });
   });
   return evaluations.length;
@@ -278,6 +283,7 @@ export async function checkStateTransitionIfNeeded(
         p_hard: String(monthlyThresholds.hard),
         p_allow_downgrade: input.allow_downgrade ?? false,
         p_reason: input.reason ?? null,
+        p_evaluation_day: input.evaluation_day ?? null,
       }),
       "tenant_usage_metrics.rpc.advance_state",
     );
