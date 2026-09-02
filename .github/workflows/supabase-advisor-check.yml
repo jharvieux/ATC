@@ -160,6 +160,13 @@ jobs:
       - name: Inspect atc-rag project settings
         run: vercel project inspect --token="$VERCEL_TOKEN" --yes
 
+      - name: Verify atc-rag upload manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          vercel deploy --token="$VERCEL_TOKEN" --yes --dry --format=json > /tmp/vercel-source.json
+          node -e 'const fs = require("node:fs"); const manifest = JSON.parse(fs.readFileSync("/tmp/vercel-source.json", "utf8")); const paths = new Set((manifest.files || []).map((file) => file.path)); console.log(`Vercel source files: ${manifest.fileCount}`); for (const path of [".pnpmfile.mjs", "scripts/check-node-runtime.mjs"]) { console.log(`${path}: ${paths.has(path) ? "included" : "missing"}`); if (!paths.has(path)) process.exitCode = 1; }'
+
       - name: Deploy exact revision to atc-rag beta
         id: deploy
         shell: bash
