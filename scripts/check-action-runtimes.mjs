@@ -5,9 +5,14 @@ import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REQUIRED_ACTION_MAJORS = Object.freeze({
+  "actions/cache": "v6",
   "actions/checkout": "v7",
   "actions/setup-node": "v7",
+  "actions/upload-artifact": "v7",
+  "dependabot/fetch-metadata": "v3",
   "gitleaks/gitleaks-action": "v3",
+  "github/codeql-action/analyze": "v4",
+  "github/codeql-action/init": "v4",
   "pnpm/action-setup": "v6",
 });
 
