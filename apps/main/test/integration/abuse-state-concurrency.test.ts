@@ -366,6 +366,164 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     expect(await evaluationCount("email_volume")).toBe(0);
   });
 
+  it("downgrades markerless prior-day email state from the real subscription call", async () => {
+    const [days] = await sql<{ today: string; prior_day: string }[]>`
+      SELECT
+        (clock_timestamp() AT TIME ZONE 'UTC')::date::text AS today,
+        ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1)::text AS prior_day
+    `;
+    if (!days) throw new Error("UTC day query returned no row");
+    await sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 23,
+          email_sent_day_ref = ${days.prior_day}::date,
+          email_volume_limit_state = 'hard'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    await sql`
+      INSERT INTO public.usage_limit_state_evaluations (tenant_id, dimension, billing_period)
+      VALUES (${tenantId}::uuid, 'email_volume', ${period}::daterange)
+    `;
+
+    const [transition] = await sql<{
+      event_id: string;
+      event_from_state: string;
+      event_to_state: string;
+      event_metric_value: string;
+      event_created: boolean;
+    }[]>`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      true, 'subscription_change_recompute', NULL
+    )`;
+    expect(transition).toMatchObject({
+      event_from_state: "hard",
+      event_to_state: "ok",
+      event_metric_value: "0",
+      event_created: true,
+    });
+    if (!transition) throw new Error("markerless prior-day recompute returned no event");
+
+    const [result] = await sql<{
+      state: string;
+      email_sent_today: number;
+      email_sent_day_ref: string;
+      marker_day: string;
+      evaluated_state: string;
+      pending: boolean;
+      marker_count: number;
+      resolution_action: string;
+    }[]>`
+      SELECT
+        metrics.email_volume_limit_state AS state,
+        metrics.email_sent_today,
+        metrics.email_sent_day_ref::text,
+        evaluation.evaluation_day::text AS marker_day,
+        evaluation.evaluated_state,
+        evaluation.pending,
+        count(*) OVER ()::int AS marker_count,
+        event.resolution_action
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+      JOIN public.usage_limit_events AS event
+        ON event.id = ${transition.event_id}::uuid
+       AND event.tenant_id = metrics.tenant_id
+      WHERE metrics.tenant_id = ${tenantId}::uuid
+        AND metrics.billing_period = ${period}::daterange
+    `;
+    expect(result).toEqual({
+      state: "ok",
+      email_sent_today: 23,
+      email_sent_day_ref: days.prior_day,
+      marker_day: days.prior_day,
+      evaluated_state: "ok",
+      pending: true,
+      marker_count: 1,
+      resolution_action: "subscription_change_recompute",
+    });
+    expect(result?.marker_day).not.toBe(days.today);
+  });
+
+  it("classifies markerless same-day email state from the locked daily count", async () => {
+    const [day] = await sql<{ today: string }[]>`
+      SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date::text AS today
+    `;
+    if (!day) throw new Error("UTC day query returned no row");
+    await sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 7,
+          email_sent_day_ref = ${day.today}::date,
+          email_volume_limit_state = 'ok'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    const [transition] = await sql<{
+      event_id: string;
+      event_from_state: string;
+      event_to_state: string;
+      event_metric_value: string;
+      event_created: boolean;
+    }[]>`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      true, 'subscription_change_recompute', NULL
+    )`;
+    expect(transition).toMatchObject({
+      event_from_state: "ok",
+      event_to_state: "soft1",
+      event_metric_value: "7",
+      event_created: true,
+    });
+    if (!transition) throw new Error("markerless same-day recompute returned no event");
+
+    const [result] = await sql<{
+      state: string;
+      email_sent_today: number;
+      email_sent_day_ref: string;
+      marker_count: number;
+      resolution_action: string;
+    }[]>`
+      SELECT
+        metrics.email_volume_limit_state AS state,
+        metrics.email_sent_today,
+        metrics.email_sent_day_ref::text,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_state_evaluations AS evaluation
+          WHERE evaluation.tenant_id = metrics.tenant_id
+            AND evaluation.dimension = 'email_volume'
+            AND evaluation.billing_period = metrics.billing_period
+        ) AS marker_count,
+        event.resolution_action
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_events AS event
+        ON event.id = ${transition.event_id}::uuid
+       AND event.tenant_id = metrics.tenant_id
+      WHERE metrics.tenant_id = ${tenantId}::uuid
+        AND metrics.billing_period = ${period}::daterange
+    `;
+    expect(result).toEqual({
+      state: "soft1",
+      email_sent_today: 7,
+      email_sent_day_ref: day.today,
+      marker_count: 0,
+      resolution_action: "subscription_change_recompute",
+    });
+  });
+
   it("keeps the newer daily email window when a stale increment arrives", async () => {
     const rangeStart = new Date(`${period.slice(1, 11)}T00:00:00.000Z`);
     const staleDay = new Date(rangeStart.getTime() + 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
