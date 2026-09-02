@@ -943,8 +943,9 @@ export function derivePostgresMigrationProvenance(
           .exec(statement)
         : undefined;
       const routineLanguage = createsExecutableRoutine
-        ? new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "i")
-          .exec(executableAnalysis.executableSql)?.[1]
+        ? [...executableAnalysis.executableSql.matchAll(
+          new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "gi"),
+        )].at(-1)?.[1]
         : undefined;
       const analysableRoutineLanguage = routineLanguage !== undefined &&
         ["sql", "plpgsql"].includes(unquotePostgresIdentifier(routineLanguage));
@@ -956,10 +957,11 @@ export function derivePostgresMigrationProvenance(
       const routineBodyAnalysis = !createsExecutableRoutine || unanalysableRoutineBody
         ? undefined
         : postgresExecutableAnalysis(routineBody!);
-      const routineBodyHasStaticDdl = routineBodyAnalysis && (
+      const routineBodyHasStaticEffect = routineBodyAnalysis && (
         /\b(?:CREATE|ALTER|DROP)\s+(?:(?:OR\s+REPLACE|IF\s+(?:NOT\s+)?EXISTS)\s+)*(?:ACCESS\s+METHOD|AGGREGATE|CAST|DATABASE|DOMAIN|EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|OPERATOR(?:\s+(?:CLASS|FAMILY))?|POLICY|PROCEDURE|ROLE|RULE|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|USER|VIEW)\b/i
           .test(routineBodyAnalysis.executableSql) ||
-        /\b(?:TRUNCATE|GRANT|REVOKE|REINDEX|CLUSTER)\b/i.test(routineBodyAnalysis.executableSql)
+        /\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|GRANT|REVOKE|REINDEX|CLUSTER)\b/i
+          .test(routineBodyAnalysis.executableSql)
       );
       if (routineBodyAnalysis?.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
       const calledRoutineIdentities = routineCallIdentities(routineBodyAnalysis?.routineCalls ?? []);
@@ -1013,7 +1015,7 @@ export function derivePostgresMigrationProvenance(
             routineIdentitySuccessors.set(droppedIdentity, identity);
             droppedRoutineIdentityBySlot.delete(routineSlot);
           }
-          if (unanalysableRoutineBody || routineBodyHasStaticDdl ||
+          if (unanalysableRoutineBody || routineBodyHasStaticEffect ||
             /\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
             directDynamicRoutineIdentities.add(identity);
           } else directDynamicRoutineIdentities.delete(identity);
@@ -1040,7 +1042,9 @@ export function derivePostgresMigrationProvenance(
         if (name) ambiguousFunctions.add(name);
       }
       const routineDefinition = createRoutineHeader || alterRoutineHeader || dropRoutineMutation;
-      if (!routineDefinition) {
+      const routineReferenceOnly = /^(?:GRANT|REVOKE|COMMENT)\b/i.test(statement) ||
+        /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i.test(statement);
+      if (!routineDefinition && !routineReferenceOnly) {
         for (const identity of routineCallIdentities(executableAnalysis.routineCalls)) {
           if (routineIdentityIsDynamic(identity)) catalogRoutinesTrusted = false;
         }
