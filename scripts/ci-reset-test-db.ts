@@ -18,7 +18,7 @@
 //
 // Usage: tsx scripts/ci-reset-test-db.ts [--target=main|rag]
 // RESET_TARGET_DB_URL is the sole database selector; --target chooses the
-// app-specific cleanup inside that selected throwaway DB. Both paths recreate
+// app-specific cleanup inside that selected DB. Both paths recreate
 // `public` and empty the migration ledger. The RAG path also removes vector and
 // pg_trgm because relocatable extensions survive a public-schema reset after
 // #2022 moves them to `extensions`; leaving them installed makes a replay start
