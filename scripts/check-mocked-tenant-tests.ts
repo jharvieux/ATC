@@ -708,8 +708,10 @@ export function derivePostgresMigrationProvenance(
       }
       const droppedRelation = dropRelationExpression.exec(statement);
       if (droppedRelation) {
-        for (const candidate of droppedRelation[1]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "").split(",")) {
-          const name = normalizedQualifiedName(candidate);
+        for (const candidate of splitTopLevelSqlList(
+          droppedRelation[1]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, ""),
+        )) {
+          const name = resolvedRelationName(candidate, currentSearchPath, currentRole);
           if (!name) continue;
           relations.delete(name);
           relationAlterations.delete(name);
@@ -721,7 +723,7 @@ export function derivePostgresMigrationProvenance(
       }
       const alteredTable = tableTailExpression.exec(statement);
       if (alteredTable) {
-        const name = normalizedQualifiedName(alteredTable[1]!);
+        const name = resolvedRelationName(alteredTable[1]!, currentSearchPath, currentRole);
         if (name) {
           const tail = alteredTable[2]!;
           const alterations = relationAlterations.get(name) ?? [];
@@ -1142,126 +1144,97 @@ export function derivePostgresMigrationProvenance(
           triggers.set(`${table}\u0000${unquotePostgresIdentifier(renamedTrigger[3]!)}`, trigger);
         }
       }
-      const cteTableMutations: Array<{ events: Set<string>; table: string }> = [];
-      if (/^WITH\b/i.test(executableAnalysis.unquotedExecutableSql)) {
-        let depth = 0;
-        for (let index = 0; index < executableAnalysis.unquotedExecutableSql.length; index += 1) {
-          const char = executableAnalysis.unquotedExecutableSql[index]!;
-          if (char === "(" && depth === 0 && /\bAS\s+(?:(?:NOT\s+)?MATERIALIZED\s+)?$/i.test(
-            executableAnalysis.unquotedExecutableSql.slice(0, index),
-          )) {
-            let close = index + 1;
-            let memberDepth = 1;
-            while (close < executableAnalysis.unquotedExecutableSql.length && memberDepth > 0) {
-              if (executableAnalysis.unquotedExecutableSql[close] === "(") memberDepth += 1;
-              else if (executableAnalysis.unquotedExecutableSql[close] === ")") memberDepth -= 1;
-              close += 1;
+      function tableMutationsForSql(
+        executableSql: string,
+        unquotedExecutableSql: string,
+      ): Array<{ events: Set<string>; table: string }> {
+        const tableMutations: Array<{ events: Set<string>; table: string }> = [];
+        let mutationOffset = 0;
+        if (/^WITH\b/i.test(unquotedExecutableSql)) {
+          mutationOffset = -1;
+          let depth = 0;
+          for (let index = 0; index < unquotedExecutableSql.length; index += 1) {
+            const char = unquotedExecutableSql[index]!;
+            if (char === "(" && depth === 0 && /\bAS\s+(?:(?:NOT\s+)?MATERIALIZED\s+)?$/i.test(
+              unquotedExecutableSql.slice(0, index),
+            )) {
+              let close = index + 1;
+              let memberDepth = 1;
+              while (close < unquotedExecutableSql.length && memberDepth > 0) {
+                if (unquotedExecutableSql[close] === "(") memberDepth += 1;
+                else if (unquotedExecutableSql[close] === ")") memberDepth -= 1;
+                close += 1;
+              }
+              if (memberDepth === 0) {
+                tableMutations.push(...tableMutationsForSql(
+                  executableSql.slice(index + 1, close - 1).trim(),
+                  unquotedExecutableSql.slice(index + 1, close - 1).trim(),
+                ));
+                index = close - 1;
+              }
+            } else if (char === "(") depth += 1;
+            else if (char === ")") depth -= 1;
+            else if (depth === 0 && /^(?:INSERT|UPDATE|DELETE|MERGE)\b/i.test(
+              unquotedExecutableSql.slice(index),
+            )) {
+              mutationOffset = index;
+              break;
             }
-            if (memberDepth === 0) {
-              const memberSql = executableAnalysis.executableSql.slice(index + 1, close - 1).trim();
-              const memberUnquotedSql = executableAnalysis.unquotedExecutableSql
-                .slice(index + 1, close - 1)
-                .trim();
-              const inserted = new RegExp(
-                `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
-                "i",
-              ).exec(memberSql)?.[1];
-              const updated = new RegExp(
-                `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-                "i",
-              ).exec(memberSql)?.[1];
-              const deleted = new RegExp(
-                `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-                "i",
-              ).exec(memberSql)?.[1];
-              const merged = new RegExp(
-                `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-                "i",
-              ).exec(memberSql)?.[1];
-              const target = inserted ?? updated ?? deleted ?? merged;
-              const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
-              if (table) cteTableMutations.push({
-                events: merged
-                  ? new Set(
-                    [...memberUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
-                      .map((match) => match[1]!.toLowerCase()),
-                  )
-                  : new Set([inserted ? "insert" : updated ? "update" : "delete"]),
-                table,
-              });
-              index = close - 1;
-            }
-          } else if (char === "(") depth += 1;
-          else if (char === ")") depth -= 1;
-        }
-      }
-      let mutationOffset = 0;
-      if (/^WITH\b/i.test(executableAnalysis.unquotedExecutableSql)) {
-        mutationOffset = -1;
-        let depth = 0;
-        for (let index = 0; index < executableAnalysis.unquotedExecutableSql.length; index += 1) {
-          const char = executableAnalysis.unquotedExecutableSql[index]!;
-          if (char === "(") depth += 1;
-          else if (char === ")") depth -= 1;
-          else if (depth === 0 && /^(?:INSERT|UPDATE|DELETE|MERGE)\b/i.test(
-            executableAnalysis.unquotedExecutableSql.slice(index),
-          )) {
-            mutationOffset = index;
-            break;
           }
         }
-      }
-      const mutationSql = mutationOffset >= 0
-        ? executableAnalysis.executableSql.slice(mutationOffset)
-        : "";
-      const mutationUnquotedSql = mutationOffset >= 0
-        ? executableAnalysis.unquotedExecutableSql.slice(mutationOffset)
-        : "";
-      const insertedTable = new RegExp(
-        `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
-        "i",
-      ).exec(mutationSql)?.[1];
-      const updatedTable = new RegExp(
-        `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-        "i",
-      ).exec(mutationSql)?.[1];
-      const deletedTable = new RegExp(
-        `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-        "i",
-      ).exec(mutationSql)?.[1];
-      const truncatedTables = new RegExp(
-        "^TRUNCATE\\s+(?:TABLE\\s+)?([\\s\\S]+)$",
-        "i",
-      ).exec(mutationSql)?.[1];
-      const mergedTable = new RegExp(
-        `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
-        "i",
-      ).exec(mutationSql)?.[1];
-      const mergeEvents = new Set(
-        [...mutationUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
-          .map((match) => match[1]!.toLowerCase()),
-      );
-      const tableMutations: Array<{ events: Set<string>; table: string }> = [...cteTableMutations];
-      if (insertedTable) {
-        const events = new Set(["insert"]);
-        if (/\bON\s+CONFLICT\b[\s\S]*\bDO\s+UPDATE\b/i.test(mutationUnquotedSql)) events.add("update");
-        const table = resolvedRelationName(insertedTable, currentSearchPath, currentRole);
-        if (table) tableMutations.push({ events, table });
-      } else if (updatedTable || deletedTable || mergedTable) {
-        const target = updatedTable ?? deletedTable ?? mergedTable!;
-        const table = resolvedRelationName(target, currentSearchPath, currentRole);
-        const events = updatedTable ? new Set(["update"]) : deletedTable ? new Set(["delete"]) : mergeEvents;
-        if (table) tableMutations.push({ events, table });
-      } else if (truncatedTables) {
-        const targets = truncatedTables
-          .replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "")
-          .replace(/\s+(?:RESTART|CONTINUE)\s+IDENTITY\s*$/i, "");
-        for (const candidate of splitTopLevelSqlList(targets)) {
-          const target = new RegExp(`^(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?:\\s*\\*)?$`, "i").exec(candidate)?.[1];
-          const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
-          if (table) tableMutations.push({ events: new Set(["truncate"]), table });
+        const mutationSql = mutationOffset >= 0 ? executableSql.slice(mutationOffset) : "";
+        const mutationUnquotedSql = mutationOffset >= 0 ? unquotedExecutableSql.slice(mutationOffset) : "";
+        const insertedTable = new RegExp(
+          `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
+          "i",
+        ).exec(mutationSql)?.[1];
+        const updatedTable = new RegExp(
+          `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+          "i",
+        ).exec(mutationSql)?.[1];
+        const deletedTable = new RegExp(
+          `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+          "i",
+        ).exec(mutationSql)?.[1];
+        const truncatedTables = /^TRUNCATE\s+(?:TABLE\s+)?([\s\S]+)$/i.exec(mutationSql)?.[1];
+        const mergedTable = new RegExp(
+          `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+          "i",
+        ).exec(mutationSql)?.[1];
+        if (insertedTable) {
+          const events = new Set(["insert"]);
+          if (/\bON\s+CONFLICT\b[\s\S]*\bDO\s+UPDATE\b/i.test(mutationUnquotedSql)) events.add("update");
+          const table = resolvedRelationName(insertedTable, currentSearchPath, currentRole);
+          if (table) tableMutations.push({ events, table });
+        } else if (updatedTable || deletedTable || mergedTable) {
+          const target = updatedTable ?? deletedTable ?? mergedTable!;
+          const table = resolvedRelationName(target, currentSearchPath, currentRole);
+          const events = updatedTable
+            ? new Set(["update"])
+            : deletedTable
+              ? new Set(["delete"])
+              : new Set(
+                [...mutationUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
+                  .map((match) => match[1]!.toLowerCase()),
+              );
+          if (table) tableMutations.push({ events, table });
+        } else if (truncatedTables) {
+          const targets = truncatedTables
+            .replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "")
+            .replace(/\s+(?:RESTART|CONTINUE)\s+IDENTITY\s*$/i, "");
+          for (const candidate of splitTopLevelSqlList(targets)) {
+            const target = new RegExp(`^(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?:\\s*\\*)?$`, "i")
+              .exec(candidate)?.[1];
+            const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
+            if (table) tableMutations.push({ events: new Set(["truncate"]), table });
+          }
         }
+        return tableMutations;
       }
+      const tableMutations = tableMutationsForSql(
+        executableAnalysis.executableSql,
+        executableAnalysis.unquotedExecutableSql,
+      );
       for (const tableMutation of tableMutations) {
         for (const trigger of triggers.values()) {
           if (trigger.table === tableMutation.table &&
