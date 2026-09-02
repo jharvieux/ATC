@@ -942,11 +942,24 @@ export function derivePostgresMigrationProvenance(
         ? /\bAS\s+(?:(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1|([eE]|[uU]&)?'((?:''|[^'])*)')/i
           .exec(statement)
         : undefined;
+      const routineLanguage = createsExecutableRoutine
+        ? new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "i").exec(statement)?.[1]
+        : undefined;
+      const analysableRoutineLanguage = routineLanguage !== undefined &&
+        ["sql", "plpgsql"].includes(unquotePostgresIdentifier(routineLanguage));
       const routineBody = routineBodyMatch?.[2] ?? (routineBodyMatch?.[3]
         ? undefined
         : routineBodyMatch?.[4]?.replace(/''/g, "'"));
-      const unanalysableRoutineBody = createsExecutableRoutine && routineBody === undefined;
-      const routineBodyAnalysis = routineBody === undefined ? undefined : postgresExecutableAnalysis(routineBody);
+      const unanalysableRoutineBody = createsExecutableRoutine &&
+        (!analysableRoutineLanguage || routineBody === undefined);
+      const routineBodyAnalysis = !createsExecutableRoutine || unanalysableRoutineBody
+        ? undefined
+        : postgresExecutableAnalysis(routineBody!);
+      const routineBodyHasStaticDdl = routineBodyAnalysis && (
+        /\b(?:CREATE|ALTER|DROP)\s+(?:(?:OR\s+REPLACE|IF\s+(?:NOT\s+)?EXISTS)\s+)*(?:ACCESS\s+METHOD|AGGREGATE|CAST|DATABASE|DOMAIN|EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|OPERATOR(?:\s+(?:CLASS|FAMILY))?|POLICY|PROCEDURE|ROLE|RULE|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|USER|VIEW)\b/i
+          .test(routineBodyAnalysis.executableSql) ||
+        /\b(?:TRUNCATE|GRANT|REVOKE|REINDEX|CLUSTER)\b/i.test(routineBodyAnalysis.executableSql)
+      );
       if (routineBodyAnalysis?.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
       const calledRoutineIdentities = routineCallIdentities(routineBodyAnalysis?.routineCalls ?? []);
       for (const routine of routineStatements) for (const event of parseRoutineEvents(routine, migration.file)) {
@@ -999,7 +1012,8 @@ export function derivePostgresMigrationProvenance(
             routineIdentitySuccessors.set(droppedIdentity, identity);
             droppedRoutineIdentityBySlot.delete(routineSlot);
           }
-          if (unanalysableRoutineBody || /\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
+          if (unanalysableRoutineBody || routineBodyHasStaticDdl ||
+            /\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
             directDynamicRoutineIdentities.add(identity);
           } else directDynamicRoutineIdentities.delete(identity);
           routineCallDependencies.set(identity, new Set(calledRoutineIdentities));
