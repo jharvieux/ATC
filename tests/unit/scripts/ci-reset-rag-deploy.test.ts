@@ -48,8 +48,9 @@ describe("atc-rag Vercel deployment root", () => {
     expect(productionStep).not.toContain("working-directory: apps/rag");
   });
 
-  it("uploads the runtime module imported by the pnpm lockfile hook", () => {
+  it("uploads the pnpm lockfile hook and its imported runtime module", () => {
     expect(pnpmfile).toContain('from "./scripts/check-node-runtime.mjs"');
+    expect(vercelIgnore).toContain("!/.pnpmfile.mjs");
     expect(vercelIgnore).toContain("/scripts/*");
     expect(vercelIgnore).toContain("!/scripts/check-node-runtime.mjs");
     expect(vercelIgnore).not.toMatch(/^\/scripts\/$/m);

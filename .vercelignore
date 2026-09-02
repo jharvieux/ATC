@@ -13,6 +13,8 @@
 
 /specs/
 /docs/
+# Vercel's default `.pnp*` exclusion also matches this pnpm hook.
+!/.pnpmfile.mjs
 /scripts/*
 # .pnpmfile.mjs imports this during the hosted pnpm install.
 !/scripts/check-node-runtime.mjs
