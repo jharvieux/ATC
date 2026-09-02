@@ -1068,7 +1068,7 @@ export function derivePostgresMigrationProvenance(
         if (table) {
           const name = unquotePostgresIdentifier(createdTrigger[1]!);
           const events = new Set(
-            [...createdTrigger[2]!.matchAll(/\b(?:INSERT|UPDATE|DELETE)\b/gi)]
+            [...createdTrigger[2]!.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
               .map((match) => match[0].toLowerCase()),
           );
           const routineIdentity = [...routineCallIdentities([createdTrigger[4]!])].at(-1);
@@ -1109,15 +1109,32 @@ export function derivePostgresMigrationProvenance(
         `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
         "i",
       ).exec(statement)?.[1];
+      const truncatedTable = new RegExp(
+        `^TRUNCATE\\s+(?:TABLE\\s+)?(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+        "i",
+      ).exec(statement)?.[1];
+      const mergedTable = new RegExp(
+        `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+        "i",
+      ).exec(statement)?.[1];
+      const mergeEvents = new Set(
+        [...executableAnalysis.unquotedExecutableSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
+          .map((match) => match[1]!.toLowerCase()),
+      );
       const tableMutation = insertedTable
-        ? { event: "insert", table: normalizedQualifiedName(insertedTable) }
+        ? { events: new Set(["insert"]), table: normalizedQualifiedName(insertedTable) }
         : updatedTable
-          ? { event: "update", table: normalizedQualifiedName(updatedTable) }
+          ? { events: new Set(["update"]), table: normalizedQualifiedName(updatedTable) }
           : deletedTable
-            ? { event: "delete", table: normalizedQualifiedName(deletedTable) }
-            : undefined;
+            ? { events: new Set(["delete"]), table: normalizedQualifiedName(deletedTable) }
+            : truncatedTable
+              ? { events: new Set(["truncate"]), table: normalizedQualifiedName(truncatedTable) }
+              : mergedTable
+                ? { events: mergeEvents, table: normalizedQualifiedName(mergedTable) }
+                : undefined;
       if (tableMutation?.table) for (const trigger of triggers.values()) {
-        if (trigger.table === tableMutation.table && trigger.events.has(tableMutation.event) &&
+        if (trigger.table === tableMutation.table &&
+          [...tableMutation.events].some((event) => trigger.events.has(event)) &&
           (!trigger.routineIdentity || routineIdentityIsDynamic(trigger.routineIdentity))) {
           catalogRoutinesTrusted = false;
         }
