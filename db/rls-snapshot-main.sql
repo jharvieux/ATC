@@ -580,14 +580,15 @@ CREATE POLICY "customer_memories_tenant_update" ON public.customer_memories
   WITH CHECK (auth_user_in_tenant(tenant_id));
 
 -- TABLE: public.email_log
+CREATE POLICY "email_log_delete_service" ON public.email_log
+  FOR DELETE TO PUBLIC
+  USING (false);
 CREATE POLICY "email_log_insert_service" ON public.email_log
   FOR INSERT TO PUBLIC
   WITH CHECK (false);
-CREATE POLICY "email_log_select" ON public.email_log
+CREATE POLICY "email_log_select_service" ON public.email_log
   FOR SELECT TO PUBLIC
-  USING ((( SELECT auth.uid() AS uid)) IS NOT NULL AND (tenant_id IN ( SELECT users.tenant_id
-   FROM users
-  WHERE users.id = (( SELECT auth.uid() AS uid)))));
+  USING (false);
 CREATE POLICY "email_log_update_service" ON public.email_log
   FOR UPDATE TO PUBLIC
   USING (false);
@@ -627,11 +628,9 @@ CREATE POLICY "email_suppressions_delete_service" ON public.email_suppressions
 CREATE POLICY "email_suppressions_insert_service" ON public.email_suppressions
   FOR INSERT TO PUBLIC
   WITH CHECK (false);
-CREATE POLICY "email_suppressions_select" ON public.email_suppressions
+CREATE POLICY "email_suppressions_select_service" ON public.email_suppressions
   FOR SELECT TO PUBLIC
-  USING ((( SELECT auth.uid() AS uid)) IS NOT NULL AND (tenant_id IN ( SELECT users.tenant_id
-   FROM users
-  WHERE users.id = (( SELECT auth.uid() AS uid)))));
+  USING (false);
 CREATE POLICY "email_suppressions_update_service" ON public.email_suppressions
   FOR UPDATE TO PUBLIC
   USING (false);
