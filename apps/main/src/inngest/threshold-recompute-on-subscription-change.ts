@@ -12,7 +12,6 @@
 import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import type { AbuseDimension } from "@/lib/abuse/thresholds";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
 import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
 
@@ -22,66 +21,6 @@ const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
   "sub_starter", "sub_pro", "sub_agency",
 ]);
-
-export function classifyAbuse(value: bigint, t: { soft1: bigint; soft2: bigint; hard: bigint }): "ok" | "soft1" | "soft2" | "hard" {
-  if (value >= t.hard) return "hard";
-  if (value >= t.soft2) return "soft2";
-  if (value >= t.soft1) return "soft1";
-  return "ok";
-}
-
-export function classifyRag(count: number, t: { approaching: number; effective: number }): "ok" | "approaching" | "at_cap" | "over_cap" {
-  if (count > t.effective) return "over_cap";
-  if (count === t.effective) return "at_cap";
-  if (count >= t.approaching) return "approaching";
-  return "ok";
-}
-
-export interface AbuseDimensionInput {
-  dim: AbuseDimension;
-  value: bigint;
-  t: { soft1: bigint; soft2: bigint; hard: bigint };
-  state_col: string;
-  changed_col: string;
-  currentState: string;
-}
-
-export interface AbuseTransition {
-  dim: AbuseDimension;
-  from: string;
-  to: string;
-  value: string;
-  threshold: string;
-}
-
-// Recompute core: re-classify each dimension against current thresholds and
-// emit a transition only when the state actually changes. Subscription change
-// is exogenous, so downgrades (e.g. "hard" → "ok" after a tier upgrade) are
-// emitted here too — the monotonic rule only applies inside a stable regime.
-// `nowIso` is injected so the timestamp column is deterministic under test.
-export function computeAbuseTransitions(
-  dimensions: AbuseDimensionInput[],
-  nowIso: string,
-): { updates: Record<string, string>; transitions: AbuseTransition[] } {
-  const updates: Record<string, string> = {};
-  const transitions: AbuseTransition[] = [];
-  for (const d of dimensions) {
-    const newState = classifyAbuse(d.value, d.t);
-    if (newState !== d.currentState) {
-      updates[d.state_col] = newState;
-      updates[d.changed_col] = nowIso;
-      const crossed = newState === "hard" ? d.t.hard : newState === "soft2" ? d.t.soft2 : newState === "soft1" ? d.t.soft1 : 0n;
-      transitions.push({
-        dim: d.dim,
-        from: d.currentState,
-        to: newState,
-        value: d.value.toString(),
-        threshold: crossed.toString(),
-      });
-    }
-  }
-  return { updates, transitions };
-}
 
 export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
   {
@@ -124,21 +63,20 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
         // Promoted count needed for RAG cap.
         const { data: quotaRow } = await db
           .from("tenant_rag_quotas")
-          .select("promoted_chunks_count, current_tenant_chunks_count, rag_state")
+          .select("promoted_chunks_count")
           .eq("tenant_id", tenant_id)
           .maybeSingle();
         const promoted = Number((quotaRow as { promoted_chunks_count?: number } | null)?.promoted_chunks_count ?? 0);
-        const currentChunks = Number((quotaRow as { current_tenant_chunks_count?: number } | null)?.current_tenant_chunks_count ?? 0);
 
         // Each RPC locks the authoritative row, applies upgrade or downgrade,
         // and writes its outbox marker atomically. Concurrent counter calls can
         // no longer create duplicate transition audits from a stale snapshot.
         const changed = await Promise.all([
-          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "ai_cost", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
-          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "chat_volume", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
-          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "email_volume", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
-          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "group_invite", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
-          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "rag_cap", metric_value: currentChunks, promoted_chunks_count: promoted, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "ai_cost", allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "chat_volume", allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "email_volume", allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "group_invite", allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "rag_cap", promoted_chunks_count: promoted, reason: "subscription_change_recompute" }),
         ]);
 
         return { tenant_id, transitions: changed.filter(Boolean).length };

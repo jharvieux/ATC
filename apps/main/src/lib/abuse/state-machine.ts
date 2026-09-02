@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { mapWithConcurrency } from "@/lib/async/with-concurrency";
 import { resolveThresholds, type AbuseDimension } from "./thresholds";
 import type { TenantRevenueSnapshot, TenantTierCode } from "./revenue";
 
@@ -29,8 +30,6 @@ export interface CheckTransitionInput {
   db: SupabaseClient;
   tenant: TenantRevenueSnapshot & { tenant_id: string };
   dimension: AbuseDimension;
-  /** Compatibility hint only; the RPC reads the authoritative locked value. */
-  metric_value: bigint | number;
   /** Required for resolving the rag_cap threshold. */
   promoted_chunks_count?: number;
   /** Subscription changes may move a monthly state down as well as up. */
@@ -50,6 +49,7 @@ const TENANT_TIER_CODES = new Set<TenantTierCode>([
   "sub_pro",
   "sub_agency",
 ]);
+const RECOVERY_CONCURRENCY = 10;
 
 function currentBillingPeriodRange(): string {
   const now = new Date();
@@ -60,11 +60,6 @@ function currentBillingPeriodRange(): string {
     .toISOString()
     .slice(0, 10);
   return `[${start},${end})`;
-}
-
-function firstTransitionRow(data: unknown): TransitionOutboxRow | null {
-  if (Array.isArray(data)) return (data[0] as TransitionOutboxRow | undefined) ?? null;
-  return (data as TransitionOutboxRow | null) ?? null;
 }
 
 export async function dispatchTransitionOutbox(
@@ -125,20 +120,18 @@ export async function dispatchPendingTransitionOutbox(
     threshold_crossed: string | number;
   }>;
 
-  await Promise.all(
-    pending.map((row) =>
-      dispatchTransitionOutbox(db, {
-        event_id: row.id,
-        event_tenant_id: row.tenant_id,
-        event_dimension: row.dimension,
-        event_from_state: row.from_state,
-        event_to_state: row.to_state,
-        event_metric_value: row.metric_value,
-        event_threshold_crossed: row.threshold_crossed,
-        event_created: false,
-      }),
-    ),
-  );
+  await mapWithConcurrency(pending, RECOVERY_CONCURRENCY, async (row) => {
+    await dispatchTransitionOutbox(db, {
+      event_id: row.id,
+      event_tenant_id: row.tenant_id,
+      event_dimension: row.dimension,
+      event_from_state: row.from_state,
+      event_to_state: row.to_state,
+      event_metric_value: row.metric_value,
+      event_threshold_crossed: row.threshold_crossed,
+      event_created: false,
+    });
+  });
   return pending.length;
 }
 
@@ -208,7 +201,7 @@ export async function recoverPendingStateEvaluations(
   const promotedByTenant = new Map(ragRows.map((row) => [row.tenant_id, row.promoted_chunks_count]));
   const tenantById = new Map(tenantRows.map((row) => [row.id, row]));
 
-  await Promise.all(evaluations.map(async (evaluation) => {
+  await mapWithConcurrency(evaluations, RECOVERY_CONCURRENCY, async (evaluation) => {
     const tenantRow = tenantById.get(evaluation.tenant_id);
     if (!tenantRow) return;
     const tierCode = tenantRow.tier_id
@@ -226,19 +219,17 @@ export async function recoverPendingStateEvaluations(
         billing_period: tenantRow.billing_period ?? "monthly",
       },
       dimension: evaluation.dimension,
-      metric_value: 0,
       promoted_chunks_count: promotedByTenant.get(evaluation.tenant_id) ?? 0,
       ...(evaluation.billing_period ? { billing_period: evaluation.billing_period } : {}),
     });
-  }));
+  });
   return evaluations.length;
 }
 
 /**
- * Re-evaluates the authoritative counter under a database row lock. The input
- * metric is intentionally not trusted because callers may race or may only know
- * the most recent delta (AI cost). Returns true only when this call created a
- * new logical transition; pending outbox work is retried either way.
+ * Re-evaluates the authoritative counter under a database row lock. Returns
+ * true only when this call created a new logical transition; pending outbox
+ * work is retried either way.
  */
 export async function checkStateTransitionIfNeeded(
   input: CheckTransitionInput,
@@ -253,7 +244,7 @@ export async function checkStateTransitionIfNeeded(
     );
   }
 
-  let result: unknown;
+  let result: TransitionOutboxRow[] | null;
   if (dimension === "rag_cap") {
     result = await safeAwait(
       db.rpc("advance_tenant_rag_state", {
@@ -292,7 +283,7 @@ export async function checkStateTransitionIfNeeded(
     );
   }
 
-  const row = firstTransitionRow(result);
+  const row = result?.[0] ?? null;
   if (row) await dispatchTransitionOutbox(db, row);
   return row?.event_created ?? false;
 }

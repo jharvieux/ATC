@@ -26,27 +26,27 @@ export interface CounterContext {
 }
 
 export async function incrementChatMessages(ctx: CounterContext): Promise<void> {
-  const count = await incrementMonthlyCounter(ctx, "chat_volume", 1);
-  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "chat_volume", metric_value: BigInt(count) });
+  await incrementMonthlyCounter(ctx, "chat_volume", 1);
+  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "chat_volume" });
 }
 
 export async function incrementEmailSent(ctx: CounterContext): Promise<void> {
-  const count = await incrementMonthlyCounter(ctx, "email_volume", 1);
-  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume", metric_value: BigInt(count) });
+  await incrementMonthlyCounter(ctx, "email_volume", 1);
+  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume" });
 }
 
 export async function incrementGroupInvitees(ctx: CounterContext, count: number): Promise<void> {
   if (count <= 0) return;
-  const total = await incrementMonthlyCounter(ctx, "group_invite", count);
-  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "group_invite", metric_value: BigInt(total) });
+  await incrementMonthlyCounter(ctx, "group_invite", count);
+  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "group_invite" });
 }
 
 async function incrementMonthlyCounter(
   ctx: CounterContext,
   dimension: "chat_volume" | "email_volume" | "group_invite",
   amount: number,
-): Promise<number> {
-  const value = await safeAwait(
+): Promise<void> {
+  await safeAwait(
     ctx.db.rpc("increment_tenant_usage_counter", {
       p_tenant_id: ctx.tenant.tenant_id,
       p_billing_period: currentBillingPeriodRange(),
@@ -55,32 +55,35 @@ async function incrementMonthlyCounter(
     }),
     "tenant_usage_metrics.rpc.increment",
   );
-  return Number(value);
 }
 
 /**
  * Bump current_tenant_chunks_count by delta (+/-) and run the rag_cap
- * state transition. Caller supplies the promoted_chunks_count for the
- * threshold calculation.
+ * state transition. The caller's promoted count initializes a missing row;
+ * an existing row's locked value remains authoritative.
  */
 export async function adjustRagChunkCount(
   ctx: CounterContext,
   delta: number,
   promoted_chunks_count: number,
 ): Promise<void> {
-  const count = Number(await safeAwait(
+  const rows = await safeAwait(
     ctx.db.rpc("adjust_tenant_rag_usage", {
       p_tenant_id: ctx.tenant.tenant_id,
       p_delta: delta,
       p_promoted_chunks_count: promoted_chunks_count,
     }),
     "tenant_rag_quotas.rpc.adjust",
-  ));
+  ) as Array<{
+    current_tenant_chunks_count: number;
+    promoted_chunks_count: number;
+  }> | null;
+  const quota = rows?.[0];
+  if (!quota) throw new Error("adjust_tenant_rag_usage returned no row");
   await checkStateTransitionIfNeeded({
     db: ctx.db,
     tenant: ctx.tenant,
     dimension: "rag_cap",
-    metric_value: count,
-    promoted_chunks_count,
+    promoted_chunks_count: quota.promoted_chunks_count,
   });
 }

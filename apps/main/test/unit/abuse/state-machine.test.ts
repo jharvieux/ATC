@@ -74,6 +74,8 @@ const OUTBOX_ROW = {
   event_created: true,
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.updatePayloads = [];
@@ -91,7 +93,6 @@ describe("monthly transition RPC", () => {
       db: makeDb(),
       tenant: TENANT,
       dimension: "chat_volume",
-      metric_value: 999n,
       allow_downgrade: true,
       reason: "subscription_change_recompute",
     });
@@ -108,12 +109,11 @@ describe("monthly transition RPC", () => {
     }));
   });
 
-  it("does not trust a caller's stale metric value", async () => {
+  it("does not accept a caller-provided metric value", async () => {
     await checkStateTransitionIfNeeded({
       db: makeDb(),
       tenant: TENANT,
       dimension: "ai_cost",
-      metric_value: 1n,
     });
 
     const args = mocks.rpc.mock.calls[0]?.[1] as Record<string, unknown>;
@@ -127,7 +127,6 @@ describe("outbox dispatch", () => {
       db: makeDb(),
       tenant: TENANT,
       dimension: "chat_volume",
-      metric_value: 10n,
     });
 
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({
@@ -147,29 +146,53 @@ describe("outbox dispatch", () => {
       db: makeDb(),
       tenant: TENANT,
       dimension: "chat_volume",
-      metric_value: 10n,
     })).rejects.toThrow(/Inngest unavailable/);
     expect(mocks.updatePayloads).toHaveLength(0);
   });
 
-  it("periodic recovery dispatches every bounded pending row", async () => {
+  it("bounds multi-row outbox recovery to ten concurrent sends", async () => {
+    const pending = Array.from({ length: 12 }, (_, index) => ({
+      id: `00000000-0000-0000-0000-${String(index).padStart(12, "0")}`,
+      tenant_id: TENANT.tenant_id,
+      dimension: "chat_volume",
+      from_state: "ok",
+      to_state: "soft1",
+      metric_value: "10",
+      threshold_crossed: "10",
+    }));
     mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) => {
       if (label.endsWith("select.dispatch_pending")) {
-        return [{
-          id: OUTBOX_ROW.event_id,
-          tenant_id: TENANT.tenant_id,
-          dimension: "chat_volume",
-          from_state: "ok",
-          to_state: "soft1",
-          metric_value: "10",
-          threshold_crossed: "10",
-        }];
+        return pending;
       }
       return null;
     });
+    let active = 0;
+    let maxActive = 0;
+    mocks.send.mockImplementation(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await sleep(5);
+      active--;
+    });
 
-    await expect(dispatchPendingTransitionOutbox(makeDb())).resolves.toBe(1);
-    expect(mocks.send).toHaveBeenCalledOnce();
+    await expect(dispatchPendingTransitionOutbox(makeDb())).resolves.toBe(12);
+    expect(mocks.send).toHaveBeenCalledTimes(12);
+    expect(maxActive).toBe(10);
+  });
+
+  it("fails outbox recovery loudly when any pending dispatch fails", async () => {
+    mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) => {
+      if (label.endsWith("select.dispatch_pending")) {
+        return [
+          { ...OUTBOX_ROW, id: "event-1", tenant_id: TENANT.tenant_id, dimension: "chat_volume", from_state: "ok", to_state: "soft1", metric_value: "10", threshold_crossed: "10" },
+          { ...OUTBOX_ROW, id: "event-2", tenant_id: TENANT.tenant_id, dimension: "chat_volume", from_state: "ok", to_state: "soft1", metric_value: "10", threshold_crossed: "10" },
+        ];
+      }
+      return null;
+    });
+    mocks.send.mockRejectedValueOnce(new Error("dispatch recovery failed"));
+
+    await expect(dispatchPendingTransitionOutbox(makeDb())).rejects.toThrow("dispatch recovery failed");
   });
 
   it("periodic recovery evaluates a durable counter marker using its original period", async () => {
@@ -200,6 +223,42 @@ describe("outbox dispatch", () => {
       p_dimension: "chat_volume",
     }));
   });
+
+  it("bounds multi-row state recovery and propagates an evaluation failure", async () => {
+    const evaluations = Array.from({ length: 12 }, (_, index) => ({
+      tenant_id: `00000000-0000-0000-0001-${String(index).padStart(12, "0")}`,
+      dimension: "chat_volume" as const,
+      billing_period: "[2026-08-01,2026-09-01)",
+    }));
+    let active = 0;
+    let maxActive = 0;
+    let advances = 0;
+    mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) => {
+      if (label === "usage_limit_state_evaluations.select.pending") return evaluations;
+      if (label === "tenants.select.usage_state_recovery") {
+        return evaluations.map((row) => ({
+          id: row.tenant_id,
+          tier_id: null,
+          seat_count: 1,
+          billing_period: "monthly",
+        }));
+      }
+      if (label.endsWith("rpc.advance_state")) {
+        const current = advances++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await sleep(5);
+        active--;
+        if (current === 11) throw new Error("state recovery failed");
+        return null;
+      }
+      return null;
+    });
+
+    await expect(recoverPendingStateEvaluations(makeDb())).rejects.toThrow("state recovery failed");
+    expect(advances).toBe(12);
+    expect(maxActive).toBe(10);
+  });
 });
 
 it("keeps help_submission_rate on its dedicated daily state machine", async () => {
@@ -207,6 +266,5 @@ it("keeps help_submission_rate on its dedicated daily state machine", async () =
     db: makeDb(),
     tenant: TENANT,
     dimension: "help_submission_rate",
-    metric_value: 20n,
   })).rejects.toThrow(/help_submission_rate/);
 });

@@ -22,13 +22,15 @@ CREATE INDEX usage_limit_events_dispatch_pending_idx
   WHERE event_dispatch_pending;
 
 CREATE TABLE public.usage_limit_state_evaluations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
   dimension TEXT NOT NULL CHECK (dimension IN (
     'ai_cost', 'chat_volume', 'email_volume', 'group_invite', 'rag_cap'
   )),
   billing_period DATERANGE,
   requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (tenant_id, dimension)
+  CONSTRAINT usage_limit_state_evaluations_scope_uidx
+    UNIQUE NULLS NOT DISTINCT (tenant_id, dimension, billing_period)
 );
 
 CREATE INDEX usage_limit_state_evaluations_requested_idx
@@ -70,8 +72,7 @@ BEGIN
 
   INSERT INTO public.usage_limit_state_evaluations (tenant_id, dimension, billing_period)
   VALUES (p_tenant_id, 'ai_cost', p_billing_period)
-  ON CONFLICT (tenant_id, dimension) DO UPDATE SET
-    billing_period = EXCLUDED.billing_period,
+  ON CONFLICT ON CONSTRAINT usage_limit_state_evaluations_scope_uidx DO UPDATE SET
     requested_at = NOW();
 END;
 $$;
@@ -150,8 +151,7 @@ BEGIN
 
   INSERT INTO public.usage_limit_state_evaluations (tenant_id, dimension, billing_period)
   VALUES (p_tenant_id, p_dimension, p_billing_period)
-  ON CONFLICT (tenant_id, dimension) DO UPDATE SET
-    billing_period = EXCLUDED.billing_period,
+  ON CONFLICT ON CONSTRAINT usage_limit_state_evaluations_scope_uidx DO UPDATE SET
     requested_at = NOW();
 
   RETURN v_value;
@@ -166,13 +166,17 @@ CREATE OR REPLACE FUNCTION public.adjust_tenant_rag_usage(
   p_delta INTEGER,
   p_promoted_chunks_count INTEGER
 )
-RETURNS INTEGER
+RETURNS TABLE (
+  current_tenant_chunks_count INTEGER,
+  promoted_chunks_count INTEGER
+)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
   v_count INTEGER;
+  v_promoted INTEGER;
 BEGIN
   IF COALESCE(auth.jwt() ->> 'role', '') <> 'service_role'
      AND session_user NOT IN ('postgres', 'supabase_admin') THEN
@@ -201,17 +205,18 @@ BEGIN
       0,
       public.tenant_rag_quotas.current_tenant_chunks_count + p_delta
     ),
-    promoted_chunks_count = p_promoted_chunks_count,
     updated_at = NOW()
-  RETURNING current_tenant_chunks_count INTO v_count;
+  RETURNING
+    public.tenant_rag_quotas.current_tenant_chunks_count,
+    public.tenant_rag_quotas.promoted_chunks_count
+  INTO v_count, v_promoted;
 
   INSERT INTO public.usage_limit_state_evaluations (tenant_id, dimension, billing_period)
   VALUES (p_tenant_id, 'rag_cap', NULL)
-  ON CONFLICT (tenant_id, dimension) DO UPDATE SET
-    billing_period = NULL,
+  ON CONFLICT ON CONSTRAINT usage_limit_state_evaluations_scope_uidx DO UPDATE SET
     requested_at = NOW();
 
-  RETURN v_count;
+  RETURN QUERY SELECT v_count, v_promoted;
 END;
 $$;
 
@@ -480,7 +485,8 @@ BEGIN
 
     DELETE FROM public.usage_limit_state_evaluations
     WHERE tenant_id = p_tenant_id
-      AND dimension = 'rag_cap';
+      AND dimension = 'rag_cap'
+      AND billing_period IS NULL;
 
     RETURN QUERY SELECT
       v_event_id,
@@ -496,7 +502,8 @@ BEGIN
 
   DELETE FROM public.usage_limit_state_evaluations
   WHERE tenant_id = p_tenant_id
-    AND dimension = 'rag_cap';
+    AND dimension = 'rag_cap'
+    AND billing_period IS NULL;
 
   RETURN QUERY
   SELECT
@@ -646,6 +653,182 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.increment_help_submission_usage(UUID, DATERANGE, INTEGER, INTEGER, INTEGER) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.increment_help_submission_usage(UUID, DATERANGE, INTEGER, INTEGER, INTEGER) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.finalize_idempotent_email_send(
+  p_tenant_id UUID,
+  p_idempotency_key TEXT,
+  p_resend_message_id TEXT
+)
+RETURNS TABLE (
+  email_log_id UUID,
+  newly_recorded BOOLEAN,
+  email_sent_today INTEGER
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := clock_timestamp();
+  v_log_id UUID;
+  v_effects_recorded_at TIMESTAMPTZ;
+  v_existing_resend_message_id TEXT;
+  v_retry_of UUID;
+  v_retry_content JSONB;
+  v_today DATE := (v_now AT TIME ZONE 'UTC')::DATE;
+  v_period DATERANGE := daterange(
+    date_trunc('month', v_now AT TIME ZONE 'UTC')::DATE,
+    (date_trunc('month', v_now AT TIME ZONE 'UTC') + INTERVAL '1 month')::DATE,
+    '[)'
+  );
+  v_daily_count INTEGER;
+  v_newly_recorded BOOLEAN;
+BEGIN
+  SELECT
+    target.id,
+    target.idempotent_effects_recorded_at,
+    target.resend_message_id,
+    target.retry_of,
+    dispatch.retry_content_snapshot
+  INTO
+    v_log_id,
+    v_effects_recorded_at,
+    v_existing_resend_message_id,
+    v_retry_of,
+    v_retry_content
+  FROM public.email_log AS target
+  JOIN public.email_provider_dispatch AS dispatch
+    ON dispatch.email_log_id = target.id
+    AND dispatch.tenant_id = target.tenant_id
+  WHERE target.tenant_id = p_tenant_id
+    AND target.idempotency_key = p_idempotency_key
+  FOR UPDATE OF target, dispatch;
+
+  IF v_log_id IS NULL THEN
+    RAISE EXCEPTION 'idempotent email outbox not found';
+  END IF;
+  IF
+    v_existing_resend_message_id IS NULL
+    AND (p_resend_message_id IS NULL OR btrim(p_resend_message_id) = '')
+  THEN
+    RAISE EXCEPTION 'provider message id is required';
+  END IF;
+  IF
+    v_existing_resend_message_id IS NOT NULL
+    AND p_resend_message_id IS NOT NULL
+    AND v_existing_resend_message_id <> p_resend_message_id
+  THEN
+    RAISE EXCEPTION 'idempotency key provider response mismatch';
+  END IF;
+
+  v_newly_recorded := v_effects_recorded_at IS NULL;
+
+  UPDATE public.email_log AS target
+  SET status = CASE
+        WHEN target.status IN ('queued', 'rejected') THEN 'sent'
+        ELSE target.status
+      END,
+      sent_at = COALESCE(target.sent_at, v_now),
+      resend_message_id = COALESCE(target.resend_message_id, p_resend_message_id)
+  WHERE target.id = v_log_id
+    AND target.tenant_id = p_tenant_id;
+
+  IF v_effects_recorded_at IS NULL THEN
+    IF v_retry_of IS NULL THEN
+      IF v_retry_content IS NULL THEN
+        RAISE EXCEPTION 'retry content snapshot is required for an original send';
+      END IF;
+
+      INSERT INTO public.email_retry_content (
+        email_log_id,
+        tenant_id,
+        to_email,
+        subject,
+        template_id,
+        email_category,
+        html,
+        reply_to,
+        related_booking_id,
+        related_group_id,
+        user_id,
+        contact_id,
+        expires_at
+      ) VALUES (
+        v_log_id,
+        p_tenant_id,
+        v_retry_content->>'to_email',
+        v_retry_content->>'subject',
+        v_retry_content->>'template_id',
+        v_retry_content->>'email_category',
+        v_retry_content->>'html',
+        NULLIF(v_retry_content->>'reply_to', ''),
+        NULLIF(v_retry_content->>'related_booking_id', '')::UUID,
+        NULLIF(v_retry_content->>'related_group_id', '')::UUID,
+        NULLIF(v_retry_content->>'user_id', '')::UUID,
+        NULLIF(v_retry_content->>'contact_id', '')::UUID,
+        v_now + INTERVAL '7 days'
+      )
+      ON CONFLICT ON CONSTRAINT email_retry_content_pkey DO NOTHING;
+    END IF;
+
+    INSERT INTO public.tenant_usage_metrics AS metrics (
+      tenant_id,
+      billing_period,
+      email_sent_count,
+      email_sent_today,
+      email_sent_day_ref
+    ) VALUES (
+      p_tenant_id,
+      v_period,
+      1,
+      1,
+      v_today
+    )
+    ON CONFLICT (tenant_id, billing_period)
+    DO UPDATE SET
+      email_sent_count = metrics.email_sent_count + 1,
+      email_sent_today = CASE
+        WHEN metrics.email_sent_day_ref = v_today
+          THEN metrics.email_sent_today + 1
+        ELSE 1
+      END,
+      email_sent_day_ref = v_today
+    RETURNING metrics.email_sent_today INTO v_daily_count;
+
+    INSERT INTO public.usage_limit_state_evaluations (tenant_id, dimension, billing_period)
+    VALUES (p_tenant_id, 'email_volume', v_period)
+    ON CONFLICT ON CONSTRAINT usage_limit_state_evaluations_scope_uidx DO UPDATE SET
+      requested_at = NOW();
+
+    UPDATE public.email_log AS target
+    SET idempotent_effects_recorded_at = v_now
+    WHERE target.id = v_log_id
+      AND target.tenant_id = p_tenant_id
+      AND target.idempotent_effects_recorded_at IS NULL;
+
+    UPDATE public.email_provider_dispatch AS dispatch
+    SET provider_request_body = NULL,
+        provider_snapshot_expires_at = NULL,
+        retry_content_snapshot = NULL
+    WHERE dispatch.email_log_id = v_log_id
+      AND dispatch.tenant_id = p_tenant_id;
+  ELSE
+    SELECT CASE
+      WHEN metrics.email_sent_day_ref = v_today
+        THEN metrics.email_sent_today
+      ELSE 0
+    END
+    INTO v_daily_count
+    FROM public.tenant_usage_metrics AS metrics
+    WHERE metrics.tenant_id = p_tenant_id
+      AND metrics.billing_period = v_period;
+
+    v_daily_count := COALESCE(v_daily_count, 0);
+  END IF;
+
+  RETURN QUERY SELECT v_log_id, v_newly_recorded, v_daily_count;
+END;
+$$;
+
 COMMENT ON COLUMN public.usage_limit_events.event_dispatch_pending IS
   'Durable outbox marker set in the same transaction as state advancement; cleared only after deterministic Inngest dispatch succeeds.';
 COMMENT ON TABLE public.usage_limit_state_evaluations IS
@@ -662,3 +845,5 @@ COMMENT ON FUNCTION public.advance_tenant_rag_state(UUID, INTEGER, INTEGER, TEXT
   '#2112: serializes non-monotonic RAG state changes and atomically writes both audit records plus the outbox marker.';
 COMMENT ON FUNCTION public.increment_help_submission_usage(UUID, DATERANGE, INTEGER, INTEGER, INTEGER) IS
   '#2112: atomically increments per-day help usage, advances its state, and records an outbox event.';
+COMMENT ON FUNCTION public.finalize_idempotent_email_send(UUID, TEXT, TEXT) IS
+  '#2112: atomically finalizes an idempotent email, increments usage, and records its pending email-volume state evaluation.';

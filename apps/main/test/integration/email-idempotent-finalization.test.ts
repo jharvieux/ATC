@@ -139,6 +139,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
   afterAll(async () => {
     if (!fx) return;
     try {
+      await fx.sql`DELETE FROM public.usage_limit_events WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_retry_content WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_provider_dispatch WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_log WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
@@ -150,6 +151,61 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     } finally {
       await fx.sql.end();
     }
+  }, 60000);
+
+  it("commits the email counter and recovery marker together before state evaluation", async () => {
+    await finalize(fx.tenantTwo, `${runTag}:counter-marker`, "counter-marker");
+
+    const [committed] = await fx.sql<{ count: number; period: string; markers: number }[]>`
+      SELECT
+        metrics.email_sent_today::int AS count,
+        metrics.billing_period::text AS period,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_state_evaluations AS evaluation
+          WHERE evaluation.tenant_id = metrics.tenant_id
+            AND evaluation.dimension = 'email_volume'
+            AND evaluation.billing_period = metrics.billing_period
+        ) AS markers
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantTwo}
+      ORDER BY upper(metrics.billing_period) DESC
+      LIMIT 1
+    `;
+    expect(committed).toMatchObject({ count: 1, markers: 1 });
+
+    await fx.sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${fx.tenantTwo}::uuid,
+      ${committed!.period}::daterange,
+      'email_volume',
+      1,
+      10,
+      20,
+      false,
+      NULL
+    )`;
+    const [recovered] = await fx.sql<{ state: string; markers: number; events: number }[]>`
+      SELECT
+        metrics.email_volume_limit_state AS state,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_state_evaluations AS evaluation
+          WHERE evaluation.tenant_id = metrics.tenant_id
+            AND evaluation.dimension = 'email_volume'
+            AND evaluation.billing_period = metrics.billing_period
+        ) AS markers,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_events AS event
+          WHERE event.tenant_id = metrics.tenant_id
+            AND event.dimension = 'email_volume'
+            AND event.resolution_action = 'state_transition'
+        ) AS events
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantTwo}
+        AND metrics.billing_period = ${committed!.period}::daterange
+    `;
+    expect(recovered).toEqual({ state: "soft1", markers: 0, events: 1 });
   }, 60000);
 
   it("records, replays, resets the UTC day, heals an orphan, and omits retry content for retry_of", async () => {

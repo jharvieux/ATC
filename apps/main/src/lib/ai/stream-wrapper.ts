@@ -238,7 +238,6 @@ export function instrumentedClaudeStream(
           db,
           tenant: snapshot.tenant,
           dimension: "ai_cost",
-          metric_value: cost_cents,
         }).catch((err) => console.warn("[stream-wrapper] state-transition check failed:", err));
         evictTenantSnapshot(args.tenant_id);
 

@@ -142,7 +142,7 @@ export async function incrementHelpSubmissionCounter(
   db: SupabaseClient,
   tenant_id: string,
 ): Promise<{ new_state: HelpSubmissionState; new_count: number; transitioned: boolean }> {
-  const result = await safeAwait(
+  const rows = await safeAwait(
     db.rpc("increment_help_submission_usage", {
       p_tenant_id: tenant_id,
       p_billing_period: currentBillingPeriodRange(),
@@ -151,8 +151,7 @@ export async function incrementHelpSubmissionCounter(
       p_hard: HARD,
     }),
     "tenant_usage_metrics.rpc.increment_help_submission",
-  );
-  const row = (Array.isArray(result) ? result[0] : result) as {
+  ) as Array<{
     new_state: HelpSubmissionState;
     new_count: number;
     transitioned: boolean;
@@ -164,7 +163,8 @@ export async function incrementHelpSubmissionCounter(
     event_metric_value: string | number | null;
     event_threshold_crossed: string | number | null;
     event_created: boolean;
-  } | null;
+  }> | null;
+  const row = rows?.[0];
   if (!row) throw new Error("increment_help_submission_usage returned no row");
 
   const newCount = Number(row.new_count);

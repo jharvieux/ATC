@@ -22,6 +22,13 @@ function monthRange(): string {
   return `[${start},${end})`;
 }
 
+function previousMonthRange(): string {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+  return `[${start},${end})`;
+}
+
 async function eventCount(dimension: string): Promise<number> {
   const [row] = await sql<{ n: number }[]>`
     SELECT count(*)::int AS n
@@ -85,16 +92,49 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     }
   }, 60000);
 
-  it("serializes chat/email/group increments without crossing tenant scope", async () => {
-    for (const dimension of ["chat_volume", "email_volume", "group_invite"] as const) {
-      await Promise.all(Array.from({ length: K }, () => sql`
+  it("serializes chat/email/group threshold crossings into one event each", async () => {
+    const dimensions = [
+      { name: "chat_volume", soft1: 100 },
+      { name: "email_volume", soft1: 5 },
+      { name: "group_invite", soft1: 100 },
+    ] as const;
+
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET chat_messages_count = 99,
+          email_sent_count = 4,
+          email_sent_today = 4,
+          email_sent_day_ref = CURRENT_DATE,
+          group_invitees_count = 99,
+          chat_volume_limit_state = 'ok',
+          email_volume_limit_state = 'ok',
+          group_invite_limit_state = 'ok'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    for (const dimension of dimensions) {
+      await Promise.all(Array.from({ length: K }, async () => {
+        await sql`
         SELECT public.increment_tenant_usage_counter(
           ${tenantId}::uuid,
           ${period}::daterange,
-          ${dimension},
+          ${dimension.name},
           1
         )
-      `));
+        `;
+        await sql`SELECT * FROM public.advance_tenant_usage_state(
+          ${tenantId}::uuid,
+          ${period}::daterange,
+          ${dimension.name},
+          ${dimension.soft1},
+          1000,
+          2000,
+          false,
+          NULL
+        )`;
+      }));
+      expect(await eventCount(dimension.name)).toBe(1);
+      expect(await evaluationCount(dimension.name)).toBe(0);
     }
 
     const [row] = await sql<{
@@ -108,10 +148,10 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(row).toMatchObject({
-      chat_messages_count: K,
-      email_sent_count: K,
-      email_sent_today: K,
-      group_invitees_count: K,
+      chat_messages_count: 99 + K,
+      email_sent_count: 4 + K,
+      email_sent_today: 4 + K,
+      group_invitees_count: 99 + K,
     });
 
     const [other] = await sql<{ total: number }[]>`
@@ -120,6 +160,47 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(other?.total).toBe(0);
+  });
+
+  it("keeps old and new period crash markers until each period recovers", async () => {
+    const oldPeriod = previousMonthRange();
+    const before = await eventCount("chat_volume");
+    await sql`
+      INSERT INTO public.tenant_usage_metrics (
+        tenant_id, billing_period, chat_messages_count, chat_volume_limit_state
+      ) VALUES (${tenantId}::uuid, ${oldPeriod}::daterange, 4, 'ok')
+      ON CONFLICT (tenant_id, billing_period) DO UPDATE SET
+        chat_messages_count = 4,
+        chat_volume_limit_state = 'ok'
+    `;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET chat_messages_count = 4, chat_volume_limit_state = 'ok'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${oldPeriod}::daterange, 'chat_volume', 1
+    )`;
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${period}::daterange, 'chat_volume', 1
+    )`;
+
+    const markers = await sql<{ billing_period: string }[]>`
+      SELECT billing_period::text
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid AND dimension = 'chat_volume'
+      ORDER BY lower(billing_period)
+    `;
+    expect(markers.map((row) => row.billing_period)).toEqual([oldPeriod, period]);
+
+    for (const recoveryPeriod of [oldPeriod, period]) {
+      await sql`SELECT * FROM public.advance_tenant_usage_state(
+        ${tenantId}::uuid, ${recoveryPeriod}::daterange, 'chat_volume', 5, 10, 20, false, NULL
+      )`;
+    }
+    expect(await eventCount("chat_volume")).toBe(before + 2);
+    expect(await evaluationCount("chat_volume")).toBe(0);
   });
 
   it("creates one monthly logical transition/outbox under concurrent threshold checks", async () => {
@@ -174,30 +255,104 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     expect(await evaluationCount("email_volume")).toBe(0);
   });
 
-  it("creates one RAG logical transition and one RAG audit under concurrent adjustment", async () => {
+  it("classifies exact monthly boundaries and only downgrades when requested", async () => {
+    for (const [value, expected] of [[10, "soft1"], [20, "soft2"], [30, "hard"]] as const) {
+      await sql`
+        UPDATE public.tenant_usage_metrics
+        SET chat_messages_count = ${value}
+        WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
+      `;
+      await sql`SELECT * FROM public.advance_tenant_usage_state(
+        ${otherTenantId}::uuid, ${period}::daterange, 'chat_volume', 10, 20, 30, false, NULL
+      )`;
+      const [row] = await sql<{ state: string }[]>`
+        SELECT chat_volume_limit_state AS state
+        FROM public.tenant_usage_metrics
+        WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
+      `;
+      expect(row?.state).toBe(expected);
+    }
+
     await sql`
-      INSERT INTO public.tenant_rag_quotas (tenant_id, base_cap, current_tenant_chunks_count)
-      VALUES (${tenantId}::uuid, 100, 0)
-      ON CONFLICT (tenant_id) DO UPDATE SET current_tenant_chunks_count = 0, rag_state = 'ok'
+      UPDATE public.tenant_usage_metrics
+      SET chat_messages_count = 0
+      WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${otherTenantId}::uuid, ${period}::daterange, 'chat_volume', 10, 20, 30, false, NULL
+    )`;
+    let [row] = await sql<{ state: string }[]>`
+      SELECT chat_volume_limit_state AS state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(row?.state).toBe("hard");
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${otherTenantId}::uuid, ${period}::daterange, 'chat_volume', 10, 20, 30, true, 'subscription_change_recompute'
+    )`;
+    [row] = await sql<{ state: string }[]>`
+      SELECT chat_volume_limit_state AS state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${otherTenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(row?.state).toBe("ok");
+  });
+
+  it("preserves nonzero promotions and classifies RAG boundaries under concurrency", async () => {
+    await sql`
+      INSERT INTO public.tenant_rag_quotas (
+        tenant_id, base_cap, promoted_chunks_count, current_tenant_chunks_count
+      ) VALUES (${tenantId}::uuid, 10, 7, 0)
+      ON CONFLICT (tenant_id) DO UPDATE SET
+        base_cap = 10,
+        promoted_chunks_count = 7,
+        current_tenant_chunks_count = 0,
+        rag_state = 'ok'
     `;
 
-    await Promise.all(Array.from({ length: K }, async () => {
-      await sql`SELECT public.adjust_tenant_rag_usage(${tenantId}::uuid, 1, 0)`;
-      await sql`SELECT * FROM public.advance_tenant_rag_state(${tenantId}::uuid, 5, 100, NULL)`;
-    }));
+    const adjusted = await Promise.all(Array.from({ length: K }, () => sql<{
+      current_tenant_chunks_count: number;
+      promoted_chunks_count: number;
+    }[]>`SELECT * FROM public.adjust_tenant_rag_usage(${tenantId}::uuid, 1, 0)`));
+    expect(adjusted.every((rows) => rows[0]?.promoted_chunks_count === 7)).toBe(true);
+    await sql`SELECT * FROM public.advance_tenant_rag_state(${tenantId}::uuid, 13, 17, NULL)`;
 
-    const [row] = await sql<{ current_tenant_chunks_count: number; rag_state: string }[]>`
-      SELECT current_tenant_chunks_count, rag_state
+    let [row] = await sql<{ current_tenant_chunks_count: number; promoted_chunks_count: number; rag_state: string }[]>`
+      SELECT current_tenant_chunks_count, promoted_chunks_count, rag_state
       FROM public.tenant_rag_quotas WHERE tenant_id = ${tenantId}::uuid
     `;
-    expect(row).toEqual({ current_tenant_chunks_count: K, rag_state: "approaching" });
+    expect(row).toEqual({ current_tenant_chunks_count: K, promoted_chunks_count: 7, rag_state: "ok" });
+    expect(await eventCount("rag_cap")).toBe(0);
+
+    await Promise.all(Array.from({ length: 3 }, async () => {
+      await sql`SELECT * FROM public.adjust_tenant_rag_usage(${tenantId}::uuid, 1, 0)`;
+      await sql`SELECT * FROM public.advance_tenant_rag_state(${tenantId}::uuid, 13, 17, NULL)`;
+    }));
+
+    [row] = await sql<{ current_tenant_chunks_count: number; promoted_chunks_count: number; rag_state: string }[]>`
+      SELECT current_tenant_chunks_count, promoted_chunks_count, rag_state
+      FROM public.tenant_rag_quotas WHERE tenant_id = ${tenantId}::uuid
+    `;
+    expect(row).toEqual({ current_tenant_chunks_count: 13, promoted_chunks_count: 7, rag_state: "approaching" });
     expect(await eventCount("rag_cap")).toBe(1);
     expect(await evaluationCount("rag_cap")).toBe(0);
+
+    await sql`UPDATE public.tenant_rag_quotas SET current_tenant_chunks_count = 17 WHERE tenant_id = ${tenantId}::uuid`;
+    await sql`SELECT * FROM public.advance_tenant_rag_state(${tenantId}::uuid, 13, 17, NULL)`;
+    await sql`UPDATE public.tenant_rag_quotas SET current_tenant_chunks_count = 18 WHERE tenant_id = ${tenantId}::uuid`;
+    await sql`SELECT * FROM public.advance_tenant_rag_state(${tenantId}::uuid, 13, 17, NULL)`;
+    const states = await sql<{ to_state: string }[]>`
+      SELECT to_state FROM public.usage_limit_events
+      WHERE tenant_id = ${tenantId}::uuid AND dimension = 'rag_cap'
+      ORDER BY triggered_at, id
+    `;
+    expect(states.map((event) => event.to_state)).toEqual(["approaching", "at_cap", "over_cap"]);
     const [audit] = await sql<{ n: number }[]>`
       SELECT count(*)::int AS n FROM public.tenant_rag_cap_events
       WHERE tenant_id = ${tenantId}::uuid AND event_type = 'state_transition'
     `;
-    expect(audit?.n).toBe(1);
+    expect(audit?.n).toBe(3);
   });
 
   it("increments help concurrently and records one threshold transition", async () => {

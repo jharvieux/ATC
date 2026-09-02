@@ -58,7 +58,11 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.safeAwait.mockResolvedValue(5);
+  mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) =>
+    label === "tenant_rag_quotas.rpc.adjust"
+      ? [{ current_tenant_chunks_count: 5, promoted_chunks_count: 0 }]
+      : null,
+  );
   mocks.rpc.mockReturnValue(Promise.resolve({ data: null, error: null }));
 });
 

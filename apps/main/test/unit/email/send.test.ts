@@ -385,7 +385,6 @@ describe("sendEmail — §23", () => {
     expect(mocks.transitions).toHaveLength(1);
     expect(mocks.transitions[0]).toMatchObject({
       dimension: "email_volume",
-      metric_value: 7n,
     });
   });
 

@@ -1,5 +1,5 @@
 // #2112 — Counter helpers delegate delta consumption to atomic DB RPCs and
-// pass the authoritative returned value into the retriable state check.
+// use the database's locked values for the retriable state check.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,13 +37,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.rpc.mockReturnValue(Promise.resolve({ data: null, error: null }));
   mocks.safeAwait.mockImplementation(async (_query: unknown, label: string) =>
-    label.includes("tenant_rag_quotas") ? 7 : 11,
+    label.includes("tenant_rag_quotas")
+      ? [{ current_tenant_chunks_count: 7, promoted_chunks_count: 9 }]
+      : null,
   );
   mocks.checkState.mockResolvedValue(false);
 });
 
 describe("monthly counters", () => {
-  it("increments chat atomically and evaluates the returned total", async () => {
+  it("increments chat atomically and evaluates authoritative state", async () => {
     await incrementChatMessages({ db, tenant: TENANT });
 
     expect(mocks.rpc).toHaveBeenCalledWith("increment_tenant_usage_counter", expect.objectContaining({
@@ -53,7 +55,6 @@ describe("monthly counters", () => {
     }));
     expect(mocks.checkState).toHaveBeenCalledWith(expect.objectContaining({
       dimension: "chat_volume",
-      metric_value: 11n,
     }));
   });
 
@@ -66,7 +67,6 @@ describe("monthly counters", () => {
     }));
     expect(mocks.checkState).toHaveBeenCalledWith(expect.objectContaining({
       dimension: "email_volume",
-      metric_value: 11n,
     }));
   });
 
@@ -89,18 +89,17 @@ describe("monthly counters", () => {
 });
 
 describe("RAG counter", () => {
-  it("passes the signed delta and promoted count to the atomic floor RPC", async () => {
-    await adjustRagChunkCount({ db, tenant: TENANT }, -3, 2);
+  it("uses the locked nonzero promoted count instead of the caller's stale value", async () => {
+    await adjustRagChunkCount({ db, tenant: TENANT }, -3, 0);
 
     expect(mocks.rpc).toHaveBeenCalledWith("adjust_tenant_rag_usage", {
       p_tenant_id: "t-1",
       p_delta: -3,
-      p_promoted_chunks_count: 2,
+      p_promoted_chunks_count: 0,
     });
     expect(mocks.checkState).toHaveBeenCalledWith(expect.objectContaining({
       dimension: "rag_cap",
-      metric_value: 7,
-      promoted_chunks_count: 2,
+      promoted_chunks_count: 9,
     }));
   });
 });
