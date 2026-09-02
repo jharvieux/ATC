@@ -931,10 +931,16 @@ export function derivePostgresMigrationProvenance(
         ? splitTopLevelSqlList(dropRoutineList[2]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, ""))
           .map((item) => `DROP FUNCTION ${dropRoutineList[1] ?? ""}${item}`)
         : [routineStatement];
-      const routineBody = createRoutineHeader
-        ? /\bAS\s+(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1/i.exec(statement)?.[2]
+      const createsExecutableRoutine = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i.test(statement);
+      const routineBodyMatch = createsExecutableRoutine
+        ? /\bAS\s+(?:(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1|([eE]|[uU]&)?'((?:''|[^'])*)')/i
+          .exec(statement)
         : undefined;
-      const routineBodyAnalysis = routineBody && postgresExecutableAnalysis(routineBody);
+      const routineBody = routineBodyMatch?.[2] ?? (routineBodyMatch?.[3]
+        ? undefined
+        : routineBodyMatch?.[4]?.replace(/''/g, "'"));
+      const unanalysableRoutineBody = createsExecutableRoutine && routineBody === undefined;
+      const routineBodyAnalysis = routineBody === undefined ? undefined : postgresExecutableAnalysis(routineBody);
       if (routineBodyAnalysis?.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
       const calledRoutineIdentities = routineCallIdentities(routineBodyAnalysis?.routineCalls ?? []);
       for (const routine of routineStatements) for (const event of parseRoutineEvents(routine, migration.file)) {
@@ -979,7 +985,7 @@ export function derivePostgresMigrationProvenance(
           overloads.set(signature, definitionHash(statement));
           if (!replacing) identities.set(signature, `${migration.file}:${routineIdentitySerial++}`);
           const identity = identities.get(signature)!;
-          if (/\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
+          if (unanalysableRoutineBody || /\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
             directDynamicRoutineIdentities.add(identity);
           } else directDynamicRoutineIdentities.delete(identity);
           routineCallDependencies.set(identity, new Set(calledRoutineIdentities));
