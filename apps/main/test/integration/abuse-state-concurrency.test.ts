@@ -366,6 +366,68 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     expect(await evaluationCount("email_volume")).toBe(0);
   });
 
+  it("keeps the newer daily email window when a stale increment arrives", async () => {
+    const rangeStart = new Date(`${period.slice(1, 11)}T00:00:00.000Z`);
+    const staleDay = new Date(rangeStart.getTime() + 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const newerDay = new Date(rangeStart.getTime() + 8 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    await sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 6,
+          email_sent_day_ref = ${newerDay}::date
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 1,
+      ${`${newerDay}T00:00:00.001Z`}::timestamptz
+    )`;
+    const [newerMarker] = await sql<{ evaluation_day: string; evaluation_value: string }[]>`
+      SELECT evaluation_day::text, evaluation_value::text
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    expect(newerMarker).toEqual({ evaluation_day: newerDay, evaluation_value: "7" });
+
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 2,
+      ${`${staleDay}T23:59:59.999Z`}::timestamptz
+    )`;
+
+    const [row] = await sql<{
+      email_sent_today: number;
+      email_sent_day_ref: string;
+      evaluation_day: string;
+      evaluation_value: string;
+    }[]>`
+      SELECT
+        metrics.email_sent_today,
+        metrics.email_sent_day_ref::text,
+        evaluation.evaluation_day::text,
+        evaluation.evaluation_value::text
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+      WHERE metrics.tenant_id = ${tenantId}::uuid
+        AND metrics.billing_period = ${period}::daterange
+    `;
+    expect(row).toEqual({
+      email_sent_today: 9,
+      email_sent_day_ref: newerDay,
+      evaluation_day: newerDay,
+      evaluation_value: "9",
+    });
+  });
+
   it("recovers both sides of UTC midnight without coalescing daily email state", async () => {
     const rangeStart = new Date(`${period.slice(1, 11)}T00:00:00.000Z`);
     const oldDay = new Date(rangeStart.getTime() + 10 * 24 * 60 * 60_000).toISOString().slice(0, 10);
@@ -478,6 +540,120 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     expect(markers).toEqual([
       { evaluation_day: oldDay, evaluation_value: "5", evaluated_state: "soft1", pending: false },
       { evaluation_day: newDay, evaluation_value: "1", evaluated_state: "soft1", pending: false },
+    ]);
+  });
+
+  it("orders delayed email markers behind an authorized monthly downgrade", async () => {
+    const rangeStart = new Date(`${period.slice(1, 11)}T00:00:00.000Z`);
+    const lowDay = new Date(rangeStart.getTime() + 18 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const crossingDay = new Date(rangeStart.getTime() + 19 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const downgradeDay = new Date(rangeStart.getTime() + 20 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const before = await eventCount("email_volume");
+    await sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 0,
+          email_sent_day_ref = ${lowDay}::date,
+          email_volume_limit_state = 'hard'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 1,
+      ${`${lowDay}T12:00:00.000Z`}::timestamptz
+    )`;
+    await sql`SELECT public.increment_tenant_usage_counter(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5,
+      ${`${crossingDay}T12:00:00.000Z`}::timestamptz
+    )`;
+    await sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 0,
+          email_sent_day_ref = ${downgradeDay}::date,
+          email_volume_limit_state = 'hard'
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      true, 'subscription_change_recompute', ${downgradeDay}::date
+    )`;
+    let [metrics] = await sql<{ state: string }[]>`
+      SELECT email_volume_limit_state AS state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(metrics?.state).toBe("ok");
+    expect(await eventCount("email_volume")).toBe(before + 1);
+
+    const markers = await sql<{
+      evaluation_day: string;
+      evaluation_value: string;
+      evaluated_state: string;
+      pending: boolean;
+    }[]>`
+      SELECT evaluation_day::text, evaluation_value::text, evaluated_state, pending
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+        AND evaluation_day IN (${lowDay}::date, ${crossingDay}::date)
+      ORDER BY evaluation_day
+    `;
+    expect(markers).toEqual([
+      { evaluation_day: lowDay, evaluation_value: "1", evaluated_state: "ok", pending: true },
+      { evaluation_day: crossingDay, evaluation_value: "5", evaluated_state: "ok", pending: true },
+    ]);
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      false, NULL, ${lowDay}::date
+    )`;
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      false, NULL, ${lowDay}::date
+    )`;
+    [metrics] = await sql<{ state: string }[]>`
+      SELECT email_volume_limit_state AS state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(metrics?.state).toBe("ok");
+    expect(await eventCount("email_volume")).toBe(before + 1);
+
+    await sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
+      false, NULL, ${crossingDay}::date
+    )`;
+    [metrics] = await sql<{ state: string }[]>`
+      SELECT email_volume_limit_state AS state
+      FROM public.tenant_usage_metrics
+      WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
+    `;
+    expect(metrics?.state).toBe("soft1");
+    expect(await eventCount("email_volume")).toBe(before + 2);
+
+    const completedMarkers = await sql<{
+      evaluation_day: string;
+      evaluated_state: string;
+      pending: boolean;
+    }[]>`
+      SELECT evaluation_day::text, evaluated_state, pending
+      FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+        AND evaluation_day IN (${lowDay}::date, ${crossingDay}::date)
+      ORDER BY evaluation_day
+    `;
+    expect(completedMarkers).toEqual([
+      { evaluation_day: lowDay, evaluated_state: "ok", pending: false },
+      { evaluation_day: crossingDay, evaluated_state: "soft1", pending: false },
     ]);
   });
 

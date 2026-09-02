@@ -354,6 +354,78 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     });
   }, 60000);
 
+  it("keeps the newer daily email window when stale finalization arrives", async () => {
+    await fx.sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${fx.tenantOne}
+        AND dimension = 'email_volume'
+    `;
+    await fx.sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 6,
+          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date + 1)
+      WHERE tenant_id = ${fx.tenantOne}
+    `;
+    await fx.sql`
+      SELECT public.increment_tenant_usage_counter(
+        metrics.tenant_id,
+        metrics.billing_period,
+        'email_volume',
+        1,
+        metrics.email_sent_day_ref::timestamp AT TIME ZONE 'UTC'
+      )
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+      ORDER BY upper(metrics.billing_period) DESC
+      LIMIT 1
+    `;
+    const [newerMarker] = await fx.sql<{ metric_day: string; marker_day: string; evaluation_value: string }[]>`
+      SELECT
+        metrics.email_sent_day_ref::text AS metric_day,
+        evaluation.evaluation_day::text AS marker_day,
+        evaluation.evaluation_value::text
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(newerMarker).toMatchObject({ evaluation_value: "7" });
+    expect(newerMarker?.marker_day).toBe(newerMarker?.metric_day);
+
+    const finalized = await finalize(fx.tenantOne, `${runTag}:stale-window`, "stale-window");
+    expect(finalized.email_sent_today).toBe(8);
+
+    const [window] = await fx.sql<{
+      email_sent_today: number;
+      metric_day: string;
+      marker_day: string;
+      evaluation_value: string;
+      stayed_newer: boolean;
+    }[]>`
+      SELECT
+        metrics.email_sent_today,
+        metrics.email_sent_day_ref::text AS metric_day,
+        evaluation.evaluation_day::text AS marker_day,
+        evaluation.evaluation_value::text,
+        metrics.email_sent_day_ref > (clock_timestamp() AT TIME ZONE 'UTC')::date AS stayed_newer
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+       AND evaluation.evaluation_day = metrics.email_sent_day_ref
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(window).toMatchObject({
+      email_sent_today: 8,
+      evaluation_value: "8",
+      stayed_newer: true,
+    });
+    expect(window?.marker_day).toBe(window?.metric_day);
+  }, 60000);
+
   it("isolates queued provider PII and lets only rejected or unstarted rows be abandoned", async () => {
     const key = `${runTag}:private-outbox`;
     const payload = rpcPayload(key, "private-outbox");
