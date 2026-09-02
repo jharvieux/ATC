@@ -17,16 +17,15 @@
 // non-queue flow (no more orphan-row wedging). See #1896 groundwork, #1914.
 //
 // Usage: tsx scripts/ci-reset-test-db.ts [--target=main|rag]
-// --target is a LOG LABEL ONLY — it does NOT select a database. Both values
-// take byte-identical code paths; RESET_TARGET_DB_URL is the sole selector of
-// what gets dropped, so `--target=rag` against a main URL resets MAIN. It
-// exists to keep the CLI shape consistent with rls-snapshot-diff.ts and to
-// make the logs say which DB the caller believed it was resetting. Defaults to
-// "main" for the original call site's backward compatibility. Drops + recreates `public`
-// — the only schema either app's migrations own, matching scripts/db-reset.ts's
-// proven local reset — and empties the migration ledger. Supabase-managed
-// schemas (auth, storage, graphql, realtime, vault) are owned by
-// supabase_admin: the postgres role can't drop them and the migrations don't
+// RESET_TARGET_DB_URL is the sole database selector; --target chooses the
+// app-specific cleanup inside that selected throwaway DB. Both paths recreate
+// `public` and empty the migration ledger. The RAG path also removes vector and
+// pg_trgm because relocatable extensions survive a public-schema reset after
+// #2022 moves them to `extensions`; leaving them installed makes a replay start
+// from the wrong extension schema instead of the migration chain's original
+// state. Defaults to "main" for the original call site's compatibility.
+// Supabase-managed schemas (auth, storage, graphql, realtime, vault) are owned
+// by supabase_admin: the postgres role can't drop them and the migrations don't
 // need them dropped.
 //
 // Target var — the name IS the safety contract (#1896 audit): this script reads
@@ -112,6 +111,13 @@ async function main(): Promise<void> {
         AND sa.backend_type = 'client backend'
         AND NOT r.rolsuper;
     `);
+
+    if (target === "rag") {
+      await sql.unsafe(`
+        DROP EXTENSION IF EXISTS vector CASCADE;
+        DROP EXTENSION IF EXISTS pg_trgm CASCADE;
+      `);
+    }
 
     // Drop + recreate public (restoring the default schema-level grants), then
     // empty the migration ledger so `db push --include-all` reapplies every
