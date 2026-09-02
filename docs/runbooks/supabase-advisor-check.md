@@ -53,8 +53,10 @@ When the tracked issue appears, for each listed finding either:
 - `atc-main` — 3× `authenticated_security_definer_function_executable`
   (`auth_user_can_access_conversation`, `auth_user_in_tenant`,
   `tenant_is_active`): intentional RLS-policy helper functions (#1369).
-- `atc-rag` — `extension_in_public` (`vector`): pgvector in `public` is the
-  Supabase default; moving it is disruptive and low-risk here.
+
+The former `atc-rag` `extension_in_public` findings for `vector` and `pg_trgm`
+were removed by migration `20260902082656_relocate_vector_and_trgm_extensions.sql`.
+They are no longer accepted-risk baseline entries.
 
 `auth_leaked_password_protection` (atc-main) is intentionally **not** baselined —
 it is actionable and will surface until enabled.

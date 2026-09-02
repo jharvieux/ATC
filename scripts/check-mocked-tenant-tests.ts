@@ -84,6 +84,7 @@ export interface PostgresMigrationProvenance {
   casts: ReadonlySet<string>;
   types: ReadonlySet<string>;
   extensions: ReadonlyMap<string, string>;
+  extensionSchemas: ReadonlyMap<string, string>;
   runtimeSearchPaths: ReadonlyMap<string, readonly string[] | undefined>;
   roleAuthorities: ReadonlyMap<string, PostgresRoleAuthority>;
   ambiguousRoleAuthorities: ReadonlySet<string>;
@@ -472,6 +473,7 @@ export function derivePostgresMigrationProvenance(
   const casts = new Set<string>();
   const types = new Set<string>();
   const extensions = new Map<string, string>();
+  const extensionSchemas = new Map<string, string>();
   const runtimeSearchPaths = new Map<string, readonly string[] | undefined>();
   const roleAuthorities = new Map<string, PostgresRoleAuthority>(
     [...REVIEWED_POSTGRES_ROLE_AUTHORITIES].map(([role, authority]) => [role, { ...authority }] as const),
@@ -1336,6 +1338,17 @@ export function derivePostgresMigrationProvenance(
         const hash = definitionHash(statement);
         extensions.set(name, hash);
         ambiguousExtensions.delete(name);
+        const explicitSchema = new RegExp(`\\bSCHEMA\\s+(${SQL_IDENTIFIER})\\b`, "i").exec(statement)?.[1];
+        const configuredPath = currentSearchPath?.map((schema) => schema === "$user" ? currentRole : schema);
+        const schema = explicitSchema
+          ? unquotePostgresIdentifier(explicitSchema)
+          : configuredPath?.find((candidate) => schemas.has(candidate));
+        if (schema && schemas.has(schema)) extensionSchemas.set(name, schema);
+        else {
+          extensionSchemas.delete(name);
+          ambiguousExtensions.add(name);
+          catalogRoutinesTrusted = false;
+        }
         if (!Object.values(REVIEWED_POSTGRES_EXTENSIONS).some((review) => review[name] === hash)) {
           catalogRoutinesTrusted = false;
         }
@@ -1345,6 +1358,7 @@ export function derivePostgresMigrationProvenance(
         const name = unquotePostgresIdentifier(droppedExtension[1]!);
         if (extensions.delete(name)) ambiguousExtensions.delete(name);
         else ambiguousExtensions.add(name);
+        extensionSchemas.delete(name);
         catalogRoutinesTrusted = false;
       }
       if (/^DROP\s+EXTENSION\b/i.test(statement)) {
@@ -1354,10 +1368,32 @@ export function derivePostgresMigrationProvenance(
           }
         }
       }
-      const alteredExtension = new RegExp(`^ALTER\\s+EXTENSION\\s+(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+      const alteredExtension = new RegExp(
+        `^ALTER\\s+EXTENSION\\s+(${SQL_IDENTIFIER})\\s+SET\\s+SCHEMA\\s+(${SQL_IDENTIFIER})$`,
+        "i",
+      ).exec(statement);
       if (alteredExtension) {
-        ambiguousExtensions.add(unquotePostgresIdentifier(alteredExtension[1]!));
-        catalogRoutinesTrusted = false;
+        const name = unquotePostgresIdentifier(alteredExtension[1]!);
+        const targetSchema = unquotePostgresIdentifier(alteredExtension[2]!);
+        const reviewedTransfer = Object.values(REVIEWED_POSTGRES_EXTENSION_TRANSFERS)
+          .map((review) => review[name])
+          .find((review) =>
+            review?.from === extensionSchemas.get(name) &&
+            review.to === targetSchema &&
+            review.definitionHash === definitionHash(statement)
+          );
+        if (reviewedTransfer && schemas.has(targetSchema) && !ambiguousExtensions.has(name)) {
+          extensionSchemas.set(name, targetSchema);
+        } else {
+          ambiguousExtensions.add(name);
+          catalogRoutinesTrusted = false;
+        }
+      } else {
+        const unreviewedAlterExtension = new RegExp(`^ALTER\\s+EXTENSION\\s+(${SQL_IDENTIFIER})\\b`, "i").exec(statement);
+        if (unreviewedAlterExtension) {
+          ambiguousExtensions.add(unquotePostgresIdentifier(unreviewedAlterExtension[1]!));
+          catalogRoutinesTrusted = false;
+        }
       }
 
       const createdOperatorClass = new RegExp(
@@ -1524,6 +1560,7 @@ export function derivePostgresMigrationProvenance(
     casts,
     types,
     extensions,
+    extensionSchemas,
     runtimeSearchPaths,
     roleAuthorities,
     ambiguousRoleAuthorities,
@@ -1780,6 +1817,33 @@ const REVIEWED_POSTGRES_EXTENSIONS: Readonly<Record<PostgresProvenanceTarget, Re
   },
 };
 
+const REVIEWED_POSTGRES_EXTENSION_SCHEMAS: Readonly<Record<PostgresProvenanceTarget, Readonly<Record<string, string>>>> = {
+  main: {},
+  rag: {
+    vector: "extensions",
+    pg_trgm: "extensions",
+  },
+};
+
+const REVIEWED_POSTGRES_EXTENSION_TRANSFERS: Readonly<Record<
+  PostgresProvenanceTarget,
+  Readonly<Record<string, { from: string; to: string; definitionHash: string }>>
+>> = {
+  main: {},
+  rag: {
+    vector: {
+      from: "public",
+      to: "extensions",
+      definitionHash: "0d903a8b33e981b3a5707a441ec22aa004d8a6547d4c3f9c5319321e98a475a6",
+    },
+    pg_trgm: {
+      from: "public",
+      to: "extensions",
+      definitionHash: "043a4165f29ae80f35e88f24e1832d80685b5a17085cfbc0f3846e6828ddd302",
+    },
+  },
+};
+
 const REVIEWED_POSTGRES_CATALOG_NAMES: Readonly<Record<PostgresProvenanceTarget, {
   operators: ReadonlySet<string>;
   types: ReadonlySet<string>;
@@ -1885,10 +1949,19 @@ export function postgresResourcesMatchReviewedProvenance(
   if (!provenance.catalogRoutinesTrusted) return false;
 
   const expectedExtensions = REVIEWED_POSTGRES_EXTENSIONS[target];
+  const expectedExtensionSchemas = REVIEWED_POSTGRES_EXTENSION_SCHEMAS[target];
   if (provenance.extensions.size !== Object.keys(expectedExtensions).length) return false;
   for (const [name, hash] of Object.entries(expectedExtensions)) {
-    if (provenance.extensions.get(name) !== hash || provenance.ambiguousExtensions.has(name)) return false;
+    const schema = expectedExtensionSchemas[name];
+    if (
+      provenance.extensions.get(name) !== hash ||
+      provenance.extensionSchemas.get(name) !== schema ||
+      !schema ||
+      provenance.ambiguousSchemas.has(schema) ||
+      provenance.ambiguousExtensions.has(name)
+    ) return false;
   }
+  if (provenance.extensionSchemas.size !== Object.keys(expectedExtensionSchemas).length) return false;
   if (provenance.ambiguousExtensions.size > 0) return false;
 
   const catalog = REVIEWED_POSTGRES_CATALOG_NAMES[target];

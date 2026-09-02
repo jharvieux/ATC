@@ -33,7 +33,7 @@ In the SQL editor, run:
 CREATE EXTENSION IF NOT EXISTS pgcrypto;        -- gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";     -- uuid_generate_v4() (legacy paths)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;         -- trigram search on contacts/quotes
-CREATE EXTENSION IF NOT EXISTS pgvector;        -- RAG embeddings (rag schema)
+CREATE EXTENSION IF NOT EXISTS vector;          -- RAG embeddings (migrations later move it to `extensions`)
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;  -- query performance debugging
 ```
 
@@ -43,7 +43,11 @@ Verify:
 SELECT extname, extversion FROM pg_extension ORDER BY extname;
 ```
 
-`pgvector` is required only for the RAG service Supabase project. The main app project can skip it.
+The `vector` extension (pgvector) is required only for the RAG service Supabase
+project. The RAG migration chain installs extension-owned objects in `public`
+first for historical definitions, then relocates `vector` and `pg_trgm` to the
+`extensions` schema in its final migration. The main app project can skip
+`vector`.
 
 ### 3. Apply baseline migrations
 
@@ -144,7 +148,7 @@ You can find your auth user UUID in the dashboard → **Authentication → Users
 
 A complete setup passes these spot checks:
 
-- `SELECT COUNT(*) FROM pg_extension` returns ≥ 4 (with pgvector if RAG)
+- `SELECT COUNT(*) FROM pg_extension` returns ≥ 4 (with `vector` if RAG)
 - `SELECT COUNT(*) FROM pg_tables WHERE schemaname IN ('public', 'rag') AND rowsecurity = false` returns 0
 - `SELECT COUNT(*) FROM platform_admins` returns ≥ 1
 - `SELECT COUNT(*) FROM platform_settings WHERE key = 'last_staging_refresh_at'` is 0 on a fresh staging env (no refreshes yet)
@@ -168,7 +172,7 @@ When the project is provisioned and verified:
 | `verifyEnvAtBoot()` throws on `SUPABASE_SERVICE_ROLE_KEY` | Key wasn't copied to the Vercel env | Settings → API → service_role secret → copy into Vercel env vars |
 | `relation "public.platform_admins" does not exist` | Migrations didn't apply | Re-run `supabase db push` with the right `SUPABASE_DB_URL` |
 | RLS Snapshot Diff CI check fails on the new env | Some table missed enabling RLS | Inspect the failing diff against `db/rls-snapshot-main.sql`; manually `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and add the missing policy |
-| pgvector extension missing on RAG | Extension wasn't enabled before migrations | Connect via SQL editor, run `CREATE EXTENSION pgvector;` then re-run failed migrations |
+| pgvector extension missing on RAG | Extension wasn't enabled before migrations | Connect via SQL editor, run `CREATE EXTENSION vector;` then re-run failed migrations; the final RAG migration relocates it to `extensions` |
 | First admin can't log in | The `auth_user_id` doesn't match the actual Supabase auth user | Sign in once via the app, then look up the real UUID in `auth.users` and INSERT |
 
 ## See also
