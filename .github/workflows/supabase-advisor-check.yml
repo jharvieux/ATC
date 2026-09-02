@@ -16,6 +16,11 @@ on:
   schedule:
     - cron: "0 9 * * 1" # 09:00 UTC every Monday
   workflow_dispatch:
+    inputs:
+      rag_beta_probe_revision:
+        description: "Full revision SHA to deploy to the hosted atc-rag beta project"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ permissions:
 
 jobs:
   advisor-check:
+    if: github.event_name == 'schedule' || inputs.rag_beta_probe_revision == ''
     name: Supabase Security Advisor scan
     runs-on: ubuntu-latest
     env:
@@ -112,3 +118,54 @@ jobs:
         run: |
           echo "Supabase advisor scan failed — see the tracked issue."
           exit 1
+
+  rag-beta-deploy-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.rag_beta_probe_revision != ''
+    name: RAG beta exact-revision deploy probe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PROBE_EXPECTED_REVISION: ${{ inputs.rag_beta_probe_revision }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
+    steps:
+      - name: Checkout requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rag_beta_probe_revision }}
+          fetch-depth: 1
+
+      - name: Verify revision and project provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PROBE_EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Probe revision must be a full lowercase SHA."
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$PROBE_EXPECTED_REVISION" ]]; then
+            echo "Checked-out revision does not match the requested revision."
+            exit 1
+          fi
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "Required Vercel beta deployment credentials are missing."
+            exit 1
+          fi
+
+      - name: Install pinned Vercel CLI
+        run: npm install -g vercel@54
+
+      - name: Deploy exact revision to atc-rag beta
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          beta_url="$(vercel deploy --token="$VERCEL_TOKEN" --yes)"
+          if [[ "$beta_url" != https://* ]]; then
+            echo "Vercel did not return a beta deployment URL."
+            exit 1
+          fi
+          echo "beta_url=$beta_url" >> "$GITHUB_OUTPUT"
+          echo "Beta deployment URL: $beta_url"
