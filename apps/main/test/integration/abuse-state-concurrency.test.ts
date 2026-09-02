@@ -231,6 +231,12 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
   it("retains a durable evaluation marker after a counter-only crash window", async () => {
     const before = await eventCount("email_volume");
     await sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND billing_period = ${period}::daterange
+    `;
+    await sql`
       UPDATE public.tenant_usage_metrics
       SET email_sent_today = 4,
           email_sent_day_ref = CURRENT_DATE,
