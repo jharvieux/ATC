@@ -549,6 +549,13 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
     const crossingDay = new Date(rangeStart.getTime() + 19 * 24 * 60 * 60_000).toISOString().slice(0, 10);
     const downgradeDay = new Date(rangeStart.getTime() + 20 * 24 * 60 * 60_000).toISOString().slice(0, 10);
     const before = await eventCount("email_volume");
+    const [downgradesBefore] = await sql<{ n: number }[]>`
+      SELECT count(*)::int AS n
+      FROM public.usage_limit_events
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND resolution_action = 'subscription_change_recompute'
+    `;
     await sql`
       DELETE FROM public.usage_limit_state_evaluations
       WHERE tenant_id = ${tenantId}::uuid
@@ -589,7 +596,15 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(metrics?.state).toBe("ok");
-    expect(await eventCount("email_volume")).toBe(before + 1);
+    expect(await eventCount("email_volume")).toBe(before);
+    const [downgradesAfter] = await sql<{ n: number }[]>`
+      SELECT count(*)::int AS n
+      FROM public.usage_limit_events
+      WHERE tenant_id = ${tenantId}::uuid
+        AND dimension = 'email_volume'
+        AND resolution_action = 'subscription_change_recompute'
+    `;
+    expect(downgradesAfter?.n).toBe((downgradesBefore?.n ?? 0) + 1);
 
     const markers = await sql<{
       evaluation_day: string;
@@ -624,7 +639,7 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(metrics?.state).toBe("ok");
-    expect(await eventCount("email_volume")).toBe(before + 1);
+    expect(await eventCount("email_volume")).toBe(before);
 
     await sql`SELECT * FROM public.advance_tenant_usage_state(
       ${tenantId}::uuid, ${period}::daterange, 'email_volume', 5, 10, 20,
@@ -636,7 +651,7 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(metrics?.state).toBe("soft1");
-    expect(await eventCount("email_volume")).toBe(before + 2);
+    expect(await eventCount("email_volume")).toBe(before + 1);
 
     const completedMarkers = await sql<{
       evaluation_day: string;
