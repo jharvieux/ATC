@@ -228,6 +228,7 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
   });
 
   it("retains a durable evaluation marker after a counter-only crash window", async () => {
+    const before = await eventCount("email_volume");
     await sql`
       UPDATE public.tenant_usage_metrics
       SET email_sent_today = 4,
@@ -251,7 +252,7 @@ describeIf("abuse usage/state RPC concurrency (DB integration)", () => {
       WHERE tenant_id = ${tenantId}::uuid AND billing_period = ${period}::daterange
     `;
     expect(row?.email_volume_limit_state).toBe("soft1");
-    expect(await eventCount("email_volume")).toBe(1);
+    expect(await eventCount("email_volume")).toBe(before + 1);
     expect(await evaluationCount("email_volume")).toBe(0);
   });
 
