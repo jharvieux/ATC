@@ -255,34 +255,11 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     await fx.sql`
       UPDATE public.tenant_usage_metrics
       SET email_sent_today = 99,
-          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1),
-          email_volume_limit_state = 'soft1'
+          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1)
       WHERE tenant_id = ${fx.tenantOne}
     `;
     const newUtcDay = await finalize(fx.tenantOne, `${runTag}:new-day`, "new-day");
     expect(newUtcDay.email_sent_today).toBe(1);
-    const [newUtcDayState] = await fx.sql<{
-      email_volume_limit_state: string;
-      evaluated_state: string;
-      evaluation_value: string;
-    }[]>`
-      SELECT
-        metrics.email_volume_limit_state,
-        evaluation.evaluated_state,
-        evaluation.evaluation_value::text
-      FROM public.tenant_usage_metrics AS metrics
-      JOIN public.usage_limit_state_evaluations AS evaluation
-        ON evaluation.tenant_id = metrics.tenant_id
-       AND evaluation.dimension = 'email_volume'
-       AND evaluation.billing_period = metrics.billing_period
-       AND evaluation.evaluation_day = metrics.email_sent_day_ref
-      WHERE metrics.tenant_id = ${fx.tenantOne}
-    `;
-    expect(newUtcDayState).toEqual({
-      email_volume_limit_state: "soft1",
-      evaluated_state: "soft1",
-      evaluation_value: "1",
-    });
 
     const [orphan] = await fx.sql<{ id: string }[]>`
       WITH inserted_log AS (
@@ -335,6 +312,46 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
       SELECT 1 FROM public.email_retry_content WHERE email_log_id = ${retry.email_log_id}
     `;
     expect(retryPayload).toHaveLength(0);
+  }, 60000);
+
+  it("preserves monthly email state when finalization resets the daily window", async () => {
+    await fx.sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${fx.tenantOne}
+        AND dimension = 'email_volume'
+    `;
+    await fx.sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 99,
+          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1),
+          email_volume_limit_state = 'soft1'
+      WHERE tenant_id = ${fx.tenantOne}
+    `;
+
+    const finalized = await finalize(fx.tenantOne, `${runTag}:state-window`, "state-window");
+    expect(finalized.email_sent_today).toBe(1);
+    const [newUtcDayState] = await fx.sql<{
+      email_volume_limit_state: string;
+      evaluated_state: string;
+      evaluation_value: string;
+    }[]>`
+      SELECT
+        metrics.email_volume_limit_state,
+        evaluation.evaluated_state,
+        evaluation.evaluation_value::text
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+       AND evaluation.evaluation_day = metrics.email_sent_day_ref
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(newUtcDayState).toEqual({
+      email_volume_limit_state: "soft1",
+      evaluated_state: "soft1",
+      evaluation_value: "1",
+    });
   }, 60000);
 
   it("isolates queued provider PII and lets only rejected or unstarted rows be abandoned", async () => {
