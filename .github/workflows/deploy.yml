@@ -716,12 +716,11 @@ jobs:
   # ============================================================
   # atc-rag beta deploy (#1829) — runs on dev-merge only, gated by
   # detect-changes' rag_changed filter so an atc-main-only PR merge
-  # doesn't trigger a redundant RAG deploy. Mirrors the manual command
-  # in the ops runbook (`cd apps/rag && vercel deploy --yes`) rather
-  # than the atc-main pull/build/deploy-prebuilt pattern below — that's
-  # the already-verified-working remote-build path for this project
-  # (see memory: reference_rag_deploy.md), and needs no local
-  # Node/pnpm install step.
+  # doesn't trigger a redundant RAG deploy. Runs Vercel from the repository
+  # root because the hosted atc-rag project already sets Root Directory to
+  # `apps/rag`; changing the process directory as well would resolve the
+  # nonexistent doubled path `apps/rag/apps/rag`. This keeps the project's
+  # remote-build path and needs no local Node/pnpm install step.
   #
   # atc-main itself has NO equivalent explicit beta-deploy job in this
   # file — Vercel's native Git integration deploys atc-main on every
@@ -748,13 +747,12 @@ jobs:
         run: npm install -g vercel@54
 
       - name: Vercel deploy (atc-rag beta)
-        working-directory: apps/rag
         run: |
           if [ -z "$VERCEL_PROJECT_ID" ]; then
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
             exit 1
           fi
-          vercel deploy --token="$VERCEL_TOKEN" --yes
+          vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -1200,17 +1198,17 @@ jobs:
       # protects against. Uses the same remote-build `vercel deploy --prod`
       # command already verified working manually (memory:
       # reference_rag_deploy.md) rather than the pull/build/deploy-prebuilt
-      # pattern atc-main uses above.
+      # pattern atc-main uses above. Run from repository root because the
+      # hosted project already contributes its configured `apps/rag` root.
       - name: Vercel deploy (atc-rag production)
         env:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}
-        working-directory: apps/rag
         run: |
           if [ -z "$VERCEL_PROJECT_ID" ]; then
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
             exit 1
           fi
-          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN" --build-env ENABLE_EXPERIMENTAL_COREPACK=1
 
       - name: Smoke test atc-rag production
         # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md
