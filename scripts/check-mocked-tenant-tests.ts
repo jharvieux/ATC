@@ -1159,6 +1159,9 @@ export function derivePostgresMigrationProvenance(
             }
             if (memberDepth === 0) {
               const memberSql = executableAnalysis.executableSql.slice(index + 1, close - 1).trim();
+              const memberUnquotedSql = executableAnalysis.unquotedExecutableSql
+                .slice(index + 1, close - 1)
+                .trim();
               const inserted = new RegExp(
                 `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
                 "i",
@@ -1171,10 +1174,19 @@ export function derivePostgresMigrationProvenance(
                 `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
                 "i",
               ).exec(memberSql)?.[1];
-              const target = inserted ?? updated ?? deleted;
+              const merged = new RegExp(
+                `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+                "i",
+              ).exec(memberSql)?.[1];
+              const target = inserted ?? updated ?? deleted ?? merged;
               const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
               if (table) cteTableMutations.push({
-                events: new Set([inserted ? "insert" : updated ? "update" : "delete"]),
+                events: merged
+                  ? new Set(
+                    [...memberUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
+                      .map((match) => match[1]!.toLowerCase()),
+                  )
+                  : new Set([inserted ? "insert" : updated ? "update" : "delete"]),
                 table,
               });
               index = close - 1;
