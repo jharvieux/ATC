@@ -45,7 +45,7 @@ describe("abuseStateTransitionNotify — §27.8 (#1580)", () => {
     expect(fileText).toContain("email_from_domain_verified_at: branding?.email_from_domain_verified_at");
   });
 
-  it("uses a deterministic idempotencyKey format: abuse_state_transition:tenant:dimension:state:admin", () => {
+  it("binds the email idempotency key to the durable transition event id", () => {
     // Verify the idempotencyKey is keyed on event data + admin id, not
     // wall-clock time or RNG, so an Inngest retry doesn't produce a
     // different key and double-send.
@@ -54,7 +54,18 @@ describe("abuseStateTransitionNotify — §27.8 (#1580)", () => {
       "utf8"
     );
 
-    // Line 183 confirms the key format.
-    expect(fileText).toContain('idempotencyKey: `abuse_state_transition:${data.tenant_id}:${data.dimension}:${data.to_state}:${admin.id}`');
+    expect(fileText).toContain('`abuse_state_transition:${data.usage_event_id}:${admin.id}`');
+    expect(fileText).toContain("usage_event_id");
+  });
+
+  it("runs a periodic recovery trigger for committed-but-undispatched outbox rows", () => {
+    const fileText = require("fs").readFileSync(
+      require("path").join(process.cwd(), "apps/main/src/inngest/abuse-state-transition-notify.ts"),
+      "utf8"
+    );
+
+    expect(fileText).toContain('{ cron: "*/5 * * * *" }');
+    expect(fileText).toContain("recoverPendingStateEvaluations(db)");
+    expect(fileText).toContain("dispatchPendingTransitionOutbox(db)");
   });
 });

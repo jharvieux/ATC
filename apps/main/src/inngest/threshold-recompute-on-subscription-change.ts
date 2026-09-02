@@ -12,9 +12,9 @@
 import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { resolveThresholds, type AbuseDimension } from "@/lib/abuse/thresholds";
+import type { AbuseDimension } from "@/lib/abuse/thresholds";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
 
 const SubscriptionChangedPayloadSchema = z.object({ tenant_id: z.string().optional() });
 
@@ -22,13 +22,6 @@ const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
   "sub_starter", "sub_pro", "sub_agency",
 ]);
-
-function currentBillingPeriodRange(): string {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
-  return `[${start},${end})`;
-}
 
 export function classifyAbuse(value: bigint, t: { soft1: bigint; soft2: bigint; hard: bigint }): "ok" | "soft1" | "soft2" | "hard" {
   if (value >= t.hard) return "hard";
@@ -137,116 +130,18 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
         const promoted = Number((quotaRow as { promoted_chunks_count?: number } | null)?.promoted_chunks_count ?? 0);
         const currentChunks = Number((quotaRow as { current_tenant_chunks_count?: number } | null)?.current_tenant_chunks_count ?? 0);
 
-        const thresholds = await resolveThresholds(db, snapshot, promoted);
+        // Each RPC locks the authoritative row, applies upgrade or downgrade,
+        // and writes its outbox marker atomically. Concurrent counter calls can
+        // no longer create duplicate transition audits from a stale snapshot.
+        const changed = await Promise.all([
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "ai_cost", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "chat_volume", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "email_volume", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "group_invite", metric_value: 0n, allow_downgrade: true, reason: "subscription_change_recompute" }),
+          checkStateTransitionIfNeeded({ db, tenant: snapshot, dimension: "rag_cap", metric_value: currentChunks, promoted_chunks_count: promoted, reason: "subscription_change_recompute" }),
+        ]);
 
-        // Read current metrics row for monthly dimensions.
-        const period = currentBillingPeriodRange();
-        const { data: metricsRow } = await db
-          .from("tenant_usage_metrics")
-          .select("id, ai_cost_cents, chat_messages_count, email_sent_count, group_invitees_count, ai_cost_limit_state, chat_volume_limit_state, email_volume_limit_state, group_invite_limit_state")
-          .eq("tenant_id", tenant_id)
-          .eq("billing_period", period)
-          .maybeSingle();
-        const rt = metricsRow as
-          | {
-              id: string;
-              ai_cost_cents: string | number;
-              chat_messages_count: number;
-              email_sent_count: number;
-              group_invitees_count: number;
-              ai_cost_limit_state: string;
-              chat_volume_limit_state: string;
-              email_volume_limit_state: string;
-              group_invite_limit_state: string;
-            }
-          | null;
-
-        const transitions: AbuseTransition[] = [];
-
-        if (rt) {
-          const dimensions: AbuseDimensionInput[] = [
-            {
-              dim: "ai_cost", value: BigInt(rt.ai_cost_cents), t: thresholds.ai_cost_cents,
-              state_col: "ai_cost_limit_state", changed_col: "ai_cost_state_changed_at",
-              currentState: rt.ai_cost_limit_state,
-            },
-            {
-              dim: "chat_volume", value: BigInt(rt.chat_messages_count),
-              t: { soft1: BigInt(thresholds.chat_volume_messages_monthly.soft1), soft2: BigInt(thresholds.chat_volume_messages_monthly.soft2), hard: BigInt(thresholds.chat_volume_messages_monthly.hard) },
-              state_col: "chat_volume_limit_state", changed_col: "chat_volume_state_changed_at",
-              currentState: rt.chat_volume_limit_state,
-            },
-            {
-              dim: "email_volume", value: BigInt(rt.email_sent_count),
-              t: { soft1: BigInt(thresholds.email_volume_daily.soft1), soft2: BigInt(thresholds.email_volume_daily.soft2), hard: BigInt(thresholds.email_volume_daily.hard) },
-              state_col: "email_volume_limit_state", changed_col: "email_volume_state_changed_at",
-              currentState: rt.email_volume_limit_state,
-            },
-            {
-              dim: "group_invite", value: BigInt(rt.group_invitees_count),
-              t: { soft1: BigInt(thresholds.group_invite_monthly.soft1), soft2: BigInt(thresholds.group_invite_monthly.soft2), hard: BigInt(thresholds.group_invite_monthly.hard) },
-              state_col: "group_invite_limit_state", changed_col: "group_invite_state_changed_at",
-              currentState: rt.group_invite_limit_state,
-            },
-          ];
-
-          const { updates, transitions: dimTransitions } = computeAbuseTransitions(dimensions, new Date().toISOString());
-          transitions.push(...dimTransitions);
-
-          if (Object.keys(updates).length > 0) {
-            await safeAwait(db.from("tenant_usage_metrics").update(updates).eq("id", rt.id), "tenant_usage_metrics.update");
-          }
-        }
-
-        // RAG: count_against_cap = current_tenant_chunks_count (promoted are exempt).
-        if (quotaRow) {
-          const currentRagState = (quotaRow as { rag_state: string }).rag_state;
-          const newRagState = classifyRag(currentChunks, thresholds.rag_cap_total);
-          if (newRagState !== currentRagState) {
-            await safeAwait(db
-              .from("tenant_rag_quotas")
-              .update({ rag_state: newRagState, rag_state_changed_at: new Date().toISOString() })
-              .eq("tenant_id", tenant_id), "tenant_rag_quotas.update");
-            transitions.push({
-              dim: "rag_cap",
-              from: currentRagState,
-              to: newRagState,
-              value: String(currentChunks),
-              threshold: String(thresholds.rag_cap_total.effective),
-            });
-          }
-        }
-
-        // Audit + notify per transition.
-        // serial-await-ok (#1952): each iteration writes the audit row BEFORE
-        // emitting abuse.state_transition (D-091 #10 idempotency ordering), and
-        // `transitions` is tiny (0–2 per tenant). Parallelizing loses the
-        // audit-before-send ordering for no measurable win.
-        for (const t of transitions) {
-          await safeAwait(db.from("usage_limit_events").insert({
-            tenant_id,
-            dimension: t.dim,
-            from_state: t.from,
-            to_state: t.to,
-            metric_value: t.value,
-            threshold_crossed: t.threshold,
-            resolution_action: "subscription_change_recompute",
-          }), "usage_limit_events.insert");
-          await inngest.send({
-            name: "abuse.state_transition",
-            data: {
-              tenant_id,
-              dimension: t.dim,
-              from_state: t.from,
-              to_state: t.to,
-              metric_value: t.value,
-              threshold_crossed: t.threshold,
-              reason: "subscription_change",
-            },
-          });
-        }
-
-        return { tenant_id, transitions: transitions.length };
+        return { tenant_id, transitions: changed.filter(Boolean).length };
       },
     );
   },
