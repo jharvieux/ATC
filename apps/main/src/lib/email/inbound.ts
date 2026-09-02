@@ -97,6 +97,7 @@ export async function resolveInboundTenant(args: {
 
   if (referencedIds.length > 0) {
     const { data } = await db
+      // d091-allow:service-role-tenant DB-unique resend_message_id references bootstrap the tenant before sender fallback
       .from("email_log")
       .select("tenant_id, contact_id")
       .in("resend_message_id", referencedIds)

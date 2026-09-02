@@ -22,6 +22,7 @@ let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } 
   error: null,
 };
 const mockSafeAwaitCalls: string[] = [];
+const mockEmailLogUpdateFilters: Array<Array<[string, unknown]>> = [];
 vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: async (q: Promise<unknown>, label: string) => {
     void q;
@@ -37,13 +38,25 @@ vi.mock("@/inngest/client", () => ({
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
-    from: (_table: string) => ({
+    from: (table: string) => ({
       select: () => ({
         eq: () => ({
           maybeSingle: () => Promise.resolve(mockMaybeSingleResult),
         }),
       }),
-      update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+      update: () => {
+        const filters: Array<[string, unknown]> = [];
+        if (table === "email_log") mockEmailLogUpdateFilters.push(filters);
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            filters.push([column, value]);
+            return chain;
+          },
+          then: (resolve: (value: unknown) => unknown) =>
+            Promise.resolve(resolve({ data: null, error: null })),
+        };
+        return chain;
+      },
       upsert: () => Promise.resolve({ data: null, error: null }),
     }),
   }),
@@ -82,6 +95,7 @@ beforeEach(() => {
     error: null,
   };
   mockSafeAwaitCalls.length = 0;
+  mockEmailLogUpdateFilters.length = 0;
   mockInngestSend.mockReset();
 });
 
@@ -156,6 +170,9 @@ describe("Resend webhook — event routing", () => {
     const res = await POST(makeReq(makeBody("email.delivered")));
     expect(res.status).toBe(200);
     expect(mockSafeAwaitCalls).toContain("email_log.update");
+    expect(mockEmailLogUpdateFilters).toEqual([
+      [["id", "log-1"], ["tenant_id", "tenant-1"]],
+    ]);
   });
 
   it("email.bounced hard → updates email_log + upserts email_suppressions", async () => {
@@ -170,6 +187,9 @@ describe("Resend webhook — event routing", () => {
     expect(res.status).toBe(200);
     // Both email_log update and email_suppressions upsert must fire
     expect(mockSafeAwaitCalls.filter((l) => l === "email_log.update")).toHaveLength(1);
+    expect(mockEmailLogUpdateFilters).toEqual([
+      [["id", "log-1"], ["tenant_id", "tenant-1"]],
+    ]);
     expect(mockSafeAwaitCalls.filter((l) => l === "email_suppressions.upsert")).toHaveLength(1);
     // Soft-bounce retry must NOT fire for hard bounce
     expect(mockInngestSend).not.toHaveBeenCalled();
@@ -186,6 +206,9 @@ describe("Resend webhook — event routing", () => {
     const res = await POST(makeReq(body));
     expect(res.status).toBe(200);
     expect(mockSafeAwaitCalls).toContain("email_log.update");
+    expect(mockEmailLogUpdateFilters).toEqual([
+      [["id", "log-1"], ["tenant_id", "tenant-1"]],
+    ]);
     // Soft bounce fires Inngest — not email_suppressions
     expect(mockInngestSend).toHaveBeenCalledOnce();
     // #1831: the id is load-bearing — it's what collapses a Svix redelivery of
@@ -226,6 +249,9 @@ describe("Resend webhook — event routing", () => {
     const res = await POST(makeReq(makeBody("email.complained")));
     expect(res.status).toBe(200);
     expect(mockSafeAwaitCalls.filter((l) => l === "email_log.update")).toHaveLength(1);
+    expect(mockEmailLogUpdateFilters).toEqual([
+      [["id", "log-1"], ["tenant_id", "tenant-1"]],
+    ]);
     expect(mockSafeAwaitCalls.filter((l) => l === "email_suppressions.upsert")).toHaveLength(1);
   });
 

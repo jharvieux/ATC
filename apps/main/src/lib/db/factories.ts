@@ -217,6 +217,7 @@ export async function tenantContextFromResendEvent(event: {
   }
   const db = createServiceRoleClient();
   const { data } = await db
+    // d091-allow:service-role-tenant resend_message_id is DB-unique and resolves the tenant context for the webhook
     .from("email_log")
     .select("tenant_id")
     .eq("resend_message_id", messageId)

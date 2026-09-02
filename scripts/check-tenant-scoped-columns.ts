@@ -16,9 +16,7 @@
 //   (2) PLATFORM_READABLE_TABLES entry WITH a tenant_id column → FAIL unless
 //       allowlisted. This is the scarier inverse: a tenant-scoped table routed
 //       through the unscoped passthrough is a silent cross-tenant leak (no
-//       error, just every tenant's rows). The one legitimate case today is
-//       `email_log` (nullable, intentionally cross-tenant — see
-//       db/rls-exceptions.txt); it is allowlisted below.
+//       error, just every tenant's rows). There are no current exceptions.
 //
 // Tables named in the sets but ABSENT from the schema (not-yet-created, or
 // living in the separate RAG database) are reported as warnings, not failures —
@@ -38,16 +36,9 @@ import {
 } from "../apps/main/src/lib/db/tenant-scoped-tables";
 import { redactSecrets } from "./lib/redact-secrets";
 
-// PLATFORM_READABLE tables that legitimately carry a tenant_id column. Each
-// entry MUST have a documented reason — adding one is a deliberate decision to
-// route a tenant_id-bearing table through the UNSCOPED passthrough, so the
-// caller is responsible for its own tenant filter.
-const PLATFORM_READABLE_TENANT_ID_OK: ReadonlyMap<string, string> = new Map([
-  [
-    "email_log",
-    "cross-tenant rate-limit/send log; tenant_id is nullable (NULL for platform-level sends). Service-role-only access. See db/rls-exceptions.txt.",
-  ],
-]);
+// Any future exception must document why a tenant_id-bearing table may bypass
+// automatic scoping. No current table has that exception.
+const PLATFORM_READABLE_TENANT_ID_OK: ReadonlyMap<string, string> = new Map();
 
 const dbUrl = process.env.SUPABASE_DB_URL;
 if (!dbUrl) {

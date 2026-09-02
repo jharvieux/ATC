@@ -50,11 +50,12 @@ interface ContentRow {
   completed_attempt: number | null;
   last_send_log_id: string | null;
 }
-interface LogRow { id: string; status: string; retry_of: string | null }
+interface LogRow { id: string; tenant_id: string; status: string; retry_of: string | null }
 
 interface State {
   content: ContentRow[];
   emailLog: LogRow[];
+  emailLogFilterSets: Array<Array<[string, unknown]>>;
   suppressions: Array<{ tenant_id: string; email_address: string; reason: string }>;
 }
 
@@ -80,7 +81,8 @@ function makeState(overrides: Partial<ContentRow> = {}): State {
         ...overrides,
       },
     ],
-    emailLog: [{ id: "orig", status: "soft_bounced", retry_of: null }],
+    emailLog: [{ id: "orig", tenant_id: "t-1", status: "soft_bounced", retry_of: null }],
+    emailLogFilterSets: [],
     suppressions: [],
   };
 }
@@ -111,6 +113,7 @@ function makeDb(state: State) {
 
       const run = (single: boolean) => {
         const target = rowsFor();
+        if (table === "email_log") state.emailLogFilterSets.push([...filters]);
         if (op === "select") {
           const matched = target.filter(matches);
           return { data: single ? (matched[0] ?? null) : matched, error: null };
@@ -159,7 +162,7 @@ function makeSendEmail(state: State, statuses: string[]) {
     const status = statuses[n - 1] ?? "soft_bounced";
     if (status === "suppressed") return { status: "suppressed", reason: "hard_bounce" };
     const id = `rs-${n}`;
-    state.emailLog.push({ id, status, retry_of: input.retry_of ?? null });
+    state.emailLog.push({ id, tenant_id: input.tenant.id, status, retry_of: input.retry_of ?? null });
     return { status: "sent", email_log_id: id, resend_message_id: `msg-${n}` };
   });
   return { fn, calls };
@@ -259,6 +262,10 @@ describe("§23.7 soft-bounce retry — termination", () => {
     // original marked hard_bounced; content purged
     expect(state.emailLog.find((r) => r.id === "orig")!.status).toBe("hard_bounced");
     expect(state.content).toHaveLength(0);
+    expect(state.emailLogFilterSets.length).toBeGreaterThan(0);
+    expect(state.emailLogFilterSets.every((filters) =>
+      filters.some(([column, value]) => column === "tenant_id" && value === "t-1")
+    )).toBe(true);
   });
 });
 

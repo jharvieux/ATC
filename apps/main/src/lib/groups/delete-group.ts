@@ -17,8 +17,8 @@ export async function hardDeleteGroup(groupId: string): Promise<void> {
   // CASCADE. Two inbound FKs do NOT cascade and are cleared first:
   //   email_log.related_group_id (nullable → null it, keep the audit row)
   //   group_invite_pending_approval.group_id (NOT NULL → delete the rows)
-  // d091-allow:service-role-tenant groupId pre-verified tenant+coordinator by the caller (see contract)
   await safeAwait(
+    // d091-allow:service-role-tenant groupId pre-verified tenant+coordinator by the caller (see contract)
     svc.from("email_log").update({ related_group_id: null }).eq("related_group_id", groupId),
     "groups.delete.unlink_email_log",
   );

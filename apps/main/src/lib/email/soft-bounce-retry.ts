@@ -113,8 +113,17 @@ async function purgeContent(db: SupabaseClient, emailLogId: string): Promise<voi
   );
 }
 
-async function isTerminalStatus(db: SupabaseClient, logId: string): Promise<boolean> {
-  const { data } = await db.from("email_log").select("status").eq("id", logId).maybeSingle();
+async function isTerminalStatus(
+  db: SupabaseClient,
+  logId: string,
+  tenantId: string,
+): Promise<boolean> {
+  const { data } = await db
+    .from("email_log")
+    .select("status")
+    .eq("id", logId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
   const status = (data as { status?: string } | null)?.status;
   // Delivered = success; hard_bounced / complained = the webhook already
   // suppressed the address. All three mean: stop the chain.
@@ -146,7 +155,8 @@ async function markHardBounceAndSuppress(
     db
       .from("email_log")
       .update({ status: "hard_bounced", bounce_reason: "soft_bounce_max_retries" })
-      .eq("id", emailLogId),
+      .eq("id", emailLogId)
+      .eq("tenant_id", tenantId),
     "email_log.update",
   );
 }
@@ -217,7 +227,7 @@ export async function runSoftBounceRetryAttempt(
   if (attempt > MAX_ATTEMPTS) {
     await sleep("retry-terminal-grace", TERMINAL_GRACE_HOURS);
     const checkId = content.last_send_log_id ?? email_log_id;
-    if (await isTerminalStatus(db, checkId)) {
+    if (await isTerminalStatus(db, checkId, tenant_id)) {
       await purgeContent(db, email_log_id);
       return "already_terminated";
     }
@@ -231,7 +241,7 @@ export async function runSoftBounceRetryAttempt(
   // A prior attempt may have delivered (or the address got suppressed) during
   // the sleep — check before sending again.
   const checkId = content.last_send_log_id ?? email_log_id;
-  if (await isTerminalStatus(db, checkId)) {
+  if (await isTerminalStatus(db, checkId, tenant_id)) {
     await purgeContent(db, email_log_id);
     return "already_terminated";
   }

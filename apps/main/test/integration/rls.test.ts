@@ -857,6 +857,307 @@ describe.skipIf(!haveSupabase)("RLS integration", () => {
     });
   });
 
+  describe("#2119 service-only email audit tables", () => {
+    let logAId: string;
+    let logBId: string;
+    let suppressionAId: string;
+    let suppressionBId: string;
+
+    beforeAll(async () => {
+      const logs = await fx.sql<{ id: string; tenant_id: string }[]>`
+        INSERT INTO public.email_log (
+          tenant_id, to_email, from_email, subject, template_id, status
+        ) VALUES
+          (${fx.tenantA.id}, ${email("email-log-a")}, 'sender@example.test', 'Tenant A', 'rls_fixture', 'queued'),
+          (${fx.tenantB.id}, ${email("email-log-b")}, 'sender@example.test', 'Tenant B', 'rls_fixture', 'queued')
+        RETURNING id, tenant_id
+      `;
+      const logA = logs.find((row) => row.tenant_id === fx.tenantA.id);
+      const logB = logs.find((row) => row.tenant_id === fx.tenantB.id);
+      if (!logA || !logB) throw new Error("email_log fixture insert returned incomplete rows");
+      logAId = logA.id;
+      logBId = logB.id;
+
+      const suppressions = await fx.sql<{ id: string; tenant_id: string }[]>`
+        INSERT INTO public.email_suppressions (tenant_id, email_address, reason)
+        VALUES
+          (${fx.tenantA.id}, ${email("suppression-a")}, 'hard_bounce'),
+          (${fx.tenantB.id}, ${email("suppression-b")}, 'hard_bounce')
+        RETURNING id, tenant_id
+      `;
+      const suppressionA = suppressions.find((row) => row.tenant_id === fx.tenantA.id);
+      const suppressionB = suppressions.find((row) => row.tenant_id === fx.tenantB.id);
+      if (!suppressionA || !suppressionB) {
+        throw new Error("email_suppressions fixture insert returned incomplete rows");
+      }
+      suppressionAId = suppressionA.id;
+      suppressionBId = suppressionB.id;
+
+      await fx.sql`
+        INSERT INTO public.email_provider_dispatch (
+          email_log_id,
+          tenant_id,
+          provider_idempotency_key,
+          provider_request_body,
+          provider_account_type,
+          provider_credential_hash,
+          provider_attempt_state,
+          provider_snapshot_expires_at
+        ) VALUES (
+          ${logAId},
+          ${fx.tenantA.id},
+          ${`${RUN_TAG}:provider`},
+          '{"html":"private-provider-body"}',
+          'platform_resend',
+          ${"a".repeat(64)},
+          'unstarted',
+          NOW() + INTERVAL '1 hour'
+        )
+      `;
+      await fx.sql`
+        INSERT INTO public.email_retry_content (
+          email_log_id, tenant_id, to_email, subject, template_id,
+          email_category, html, expires_at
+        ) VALUES (
+          ${logAId}, ${fx.tenantA.id}, ${email("retry-a")}, 'Retry subject',
+          'rls_fixture', 'transactional', '<p>private retry html</p>',
+          NOW() + INTERVAL '1 day'
+        )
+      `;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      await fx.sql`DELETE FROM public.email_suppressions WHERE id IN (${suppressionAId}, ${suppressionBId})`;
+      await fx.sql`DELETE FROM public.email_log WHERE id IN (${logAId}, ${logBId})`;
+    }, 30000);
+
+    it("allows service_role CRUD on both email tables", async () => {
+      const insertedLog = await fx.admin
+        .from("email_log")
+        .insert({
+          tenant_id: fx.tenantA.id,
+          to_email: email("service-log"),
+          from_email: "sender@example.test",
+          subject: "Service CRUD",
+          template_id: "rls_fixture",
+          status: "queued",
+        })
+        .select("id")
+        .single();
+      expect(insertedLog.error).toBeNull();
+      expect(insertedLog.data?.id).toBeTruthy();
+
+      const selectedLog = await fx.admin
+        .from("email_log")
+        .select("id")
+        .eq("id", insertedLog.data!.id)
+        .single();
+      expect(selectedLog.error).toBeNull();
+      expect(selectedLog.data?.id).toBe(insertedLog.data!.id);
+      const updatedLog = await fx.admin
+        .from("email_log")
+        .update({ status: "sent" })
+        .eq("id", insertedLog.data!.id)
+        .select("id")
+        .single();
+      expect(updatedLog.error).toBeNull();
+      expect(updatedLog.data?.id).toBe(insertedLog.data!.id);
+      const deletedLog = await fx.admin
+        .from("email_log")
+        .delete()
+        .eq("id", insertedLog.data!.id);
+      expect(deletedLog.error).toBeNull();
+
+      const insertedSuppression = await fx.admin
+        .from("email_suppressions")
+        .insert({
+          tenant_id: fx.tenantA.id,
+          email_address: email("service-suppression"),
+          reason: "hard_bounce",
+        })
+        .select("id")
+        .single();
+      expect(insertedSuppression.error).toBeNull();
+      expect(insertedSuppression.data?.id).toBeTruthy();
+      const selectedSuppression = await fx.admin
+        .from("email_suppressions")
+        .select("id")
+        .eq("id", insertedSuppression.data!.id)
+        .single();
+      expect(selectedSuppression.error).toBeNull();
+      expect(selectedSuppression.data?.id).toBe(insertedSuppression.data!.id);
+      const updatedSuppression = await fx.admin
+        .from("email_suppressions")
+        .update({ expires_at: new Date(Date.now() + 60_000).toISOString() })
+        .eq("id", insertedSuppression.data!.id)
+        .select("id")
+        .single();
+      expect(updatedSuppression.error).toBeNull();
+      expect(updatedSuppression.data?.id).toBe(insertedSuppression.data!.id);
+      const deletedSuppression = await fx.admin
+        .from("email_suppressions")
+        .delete()
+        .eq("id", insertedSuppression.data!.id);
+      expect(deletedSuppression.error).toBeNull();
+    });
+
+    it("denies authenticated same-tenant and cross-tenant CRUD on both tables", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const results = await Promise.all([
+        clientA.from("email_log").select("id").eq("id", logAId),
+        clientA.from("email_log").select("id").eq("id", logBId),
+        clientA.from("email_log").insert({
+          tenant_id: fx.tenantA.id,
+          to_email: email("auth-log-own"),
+          from_email: "sender@example.test",
+          subject: "Denied",
+          template_id: "rls_fixture",
+          status: "queued",
+        }),
+        clientA.from("email_log").insert({
+          tenant_id: fx.tenantB.id,
+          to_email: email("auth-log-cross"),
+          from_email: "sender@example.test",
+          subject: "Denied",
+          template_id: "rls_fixture",
+          status: "queued",
+        }),
+        clientA.from("email_log").update({ status: "sent" }).eq("id", logAId),
+        clientA.from("email_log").update({ status: "sent" }).eq("id", logBId),
+        clientA.from("email_log").delete().eq("id", logAId),
+        clientA.from("email_log").delete().eq("id", logBId),
+        clientA.from("email_suppressions").select("id").eq("id", suppressionAId),
+        clientA.from("email_suppressions").select("id").eq("id", suppressionBId),
+        clientA.from("email_suppressions").insert({
+          tenant_id: fx.tenantA.id,
+          email_address: email("auth-suppression-own"),
+          reason: "hard_bounce",
+        }),
+        clientA.from("email_suppressions").insert({
+          tenant_id: fx.tenantB.id,
+          email_address: email("auth-suppression-cross"),
+          reason: "hard_bounce",
+        }),
+        clientA.from("email_suppressions").update({ expires_at: null }).eq("id", suppressionAId),
+        clientA.from("email_suppressions").update({ expires_at: null }).eq("id", suppressionBId),
+        clientA.from("email_suppressions").delete().eq("id", suppressionAId),
+        clientA.from("email_suppressions").delete().eq("id", suppressionBId),
+      ]);
+
+      expect(results).toHaveLength(16);
+      for (const result of results) expect(result.error).not.toBeNull();
+    });
+
+    it("denies anon CRUD on both tables", async () => {
+      const anon = createClient(SUPABASE_URL!, ANON_KEY!, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const results = await Promise.all([
+        anon.from("email_log").select("id").eq("id", logAId),
+        anon.from("email_log").insert({
+          tenant_id: fx.tenantA.id,
+          to_email: email("anon-log"),
+          from_email: "sender@example.test",
+          subject: "Denied",
+          template_id: "rls_fixture",
+          status: "queued",
+        }),
+        anon.from("email_log").update({ status: "sent" }).eq("id", logAId),
+        anon.from("email_log").delete().eq("id", logAId),
+        anon.from("email_suppressions").select("id").eq("id", suppressionAId),
+        anon.from("email_suppressions").insert({
+          tenant_id: fx.tenantA.id,
+          email_address: email("anon-suppression"),
+          reason: "hard_bounce",
+        }),
+        anon.from("email_suppressions").update({ expires_at: null }).eq("id", suppressionAId),
+        anon.from("email_suppressions").delete().eq("id", suppressionAId),
+      ]);
+
+      expect(results).toHaveLength(8);
+      for (const result of results) expect(result.error).not.toBeNull();
+    });
+
+    it("exposes only service_role table privileges and false policies", async () => {
+      const privileges = await fx.sql<{
+        table_name: string;
+        grantee: string;
+        privilege_type: string;
+      }[]>`
+        SELECT table_name, grantee, privilege_type
+        FROM information_schema.table_privileges
+        WHERE table_schema = 'public'
+          AND table_name IN ('email_log', 'email_suppressions')
+          AND grantee IN ('PUBLIC', 'anon', 'authenticated', 'service_role')
+        ORDER BY table_name, grantee, privilege_type
+      `;
+      expect(privileges).toEqual([
+        { table_name: "email_log", grantee: "service_role", privilege_type: "DELETE" },
+        { table_name: "email_log", grantee: "service_role", privilege_type: "INSERT" },
+        { table_name: "email_log", grantee: "service_role", privilege_type: "SELECT" },
+        { table_name: "email_log", grantee: "service_role", privilege_type: "UPDATE" },
+        { table_name: "email_suppressions", grantee: "service_role", privilege_type: "DELETE" },
+        { table_name: "email_suppressions", grantee: "service_role", privilege_type: "INSERT" },
+        { table_name: "email_suppressions", grantee: "service_role", privilege_type: "SELECT" },
+        { table_name: "email_suppressions", grantee: "service_role", privilege_type: "UPDATE" },
+      ]);
+
+      const policies = await fx.sql<{
+        table_name: string;
+        policy_name: string;
+        command: string;
+        public_only: boolean;
+        expressions_false: boolean;
+      }[]>`
+        SELECT
+          relation.relname AS table_name,
+          policy.polname AS policy_name,
+          policy.polcmd::text AS command,
+          policy.polroles = ARRAY[0::oid] AS public_only,
+          (policy.polqual IS NULL OR pg_get_expr(policy.polqual, policy.polrelid) = 'false')
+            AND (policy.polwithcheck IS NULL OR pg_get_expr(policy.polwithcheck, policy.polrelid) = 'false')
+            AS expressions_false
+        FROM pg_policy AS policy
+        JOIN pg_class AS relation ON relation.oid = policy.polrelid
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relname IN ('email_log', 'email_suppressions')
+        ORDER BY relation.relname, policy.polname
+      `;
+      expect(policies.map((policy) => [policy.table_name, policy.policy_name])).toEqual([
+        ["email_log", "email_log_delete_service"],
+        ["email_log", "email_log_insert_service"],
+        ["email_log", "email_log_select_service"],
+        ["email_log", "email_log_update_service"],
+        ["email_suppressions", "email_suppressions_delete_service"],
+        ["email_suppressions", "email_suppressions_insert_service"],
+        ["email_suppressions", "email_suppressions_select_service"],
+        ["email_suppressions", "email_suppressions_update_service"],
+      ]);
+      expect(policies.every((policy) => policy.public_only && policy.expressions_false)).toBe(true);
+    });
+
+    it("keeps provider request bodies and retry HTML inaccessible to authenticated users", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const [provider, retry] = await Promise.all([
+        clientA
+          .from("email_provider_dispatch")
+          .select("provider_request_body")
+          .eq("email_log_id", logAId),
+        clientA
+          .from("email_retry_content")
+          .select("html")
+          .eq("email_log_id", logAId),
+      ]);
+
+      expect(provider.error).not.toBeNull();
+      expect(provider.data).toBeNull();
+      expect(retry.error).not.toBeNull();
+      expect(retry.data).toBeNull();
+    });
+  });
+
   // #1523 / D-295 — SECURITY DEFINER tenant-helper functions exposed at
   // /rest/v1/rpc. The Supabase security advisor flags auth_user_in_tenant,
   // tenant_is_active, and auth_user_can_access_conversation as EXECUTE-able by

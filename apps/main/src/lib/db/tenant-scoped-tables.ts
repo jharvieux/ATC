@@ -103,6 +103,7 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "trip_resources",                   // BP39
   "pre_cruise_email_content",         // pre-cruise email content
   "tenant_email_templates",           // #963 per-tenant email subject/body overrides
+  "email_log",                        // service-only tenant email delivery audit
   "email_suppressions",               // tenant email suppression list
   "legal_consents",                   // tenant consent records
   "audit_log",                        // tenant audit log (writes service-role only)
@@ -131,8 +132,8 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
 //       host_adapters), OR
 //   (b) use the tenant id as their primary key (the `tenants` table itself —
 //       callers self-scope with `.eq("id", ctx.tenant_id)`), OR
-//   (c) are platform-internal logs intentionally accessed cross-tenant
-//       (email_log, pricing_cache).
+//   (c) are platform-internal data intentionally accessed cross-tenant
+//       (pricing_cache).
 //
 // Reads/writes through tenantClient on these tables are PASSED THROUGH
 // without modification — callers MUST apply their own filter. Adding a
@@ -173,9 +174,6 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   // Platform-wide settings (no tenant_id, singleton-ish rows).
   "platform_settings",
   "ai_kill_switch_state",
-  // Cross-tenant log — service-role-only writes from cron paths, reads via
-  // platform-admin audit. tenant_id is nullable.
-  "email_log",
   // #780/#781 — canonical cruise-line/ship reference catalogs (no tenant_id).
   // RLS grants SELECT to any authenticated user; all writes are service-role
   // (CruiseMapper scraper). Reads flow through tenantClient in quote/booking
