@@ -40,8 +40,10 @@ describe("atc-rag Vercel deployment root", () => {
 
     expect(betaJob).toContain('VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}');
     expect(betaJob).toContain('vercel deploy --token="$VERCEL_TOKEN" --yes');
+    expect(betaJob).toContain('--build-env ENABLE_EXPERIMENTAL_COREPACK=1');
     expect(productionStep).toContain('VERCEL_PROJECT_ID: ${{ secrets.VERCEL_RAG_PROJECT_ID }}');
     expect(productionStep).toContain('vercel deploy --prod --yes --token="$VERCEL_TOKEN"');
+    expect(productionStep).toContain('--build-env ENABLE_EXPERIMENTAL_COREPACK=1');
     expect(betaJob).not.toContain("working-directory: apps/rag");
     expect(productionStep).not.toContain("working-directory: apps/rag");
   });

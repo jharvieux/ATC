@@ -752,7 +752,7 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
             exit 1
           fi
-          vercel deploy --token="$VERCEL_TOKEN" --yes
+          vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -1208,7 +1208,7 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
             exit 1
           fi
-          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN" --build-env ENABLE_EXPERIMENTAL_COREPACK=1
 
       - name: Smoke test atc-rag production
         # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md
