@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const REQUIRED_ACTION_MAJORS = Object.freeze({
   "actions/checkout": "v7",
   "actions/setup-node": "v7",
+  "gitleaks/gitleaks-action": "v3",
   "pnpm/action-setup": "v6",
 });
 

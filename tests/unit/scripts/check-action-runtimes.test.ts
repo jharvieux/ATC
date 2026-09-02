@@ -28,13 +28,15 @@ describe("workflow action runtime guard", () => {
     const fixture = workflowFixture(`steps:
   - uses: actions/checkout@v4
   - uses: actions/setup-node@v4
+  - uses: gitleaks/gitleaks-action@v2
   - uses: pnpm/action-setup@v4
 `);
 
     expect(findActionRuntimeErrors(fixture)).toEqual([
       "workflow.yml:2: actions/checkout@v4 must use actions/checkout@v7.",
       "workflow.yml:3: actions/setup-node@v4 must use actions/setup-node@v7.",
-      "workflow.yml:4: pnpm/action-setup@v4 must use pnpm/action-setup@v6.",
+      "workflow.yml:4: gitleaks/gitleaks-action@v2 must use gitleaks/gitleaks-action@v3.",
+      "workflow.yml:5: pnpm/action-setup@v4 must use pnpm/action-setup@v6.",
     ]);
   });
 });
