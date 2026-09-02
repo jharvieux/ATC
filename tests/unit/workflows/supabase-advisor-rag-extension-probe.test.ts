@@ -13,12 +13,13 @@ describe("Supabase advisor RAG extension probe workflow", () => {
     const source = workflowSource();
 
     expect(source).toContain("rag_extension_probe_revision:");
+    expect(source).toContain("rag_extension_probe_project_ref:");
     expect(source).toContain("required: false");
     expect(source).toContain(
       "if: github.event_name == 'schedule' || inputs.rag_extension_probe_revision == ''",
     );
     expect(source).toContain(
-      "if: github.event_name == 'workflow_dispatch' && inputs.rag_extension_probe_revision != ''",
+      "if: github.event_name == 'workflow_dispatch' && inputs.rag_extension_probe_revision != '' && inputs.rag_extension_probe_project_ref != ''",
     );
     expect(source).toContain("group: shared-test-db");
     expect(source).toContain("contents: read");
@@ -28,12 +29,16 @@ describe("Supabase advisor RAG extension probe workflow", () => {
     const source = workflowSource();
 
     expect(source).toContain("PROBE_ACTUAL_REVISION: ${{ github.sha }}");
+    expect(source).toContain(
+      "PROBE_ALLOWED_PROJECT_REF: ${{ inputs.rag_extension_probe_project_ref }}",
+    );
     expect(source).toContain("PROBE_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}");
     expect(source).toContain(
       "PROBE_EXPECTED_REVISION: ${{ inputs.rag_extension_probe_revision }}",
     );
     expect(source).toContain("ref: ${{ inputs.rag_extension_probe_revision }}");
     expect(source).toContain('[[ ! "$PROBE_EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]');
+    expect(source).toContain('[[ ! "$PROBE_ALLOWED_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]');
     expect(source).toContain('checked_out_revision="$(git rev-parse HEAD)"');
     expect(source).toContain('[[ "$checked_out_revision" != "$PROBE_EXPECTED_REVISION" ]]');
     expect(source).toContain('[[ "$PROBE_ACTUAL_REVISION" != "$PROBE_EXPECTED_REVISION" ]]');

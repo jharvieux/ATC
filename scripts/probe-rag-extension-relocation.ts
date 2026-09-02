@@ -3,7 +3,6 @@ import { pathToFileURL } from "node:url";
 import postgres from "postgres";
 import { redactSecrets } from "./lib/redact-secrets";
 
-const PRODUCTION_PROJECT_REF = "jjznkprbotkqqnuvcost";
 const PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/;
 const EXTENSIONS = ["pg_trgm", "vector"] as const;
 
@@ -75,7 +74,10 @@ export function snapshotsEqual(before: ProbeSnapshot, after: ProbeSnapshot): boo
   return canonicalJson(before) === canonicalJson(after);
 }
 
-export function assertSafeTarget(dbUrl: string): TargetIdentity {
+export function assertExpectedTarget(dbUrl: string, expectedProjectRef: string): TargetIdentity {
+  if (!PROJECT_REF_PATTERN.test(expectedProjectRef)) {
+    throw new Error("PROBE_ALLOWED_PROJECT_REF must be an exact 20-character project ref");
+  }
   let parsed: URL;
   try {
     parsed = new URL(dbUrl);
@@ -97,8 +99,8 @@ export function assertSafeTarget(dbUrl: string): TargetIdentity {
   if (!projectRef) {
     throw new Error("Could not prove the Supabase project ref from PROBE_DB_URL; refusing target");
   }
-  if (projectRef === PRODUCTION_PROJECT_REF) {
-    throw new Error("Production RAG project rejected before connection");
+  if (projectRef !== expectedProjectRef) {
+    throw new Error("PROBE_DB_URL does not match the explicitly authorized project ref");
   }
 
   return {
@@ -222,8 +224,12 @@ function redactedSnapshot(snapshot: ProbeSnapshot): Record<string, unknown> {
   };
 }
 
-async function runProbe(dbUrl: string, revision: string): Promise<ProbeEvidence> {
-  const target = assertSafeTarget(dbUrl);
+async function runProbe(
+  dbUrl: string,
+  revision: string,
+  allowedProjectRef: string,
+): Promise<ProbeEvidence> {
+  const target = assertExpectedTarget(dbUrl, allowedProjectRef);
   const client = postgres(dbUrl, {
     connect_timeout: 15,
     idle_timeout: 5,
@@ -238,8 +244,8 @@ async function runProbe(dbUrl: string, revision: string): Promise<ProbeEvidence>
       throw new Error("Both pg_trgm and vector must be installed before probing");
     }
     for (const extension of before.extensions) {
-      if (extension.schema !== "public") {
-        throw new Error(`${String(extension.extension)} is not in public; refusing stale probe`);
+      if (extension.schema !== "extensions") {
+        throw new Error(`${String(extension.extension)} is not in extensions; refusing stale probe`);
       }
     }
     if (!before.schemas.some((schema) => schema.schema === "extensions")) {
@@ -259,7 +265,7 @@ async function runProbe(dbUrl: string, revision: string): Promise<ProbeEvidence>
 
       for (const extension of EXTENSIONS) {
         try {
-          await connection.unsafe(`ALTER EXTENSION ${extension} SET SCHEMA extensions`);
+          await connection.unsafe(`ALTER EXTENSION ${extension} SET SCHEMA public`);
           alters.push({ extension, status: "succeeded" });
         } catch (error) {
           alters.push({ extension, status: "failed", error: sanitizeError(error) });
@@ -272,8 +278,8 @@ async function runProbe(dbUrl: string, revision: string): Promise<ProbeEvidence>
         const extension = transactional.extensions.find(
           (entry) => entry.extension === extensionName,
         );
-        if (extension?.schema !== "extensions") {
-          throw new Error(`${extensionName} did not resolve to extensions inside the transaction`);
+        if (extension?.schema !== "public") {
+          throw new Error(`${extensionName} did not resolve to public inside the transaction`);
         }
       }
     } catch (error) {
@@ -309,10 +315,14 @@ async function runProbe(dbUrl: string, revision: string): Promise<ProbeEvidence>
 
 async function main(): Promise<void> {
   const dbUrl = process.env.PROBE_DB_URL;
+  const allowedProjectRef = process.env.PROBE_ALLOWED_PROJECT_REF;
   const expectedRevision = process.env.PROBE_EXPECTED_REVISION;
   const actualRevision = process.env.PROBE_ACTUAL_REVISION;
 
   if (!dbUrl) throw new Error("PROBE_DB_URL is required; refusing to skip the authorization probe");
+  if (!allowedProjectRef) {
+    throw new Error("PROBE_ALLOWED_PROJECT_REF is required; refusing an unattested target");
+  }
   if (!expectedRevision || !/^[0-9a-f]{40}$/.test(expectedRevision)) {
     throw new Error("PROBE_EXPECTED_REVISION must be a full lowercase SHA");
   }
@@ -320,7 +330,7 @@ async function main(): Promise<void> {
     throw new Error("PROBE_ACTUAL_REVISION does not match the requested content address");
   }
 
-  const evidence = await runProbe(dbUrl, expectedRevision);
+  const evidence = await runProbe(dbUrl, expectedRevision, allowedProjectRef);
   console.log(`probe.revision=${evidence.revision}`);
   console.log(`probe.target=${canonicalJson(evidence.target)}`);
   console.log(`probe.before=${canonicalJson(redactedSnapshot(evidence.before))}`);

@@ -1,33 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertSafeTarget,
+  assertExpectedTarget,
   canonicalJson,
   digestLedgerRows,
   snapshotsEqual,
 } from "../../../scripts/probe-rag-extension-relocation";
 
-const PRODUCTION_REF = "jjznkprbotkqqnuvcost";
 const TEST_REF = "abcdefghijklmnopqrst";
+const OTHER_REF = "zyxwvutsrqponmlkjihg";
 
 describe("RAG extension relocation probe target guard", () => {
-  it("rejects the production project before any database connection can be made", () => {
+  it("rejects any project other than the exact operator-authorized ref", () => {
     expect(() =>
-      assertSafeTarget(`postgres://postgres:secret@db.${PRODUCTION_REF}.supabase.co/postgres`),
-    ).toThrow("Production RAG project rejected before connection");
+      assertExpectedTarget(
+        `postgres://postgres:secret@db.${OTHER_REF}.supabase.co/postgres`,
+        TEST_REF,
+      ),
+    ).toThrow("does not match the explicitly authorized project ref");
   });
 
   it("accepts direct and pooler URLs only when their Supabase project ref is provable", () => {
     expect(
-      assertSafeTarget(`postgres://postgres:secret@db.${TEST_REF}.supabase.co/postgres`).projectRef,
-    ).toBe("abcd…qrst");
-    expect(
-      assertSafeTarget(
-        `postgres://postgres.${TEST_REF}:secret@aws-0-us-east-1.pooler.supabase.com/postgres`,
+      assertExpectedTarget(
+        `postgres://postgres:secret@db.${TEST_REF}.supabase.co/postgres`,
+        TEST_REF,
       ).projectRef,
     ).toBe("abcd…qrst");
-    expect(() => assertSafeTarget("postgres://postgres:secret@localhost/postgres")).toThrow(
-      "Could not prove the Supabase project ref",
-    );
+    expect(
+      assertExpectedTarget(
+        `postgres://postgres.${TEST_REF}:secret@aws-0-us-east-1.pooler.supabase.com/postgres`,
+        TEST_REF,
+      ).projectRef,
+    ).toBe("abcd…qrst");
+    expect(() =>
+      assertExpectedTarget("postgres://postgres:secret@localhost/postgres", TEST_REF),
+    ).toThrow("Could not prove the Supabase project ref");
   });
 });
 
@@ -36,8 +43,8 @@ describe("RAG extension relocation probe rollback evidence", () => {
     identity: [{ current_user: "postgres", session_user: "postgres" }],
     memberships: [{ member: "postgres", granted_role: "supabase_admin" }],
     extensions: [
-      { extension: "pg_trgm", schema: "public" },
-      { extension: "vector", schema: "public" },
+      { extension: "pg_trgm", schema: "extensions" },
+      { extension: "vector", schema: "extensions" },
     ],
     schemas: [{ schema: "public" }, { schema: "extensions" }],
     migrationLedger: { count: 2, digest: "digest" },
