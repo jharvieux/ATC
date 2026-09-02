@@ -85,9 +85,9 @@ function currentBillingPeriodRange(): string {
   return `[${start},${end})`;
 }
 
-// Mirror of call-wrapper.logAndIncrement. Kept here local rather than
-// exported from call-wrapper so the streaming and non-streaming paths can
-// diverge if future cost accounting differs (e.g. mid-stream caching).
+// Mirror of call-wrapper.logAndIncrement. Both paths use the same atomic
+// increment RPC so concurrent streaming and non-streaming completions cannot
+// overwrite each other's cost.
 async function logAndIncrement(args: LogIncrementArgs): Promise<void> {
   await safeAwait(args.db.from("ai_call_log").insert({
     tenant_id: args.tenant_id,
@@ -105,27 +105,14 @@ async function logAndIncrement(args: LogIncrementArgs): Promise<void> {
   if (args.tenant_id === PLATFORM_TENANT_ID) return;
 
   const period = currentBillingPeriodRange();
-  const { data: existing } = await args.db
-    .from("tenant_usage_metrics")
-    .select("id, ai_cost_cents")
-    .eq("tenant_id", args.tenant_id)
-    .eq("billing_period", period)
-    .maybeSingle();
-
-  if (existing) {
-    const current = BigInt((existing as { ai_cost_cents: string | number }).ai_cost_cents);
-    const updated = current + args.cost_cents;
-    await safeAwait(args.db
-      .from("tenant_usage_metrics")
-      .update({ ai_cost_cents: updated.toString() })
-      .eq("id", (existing as { id: string }).id), "tenant_usage_metrics.update");
-  } else {
-    await safeAwait(args.db.from("tenant_usage_metrics").insert({
-      tenant_id: args.tenant_id,
-      billing_period: period,
-      ai_cost_cents: args.cost_cents.toString(),
-    }), "tenant_usage_metrics.insert");
-  }
+  await safeAwait(
+    args.db.rpc("increment_tenant_ai_cost", {
+      p_tenant_id: args.tenant_id,
+      p_billing_period: period,
+      p_amount_cents: args.cost_cents.toString(),
+    }),
+    "tenant_usage_metrics.rpc.increment",
+  );
 }
 
 export function instrumentedClaudeStream(
@@ -251,7 +238,6 @@ export function instrumentedClaudeStream(
           db,
           tenant: snapshot.tenant,
           dimension: "ai_cost",
-          metric_value: cost_cents,
         }).catch((err) => console.warn("[stream-wrapper] state-transition check failed:", err));
         evictTenantSnapshot(args.tenant_id);
 

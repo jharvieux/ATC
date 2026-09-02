@@ -22,6 +22,10 @@ import { sendEmail, TENANT_BRANDING_COLUMNS } from "@/lib/email/send";
 import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { AbuseStateTransition } from "@/emails/AbuseStateTransition";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import {
+  dispatchPendingTransitionOutbox,
+  recoverPendingStateEvaluations,
+} from "@/lib/abuse/state-machine";
 
 interface NotificationCopy {
   subject_template: string;
@@ -29,6 +33,7 @@ interface NotificationCopy {
 }
 
 const AbuseStateTransitionPayloadSchema = z.object({
+  usage_event_id: z.string().optional(),
   tenant_id: z.string().optional(),
   dimension: z.enum(["ai_cost", "chat_volume", "email_volume", "group_invite", "rag_cap", "help_submission"]).optional(),
   from_state: z.string().optional(),
@@ -43,9 +48,27 @@ const PUBLIC_ORIGIN_PATH = "/settings/usage";
 export const abuseStateTransitionNotify = inngest.createFunction(
   {
     id: "abuse-state-transition-notify",
-    triggers: [{ event: "abuse.state_transition" }],
+    triggers: [
+      { event: "abuse.state_transition" },
+      { cron: "*/5 * * * *" },
+    ],
   },
   async ({ event }) => {
+    if (event.name === "inngest/scheduled.timer") {
+      return withPlatformAdminAudit(
+        {
+          admin_user_id: "system-inngest",
+          reason: "cross_tenant_admin",
+          operation: "abuse_state_transition_outbox_recovery",
+        },
+        async (db) => {
+          const evaluated = await recoverPendingStateEvaluations(db);
+          const dispatched = await dispatchPendingTransitionOutbox(db);
+          return { evaluated, dispatched };
+        },
+      );
+    }
+
     const parsed = AbuseStateTransitionPayloadSchema.safeParse(event.data);
     if (!parsed.success) {
       console.error("[abuse-state-transition-notify] invalid event payload: %s", parsed.error.message);
@@ -182,27 +205,35 @@ export const abuseStateTransitionNotify = inngest.createFunction(
             // Keyed on the transition + recipient so a step retry of this same
             // event doesn't double-send; a genuinely new transition (different
             // to_state) gets a new key and sends.
-            idempotencyKey: `abuse_state_transition:${data.tenant_id}:${data.dimension}:${data.to_state}:${admin.id}`,
+            idempotencyKey: data.usage_event_id
+              ? `abuse_state_transition:${data.usage_event_id}:${admin.id}`
+              : `abuse_state_transition:${data.tenant_id}:${data.dimension}:${data.to_state}:${admin.id}`,
           });
           return { email: admin.email, sent: result.status === "sent" };
         }));
         const sentTo = sendOutcomes.filter((o) => o.sent).map((o) => o.email);
 
         // 5. Stamp the most-recent usage_limit_events row for this transition.
-        const { data: eventRow } = await db
+        let eventQuery = db
           .from("usage_limit_events")
           .select("id")
           .eq("tenant_id", data.tenant_id)
-          .eq("dimension", data.dimension)
-          .eq("to_state", data.to_state)
-          .order("triggered_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .eq("dimension", data.dimension);
+        if (data.usage_event_id) {
+          eventQuery = eventQuery.eq("id", data.usage_event_id);
+        } else {
+          eventQuery = eventQuery
+            .eq("to_state", data.to_state)
+            .order("triggered_at", { ascending: false })
+            .limit(1);
+        }
+        const { data: eventRow } = await eventQuery.maybeSingle();
         if (eventRow && sentTo.length > 0) {
           await safeAwait(db
             .from("usage_limit_events")
             .update({ notification_sent_to: sentTo })
-            .eq("id", (eventRow as { id: string }).id), "usage_limit_events.update");
+            .eq("id", (eventRow as { id: string }).id)
+            .eq("tenant_id", data.tenant_id), "usage_limit_events.update");
         }
 
         return {

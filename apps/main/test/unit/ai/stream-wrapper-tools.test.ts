@@ -24,6 +24,7 @@ let streamDeltas: string[];
 let streamFinalMessage: unknown;
 let streamShouldThrow: boolean;
 let abortCalled: boolean;
+let rpcCalls: Array<{ name: string; args: Record<string, unknown> }>;
 
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class FakeAnthropic {
@@ -69,8 +70,8 @@ vi.mock("@/lib/abuse/snapshot", () => ({
   evictTenantSnapshot: () => {},
 }));
 
-// Chainable service-role client stub. The done-promise logging path does an
-// ai_call_log insert + a tenant_usage_metrics read/insert; all resolve clean.
+// Chainable service-role client stub. The done-promise logging path inserts
+// ai_call_log and increments tenant usage through the atomic RPC.
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => {
     const builder: Record<string, unknown> = {
@@ -80,7 +81,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
       maybeSingle: () => Promise.resolve({ data: null, error: null }),
       update: () => builder,
     };
-    return { from: () => builder };
+    return {
+      from: () => builder,
+      rpc: (name: string, args: Record<string, unknown>) => {
+        rpcCalls.push({ name, args });
+        return Promise.resolve({ data: null, error: null });
+      },
+    };
   },
 }));
 
@@ -146,6 +153,7 @@ beforeEach(() => {
   streamFinalMessage = finalMsg([{ type: "text", text: "Sure." }]);
   streamShouldThrow = false;
   abortCalled = false;
+  rpcCalls = [];
   vendorSuccess = [];
   vendorFailure = [];
   process.env.ANTHROPIC_API_KEY = "sk-ant-test";
@@ -216,6 +224,19 @@ describe("instrumentedClaudeStream — raw exposure (#421)", () => {
     expect(result.input_tokens).toBe(12);
     expect(result.output_tokens).toBe(8);
     expect(result.cost_cents).toBe(20n); // fixture: cents = input + output
+  });
+
+  it("attributes streaming cost through the atomic AI-cost increment RPC", async () => {
+    const { done } = instrumentedClaudeStream({ ...baseArgs });
+    await done;
+
+    expect(rpcCalls).toContainEqual({
+      name: "increment_tenant_ai_cost",
+      args: expect.objectContaining({
+        p_tenant_id: "t-1",
+        p_amount_cents: "20",
+      }),
+    });
   });
 });
 

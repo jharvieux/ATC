@@ -7,9 +7,9 @@ import { checkHelpSubmissionRate, incrementHelpSubmissionCounter } from "@/lib/a
 import { PRICING_FIXTURE as PRICING } from "../../fixtures/pricing";
 
 
-const inngestSendMock = vi.fn();
-vi.mock("@/inngest/client", () => ({
-  inngest: { send: (...args: unknown[]) => inngestSendMock(...args) },
+const dispatchOutboxMock = vi.fn();
+vi.mock("@/lib/abuse/state-machine", () => ({
+  dispatchTransitionOutbox: (...args: unknown[]) => dispatchOutboxMock(...args),
 }));
 
 const operatorAlertMock = vi.fn();
@@ -87,92 +87,82 @@ describe("help_submission_rate thresholds", () => {
   });
 });
 
-// Stub for incrementHelpSubmissionCounter tests: handles one select then one update.
-function metricsDbForIncrement(existingRow: Record<string, unknown> | null): SupabaseClient {
-  const selectChain = {
-    select: () => selectChain,
-    eq: () => selectChain,
-    order: () => selectChain,
-    limit: () => selectChain,
-    maybeSingle: () => Promise.resolve({ data: existingRow, error: null }),
-  };
-
-  const updateResult = { data: null, error: null };
-  const updateChain: Record<string, unknown> = {};
-  updateChain.update = () => updateChain;
-  updateChain.eq = () => updateChain;
-  // thenable — safeAwait does `await chain`, which calls .then
-  updateChain.then = (resolve: (v: unknown) => unknown) => resolve(updateResult);
-
-  let fromCount = 0;
+function metricsDbForIncrement(row: Record<string, unknown>): SupabaseClient {
   return {
-    from: () => (fromCount++ === 0 ? selectChain : updateChain),
+    rpc: () => Promise.resolve({ data: [row], error: null }),
   } as unknown as SupabaseClient;
 }
 
 describe("incrementHelpSubmissionCounter — soft2 owner email (#1261)", () => {
   beforeEach(() => {
-    inngestSendMock.mockReset();
+    dispatchOutboxMock.mockReset();
+    dispatchOutboxMock.mockResolvedValue(undefined);
     operatorAlertMock.mockReset();
   });
 
   it("fires abuse.state_transition(help_submission, soft2) when crossing the soft2 threshold", async () => {
     // 49 submissions + 1 = 50, crosses soft2 for the first time this day
     const db = metricsDbForIncrement({
-      help_submission_count: 49,
-      help_submission_limit_state: "soft1",
-      last_recomputed_at: null,
-      billing_period: "2026-06",
+      new_count: 50,
+      new_state: "soft2",
+      transitioned: true,
+      event_id: "event-soft2",
+      event_tenant_id: "t-soft2",
+      event_dimension: "help_submission",
+      event_from_state: "soft1",
+      event_to_state: "soft2",
+      event_metric_value: "50",
+      event_threshold_crossed: "50",
+      event_created: true,
     });
 
     const result = await incrementHelpSubmissionCounter(db, "t-soft2");
 
     expect(result.new_state).toBe("soft2");
     expect(result.transitioned).toBe(true);
-    expect(inngestSendMock).toHaveBeenCalledOnce();
-    expect(inngestSendMock).toHaveBeenCalledWith({
-      name: "abuse.state_transition",
-      data: {
-        tenant_id: "t-soft2",
-        dimension: "help_submission",
-        from_state: "soft1",
-        to_state: "soft2",
-        metric_value: "50",
-        threshold_crossed: "50",
-      },
-    });
+    expect(dispatchOutboxMock).toHaveBeenCalledWith(db, expect.objectContaining({
+      event_id: "event-soft2",
+      event_to_state: "soft2",
+    }));
   });
 
   it("does NOT re-fire when already in soft2 (24 h throttle: at-most-once per day)", async () => {
     // Already at 55 submissions in soft2 — no new transition, no email
     const db = metricsDbForIncrement({
-      help_submission_count: 55,
-      help_submission_limit_state: "soft2",
-      last_recomputed_at: null,
-      billing_period: "2026-06",
+      new_count: 56,
+      new_state: "soft2",
+      transitioned: false,
+      event_id: null,
     });
 
     const result = await incrementHelpSubmissionCounter(db, "t-soft2-again");
 
     expect(result.new_state).toBe("soft2");
     expect(result.transitioned).toBe(false);
-    expect(inngestSendMock).not.toHaveBeenCalled();
+    expect(dispatchOutboxMock).not.toHaveBeenCalled();
   });
 
   it("does NOT fire soft2 event when crossing the hard threshold", async () => {
     // 99 submissions in soft2 → 100 = hard; only the hard operator alert fires
     const db = metricsDbForIncrement({
-      help_submission_count: 99,
-      help_submission_limit_state: "soft2",
-      last_recomputed_at: null,
-      billing_period: "2026-06",
+      new_count: 100,
+      new_state: "hard",
+      transitioned: true,
+      event_id: "event-hard",
+      event_tenant_id: "t-hard",
+      event_dimension: "help_submission",
+      event_from_state: "soft2",
+      event_to_state: "hard",
+      event_metric_value: "100",
+      event_threshold_crossed: "100",
+      event_created: true,
     });
 
     const result = await incrementHelpSubmissionCounter(db, "t-hard");
 
     expect(result.new_state).toBe("hard");
     expect(result.transitioned).toBe(true);
-    expect(inngestSendMock).not.toHaveBeenCalled();
+    expect(dispatchOutboxMock).not.toHaveBeenCalled();
     expect(operatorAlertMock).toHaveBeenCalledWith(
       expect.objectContaining({ signal: "help_submission_rate_hard" }),
     );

@@ -139,6 +139,7 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
   afterAll(async () => {
     if (!fx) return;
     try {
+      await fx.sql`DELETE FROM public.usage_limit_events WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_retry_content WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_provider_dispatch WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
       await fx.sql`DELETE FROM public.email_log WHERE tenant_id IN (${fx.tenantOne}, ${fx.tenantTwo})`;
@@ -150,6 +151,63 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     } finally {
       await fx.sql.end();
     }
+  }, 60000);
+
+  it("commits the email counter and recovery marker together before state evaluation", async () => {
+    await finalize(fx.tenantTwo, `${runTag}:counter-marker`, "counter-marker");
+
+    const [committed] = await fx.sql<{ count: number; period: string; markers: number }[]>`
+      SELECT
+        metrics.email_sent_today::int AS count,
+        metrics.billing_period::text AS period,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_state_evaluations AS evaluation
+          WHERE evaluation.tenant_id = metrics.tenant_id
+            AND evaluation.dimension = 'email_volume'
+            AND evaluation.billing_period = metrics.billing_period
+            AND evaluation.pending
+        ) AS markers
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantTwo}
+      ORDER BY upper(metrics.billing_period) DESC
+      LIMIT 1
+    `;
+    expect(committed).toMatchObject({ count: 1, markers: 1 });
+
+    await fx.sql`SELECT * FROM public.advance_tenant_usage_state(
+      ${fx.tenantTwo}::uuid,
+      ${committed!.period}::daterange,
+      'email_volume',
+      1,
+      10,
+      20,
+      false,
+      NULL
+    )`;
+    const [recovered] = await fx.sql<{ state: string; markers: number; events: number }[]>`
+      SELECT
+        metrics.email_volume_limit_state AS state,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_state_evaluations AS evaluation
+          WHERE evaluation.tenant_id = metrics.tenant_id
+            AND evaluation.dimension = 'email_volume'
+            AND evaluation.billing_period = metrics.billing_period
+            AND evaluation.pending
+        ) AS markers,
+        (
+          SELECT count(*)::int
+          FROM public.usage_limit_events AS event
+          WHERE event.tenant_id = metrics.tenant_id
+            AND event.dimension = 'email_volume'
+            AND event.resolution_action = 'state_transition'
+        ) AS events
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantTwo}
+        AND metrics.billing_period = ${committed!.period}::daterange
+    `;
+    expect(recovered).toEqual({ state: "soft1", markers: 0, events: 1 });
   }, 60000);
 
   it("records, replays, resets the UTC day, heals an orphan, and omits retry content for retry_of", async () => {
@@ -189,6 +247,11 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
     const second = await finalize(fx.tenantOne, `${runTag}:second`, "second");
     expect(second.email_sent_today).toBe(2);
 
+    await fx.sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${fx.tenantOne}
+        AND dimension = 'email_volume'
+    `;
     await fx.sql`
       UPDATE public.tenant_usage_metrics
       SET email_sent_today = 99,
@@ -249,6 +312,118 @@ describeIf("finalize_idempotent_email_send RPC (DB integration)", () => {
       SELECT 1 FROM public.email_retry_content WHERE email_log_id = ${retry.email_log_id}
     `;
     expect(retryPayload).toHaveLength(0);
+  }, 60000);
+
+  it("preserves monthly email state when finalization resets the daily window", async () => {
+    await fx.sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${fx.tenantOne}
+        AND dimension = 'email_volume'
+    `;
+    await fx.sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 99,
+          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1),
+          email_volume_limit_state = 'soft1'
+      WHERE tenant_id = ${fx.tenantOne}
+    `;
+
+    const finalized = await finalize(fx.tenantOne, `${runTag}:state-window`, "state-window");
+    expect(finalized.email_sent_today).toBe(1);
+    const [newUtcDayState] = await fx.sql<{
+      email_volume_limit_state: string;
+      evaluated_state: string;
+      evaluation_value: string;
+    }[]>`
+      SELECT
+        metrics.email_volume_limit_state,
+        evaluation.evaluated_state,
+        evaluation.evaluation_value::text
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+       AND evaluation.evaluation_day = metrics.email_sent_day_ref
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(newUtcDayState).toEqual({
+      email_volume_limit_state: "soft1",
+      evaluated_state: "soft1",
+      evaluation_value: "1",
+    });
+  }, 60000);
+
+  it("keeps the newer daily email window when stale finalization arrives", async () => {
+    await fx.sql`
+      DELETE FROM public.usage_limit_state_evaluations
+      WHERE tenant_id = ${fx.tenantOne}
+        AND dimension = 'email_volume'
+    `;
+    await fx.sql`
+      UPDATE public.tenant_usage_metrics
+      SET email_sent_today = 6,
+          email_sent_day_ref = ((clock_timestamp() AT TIME ZONE 'UTC')::date + 1)
+      WHERE tenant_id = ${fx.tenantOne}
+    `;
+    await fx.sql`
+      SELECT public.increment_tenant_usage_counter(
+        metrics.tenant_id,
+        metrics.billing_period,
+        'email_volume',
+        1,
+        metrics.email_sent_day_ref::timestamp AT TIME ZONE 'UTC'
+      )
+      FROM public.tenant_usage_metrics AS metrics
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+      ORDER BY upper(metrics.billing_period) DESC
+      LIMIT 1
+    `;
+    const [newerMarker] = await fx.sql<{ metric_day: string; marker_day: string; evaluation_value: string }[]>`
+      SELECT
+        metrics.email_sent_day_ref::text AS metric_day,
+        evaluation.evaluation_day::text AS marker_day,
+        evaluation.evaluation_value::text
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(newerMarker).toMatchObject({ evaluation_value: "7" });
+    expect(newerMarker?.marker_day).toBe(newerMarker?.metric_day);
+
+    const finalized = await finalize(fx.tenantOne, `${runTag}:stale-window`, "stale-window");
+    expect(finalized.email_sent_today).toBe(8);
+
+    const [window] = await fx.sql<{
+      email_sent_today: number;
+      metric_day: string;
+      marker_day: string;
+      evaluation_value: string;
+      stayed_newer: boolean;
+    }[]>`
+      SELECT
+        metrics.email_sent_today,
+        metrics.email_sent_day_ref::text AS metric_day,
+        evaluation.evaluation_day::text AS marker_day,
+        evaluation.evaluation_value::text,
+        metrics.email_sent_day_ref > (clock_timestamp() AT TIME ZONE 'UTC')::date AS stayed_newer
+      FROM public.tenant_usage_metrics AS metrics
+      JOIN public.usage_limit_state_evaluations AS evaluation
+        ON evaluation.tenant_id = metrics.tenant_id
+       AND evaluation.dimension = 'email_volume'
+       AND evaluation.billing_period = metrics.billing_period
+       AND evaluation.evaluation_day = metrics.email_sent_day_ref
+      WHERE metrics.tenant_id = ${fx.tenantOne}
+    `;
+    expect(window).toMatchObject({
+      email_sent_today: 8,
+      evaluation_value: "8",
+      stayed_newer: true,
+    });
+    expect(window?.marker_day).toBe(window?.metric_day);
   }, 60000);
 
   it("isolates queued provider PII and lets only rejected or unstarted rows be abandoned", async () => {

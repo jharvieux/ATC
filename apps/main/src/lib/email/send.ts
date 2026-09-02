@@ -246,7 +246,6 @@ async function finalizeIdempotentEmail(args: {
     db: args.db,
     tenant: snapshot.tenant,
     dimension: "email_volume",
-    metric_value: BigInt(finalized.email_sent_today),
   });
 
   return {

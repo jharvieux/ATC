@@ -173,8 +173,16 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           const aiTrue = sumCostCents((aiSumRows ?? []) as Array<{ cost_estimate_cents: string | number }>);
           const aiRt = BigInt(rt?.ai_cost_cents ?? 0);
           if (rt && driftExceedsTolerance(aiRt, aiTrue, 1n)) {
-            await safeAwait(db.from("tenant_usage_metrics").update({ ai_cost_cents: aiTrue.toString() }).eq("id", rt.id), "tenant_usage_metrics.update");
-            drifts.push({ tenant_id: t.id, dimension: "ai_cost", real_time_value: aiRt, recomputed_value: aiTrue });
+            const corrected = await safeAwait(db
+              .from("tenant_usage_metrics")
+              .update({ ai_cost_cents: aiTrue.toString() })
+              .eq("id", rt.id)
+              .eq("tenant_id", t.id)
+              .eq("ai_cost_cents", aiRt.toString())
+              .select("id"), "tenant_usage_metrics.update.ai_cost_cas");
+            if (corrected && corrected.length > 0) {
+              drifts.push({ tenant_id: t.id, dimension: "ai_cost", real_time_value: aiRt, recomputed_value: aiTrue });
+            }
           }
 
           // ── Chat volume: count assistant messages in this tenant's conversations ──
@@ -189,13 +197,21 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           const chatTrue = Array.isArray(chatCountRows) ? chatCountRows.length : 0;
           const chatRt = rt?.chat_messages_count ?? 0;
           if (rt && driftExceedsTolerance(BigInt(chatRt), BigInt(chatTrue), 0n)) {
-            await safeAwait(db.from("tenant_usage_metrics").update({ chat_messages_count: chatTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
-            drifts.push({
-              tenant_id: t.id,
-              dimension: "chat_volume",
-              real_time_value: BigInt(chatRt),
-              recomputed_value: BigInt(chatTrue),
-            });
+            const corrected = await safeAwait(db
+              .from("tenant_usage_metrics")
+              .update({ chat_messages_count: chatTrue })
+              .eq("id", rt.id)
+              .eq("tenant_id", t.id)
+              .eq("chat_messages_count", chatRt)
+              .select("id"), "tenant_usage_metrics.update.chat_cas");
+            if (corrected && corrected.length > 0) {
+              drifts.push({
+                tenant_id: t.id,
+                dimension: "chat_volume",
+                real_time_value: BigInt(chatRt),
+                recomputed_value: BigInt(chatTrue),
+              });
+            }
           }
 
           // ── Email volume: count email_log rows not suppressed/failed ──
@@ -211,13 +227,21 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             : 0;
           const emailRt = rt?.email_sent_count ?? 0;
           if (rt && driftExceedsTolerance(BigInt(emailRt), BigInt(emailTrue), 0n)) {
-            await safeAwait(db.from("tenant_usage_metrics").update({ email_sent_count: emailTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
-            drifts.push({
-              tenant_id: t.id,
-              dimension: "email_volume",
-              real_time_value: BigInt(emailRt),
-              recomputed_value: BigInt(emailTrue),
-            });
+            const corrected = await safeAwait(db
+              .from("tenant_usage_metrics")
+              .update({ email_sent_count: emailTrue })
+              .eq("id", rt.id)
+              .eq("tenant_id", t.id)
+              .eq("email_sent_count", emailRt)
+              .select("id"), "tenant_usage_metrics.update.email_cas");
+            if (corrected && corrected.length > 0) {
+              drifts.push({
+                tenant_id: t.id,
+                dimension: "email_volume",
+                real_time_value: BigInt(emailRt),
+                recomputed_value: BigInt(emailTrue),
+              });
+            }
           }
 
           // ── Group invite: count invitations created ──
@@ -231,13 +255,21 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           const inviteTrue = Array.isArray(inviteRows) ? inviteRows.length : 0;
           const inviteRt = rt?.group_invitees_count ?? 0;
           if (rt && driftExceedsTolerance(BigInt(inviteRt), BigInt(inviteTrue), 0n)) {
-            await safeAwait(db.from("tenant_usage_metrics").update({ group_invitees_count: inviteTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
-            drifts.push({
-              tenant_id: t.id,
-              dimension: "group_invite",
-              real_time_value: BigInt(inviteRt),
-              recomputed_value: BigInt(inviteTrue),
-            });
+            const corrected = await safeAwait(db
+              .from("tenant_usage_metrics")
+              .update({ group_invitees_count: inviteTrue })
+              .eq("id", rt.id)
+              .eq("tenant_id", t.id)
+              .eq("group_invitees_count", inviteRt)
+              .select("id"), "tenant_usage_metrics.update.group_invite_cas");
+            if (corrected && corrected.length > 0) {
+              drifts.push({
+                tenant_id: t.id,
+                dimension: "group_invite",
+                real_time_value: BigInt(inviteRt),
+                recomputed_value: BigInt(inviteTrue),
+              });
+            }
           }
 
           // ── RAG: recompute promoted_chunks_count + current_tenant_chunks_count ──
@@ -265,18 +297,25 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           const chunksTrue = ragChunkCounts.get(t.id);
           const { promotedDrifted, chunksDrifted, update } = computeRagDrift({ promotedTrue, promotedRt, chunksTrue, chunksRt });
           if (promotedDrifted || chunksDrifted) {
+            let corrected: unknown[] | null;
             if (quota) {
-              await safeAwait(db.from("tenant_rag_quotas").update(update).eq("tenant_id", t.id), "tenant_rag_quotas.update");
+              corrected = await safeAwait(db
+                .from("tenant_rag_quotas")
+                .update(update)
+                .eq("tenant_id", t.id)
+                .eq("promoted_chunks_count", promotedRt)
+                .eq("current_tenant_chunks_count", chunksRt)
+                .select("tenant_id"), "tenant_rag_quotas.update.recompute_cas") as unknown[] | null;
             } else {
-              await safeAwait(db.from("tenant_rag_quotas").insert({
+              corrected = await safeAwait(db.from("tenant_rag_quotas").upsert({
                 tenant_id: t.id,
                 base_cap: 0,
                 promoted_chunks_count: promotedTrue,
                 current_tenant_chunks_count: chunksTrue ?? 0,
-              }), "tenant_rag_quotas.insert");
+              }, { onConflict: "tenant_id", ignoreDuplicates: true }).select("tenant_id"), "tenant_rag_quotas.insert.recompute") as unknown[] | null;
             }
             // One drift row per dimension that moved.
-            if (promotedDrifted) {
+            if (corrected && corrected.length > 0 && promotedDrifted) {
               drifts.push({
                 tenant_id: t.id,
                 dimension: "rag_cap",
@@ -284,7 +323,7 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
                 recomputed_value: BigInt(promotedTrue),
               });
             }
-            if (chunksDrifted) {
+            if (corrected && corrected.length > 0 && chunksDrifted) {
               drifts.push({
                 tenant_id: t.id,
                 dimension: "rag_chunks",
@@ -296,10 +335,11 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
 
           // Re-evaluate state machine for each dimension after corrections.
           await Promise.all([
-            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "ai_cost", metric_value: aiTrue }),
-            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "chat_volume", metric_value: BigInt(chatTrue) }),
-            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "email_volume", metric_value: BigInt(emailTrue) }),
-            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "group_invite", metric_value: BigInt(inviteTrue) }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "ai_cost" }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "chat_volume" }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "email_volume" }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "group_invite" }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "rag_cap", promoted_chunks_count: promotedTrue }),
           ]);
         }
 

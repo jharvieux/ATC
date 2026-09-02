@@ -34,7 +34,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import { inngest } from "@/inngest/client";
+import { dispatchTransitionOutbox, type TransitionOutboxRow } from "./state-machine";
 
 const SOFT1 = 20;
 const SOFT2 = 50;
@@ -67,11 +67,15 @@ const SOFT2_THROTTLED_MESSAGE =
  * the day's counter reaches a threshold, the state only advances; the
  * daily reset cron is the only path back to 'ok'.
  */
-function stateForCount(count: number): HelpSubmissionState {
-  if (count >= HARD) return "hard";
-  if (count >= SOFT2) return "soft2";
-  if (count >= SOFT1) return "soft1";
-  return "ok";
+function currentBillingPeriodRange(): string {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+    .toISOString()
+    .slice(0, 10);
+  return `[${start},${end})`;
 }
 
 async function loadCurrentMetrics(db: SupabaseClient, tenant_id: string): Promise<MetricsRow | null> {
@@ -138,29 +142,48 @@ export async function incrementHelpSubmissionCounter(
   db: SupabaseClient,
   tenant_id: string,
 ): Promise<{ new_state: HelpSubmissionState; new_count: number; transitioned: boolean }> {
-  const existing = await loadCurrentMetrics(db, tenant_id);
-  const prevCount = existing?.help_submission_count ?? 0;
-  const prevState = existing?.help_submission_limit_state ?? "ok";
-  const newCount = prevCount + 1;
-  const newState = stateForCount(newCount);
-  const transitioned = newState !== prevState;
-  const now = new Date().toISOString();
+  const rows = await safeAwait(
+    db.rpc("increment_help_submission_usage", {
+      p_tenant_id: tenant_id,
+      p_billing_period: currentBillingPeriodRange(),
+      p_soft1: SOFT1,
+      p_soft2: SOFT2,
+      p_hard: HARD,
+    }),
+    "tenant_usage_metrics.rpc.increment_help_submission",
+  ) as Array<{
+    new_state: HelpSubmissionState;
+    new_count: number;
+    transitioned: boolean;
+    event_id: string | null;
+    event_tenant_id: string | null;
+    event_dimension: string | null;
+    event_from_state: string | null;
+    event_to_state: string | null;
+    event_metric_value: string | number | null;
+    event_threshold_crossed: string | number | null;
+    event_created: boolean;
+  }> | null;
+  const row = rows?.[0];
+  if (!row) throw new Error("increment_help_submission_usage returned no row");
 
-  if (existing) {
-    await safeAwait(db
-      .from("tenant_usage_metrics")
-      .update({
-        help_submission_count: newCount,
-        help_submission_limit_state: newState,
-        help_submission_state_changed_at: transitioned ? now : undefined,
-        last_recomputed_at: now,
-      })
-      .eq("tenant_id", tenant_id)
-      .eq("billing_period", existing.billing_period), "tenant_usage_metrics.update");
-  } else {
-    // No metrics row yet — let the existing recompute path create it
-    // on the next nightly run. For v1 we skip rather than synthesize a
-    // billing_period; counter starts at 0 and advances naturally.
+  const newCount = Number(row.new_count);
+  const newState = row.new_state;
+  const transitioned = row.transitioned;
+
+  // Help's tenant email is intentionally soft2-only. Soft1/hard retain their
+  // operator-alert behavior without widening tenant notification semantics.
+  if (row.event_id && row.event_to_state === "soft2") {
+    await dispatchTransitionOutbox(db, {
+      event_id: row.event_id,
+      event_tenant_id: row.event_tenant_id!,
+      event_dimension: row.event_dimension!,
+      event_from_state: row.event_from_state!,
+      event_to_state: row.event_to_state,
+      event_metric_value: row.event_metric_value!,
+      event_threshold_crossed: row.event_threshold_crossed!,
+      event_created: row.event_created,
+    } satisfies TransitionOutboxRow);
   }
 
   if (transitioned) {
@@ -179,20 +202,6 @@ export async function incrementHelpSubmissionCounter(
         signal: "help_submission_rate_soft2",
         detail: `Tenant ${tenant_id} reached help_submission_rate soft2 (${newCount} submissions today). Throttling to 1 per 10 min.`,
         payload: { tenant_id, count: newCount },
-      });
-      // Fire abuse.state_transition so abuse-state-transition-notify sends the
-      // tenant-owner warning email. Fires at most once per day — the state machine
-      // is monotonic; transitioned=true only when prevState !== "soft2".
-      await inngest.send({
-        name: "abuse.state_transition",
-        data: {
-          tenant_id,
-          dimension: "help_submission",
-          from_state: prevState,
-          to_state: "soft2",
-          metric_value: String(newCount),
-          threshold_crossed: String(SOFT2),
-        },
       });
     } else if (newState === "hard") {
       await sendOperatorAlert({

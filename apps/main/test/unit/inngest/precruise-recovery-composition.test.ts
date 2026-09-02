@@ -5,7 +5,6 @@ const state = vi.hoisted(() => ({
   emailSentToday: 4,
   pceSentAt: null as string | null,
   trace: [] as string[],
-  transitionMetrics: [] as bigint[],
   db: null as unknown,
 }));
 
@@ -41,9 +40,8 @@ vi.mock("@/lib/abuse/snapshot", () => ({
 }));
 
 vi.mock("@/lib/abuse/state-machine", () => ({
-  checkStateTransitionIfNeeded: async ({ metric_value }: { metric_value: bigint }) => {
+  checkStateTransitionIfNeeded: async () => {
     state.trace.push("transition");
-    state.transitionMetrics.push(metric_value);
   },
 }));
 
@@ -139,7 +137,6 @@ beforeEach(() => {
   state.emailSentToday = 4;
   state.pceSentAt = null;
   state.trace = [];
-  state.transitionMetrics = [];
   state.db = makeDb();
   vi.stubGlobal("fetch", vi.fn());
 });
@@ -161,7 +158,6 @@ describe("pre-cruise recovery composition", () => {
 
     expect(state.effectsRecorded).toBe(true);
     expect(state.emailSentToday).toBe(5);
-    expect(state.transitionMetrics).toEqual([5n]);
     expect(state.pceSentAt).toBe("2026-08-31T22:00:00.000Z");
     expect(state.trace).toEqual(["atomic-finalize", "snapshot", "transition", "pce-cas"]);
     expect(fetch).not.toHaveBeenCalled();

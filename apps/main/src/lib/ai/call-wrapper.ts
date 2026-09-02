@@ -370,7 +370,6 @@ export async function instrumentedClaudeCall(
     db,
     tenant: snapshot.tenant,
     dimension: "ai_cost",
-    metric_value: cost,
   }).catch((err) => console.warn("[call-wrapper] state-transition check failed:", err));
   evictTenantSnapshot(args.tenant_id);
 

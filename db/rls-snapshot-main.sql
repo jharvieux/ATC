@@ -130,6 +130,7 @@
 -- public.trip_itineraries (rls_enabled)
 -- public.trip_resources (rls_enabled)
 -- public.usage_limit_events (rls_enabled)
+-- public.usage_limit_state_evaluations (rls_enabled)
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
@@ -1683,6 +1684,20 @@ CREATE POLICY "ule_update_service" ON public.usage_limit_events
   FOR UPDATE TO PUBLIC
   USING (false);
 
+-- TABLE: public.usage_limit_state_evaluations
+CREATE POLICY "usage_limit_state_evaluations_no_user_delete" ON public.usage_limit_state_evaluations
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "usage_limit_state_evaluations_no_user_insert" ON public.usage_limit_state_evaluations
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "usage_limit_state_evaluations_no_user_select" ON public.usage_limit_state_evaluations
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "usage_limit_state_evaluations_no_user_update" ON public.usage_limit_state_evaluations
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.user_consent_pending
 CREATE POLICY "user_consent_pending_select" ON public.user_consent_pending
   FOR SELECT TO PUBLIC
@@ -1782,3 +1797,4 @@ CREATE POLICY "imported_documents_tenant_select" ON storage.objects
 CREATE POLICY "quote_pdfs_tenant_select" ON storage.objects
   FOR SELECT TO authenticated
   USING (bucket_id = 'quote-pdfs'::text AND auth_user_in_tenant((regexp_match(name, '^tenant_([0-9a-f-]+)/'::text))[1]::uuid));
+
