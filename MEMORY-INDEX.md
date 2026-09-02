@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-381 — 2026-09-02 — RAG `vector`/`pg_trgm` live in `extensions`; existing indexes stay OID-bound and only the vector RPC adds `extensions` to its path (#2022; refs D-380)
 - D-380 — 2026-09-01 — Raw Postgres isolation witnesses bind reviewed normalized SQL/resources to exact effective migration, catalog, and creation-time search-path provenance; executable comments become whitespace, inert quoted bodies remain inert, and unknown/stale/ambiguous relevant state fails closed (#2121; extends D-373)
 - D-379 — 2026-09-01 — Main/RAG exact-revision live acceptance remains mandatory, but absent compatible app hosting yields explicit cross-tenant enumeration-only `host-unavailable`; live mode requires concrete health plus tenant-B own-booking evidence before tenant-A probes (#2098; #1913 provisions the host, #2122 attests hosted revisions; refs D-378)
 - D-378 — 2026-09-01 — Shared main/RAG acceptance and release staging consumption use two uninterrupted non-cancelling holders in one shared-DB group; exact-SHA receipts fail closed, shared-host provenance stays explicit, and `/api` health/fixture evidence prevents false acceptance (issue #2098; #2122 tracks broader hosted SHA attestation)

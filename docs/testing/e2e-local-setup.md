@@ -21,7 +21,7 @@ A `.env.local` is required so `apps/main`'s boot-time Zod check passes — see "
 
 What this gets you:
 - Real Postgres 17 running locally via brew (~50MB RAM idle, ~150MB disk).
-- All 65 migrations applied (52 main + 13 RAG, includes pgvector).
+- All main and RAG migrations applied, including pgvector.
 - Auth bypass so Playwright specs can hit `assertPermission`-gated routes without GoTrue.
 - 3 real price-watch specs passing (`tests/e2e/price-watch.spec.ts`).
 
@@ -49,6 +49,9 @@ $PG/psql -h localhost -d atc_rag_test  -f scripts/local-pg-bootstrap.sql
 # 4. Apply migrations to both
 SUPABASE_DB_URL="postgresql://$USER@localhost:5432/atc_main_test" pnpm db:migrate
 SUPABASE_DB_URL="postgresql://$USER@localhost:5432/atc_rag_test"  MIGRATIONS_DIR=apps/rag/supabase/migrations pnpm db:migrate
+
+# The final RAG migration relocates vector + pg_trgm to `extensions`; use
+# `extensions.vector` in any direct SQL casts after the migration chain.
 
 # 5. Seed the Tier-2 fixture user + tenant
 SUPABASE_DB_URL="postgresql://$USER@localhost:5432/atc_main_test" pnpm tsx scripts/seed-tier2-test.ts

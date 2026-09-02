@@ -14,12 +14,6 @@ atc-main:authenticated_security_definer_function_executable_public_auth_user_can
 atc-main:authenticated_security_definer_function_executable_public_auth_user_in_tenant_target_tenant_id uuid
 atc-main:authenticated_security_definer_function_executable_public_tenant_is_active_target_tenant_id uuid
 #
-# --- atc-rag: pgvector installed in public schema ---
-# The `vector` extension is installed in `public` (Supabase default for pgvector).
-# Moving it is disruptive and low-risk here; accepted. Revisit if a schema-move
-# migration is ever done.
-atc-rag:extension_in_public_vector
-#
 # NOTE: atc-main `auth_leaked_password_protection` is deliberately NOT baselined —
 # it is an actionable WARN (enable HaveIBeenPwned check in Auth settings, an
 # operator dashboard toggle). The check will surface it until it is enabled.

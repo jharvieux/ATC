@@ -4,7 +4,7 @@
 // filters. These tests prove those predicates against real RAG tables with
 // global, same-tenant, and other-tenant rows.
 
-import { afterAll, beforeAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { assertIsolationQuery } from "../../../../tests/helpers/isolation-witness";
@@ -27,7 +27,7 @@ const ship = `Scope Ship ${runId}`;
 const port = `Scope Port ${runId}`;
 const region = `Scope Region ${runId}`;
 const sailDate = "2098-04-12";
-const zeroEmbedding = `[${Array(1536).fill(0).join(",")}]`;
+const unitEmbedding = `[1,${Array(1535).fill(0).join(",")}]`;
 
 let sql: ReturnType<typeof postgres>;
 
@@ -82,11 +82,11 @@ describe.skipIf(!ragDbUrl)("seeded RAG retrieval scope", () => {
         (id, content, content_hash, embedding, scope, tenant_id, category,
          ship_or_property, source_type, authority_auto, status)
       VALUES
-        (${chunkGlobal}, ${`Global scope fixture ${runId}`}, ${`scope-global-${runId}`}, ${zeroEmbedding}::vector,
+        (${chunkGlobal}, ${`Global scope fixture ${runId}`}, ${`scope-global-${runId}`}, ${unitEmbedding}::extensions.vector,
          'global', NULL, 'ship_intel', ${ship}, 'test', 0.5, 'approved'),
-        (${chunkA}, ${`Tenant A scope fixture ${runId}`}, ${`scope-a-${runId}`}, ${zeroEmbedding}::vector,
+        (${chunkA}, ${`Tenant A scope fixture ${runId}`}, ${`scope-a-${runId}`}, ${unitEmbedding}::extensions.vector,
          'tenant', ${tenantA}, 'ship_intel', ${ship}, 'test', 0.5, 'approved'),
-        (${chunkB}, ${`Tenant B scope fixture ${runId}`}, ${`scope-b-${runId}`}, ${zeroEmbedding}::vector,
+        (${chunkB}, ${`Tenant B scope fixture ${runId}`}, ${`scope-b-${runId}`}, ${unitEmbedding}::extensions.vector,
          'tenant', ${tenantB}, 'ship_intel', ${ship}, 'test', 0.5, 'approved')
     `;
 
@@ -157,6 +157,54 @@ describe.skipIf(!ragDbUrl)("seeded RAG retrieval scope", () => {
       allowedIds: [chunkGlobal, chunkA],
       deniedIds: [chunkB],
     });
+  });
+
+  it("relocated vector RPC returns global and tenant A chunks, not tenant B", async () => {
+    await assertIsolationQuery({
+      query: () => sql<{ id: string }[]>`
+        SELECT id
+        FROM public.match_knowledge_chunks(
+          ${unitEmbedding}::extensions.vector,
+          ${tenantA}::uuid,
+          12
+        )
+      `,
+      allowedIds: [chunkGlobal, chunkA],
+      deniedIds: [chunkB],
+    });
+  });
+
+  it("keeps relocated extension indexes valid and ready", async () => {
+    const extensionSchemas = await sql<{ extname: string; schema: string }[]>`
+      SELECT e.extname, n.nspname AS schema
+      FROM pg_extension e
+      JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE e.extname IN ('vector', 'pg_trgm')
+      ORDER BY e.extname
+    `;
+    expect(extensionSchemas).toEqual([
+      { extname: "pg_trgm", schema: "extensions" },
+      { extname: "vector", schema: "extensions" },
+    ]);
+
+    const indexes = await sql<{ name: string; valid: boolean; ready: boolean }[]>`
+      SELECT c.relname AS name, i.indisvalid AS valid, i.indisready AS ready
+      FROM pg_index i
+      JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE c.relname IN (
+        'idx_itineraries_ship_trgm',
+        'idx_itineraries_departure_port_trgm',
+        'idx_knowledge_chunks_ship_or_property_trgm',
+        'knowledge_chunks_embedding_hnsw_idx'
+      )
+      ORDER BY c.relname
+    `;
+    expect(indexes).toEqual([
+      { name: "idx_itineraries_departure_port_trgm", valid: true, ready: true },
+      { name: "idx_itineraries_ship_trgm", valid: true, ready: true },
+      { name: "idx_knowledge_chunks_ship_or_property_trgm", valid: true, ready: true },
+      { name: "knowledge_chunks_embedding_hnsw_idx", valid: true, ready: true },
+    ]);
   });
 
   it("itinerary lookup scope returns global and tenant A chunks, not tenant B", async () => {

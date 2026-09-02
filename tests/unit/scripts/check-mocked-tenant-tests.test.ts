@@ -1208,10 +1208,24 @@ describe("raw Postgres migration provenance", () => {
     )).toBe(true);
   });
 
+  it("binds the reviewed RAG extensions to their relocated schema", () => {
+    const provenance = derivePostgresMigrationProvenance(repoMigrations("rag"));
+    expect([...provenance.extensionSchemas]).toEqual([
+      ["vector", "extensions"],
+      ["pg_trgm", "extensions"],
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["table:public.knowledge_chunks", "rpc:public.match_region_itinerary_chunks"],
+      provenance,
+    )).toBe(true);
+  });
+
   it.each([
     ["drop", "DROP EXTENSION vector;"],
     ["update", "ALTER EXTENSION vector UPDATE;"],
-    ["schema transfer", "ALTER EXTENSION vector SET SCHEMA extensions;"],
+    ["repeated schema transfer", "ALTER EXTENSION vector SET SCHEMA extensions;"],
+    ["unreviewed schema transfer", "CREATE SCHEMA private_extensions; ALTER EXTENSION vector SET SCHEMA private_extensions;"],
   ])("rejects RAG provenance after reviewed extension %s", (_shape, sql) => {
     const provenance = derivePostgresMigrationProvenance([
       ...repoMigrations("rag"),

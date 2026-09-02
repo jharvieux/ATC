@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-381 — 2026-09-02 — Keep RAG extensions isolated without rebuilding indexes
+
+**Decision.** The RAG database keeps `vector` and `pg_trgm` in the `extensions` schema after the historical migration chain creates their dependent objects. Direct post-migration casts use `extensions.vector`; `match_knowledge_chunks` resolves `<=>` through `search_path = public, extensions`, while `match_region_itinerary_chunks` retains its narrower `public` path because its `ILIKE` expressions are built in and the trigram indexes remain OID-bound.
+
+**Why.**
+- Supabase's PG17 build reports both installed extensions as relocatable, and an isolated full-chain migration proved that both retrieval functions still return expected rows while all four vector/trigram indexes remain valid and ready.
+- Moving the extension catalogs clears the advisor findings without dropping stored vector columns, rebuilding HNSW/GIN indexes, or introducing a retrieval outage.
+
+**Rejected.**
+- *Drop and recreate the extensions in `extensions`.* This would cascade through the stored vector column, retrieval functions, and live indexes and requires a maintenance-window restore.
+- *Add `extensions` to every retrieval function.* Only the vector RPC resolves an extension operator at execution time; widening unrelated function paths adds resolution surface without preserving anything.
+- *Rewrite historical migrations to schema-qualify extension objects.* Migrations are append-only, and changing applied history would break ledger reproducibility.
+
+**Related artifacts.** Issue #2022, `apps/rag/supabase/migrations/20260902082656_relocate_vector_and_trgm_extensions.sql`, `apps/rag/test/integration/retrieval-scope-isolation.test.ts`, [[D-380]].
+
+---
+
 ## D-380 — 2026-09-01 — Bind raw SQL witnesses to effective catalog provenance
 
 **Decision.** Raw Postgres isolation witnesses bind normalized SQL and expected resources to exact effective migration, catalog, and creation-time search-path provenance. Executable comments normalize as whitespace while strings, quoted identifiers, and dollar bodies remain inert; unknown, stale, or ambiguous relevant state fails closed.
