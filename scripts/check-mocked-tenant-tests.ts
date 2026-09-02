@@ -455,6 +455,8 @@ export function derivePostgresMigrationProvenance(
   const functionIdentities = new Map<string, Map<string, string>>();
   const directDynamicRoutineIdentities = new Set<string>();
   const routineCallDependencies = new Map<string, Set<string>>();
+  const droppedRoutineIdentityBySlot = new Map<string, string>();
+  const routineIdentitySuccessors = new Map<string, string | null>();
   let catalogRoutinesTrusted = true;
   let executableProvenanceTrusted = true;
   const rules = new Map<string, Map<string, string>>();
@@ -488,6 +490,10 @@ export function derivePostgresMigrationProvenance(
     if (directDynamicRoutineIdentities.has(identity)) return true;
     if (visited.has(identity)) return false;
     visited.add(identity);
+    if (routineIdentitySuccessors.has(identity)) {
+      const successor = routineIdentitySuccessors.get(identity);
+      return successor === null || routineIdentityIsDynamic(successor!, visited);
+    }
     return [...(routineCallDependencies.get(identity) ?? [])].some((dependency) =>
       routineIdentityIsDynamic(dependency, visited)
     );
@@ -964,11 +970,14 @@ export function derivePostgresMigrationProvenance(
           } else schema = configuredPath?.find((item) => schemas.has(item)) ?? "";
         }
         const name = `${schema || "public"}.${objectName}`;
+        const routineSlot = `${name}\u0000${signature}`;
         if (event.action === "drop") {
           const identity = functionIdentities.get(name)?.get(signature);
           if (identity) {
             directDynamicRoutineIdentities.delete(identity);
             routineCallDependencies.delete(identity);
+            routineIdentitySuccessors.set(identity, null);
+            droppedRoutineIdentityBySlot.set(routineSlot, identity);
           }
           const overloads = functions.get(name);
           overloads?.delete(signature);
@@ -985,6 +994,11 @@ export function derivePostgresMigrationProvenance(
           overloads.set(signature, definitionHash(statement));
           if (!replacing) identities.set(signature, `${migration.file}:${routineIdentitySerial++}`);
           const identity = identities.get(signature)!;
+          const droppedIdentity = droppedRoutineIdentityBySlot.get(routineSlot);
+          if (!replacing && droppedIdentity) {
+            routineIdentitySuccessors.set(droppedIdentity, identity);
+            droppedRoutineIdentityBySlot.delete(routineSlot);
+          }
           if (unanalysableRoutineBody || /\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
             directDynamicRoutineIdentities.add(identity);
           } else directDynamicRoutineIdentities.delete(identity);
