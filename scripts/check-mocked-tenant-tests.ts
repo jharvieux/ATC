@@ -511,12 +511,17 @@ export function derivePostgresMigrationProvenance(
     value: string,
     searchPath: readonly string[] | undefined,
     role: string,
+    creation = false,
   ): string | undefined => {
     const match = new RegExp(`^(${SQL_IDENTIFIER})(?:\\s*\\.\\s*(${SQL_IDENTIFIER}))?$`).exec(value.trim());
     if (!match) return undefined;
     if (match[2]) return `${unquotePostgresIdentifier(match[1]!)}.${unquotePostgresIdentifier(match[2])}`;
     const object = unquotePostgresIdentifier(match[1]!);
     const configuredPath = searchPath?.map((schema) => schema === "$user" ? role : schema);
+    if (creation) {
+      const schema = configuredPath?.find((candidate) => schemas.has(candidate));
+      return schema && `${schema}.${object}`;
+    }
     const orderedPath = configuredPath?.includes("pg_catalog")
       ? configuredPath
       : configuredPath && ["pg_catalog", ...configuredPath];
@@ -686,7 +691,7 @@ export function derivePostgresMigrationProvenance(
 
       const relation = relationExpression.exec(statement);
       if (relation) {
-        const name = normalizedQualifiedName(relation[3]!);
+        const name = resolvedRelationName(relation[3]!, currentSearchPath, currentRole, true);
         if (!name) continue;
         const declaredKind = relation[2]!.replace(/\s+/g, " ").toUpperCase();
         const kind: PostgresRelationKind = declaredKind === "MATERIALIZED VIEW"
@@ -853,7 +858,7 @@ export function derivePostgresMigrationProvenance(
         const resolved = resolveRoutineMutation(declaredName, creation, signature);
         return !resolved || resolved.startsWith("pg_catalog.");
       };
-      const routineCallIdentities = (calls: readonly string[]): Set<string> => {
+      const routineCallIdentities = (calls: readonly string[], signature?: string): Set<string> => {
         const identities = new Set<string>();
         const configuredPath = currentSearchPath?.map((item) => item === "$user" ? currentRole : item);
         const lookupPath = configuredPath?.includes("pg_catalog")
@@ -867,7 +872,15 @@ export function derivePostgresMigrationProvenance(
             ? [name]
             : lookupPath?.map((schema) => `${schema}.${name.slice(name.indexOf(".") + 1)}`) ?? [];
           for (const candidate of candidates) {
-            for (const identity of functionIdentities.get(candidate)?.values() ?? []) identities.add(identity);
+            if (signature !== undefined) {
+              const identity = functionIdentities.get(candidate)?.get(signature);
+              if (identity) {
+                identities.add(identity);
+                break;
+              }
+            } else {
+              for (const identity of functionIdentities.get(candidate)?.values() ?? []) identities.add(identity);
+            }
           }
         }
         return identities;
@@ -1101,7 +1114,8 @@ export function derivePostgresMigrationProvenance(
               [...triggerEventSql.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
                 .map((match) => match[0].toLowerCase()),
             );
-            const routineIdentity = [...routineCallIdentities([routineTarget])].at(-1);
+            const routineIdentity = [...routineCallIdentities([routineTarget], "")].at(-1);
+            if (!routineIdentity) catalogRoutinesTrusted = false;
             triggers.set(`${table}\u0000${name}`, { table, events, routineIdentity });
           }
         }
@@ -1111,7 +1125,7 @@ export function derivePostgresMigrationProvenance(
         "i",
       ).exec(statement);
       if (droppedTrigger) {
-        const table = normalizedQualifiedName(droppedTrigger[2]!);
+        const table = resolvedRelationName(droppedTrigger[2]!, currentSearchPath, currentRole);
         if (table) triggers.delete(`${table}\u0000${unquotePostgresIdentifier(droppedTrigger[1]!)}`);
       }
       const renamedTrigger = new RegExp(
@@ -1120,12 +1134,53 @@ export function derivePostgresMigrationProvenance(
         "i",
       ).exec(statement);
       if (renamedTrigger) {
-        const table = normalizedQualifiedName(renamedTrigger[2]!);
+        const table = resolvedRelationName(renamedTrigger[2]!, currentSearchPath, currentRole);
         const oldKey = table && `${table}\u0000${unquotePostgresIdentifier(renamedTrigger[1]!)}`;
         const trigger = oldKey ? triggers.get(oldKey) : undefined;
         if (table && oldKey && trigger) {
           triggers.delete(oldKey);
           triggers.set(`${table}\u0000${unquotePostgresIdentifier(renamedTrigger[3]!)}`, trigger);
+        }
+      }
+      const cteTableMutations: Array<{ events: Set<string>; table: string }> = [];
+      if (/^WITH\b/i.test(executableAnalysis.unquotedExecutableSql)) {
+        let depth = 0;
+        for (let index = 0; index < executableAnalysis.unquotedExecutableSql.length; index += 1) {
+          const char = executableAnalysis.unquotedExecutableSql[index]!;
+          if (char === "(" && depth === 0 && /\bAS\s+(?:(?:NOT\s+)?MATERIALIZED\s+)?$/i.test(
+            executableAnalysis.unquotedExecutableSql.slice(0, index),
+          )) {
+            let close = index + 1;
+            let memberDepth = 1;
+            while (close < executableAnalysis.unquotedExecutableSql.length && memberDepth > 0) {
+              if (executableAnalysis.unquotedExecutableSql[close] === "(") memberDepth += 1;
+              else if (executableAnalysis.unquotedExecutableSql[close] === ")") memberDepth -= 1;
+              close += 1;
+            }
+            if (memberDepth === 0) {
+              const memberSql = executableAnalysis.executableSql.slice(index + 1, close - 1).trim();
+              const inserted = new RegExp(
+                `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
+                "i",
+              ).exec(memberSql)?.[1];
+              const updated = new RegExp(
+                `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+                "i",
+              ).exec(memberSql)?.[1];
+              const deleted = new RegExp(
+                `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+                "i",
+              ).exec(memberSql)?.[1];
+              const target = inserted ?? updated ?? deleted;
+              const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
+              if (table) cteTableMutations.push({
+                events: new Set([inserted ? "insert" : updated ? "update" : "delete"]),
+                table,
+              });
+              index = close - 1;
+            }
+          } else if (char === "(") depth += 1;
+          else if (char === ")") depth -= 1;
         }
       }
       let mutationOffset = 0;
@@ -1174,7 +1229,7 @@ export function derivePostgresMigrationProvenance(
         [...mutationUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
           .map((match) => match[1]!.toLowerCase()),
       );
-      const tableMutations: Array<{ events: Set<string>; table: string }> = [];
+      const tableMutations: Array<{ events: Set<string>; table: string }> = [...cteTableMutations];
       if (insertedTable) {
         const events = new Set(["insert"]);
         if (/\bON\s+CONFLICT\b[\s\S]*\bDO\s+UPDATE\b/i.test(mutationUnquotedSql)) events.add("update");
