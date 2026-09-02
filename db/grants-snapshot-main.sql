@@ -472,6 +472,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.trip_resources TO service_role;
 -- TABLE: public.usage_limit_events
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.usage_limit_events TO service_role;
 
+-- TABLE: public.usage_limit_state_evaluations
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.usage_limit_state_evaluations TO service_role;
+
 -- TABLE: public.user_consent_pending
 GRANT SELECT ON public.user_consent_pending TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.user_consent_pending TO service_role;
