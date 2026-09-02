@@ -175,7 +175,7 @@ jobs:
       # the jq line is guarded.)
       - name: Checkout (hash-recipe drift guard)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Hash-recipe drift guard
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         run: |
