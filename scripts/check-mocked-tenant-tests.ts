@@ -222,6 +222,7 @@ function migrationStatements(sql: string): string[] {
 
 function postgresExecutableAnalysis(sql: string): {
   executableSql: string;
+  unquotedExecutableSql: string;
   routineCalls: string[];
   unicodeDelimitedIdentifier: boolean;
 } {
@@ -285,12 +286,14 @@ function postgresExecutableAnalysis(sql: string): {
     }
   }
   const executableSql = executable.join("");
+  const unquotedExecutable = [...executableSql];
+  for (const [start, end] of quotedIdentifiers) unquotedExecutable.fill(" ", start, end + 1);
   const routineCalls: string[] = [];
   for (const match of executableSql.matchAll(new RegExp(`(${SQL_QUALIFIED_NAME})\\s*\\(`, "gi"))) {
     if (quotedIdentifiers.some(([start, end]) => match.index > start && match.index < end)) continue;
     routineCalls.push(match[1]!);
   }
-  return { executableSql, routineCalls, unicodeDelimitedIdentifier };
+  return { executableSql, unquotedExecutableSql: unquotedExecutable.join(""), routineCalls, unicodeDelimitedIdentifier };
 }
 
 function definitionHash(sql: string): string {
@@ -457,6 +460,11 @@ export function derivePostgresMigrationProvenance(
   const routineCallDependencies = new Map<string, Set<string>>();
   const droppedRoutineIdentityBySlot = new Map<string, string>();
   const routineIdentitySuccessors = new Map<string, string | null>();
+  const triggers = new Map<string, {
+    table: string;
+    events: ReadonlySet<string>;
+    routineIdentity: string | undefined;
+  }>();
   let catalogRoutinesTrusted = true;
   let executableProvenanceTrusted = true;
   const rules = new Map<string, Map<string, string>>();
@@ -687,6 +695,7 @@ export function derivePostgresMigrationProvenance(
           rlsEnabled.delete(name);
           policies.delete(name);
           rules.delete(name);
+          for (const [key, trigger] of triggers) if (trigger.table === name) triggers.delete(key);
         }
       }
       const alteredTable = tableTailExpression.exec(statement);
@@ -717,6 +726,10 @@ export function derivePostgresMigrationProvenance(
             policies.delete(name);
             if (rules.has(name)) rules.set(next, rules.get(name)!);
             rules.delete(name);
+            for (const [key, trigger] of triggers) if (trigger.table === name) {
+              triggers.delete(key);
+              triggers.set(`${next}\u0000${key.slice(key.indexOf("\u0000") + 1)}`, { ...trigger, table: next });
+            }
           }
         }
       }
@@ -938,10 +951,13 @@ export function derivePostgresMigrationProvenance(
           .map((item) => `DROP FUNCTION ${dropRoutineList[1] ?? ""}${item}`)
         : [routineStatement];
       const createsExecutableRoutine = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i.test(statement);
-      const routineBodyMatch = createsExecutableRoutine
-        ? /\bAS\s+(?:(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1|([eE]|[uU]&)?'((?:''|[^'])*)')/i
-          .exec(statement)
+      const routineBodyClause = createsExecutableRoutine
+        ? [...executableAnalysis.executableSql.matchAll(/\bAS(?=\s)/gi)].at(-1)
         : undefined;
+      const routineBodyMatch = routineBodyClause?.index === undefined
+        ? undefined
+        : /^AS\s+(?:(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1|([eE]|[uU]&)?'((?:''|[^'])*)')/i
+          .exec(statement.slice(routineBodyClause.index));
       const routineLanguage = createsExecutableRoutine
         ? [...executableAnalysis.executableSql.matchAll(
           new RegExp(`\\bLANGUAGE\\s+(${SQL_IDENTIFIER})(?=\\s|$)`, "gi"),
@@ -959,9 +975,9 @@ export function derivePostgresMigrationProvenance(
         : postgresExecutableAnalysis(routineBody!);
       const routineBodyHasStaticEffect = routineBodyAnalysis && (
         /\b(?:CREATE|ALTER|DROP)\s+(?:(?:OR\s+REPLACE|IF\s+(?:NOT\s+)?EXISTS)\s+)*(?:ACCESS\s+METHOD|AGGREGATE|CAST|DATABASE|DOMAIN|EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|OPERATOR(?:\s+(?:CLASS|FAMILY))?|POLICY|PROCEDURE|ROLE|RULE|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|USER|VIEW)\b/i
-          .test(routineBodyAnalysis.executableSql) ||
+          .test(routineBodyAnalysis.unquotedExecutableSql) ||
         /\b(?:INSERT|UPDATE|DELETE|MERGE|TRUNCATE|GRANT|REVOKE|REINDEX|CLUSTER)\b/i
-          .test(routineBodyAnalysis.executableSql)
+          .test(routineBodyAnalysis.unquotedExecutableSql)
       );
       if (routineBodyAnalysis?.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
       const calledRoutineIdentities = routineCallIdentities(routineBodyAnalysis?.routineCalls ?? []);
@@ -1040,6 +1056,71 @@ export function derivePostgresMigrationProvenance(
       if (alteredFunction) {
         const name = normalizedQualifiedName(alteredFunction[1]!);
         if (name) ambiguousFunctions.add(name);
+      }
+      const createdTrigger = new RegExp(
+        `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:CONSTRAINT\\s+)?TRIGGER\\s+(${SQL_IDENTIFIER})\\s+` +
+        `([\\s\\S]*?)\\s+ON\\s+(${SQL_QUALIFIED_NAME})[\\s\\S]*?\\bEXECUTE\\s+` +
+        `(?:FUNCTION|PROCEDURE)\\s+(${SQL_QUALIFIED_NAME})\\s*\\(`,
+        "i",
+      ).exec(statement);
+      if (createdTrigger) {
+        const table = normalizedQualifiedName(createdTrigger[3]!);
+        if (table) {
+          const name = unquotePostgresIdentifier(createdTrigger[1]!);
+          const events = new Set(
+            [...createdTrigger[2]!.matchAll(/\b(?:INSERT|UPDATE|DELETE)\b/gi)]
+              .map((match) => match[0].toLowerCase()),
+          );
+          const routineIdentity = [...routineCallIdentities([createdTrigger[4]!])].at(-1);
+          triggers.set(`${table}\u0000${name}`, { table, events, routineIdentity });
+        }
+      }
+      const droppedTrigger = new RegExp(
+        `^DROP\\s+TRIGGER\\s+(?:IF\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_QUALIFIED_NAME})`,
+        "i",
+      ).exec(statement);
+      if (droppedTrigger) {
+        const table = normalizedQualifiedName(droppedTrigger[2]!);
+        if (table) triggers.delete(`${table}\u0000${unquotePostgresIdentifier(droppedTrigger[1]!)}`);
+      }
+      const renamedTrigger = new RegExp(
+        `^ALTER\\s+TRIGGER\\s+(${SQL_IDENTIFIER})\\s+ON\\s+(${SQL_QUALIFIED_NAME})\\s+` +
+        `RENAME\\s+TO\\s+(${SQL_IDENTIFIER})$`,
+        "i",
+      ).exec(statement);
+      if (renamedTrigger) {
+        const table = normalizedQualifiedName(renamedTrigger[2]!);
+        const oldKey = table && `${table}\u0000${unquotePostgresIdentifier(renamedTrigger[1]!)}`;
+        const trigger = oldKey ? triggers.get(oldKey) : undefined;
+        if (table && oldKey && trigger) {
+          triggers.delete(oldKey);
+          triggers.set(`${table}\u0000${unquotePostgresIdentifier(renamedTrigger[3]!)}`, trigger);
+        }
+      }
+      const insertedTable = new RegExp(
+        `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
+        "i",
+      ).exec(statement)?.[1];
+      const updatedTable = new RegExp(
+        `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+        "i",
+      ).exec(statement)?.[1];
+      const deletedTable = new RegExp(
+        `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+        "i",
+      ).exec(statement)?.[1];
+      const tableMutation = insertedTable
+        ? { event: "insert", table: normalizedQualifiedName(insertedTable) }
+        : updatedTable
+          ? { event: "update", table: normalizedQualifiedName(updatedTable) }
+          : deletedTable
+            ? { event: "delete", table: normalizedQualifiedName(deletedTable) }
+            : undefined;
+      if (tableMutation?.table) for (const trigger of triggers.values()) {
+        if (trigger.table === tableMutation.table && trigger.events.has(tableMutation.event) &&
+          (!trigger.routineIdentity || routineIdentityIsDynamic(trigger.routineIdentity))) {
+          catalogRoutinesTrusted = false;
+        }
       }
       const routineDefinition = createRoutineHeader || alterRoutineHeader || dropRoutineMutation;
       const routineReferenceOnly = /^(?:GRANT|REVOKE|COMMENT)\b/i.test(statement) ||
