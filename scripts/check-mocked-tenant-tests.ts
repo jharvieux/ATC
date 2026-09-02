@@ -1067,8 +1067,9 @@ export function derivePostgresMigrationProvenance(
         const table = normalizedQualifiedName(createdTrigger[3]!);
         if (table) {
           const name = unquotePostgresIdentifier(createdTrigger[1]!);
+          const triggerEventSql = postgresExecutableAnalysis(createdTrigger[2]!).unquotedExecutableSql;
           const events = new Set(
-            [...createdTrigger[2]!.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
+            [...triggerEventSql.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
               .map((match) => match[0].toLowerCase()),
           );
           const routineIdentity = [...routineCallIdentities([createdTrigger[4]!])].at(-1);
