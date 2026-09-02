@@ -507,6 +507,22 @@ export function derivePostgresMigrationProvenance(
     );
   };
 
+  const resolvedRelationName = (
+    value: string,
+    searchPath: readonly string[] | undefined,
+    role: string,
+  ): string | undefined => {
+    const match = new RegExp(`^(${SQL_IDENTIFIER})(?:\\s*\\.\\s*(${SQL_IDENTIFIER}))?$`).exec(value.trim());
+    if (!match) return undefined;
+    if (match[2]) return `${unquotePostgresIdentifier(match[1]!)}.${unquotePostgresIdentifier(match[2])}`;
+    const object = unquotePostgresIdentifier(match[1]!);
+    const configuredPath = searchPath?.map((schema) => schema === "$user" ? role : schema);
+    const orderedPath = configuredPath?.includes("pg_catalog")
+      ? configuredPath
+      : configuredPath && ["pg_catalog", ...configuredPath];
+    return orderedPath?.map((schema) => `${schema}.${object}`).find((name) => relations.has(name));
+  };
+
   const relationExpression = new RegExp(
     `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(UNLOGGED)\\s+)?(MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE|VIEW|TABLE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
     "i",
@@ -1057,23 +1073,37 @@ export function derivePostgresMigrationProvenance(
         const name = normalizedQualifiedName(alteredFunction[1]!);
         if (name) ambiguousFunctions.add(name);
       }
-      const createdTrigger = new RegExp(
-        `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:CONSTRAINT\\s+)?TRIGGER\\s+(${SQL_IDENTIFIER})\\s+` +
-        `([\\s\\S]*?)\\s+ON\\s+(${SQL_QUALIFIED_NAME})[\\s\\S]*?\\bEXECUTE\\s+` +
-        `(?:FUNCTION|PROCEDURE)\\s+(${SQL_QUALIFIED_NAME})\\s*\\(`,
+      const triggerPrefix = new RegExp(
+        `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:CONSTRAINT\\s+)?TRIGGER\\s+(${SQL_IDENTIFIER})\\s+`,
         "i",
-      ).exec(statement);
-      if (createdTrigger) {
-        const table = normalizedQualifiedName(createdTrigger[3]!);
-        if (table) {
-          const name = unquotePostgresIdentifier(createdTrigger[1]!);
-          const triggerEventSql = postgresExecutableAnalysis(createdTrigger[2]!).unquotedExecutableSql;
-          const events = new Set(
-            [...triggerEventSql.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
-              .map((match) => match[0].toLowerCase()),
-          );
-          const routineIdentity = [...routineCallIdentities([createdTrigger[4]!])].at(-1);
-          triggers.set(`${table}\u0000${name}`, { table, events, routineIdentity });
+      ).exec(executableAnalysis.executableSql);
+      if (triggerPrefix) {
+        const triggerClauseOffset = triggerPrefix[0].length;
+        const triggerClauseSql = executableAnalysis.unquotedExecutableSql.slice(triggerClauseOffset);
+        const onClause = /\bON\b/i.exec(triggerClauseSql);
+        if (onClause) {
+          const onOffset = triggerClauseOffset + onClause.index;
+          const afterOnSql = executableAnalysis.executableSql.slice(onOffset + onClause[0].length);
+          const tableTarget = new RegExp(`^\\s*(${SQL_QUALIFIED_NAME})(?=\\s|$)`, "i").exec(afterOnSql)?.[1];
+          const afterOnExecutable = executableAnalysis.unquotedExecutableSql.slice(onOffset + onClause[0].length);
+          const executeClause = /\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\b/i.exec(afterOnExecutable);
+          const routineOffset = executeClause &&
+            onOffset + onClause[0].length + executeClause.index + executeClause[0].length;
+          const routineTarget = routineOffset !== null && routineOffset !== undefined
+            ? new RegExp(`^\\s*(${SQL_QUALIFIED_NAME})\\s*\\(`, "i")
+              .exec(executableAnalysis.executableSql.slice(routineOffset))?.[1]
+            : undefined;
+          const table = tableTarget && resolvedRelationName(tableTarget, currentSearchPath, currentRole);
+          if (table && routineTarget) {
+            const name = unquotePostgresIdentifier(triggerPrefix[1]!);
+            const triggerEventSql = executableAnalysis.unquotedExecutableSql.slice(triggerClauseOffset, onOffset);
+            const events = new Set(
+              [...triggerEventSql.matchAll(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/gi)]
+                .map((match) => match[0].toLowerCase()),
+            );
+            const routineIdentity = [...routineCallIdentities([routineTarget])].at(-1);
+            triggers.set(`${table}\u0000${name}`, { table, events, routineIdentity });
+          }
         }
       }
       const droppedTrigger = new RegExp(
@@ -1098,46 +1128,80 @@ export function derivePostgresMigrationProvenance(
           triggers.set(`${table}\u0000${unquotePostgresIdentifier(renamedTrigger[3]!)}`, trigger);
         }
       }
+      let mutationOffset = 0;
+      if (/^WITH\b/i.test(executableAnalysis.unquotedExecutableSql)) {
+        mutationOffset = -1;
+        let depth = 0;
+        for (let index = 0; index < executableAnalysis.unquotedExecutableSql.length; index += 1) {
+          const char = executableAnalysis.unquotedExecutableSql[index]!;
+          if (char === "(") depth += 1;
+          else if (char === ")") depth -= 1;
+          else if (depth === 0 && /^(?:INSERT|UPDATE|DELETE|MERGE)\b/i.test(
+            executableAnalysis.unquotedExecutableSql.slice(index),
+          )) {
+            mutationOffset = index;
+            break;
+          }
+        }
+      }
+      const mutationSql = mutationOffset >= 0
+        ? executableAnalysis.executableSql.slice(mutationOffset)
+        : "";
+      const mutationUnquotedSql = mutationOffset >= 0
+        ? executableAnalysis.unquotedExecutableSql.slice(mutationOffset)
+        : "";
       const insertedTable = new RegExp(
         `^INSERT\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|\\()`,
         "i",
-      ).exec(statement)?.[1];
+      ).exec(mutationSql)?.[1];
       const updatedTable = new RegExp(
         `^UPDATE\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
         "i",
-      ).exec(statement)?.[1];
+      ).exec(mutationSql)?.[1];
       const deletedTable = new RegExp(
         `^DELETE\\s+FROM\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
         "i",
-      ).exec(statement)?.[1];
-      const truncatedTable = new RegExp(
-        `^TRUNCATE\\s+(?:TABLE\\s+)?(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
+      ).exec(mutationSql)?.[1];
+      const truncatedTables = new RegExp(
+        "^TRUNCATE\\s+(?:TABLE\\s+)?([\\s\\S]+)$",
         "i",
-      ).exec(statement)?.[1];
+      ).exec(mutationSql)?.[1];
       const mergedTable = new RegExp(
         `^MERGE\\s+INTO\\s+(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?=\\s|$)`,
         "i",
-      ).exec(statement)?.[1];
+      ).exec(mutationSql)?.[1];
       const mergeEvents = new Set(
-        [...executableAnalysis.unquotedExecutableSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
+        [...mutationUnquotedSql.matchAll(/\bTHEN\s+(INSERT|UPDATE|DELETE)\b/gi)]
           .map((match) => match[1]!.toLowerCase()),
       );
-      const tableMutation = insertedTable
-        ? { events: new Set(["insert"]), table: normalizedQualifiedName(insertedTable) }
-        : updatedTable
-          ? { events: new Set(["update"]), table: normalizedQualifiedName(updatedTable) }
-          : deletedTable
-            ? { events: new Set(["delete"]), table: normalizedQualifiedName(deletedTable) }
-            : truncatedTable
-              ? { events: new Set(["truncate"]), table: normalizedQualifiedName(truncatedTable) }
-              : mergedTable
-                ? { events: mergeEvents, table: normalizedQualifiedName(mergedTable) }
-                : undefined;
-      if (tableMutation?.table) for (const trigger of triggers.values()) {
-        if (trigger.table === tableMutation.table &&
-          [...tableMutation.events].some((event) => trigger.events.has(event)) &&
-          (!trigger.routineIdentity || routineIdentityIsDynamic(trigger.routineIdentity))) {
-          catalogRoutinesTrusted = false;
+      const tableMutations: Array<{ events: Set<string>; table: string }> = [];
+      if (insertedTable) {
+        const events = new Set(["insert"]);
+        if (/\bON\s+CONFLICT\b[\s\S]*\bDO\s+UPDATE\b/i.test(mutationUnquotedSql)) events.add("update");
+        const table = resolvedRelationName(insertedTable, currentSearchPath, currentRole);
+        if (table) tableMutations.push({ events, table });
+      } else if (updatedTable || deletedTable || mergedTable) {
+        const target = updatedTable ?? deletedTable ?? mergedTable!;
+        const table = resolvedRelationName(target, currentSearchPath, currentRole);
+        const events = updatedTable ? new Set(["update"]) : deletedTable ? new Set(["delete"]) : mergeEvents;
+        if (table) tableMutations.push({ events, table });
+      } else if (truncatedTables) {
+        const targets = truncatedTables
+          .replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, "")
+          .replace(/\s+(?:RESTART|CONTINUE)\s+IDENTITY\s*$/i, "");
+        for (const candidate of splitTopLevelSqlList(targets)) {
+          const target = new RegExp(`^(?:ONLY\\s+)?(${SQL_QUALIFIED_NAME})(?:\\s*\\*)?$`, "i").exec(candidate)?.[1];
+          const table = target && resolvedRelationName(target, currentSearchPath, currentRole);
+          if (table) tableMutations.push({ events: new Set(["truncate"]), table });
+        }
+      }
+      for (const tableMutation of tableMutations) {
+        for (const trigger of triggers.values()) {
+          if (trigger.table === tableMutation.table &&
+            [...tableMutation.events].some((event) => trigger.events.has(event)) &&
+            (!trigger.routineIdentity || routineIdentityIsDynamic(trigger.routineIdentity))) {
+            catalogRoutinesTrusted = false;
+          }
         }
       }
       const routineDefinition = createRoutineHeader || alterRoutineHeader || dropRoutineMutation;
