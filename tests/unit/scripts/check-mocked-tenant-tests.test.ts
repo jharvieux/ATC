@@ -692,6 +692,14 @@ describe("raw Postgres migration provenance", () => {
     ["dynamic catalog DDL through SELECT FROM", "CREATE FUNCTION public.catalog_mutator() RETURNS SETOF integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN NEXT 1; END $body$; SELECT * FROM public.catalog_mutator();"],
     ["dynamic catalog DDL through SELECT predicate", "CREATE FUNCTION public.catalog_mutator() RETURNS boolean LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN true; END $body$; SELECT 1 WHERE public.catalog_mutator();"],
     ["dynamic catalog DDL through quoted routine call", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT public.\"catalog_mutator\"();"],
+    ["dynamic catalog DDL through INSERT SELECT", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE TABLE public.probe_sink(value integer); INSERT INTO public.probe_sink SELECT public.catalog_mutator();"],
+    ["dynamic catalog DDL through UPDATE", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE TABLE public.probe_sink(value integer); UPDATE public.probe_sink SET value = public.catalog_mutator();"],
+    ["dynamic catalog DDL through CREATE TABLE AS", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE TABLE public.probe_sink AS SELECT public.catalog_mutator() AS value;"],
+    ["dynamic catalog DDL through transitive wrapper", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE FUNCTION public.catalog_wrapper() RETURNS integer LANGUAGE sql AS $$ SELECT public.catalog_mutator() $$; SELECT public.catalog_wrapper();"],
+    ["Unicode-delimited reviewed relation", "ALTER TABLE U&\"publ\\0069c\".bookings DISABLE ROW LEVEL SECURITY;"],
+    ["Unicode-delimited reviewed role", "ALTER USER U&\"authent\\0069cated\" SET search_path = private, pg_catalog, public;"],
+    ["Unicode-delimited catalog operator", "DROP OPERATOR U&\"pg\\005fcatalog\".= (uuid, uuid) CASCADE;"],
+    ["Unicode-delimited reviewed index", "DROP INDEX U&\"publ\\0069c\".bookings_pkey CASCADE;"],
     ["dynamic function after rename", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; ALTER FUNCTION public.catalog_mutator() RENAME TO renamed_catalog_mutator; SELECT public.renamed_catalog_mutator();"],
     ["dynamic procedure after schema move", "CREATE SCHEMA private; CREATE PROCEDURE public.catalog_mutator() LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; ALTER PROCEDURE public.catalog_mutator() SET SCHEMA private; CALL private.catalog_mutator();"],
     ["reviewed schema rename", "ALTER SCHEMA public RENAME TO app_public;"],
@@ -954,6 +962,10 @@ describe("raw Postgres migration provenance", () => {
     ["qualified call-shaped quoted column", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT x.\"public.catalog_mutator()\" FROM (SELECT 1 AS \"public.catalog_mutator()\") x;"],
     ["unqualified call-shaped quoted alias", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT 1 AS \"catalog_mutator()\";"],
     ["escaped call-shaped quoted alias", "CREATE FUNCTION public.catalog_mutator() RETURNS void LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; END $body$; SELECT 1 AS \"public.catalog_mutator()\"\"quoted\";"],
+    ["unrelated wrapper around a dynamic routine", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE FUNCTION public.safe_wrapper() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$; SELECT public.safe_wrapper();"],
+    ["unrelated INSERT and UPDATE expressions", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE TABLE public.probe_sink(value integer); INSERT INTO public.probe_sink SELECT COALESCE(1, 1); UPDATE public.probe_sink SET value = COALESCE(value, 1);"],
+    ["call-shaped CTAS literals", "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN EXECUTE $ddl$CREATE FUNCTION pg_catalog.catalog_probe() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$ $ddl$; RETURN 1; END $body$; CREATE TABLE public.probe_sink AS SELECT 'public.catalog_mutator()'::text AS value;"],
+    ["inert Unicode-delimited identifier text", "SELECT 'ALTER TABLE U&\"publ\\0069c\".bookings'; SELECT $$ DROP INDEX U&\"publ\\0069c\".bookings_pkey $$; -- ALTER USER U&\"authent\\0069cated\" SET search_path=private;"],
     ["renamed-schema creation", "CREATE SCHEMA private; ALTER SCHEMA private RENAME TO private2; SET search_path=private2,pg_catalog; CREATE FUNCTION f() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"],
     ["other-database role path", "ALTER ROLE authenticated IN DATABASE template1 SET search_path=private,public;"],
     ["private same-name index drop", "CREATE SCHEMA private; CREATE TABLE private.other(id uuid); CREATE INDEX bookings_pkey ON private.other(id); SET search_path=private,public; DROP INDEX bookings_pkey;"],
@@ -978,6 +990,29 @@ describe("raw Postgres migration provenance", () => {
       "rag",
       ["table:public.knowledge_chunks", "rpc:public.match_region_itinerary_chunks"],
       freshRag,
+    )).toBe(true);
+  });
+
+  it("does not carry transitive dynamic-routine taint across derivations or targets", () => {
+    const tainted = derivePostgresMigrationProvenance([
+      ...repoMigrations("main"),
+      {
+        file: "zzzz_dynamic_wrapper.sql",
+        sql: "CREATE FUNCTION public.catalog_mutator() RETURNS integer LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'SELECT 1'; RETURN 1; END $$; " +
+          "CREATE FUNCTION public.catalog_wrapper() RETURNS integer LANGUAGE sql AS $$ SELECT public.catalog_mutator() $$; " +
+          "CREATE TABLE public.probe_sink(value integer); INSERT INTO public.probe_sink SELECT public.catalog_wrapper();",
+      },
+    ]);
+    expect(postgresResourcesMatchReviewedProvenance("main", ["table:public.bookings"], tainted)).toBe(false);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "main",
+      ["table:public.bookings"],
+      derivePostgresMigrationProvenance(repoMigrations("main")),
+    )).toBe(true);
+    expect(postgresResourcesMatchReviewedProvenance(
+      "rag",
+      ["table:public.knowledge_chunks", "rpc:public.match_region_itinerary_chunks"],
+      derivePostgresMigrationProvenance(repoMigrations("rag")),
     )).toBe(true);
   });
 

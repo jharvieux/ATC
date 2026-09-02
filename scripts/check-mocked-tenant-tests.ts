@@ -78,6 +78,7 @@ export interface PostgresMigrationProvenance {
   functions: ReadonlyMap<string, ReadonlyMap<string, string>>;
   functionIdentities: ReadonlyMap<string, ReadonlyMap<string, string>>;
   catalogRoutinesTrusted: boolean;
+  executableProvenanceTrusted: boolean;
   rules: ReadonlyMap<string, ReadonlyMap<string, string>>;
   operators: ReadonlyMap<string, string>;
   casts: ReadonlySet<string>;
@@ -217,6 +218,79 @@ function migrationStatements(sql: string): string[] {
   const statement = executableSql.slice(start).join("").trim();
   if (statement) statements.push(statement.slice(skipLeadingSqlTrivia(statement)).trim());
   return statements.filter(Boolean);
+}
+
+function postgresExecutableAnalysis(sql: string): {
+  executableSql: string;
+  routineCalls: string[];
+  unicodeDelimitedIdentifier: boolean;
+} {
+  const executable = [...sql];
+  const quotedIdentifiers: Array<readonly [number, number]> = [];
+  let unicodeDelimitedIdentifier = false;
+  for (let index = 0; index < executable.length; index += 1) {
+    const char = executable[index]!;
+    const escapeString = /[eE]/.test(char) && executable[index + 1] === "'";
+    if (char === "'" || escapeString) {
+      const start = index;
+      index += escapeString ? 2 : 1;
+      while (index < executable.length) {
+        if (escapeString && executable[index] === "\\") index += 2;
+        else if (executable[index] === "'" && executable[index + 1] === "'") index += 2;
+        else if (executable[index] === "'") break;
+        else index += 1;
+      }
+      executable.fill(" ", start, Math.min(index + 1, executable.length));
+    } else if (char === "\"") {
+      const start = index;
+      index += 1;
+      while (index < executable.length) {
+        if (executable[index] === "\"" && executable[index + 1] === "\"") index += 2;
+        else if (executable[index] === "\"") break;
+        else index += 1;
+      }
+      quotedIdentifiers.push([start, index]);
+    } else if ((char === "u" || char === "U") && executable[index + 1] === "&" && executable[index + 2] === "\"") {
+      unicodeDelimitedIdentifier = true;
+    } else if (char === "-") {
+      if (executable[index + 1] !== "-") continue;
+      const start = index;
+      const newline = sql.indexOf("\n", index + 2);
+      index = newline < 0 ? executable.length : newline;
+      executable.fill(" ", start, Math.min(index + 1, executable.length));
+    } else if (char === "/") {
+      if (executable[index + 1] !== "*") continue;
+      const start = index;
+      let depth = 1;
+      index += 2;
+      while (index < executable.length && depth > 0) {
+        if (executable[index] === "/" && executable[index + 1] === "*") {
+          depth += 1;
+          index += 2;
+        } else if (executable[index] === "*" && executable[index + 1] === "/") {
+          depth -= 1;
+          index += 2;
+        } else index += 1;
+      }
+      index -= 1;
+      executable.fill(" ", start, Math.min(index + 1, executable.length));
+    } else if (char === "$") {
+      const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(executable.slice(index).join(""))?.[0];
+      if (delimiter) {
+        const start = index;
+        const close = sql.indexOf(delimiter, index + delimiter.length);
+        index = close < 0 ? executable.length : close + delimiter.length - 1;
+        executable.fill(" ", start, Math.min(index + 1, executable.length));
+      }
+    }
+  }
+  const executableSql = executable.join("");
+  const routineCalls: string[] = [];
+  for (const match of executableSql.matchAll(new RegExp(`(${SQL_QUALIFIED_NAME})\\s*\\(`, "gi"))) {
+    if (quotedIdentifiers.some(([start, end]) => match.index > start && match.index < end)) continue;
+    routineCalls.push(match[1]!);
+  }
+  return { executableSql, routineCalls, unicodeDelimitedIdentifier };
 }
 
 function definitionHash(sql: string): string {
@@ -379,8 +453,10 @@ export function derivePostgresMigrationProvenance(
   const policies = new Map<string, Map<string, PostgresPolicyProvenance>>();
   const functions = new Map<string, Map<string, string>>();
   const functionIdentities = new Map<string, Map<string, string>>();
-  const dynamicRoutineSignatures = new Map<string, Set<string>>();
+  const directDynamicRoutineIdentities = new Set<string>();
+  const routineCallDependencies = new Map<string, Set<string>>();
   let catalogRoutinesTrusted = true;
+  let executableProvenanceTrusted = true;
   const rules = new Map<string, Map<string, string>>();
   const operators = new Map<string, string>();
   const casts = new Set<string>();
@@ -407,6 +483,15 @@ export function derivePostgresMigrationProvenance(
   let sessionAuthorization = "postgres";
   let sessionRole = sessionAuthorization;
   let routineIdentitySerial = 0;
+
+  const routineIdentityIsDynamic = (identity: string, visited = new Set<string>()): boolean => {
+    if (directDynamicRoutineIdentities.has(identity)) return true;
+    if (visited.has(identity)) return false;
+    visited.add(identity);
+    return [...(routineCallDependencies.get(identity) ?? [])].some((dependency) =>
+      routineIdentityIsDynamic(dependency, visited)
+    );
+  };
 
   const relationExpression = new RegExp(
     `^CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(UNLOGGED)\\s+)?(MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE|VIEW|TABLE)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_QUALIFIED_NAME})([\\s\\S]*)$`,
@@ -445,6 +530,8 @@ export function derivePostgresMigrationProvenance(
     let currentSearchPath = sessionSearchPath;
     let currentRole = sessionRole;
     for (const statement of migrationStatements(migration.sql)) {
+      const executableAnalysis = postgresExecutableAnalysis(statement);
+      if (executableAnalysis.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
       const createdSchema = new RegExp(
         `^CREATE\\s+SCHEMA\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${SQL_IDENTIFIER})\\b`,
         "i",
@@ -731,6 +818,25 @@ export function derivePostgresMigrationProvenance(
         const resolved = resolveRoutineMutation(declaredName, creation, signature);
         return !resolved || resolved.startsWith("pg_catalog.");
       };
+      const routineCallIdentities = (calls: readonly string[]): Set<string> => {
+        const identities = new Set<string>();
+        const configuredPath = currentSearchPath?.map((item) => item === "$user" ? currentRole : item);
+        const lookupPath = configuredPath?.includes("pg_catalog")
+          ? configuredPath
+          : configuredPath && ["pg_catalog", ...configuredPath];
+        for (const call of calls) {
+          const name = normalizedQualifiedName(call);
+          if (!name) continue;
+          const qualified = new RegExp(`^${SQL_IDENTIFIER}\\s*\\.\\s*${SQL_IDENTIFIER}$`).test(call);
+          const candidates = qualified
+            ? [name]
+            : lookupPath?.map((schema) => `${schema}.${name.slice(name.indexOf(".") + 1)}`) ?? [];
+          for (const candidate of candidates) {
+            for (const identity of functionIdentities.get(candidate)?.values() ?? []) identities.add(identity);
+          }
+        }
+        return identities;
+      };
       const createRoutineHeader = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE|AGGREGATE)\b/i.test(statement);
       if (createRoutineHeader) {
         const createdRoutine = new RegExp(
@@ -772,7 +878,6 @@ export function derivePostgresMigrationProvenance(
               : `${unquotePostgresIdentifier(destination!)}.${source.slice(separator + 1)}`;
             const definition = sourceDefinitions?.get(signature);
             const identity = functionIdentities.get(source)?.get(signature);
-            const dynamic = dynamicRoutineSignatures.get(source)?.has(signature) === true;
             if (definition !== undefined) {
               const nextDefinitions = functions.get(next) ?? new Map<string, string>();
               nextDefinitions.set(signature, definition);
@@ -787,14 +892,6 @@ export function derivePostgresMigrationProvenance(
               const sourceIdentities = functionIdentities.get(source)!;
               sourceIdentities.delete(signature);
               if (sourceIdentities.size === 0) functionIdentities.delete(source);
-            }
-            if (dynamic) {
-              const nextDynamic = dynamicRoutineSignatures.get(next) ?? new Set<string>();
-              nextDynamic.add(signature);
-              dynamicRoutineSignatures.set(next, nextDynamic);
-              const sourceDynamic = dynamicRoutineSignatures.get(source)!;
-              sourceDynamic.delete(signature);
-              if (sourceDynamic.size === 0) dynamicRoutineSignatures.delete(source);
             }
           }
         }
@@ -834,6 +931,12 @@ export function derivePostgresMigrationProvenance(
         ? splitTopLevelSqlList(dropRoutineList[2]!.replace(/\s+(?:CASCADE|RESTRICT)\s*$/i, ""))
           .map((item) => `DROP FUNCTION ${dropRoutineList[1] ?? ""}${item}`)
         : [routineStatement];
+      const routineBody = createRoutineHeader
+        ? /\bAS\s+(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)([\s\S]*?)\1/i.exec(statement)?.[2]
+        : undefined;
+      const routineBodyAnalysis = routineBody && postgresExecutableAnalysis(routineBody);
+      if (routineBodyAnalysis?.unicodeDelimitedIdentifier) executableProvenanceTrusted = false;
+      const calledRoutineIdentities = routineCallIdentities(routineBodyAnalysis?.routineCalls ?? []);
       for (const routine of routineStatements) for (const event of parseRoutineEvents(routine, migration.file)) {
         const signature = normalizedRoutineEventSignature(event);
         const declaredName = new RegExp(
@@ -855,9 +958,12 @@ export function derivePostgresMigrationProvenance(
           } else schema = configuredPath?.find((item) => schemas.has(item)) ?? "";
         }
         const name = `${schema || "public"}.${objectName}`;
-        const dynamicSignatures = dynamicRoutineSignatures.get(name) ?? new Set<string>();
         if (event.action === "drop") {
-          dynamicSignatures.delete(signature);
+          const identity = functionIdentities.get(name)?.get(signature);
+          if (identity) {
+            directDynamicRoutineIdentities.delete(identity);
+            routineCallDependencies.delete(identity);
+          }
           const overloads = functions.get(name);
           overloads?.delete(signature);
           functionIdentities.get(name)?.delete(signature);
@@ -867,19 +973,20 @@ export function derivePostgresMigrationProvenance(
             ambiguousFunctions.delete(name);
           }
         } else {
-          if (/\bEXECUTE\b/i.test(statement)) dynamicSignatures.add(signature);
-          else dynamicSignatures.delete(signature);
           const overloads = functions.get(name) ?? new Map<string, string>();
           const identities = functionIdentities.get(name) ?? new Map<string, string>();
           const replacing = overloads.has(signature);
           overloads.set(signature, definitionHash(statement));
           if (!replacing) identities.set(signature, `${migration.file}:${routineIdentitySerial++}`);
+          const identity = identities.get(signature)!;
+          if (/\bEXECUTE\b/i.test(routineBodyAnalysis?.executableSql ?? "")) {
+            directDynamicRoutineIdentities.add(identity);
+          } else directDynamicRoutineIdentities.delete(identity);
+          routineCallDependencies.set(identity, new Set(calledRoutineIdentities));
           functions.set(name, overloads);
           functionIdentities.set(name, identities);
           if (!replacing && overloads.size === 1) ambiguousFunctions.delete(name);
         }
-        if (dynamicSignatures.size > 0) dynamicRoutineSignatures.set(name, dynamicSignatures);
-        else dynamicRoutineSignatures.delete(name);
       }
       if (/^DROP\s+(?:FUNCTION|PROCEDURE|ROUTINE|AGGREGATE)\b/i.test(statement)) {
         for (const name of REVIEWED_ROUTINES) {
@@ -897,57 +1004,10 @@ export function derivePostgresMigrationProvenance(
         const name = normalizedQualifiedName(alteredFunction[1]!);
         if (name) ambiguousFunctions.add(name);
       }
-      if (dynamicRoutineSignatures.size > 0 && /^(?:CALL|SELECT)\b/i.test(statement)) {
-        const executable = [...statement];
-        const quotedIdentifiers: Array<readonly [number, number]> = [];
-        for (let index = 0; index < executable.length; index += 1) {
-          const escapeString = /[eE]/.test(executable[index]!) && executable[index + 1] === "'";
-          if (executable[index] === "'" || escapeString) {
-            const start = index;
-            index += escapeString ? 2 : 1;
-            while (index < executable.length) {
-              if (escapeString && executable[index] === "\\") index += 2;
-              else if (executable[index] === "'" && executable[index + 1] === "'") index += 2;
-              else if (executable[index] === "'") break;
-              else index += 1;
-            }
-            executable.fill(" ", start, Math.min(index + 1, executable.length));
-          } else if (executable[index] === "\"") {
-            const start = index;
-            index += 1;
-            while (index < executable.length) {
-              if (executable[index] === "\"" && executable[index + 1] === "\"") index += 2;
-              else if (executable[index] === "\"") break;
-              else index += 1;
-            }
-            quotedIdentifiers.push([start, index]);
-          } else if (executable[index] === "$") {
-            const delimiter = /^\$[a-zA-Z_][a-zA-Z0-9_]*\$|^\$\$/.exec(executable.slice(index).join(""))?.[0];
-            if (delimiter) {
-              const start = index;
-              const close = statement.indexOf(delimiter, index + delimiter.length);
-              index = close < 0 ? executable.length : close + delimiter.length - 1;
-              executable.fill(" ", start, Math.min(index + 1, executable.length));
-            }
-          }
-        }
-        for (const match of executable.join("").matchAll(new RegExp(`(${SQL_QUALIFIED_NAME})\\s*\\(`, "gi"))) {
-          if (quotedIdentifiers.some(([start, end]) => match.index > start && match.index < end)) continue;
-          const invokedRoutine = match[1]!;
-          const qualified = new RegExp(`^${SQL_IDENTIFIER}\\s*\\.\\s*${SQL_IDENTIFIER}$`).test(invokedRoutine);
-          const name = normalizedQualifiedName(invokedRoutine);
-          if (name && qualified) {
-            if (dynamicRoutineSignatures.has(name)) catalogRoutinesTrusted = false;
-          } else if (name) {
-            const objectName = name.slice(name.indexOf(".") + 1);
-            const configuredPath = currentSearchPath?.map((item) => item === "$user" ? currentRole : item);
-            const lookupPath = configuredPath?.includes("pg_catalog")
-              ? configuredPath
-              : configuredPath && ["pg_catalog", ...configuredPath];
-            if (lookupPath?.some((schema) => dynamicRoutineSignatures.has(`${schema}.${objectName}`))) {
-              catalogRoutinesTrusted = false;
-            }
-          }
+      const routineDefinition = createRoutineHeader || alterRoutineHeader || dropRoutineMutation;
+      if (!routineDefinition) {
+        for (const identity of routineCallIdentities(executableAnalysis.routineCalls)) {
+          if (routineIdentityIsDynamic(identity)) catalogRoutinesTrusted = false;
         }
       }
 
@@ -1216,6 +1276,7 @@ export function derivePostgresMigrationProvenance(
     functions,
     functionIdentities,
     catalogRoutinesTrusted,
+    executableProvenanceTrusted,
     rules,
     operators,
     casts,
@@ -1537,6 +1598,7 @@ export function postgresResourcesMatchReviewedProvenance(
   resources: readonly string[],
   provenance: PostgresMigrationProvenance,
 ): boolean {
+  if (!provenance.executableProvenanceTrusted) return false;
   const functions = new Set<string>();
   const sameOrderedValues = (actual: readonly string[] | undefined, expected: readonly string[]) =>
     actual?.length === expected.length && actual.every((value, index) => value === expected[index]);
