@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
 const resetSource = fs.readFileSync(path.join(root, "scripts/ci-reset-test-db.ts"), "utf8");
 const deployWorkflow = fs.readFileSync(path.join(root, ".github/workflows/deploy.yml"), "utf8");
 const nightlyWorkflow = fs.readFileSync(path.join(root, ".github/workflows/nightly-full-test.yml"), "utf8");
+const vercelIgnore = fs.readFileSync(path.join(root, ".vercelignore"), "utf8");
+const pnpmfile = fs.readFileSync(path.join(root, ".pnpmfile.mjs"), "utf8");
 
 describe("RAG test database reset", () => {
   it("removes relocated extensions only for a RAG reset before rebuilding public", () => {
@@ -42,5 +44,12 @@ describe("atc-rag Vercel deployment root", () => {
     expect(productionStep).toContain('vercel deploy --prod --yes --token="$VERCEL_TOKEN"');
     expect(betaJob).not.toContain("working-directory: apps/rag");
     expect(productionStep).not.toContain("working-directory: apps/rag");
+  });
+
+  it("uploads the runtime module imported by the pnpm lockfile hook", () => {
+    expect(pnpmfile).toContain('from "./scripts/check-node-runtime.mjs"');
+    expect(vercelIgnore).toContain("/scripts/*");
+    expect(vercelIgnore).toContain("!/scripts/check-node-runtime.mjs");
+    expect(vercelIgnore).not.toMatch(/^\/scripts\/$/m);
   });
 });

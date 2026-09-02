@@ -1,5 +1,5 @@
-# Defense-in-depth: keep documentation, specs, scripts, and tests out of
-# any `vercel deploy` upload bundle.
+# Defense-in-depth: keep documentation, specs, non-runtime scripts, and tests
+# out of any `vercel deploy` upload bundle.
 #
 # The CI/CD pipeline (`.github/workflows/deploy.yml`) already uses
 # `vercel deploy --prebuilt`, which uploads only `.vercel/output/` build
@@ -13,7 +13,9 @@
 
 /specs/
 /docs/
-/scripts/
+/scripts/*
+# .pnpmfile.mjs imports this during the hosted pnpm install.
+!/scripts/check-node-runtime.mjs
 /tests/
 /db/
 
