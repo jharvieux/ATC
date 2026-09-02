@@ -157,12 +157,23 @@ jobs:
       - name: Install pinned Vercel CLI
         run: npm install -g vercel@54
 
+      - name: Inspect atc-rag project settings
+        run: vercel project inspect --token="$VERCEL_TOKEN" --yes
+
       - name: Deploy exact revision to atc-rag beta
         id: deploy
         shell: bash
         run: |
-          set -euo pipefail
-          beta_url="$(vercel deploy --token="$VERCEL_TOKEN" --yes)"
+          set -uo pipefail
+          vercel deploy --token="$VERCEL_TOKEN" --yes 2>&1 | tee /tmp/vercel-deploy.log
+          deploy_status="${PIPESTATUS[0]}"
+          beta_url="$(grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' /tmp/vercel-deploy.log | tail -1)"
+          if [ "$deploy_status" -ne 0 ]; then
+            if [ -n "$beta_url" ]; then
+              vercel inspect "$beta_url" --logs --token="$VERCEL_TOKEN" || true
+            fi
+            exit "$deploy_status"
+          fi
           if [[ "$beta_url" != https://* ]]; then
             echo "Vercel did not return a beta deployment URL."
             exit 1
