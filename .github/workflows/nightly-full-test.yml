@@ -58,7 +58,7 @@ jobs:
       STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
     steps:
       - name: Checkout dev
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: dev
 
@@ -73,12 +73,12 @@ jobs:
             --repo "${{ github.repository }}" || true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -22,7 +22,7 @@ jobs:
       # A PAT (not GITHUB_TOKEN) is required so the push to release/* triggers
       # deploy.yml's push pipeline — GITHUB_TOKEN-authored pushes don't fire
       # downstream workflow runs.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: dev
           fetch-depth: 0
