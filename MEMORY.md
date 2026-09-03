@@ -4,6 +4,43 @@ Newest entries on top.
 
 ---
 
+## D-383 — 2026-09-02 — Keep email audit tables service-role-only
+
+**Decision.** `email_log` and `email_suppressions` are inaccessible to authenticated and anonymous Data API clients. Server workflows use explicit tenant predicates; provider-message reference bootstrap requires bounded all-match tenant consensus and fails loud on database errors.
+
+**Why.**
+- No legitimate client workflow needs raw access, and the tables contain sensitive provider and recipient metadata.
+- Requiring every matched provider reference to identify one tenant prevents mixed-tenant reference sets from authorizing an arbitrary tenant or CRM attachment.
+
+**Rejected.**
+- *Tenant-visible raw SELECT policies.* The product has no client workflow that needs them, so they add exposure without user value.
+- *Platform-readable `email_log` classification.* Tenant-bearing server mutations still require explicit application-layer isolation.
+- *First-match tenant bootstrap from multiple provider references.* Individual provider-ID uniqueness does not make a multi-ID set tenant-consistent.
+
+**Related artifacts.** PR #2138, issue #2119, `apps/main/supabase/migrations/20260902224515_email_tables_service_only.sql`, issue #2139, [[D-375]].
+
+---
+
+## D-382 — 2026-09-02 — Make usage recovery window- and ordering-aware
+
+**Decision.** Usage-limit counters and transition recovery use database-atomic evaluation markers keyed by billing period and, for daily email evaluation, UTC day. Email limit state remains monthly and monotonic during normal recovery; authorized downgrades atomically rebase retained markers, stale writers cannot move the daily window backward, and markerless authorized recompute uses the locked current-day count or zero only when the stored day is earlier.
+
+**Why.**
+- Counter mutation, threshold recovery, and deterministic outbox creation must converge across crashes, concurrent threshold crossings, UTC midnight, subscription changes, and delayed writers without losing or duplicating a logical transition.
+- The §27 contract combines a daily email counter with monthly monotonic enforcement state, so recovery must preserve both identities instead of treating either one as authoritative alone.
+- Retained completed daily markers make recovery durable, while a partial pending index keeps the recovery scan bounded as history grows.
+
+**Rejected.**
+- *One marker per tenant and dimension.* It coalesces distinct billing periods and UTC email days, losing earlier crash windows.
+- *Reset monthly email state at UTC midnight.* This conflicts with §27's billing-period monotonicity rule.
+- *Trust retained marker state after an authorized downgrade.* A delayed marker could resurrect the superseded state.
+- *Let a transaction's captured date overwrite the locked date.* Reverse-midnight ordering could regress the active day and lose newer counts.
+- *Return early when markerless recompute sees a prior stored day.* A tenant with no email today would remain incorrectly throttled after a subscription change.
+
+**Related artifacts.** PR #2137, issue #2112, `apps/main/supabase/migrations/20260902191508_usage_limit_state_outbox.sql`, `apps/main/supabase/migrations/20260902205406_usage_limit_email_daily_window.sql`, `apps/main/supabase/migrations/20260902211755_usage_limit_email_state_rollout.sql`, `apps/main/supabase/migrations/20260902214154_usage_limit_email_downgrade_ordering.sql`, `apps/main/supabase/migrations/20260902220915_usage_limit_email_markerless_recompute.sql`, `apps/main/test/integration/abuse-state-concurrency.test.ts`, `apps/main/test/integration/email-idempotent-finalization.test.ts`, §27, [[D-375]].
+
+---
+
 ## D-381 — 2026-09-02 — Keep RAG extensions isolated without rebuilding indexes
 
 **Decision.** The RAG database keeps `vector` and `pg_trgm` in the `extensions` schema after the historical migration chain creates their dependent objects. Direct post-migration casts use `extensions.vector`; `match_knowledge_chunks` resolves `<=>` through `search_path = public, extensions`, while `match_region_itinerary_chunks` retains its narrower `public` path because its `ILIKE` expressions are built in and the trigram indexes remain OID-bound.
