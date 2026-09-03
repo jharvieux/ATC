@@ -46,3 +46,13 @@ cd apps/rag  && pnpm dev     # http://localhost:3001
 ## CI
 
 Every PR into `dev` or `release/*` runs lint, typecheck, and build via `.github/workflows/ci.yml`.
+
+## License
+
+Copyright © 2026 John Harvieux. All rights reserved.
+
+This repository contains proprietary source code. Except for the limited rights
+required by the GitHub Terms of Service for a public repository, public
+availability does not make the code open source or grant permission to use,
+copy, modify, distribute, deploy, host, commercialize, or create derivative
+works from it. See the [LICENSE](LICENSE) for the complete notice.
