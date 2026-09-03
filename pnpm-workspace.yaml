@@ -19,6 +19,9 @@ overrides:
   js-yaml: ">=4.3.1 <5"
   esbuild: ">=0.28.1 <0.29"
   "@babel/core": ">=7.29.6 <8"
+  # #2128 — browserslist <=4.28.6 mishandles inherited keys in custom stats.
+  # Keep every transitive consumer on the patched 4.x line.
+  browserslist: ">=4.28.8 <5"
   # Keep transitive security patches on the majors required by their parents.
   # A single unscoped override would force incompatible ESM/API majors into
   # older PostCSS and glob consumers.
