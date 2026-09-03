@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-384 — 2026-09-03 — Constrain Browserslist to patched major 4
+
+**Decision.** Centrally override `browserslist` to `>=4.28.8 <5` so every transitive consumer resolves a patched 4.x release while preserving the established major-version contract.
+
+**Why.**
+- Versions through 4.28.6 allow hostile custom statistics to crash normalization or alter the result prototype; the resolved 4.28.8 package passed the adversarial inherited-key check.
+- The workspace-level override is the authoritative pnpm mechanism and keeps frozen installs reproducible across Babel, Webpack, Next.js, Sentry, Stryker, and Inngest dependency paths.
+
+**Rejected.**
+- *Upgrade to an unverified next major.* A major jump adds compatibility risk unrelated to removing the vulnerable resolution.
+- *Pin exactly 4.28.8.* The bounded range permits future patched 4.x releases without weakening the security floor.
+- *Put the override only in `package.json`.* This workspace owns overrides centrally in `pnpm-workspace.yaml`.
+
+**Related artifacts.** PR #2141, issue #2128, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, [[D-374]].
+
+---
+
 ## D-383 — 2026-09-02 — Keep email audit tables service-role-only
 
 **Decision.** `email_log` and `email_suppressions` are inaccessible to authenticated and anonymous Data API clients. Server workflows use explicit tenant predicates; provider-message reference bootstrap requires bounded all-match tenant consensus and fails loud on database errors.
