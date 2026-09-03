@@ -17,6 +17,8 @@ session; keep it lean.
 
 ## Entries
 
+- D-383 — 2026-09-02 — `email_log` and `email_suppressions` are service-role-only; server paths keep tenant predicates, and multi-reference provider bootstrap requires bounded single-tenant consensus with fail-loud database errors (PR #2138; issue #2119; #2139 tracks event ordering; refs D-375)
+- D-382 — 2026-09-02 — Usage recovery keys monthly counters by billing period and daily email by UTC day while preserving monthly monotonic state; authorized downgrades rebase markers, stale writers cannot regress the day, and markerless subscription recompute distinguishes prior-day zero from same-day count (PR #2137; issue #2112; refs D-375)
 - D-381 — 2026-09-02 — RAG `vector`/`pg_trgm` live in `extensions`; existing indexes stay OID-bound and only the vector RPC adds `extensions` to its path (#2022; refs D-380)
 - D-380 — 2026-09-01 — Raw Postgres isolation witnesses bind reviewed normalized SQL/resources to exact effective migration, catalog, and creation-time search-path provenance; executable comments become whitespace, inert quoted bodies remain inert, and unknown/stale/ambiguous relevant state fails closed (#2121; extends D-373)
 - D-379 — 2026-09-01 — Main/RAG exact-revision live acceptance remains mandatory, but absent compatible app hosting yields explicit cross-tenant enumeration-only `host-unavailable`; live mode requires concrete health plus tenant-B own-booking evidence before tenant-A probes (#2098; #1913 provisions the host, #2122 attests hosted revisions; refs D-378)
