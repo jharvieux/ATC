@@ -87,7 +87,11 @@ describe("GET /api/email/unsubscribe", () => {
       tenant_id: TENANT_ID,
       category: "all",
     });
-    const tampered = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`;
+    const [header, payload, signature] = token.split(".");
+    if (!header || !payload || !signature) throw new Error("expected compact JWS");
+    const signatureBytes = Buffer.from(signature, "base64url");
+    signatureBytes.writeUInt8(signatureBytes.readUInt8(0) ^ 1, 0);
+    const tampered = `${header}.${payload}.${signatureBytes.toString("base64url")}`;
 
     const response = await GET(request(tampered));
 

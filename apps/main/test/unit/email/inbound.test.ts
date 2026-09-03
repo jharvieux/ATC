@@ -50,17 +50,33 @@ describe("extractReferencedMessageIds", () => {
 // Minimal table-routed mock: each test declares what email_log / contacts
 // return; unexpected tables throw so a query-shape change fails the test.
 function mockDb(handlers: {
-  email_log?: { tenant_id: string; contact_id: string | null }[];
+  email_log?: { resend_message_id: string; tenant_id: string; contact_id: string | null }[];
+  emailLogError?: unknown;
   contacts?: { id: string; tenant_id: string }[];
-}): { db: SupabaseClient; queried: string[] } {
+}): {
+  db: SupabaseClient;
+  queried: string[];
+  emailLogQuery: { columns: string | null; ids: string[] | null; limit: number | null };
+} {
   const queried: string[] = [];
+  const emailLogQuery = { columns: null as string | null, ids: null as string[] | null, limit: null as number | null };
   const db = {
     from(table: string) {
       queried.push(table);
       if (table === "email_log") {
         return {
-          select: () => ({
-            in: () => ({ limit: () => Promise.resolve({ data: handlers.email_log ?? [], error: null }) }),
+          select: (columns: string) => ({
+            in: (_column: string, ids: string[]) => ({
+              limit: (limit: number) => {
+                emailLogQuery.columns = columns;
+                emailLogQuery.ids = ids;
+                emailLogQuery.limit = limit;
+                return Promise.resolve({
+                  data: handlers.email_log ?? [],
+                  error: handlers.emailLogError ?? null,
+                });
+              },
+            }),
           }),
         };
       }
@@ -74,18 +90,96 @@ function mockDb(handlers: {
       throw new Error(`unexpected table ${table}`);
     },
   } as unknown as SupabaseClient;
-  return { db, queried };
+  return { db, queried, emailLogQuery };
 }
 
 describe("resolveInboundTenant", () => {
   it("resolves via References match and never consults the spoofable sender when it hits", async () => {
     const { db, queried } = mockDb({
-      email_log: [{ tenant_id: "t-1", contact_id: "c-9" }],
+      email_log: [{ resend_message_id: "msg-1", tenant_id: "t-1", contact_id: "c-9" }],
       contacts: [{ id: "attacker-planted", tenant_id: "t-EVIL" }],
     });
     const res = await resolveInboundTenant({ db, referencedIds: ["msg-1"], fromEmail: "a@b.com" });
     expect(res).toEqual({ method: "references", tenant_id: "t-1", contact_id: "c-9" });
     expect(queried).not.toContain("contacts");
+  });
+
+  it("resolves same-tenant references by header order regardless of query row order", async () => {
+    const { db, queried, emailLogQuery } = mockDb({
+      email_log: [
+        { resend_message_id: "msg-1", tenant_id: "t-1", contact_id: "c-1" },
+        { resend_message_id: "msg-2", tenant_id: "t-1", contact_id: "c-2" },
+      ],
+    });
+
+    const res = await resolveInboundTenant({
+      db,
+      referencedIds: ["msg-2", "msg-1", "msg-2"],
+      fromEmail: "a@b.com",
+    });
+
+    expect(res).toEqual({ method: "references", tenant_id: "t-1", contact_id: "c-2" });
+    expect(emailLogQuery).toEqual({
+      columns: "resend_message_id, tenant_id, contact_id",
+      ids: ["msg-2", "msg-1"],
+      limit: 2,
+    });
+    expect(queried).not.toContain("contacts");
+  });
+
+  it("fails closed when references match more than one tenant", async () => {
+    const { db, queried } = mockDb({
+      email_log: [
+        { resend_message_id: "msg-1", tenant_id: "t-1", contact_id: "c-1" },
+        { resend_message_id: "msg-2", tenant_id: "t-2", contact_id: "c-2" },
+      ],
+      contacts: [{ id: "sender-contact", tenant_id: "t-1" }],
+    });
+
+    const res = await resolveInboundTenant({
+      db,
+      referencedIds: ["msg-1", "msg-2"],
+      fromEmail: "a@b.com",
+    });
+
+    expect(res).toEqual({ method: "unresolved" });
+    expect(queried).not.toContain("contacts");
+  });
+
+  it("fails loud on a reference query error without falling back to sender routing", async () => {
+    const { db, queried, emailLogQuery } = mockDb({
+      emailLogError: { code: "XX000" },
+      contacts: [{ id: "sender-contact", tenant_id: "t-1" }],
+    });
+
+    const resolution = resolveInboundTenant({
+      db,
+      referencedIds: ["msg-1", "msg-2"],
+      fromEmail: "a@b.com",
+    });
+
+    await expect(resolution).rejects.toThrow("email_log reference lookup failed");
+    expect(emailLogQuery).toEqual({
+      columns: "resend_message_id, tenant_id, contact_id",
+      ids: ["msg-1", "msg-2"],
+      limit: 2,
+    });
+    expect(queried).not.toContain("contacts");
+  });
+
+  it("fails closed without querying when reference candidates exceed the bounded lookup", async () => {
+    const { db, queried } = mockDb({
+      contacts: [{ id: "sender-contact", tenant_id: "t-1" }],
+    });
+
+    const res = await resolveInboundTenant({
+      db,
+      referencedIds: Array.from({ length: 101 }, (_, index) => `msg-${index}`),
+      fromEmail: "a@b.com",
+    });
+
+    expect(res).toEqual({ method: "unresolved" });
+    expect(queried).toEqual([]);
   });
 
   it("skips the email_log query entirely when there are no referenced ids", async () => {

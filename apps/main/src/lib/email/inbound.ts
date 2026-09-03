@@ -8,8 +8,8 @@
 //
 // Tenant resolution (in precedence order):
 //   1. "references" — an In-Reply-To/References header token matches an
-//      email_log.resend_message_id we sent. Deterministic and spoof-resistant:
-//      an attacker can't know another tenant's provider message ids.
+//      email_log.resend_message_id we sent. Every matched reference must agree
+//      on one tenant; the earliest referenced match supplies the contact.
 //   2. "sender"     — the from-address matches exactly ONE contacts row across
 //      all tenants. Zero or multiple matches → unresolved (a forged sender must
 //      never attach mail to another tenant, so ambiguity fails closed).
@@ -24,6 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // the MX record + webhook are provisioned). A wrong path degrades gracefully:
 // fetchReceivedEmail returns null and processing continues metadata-only.
 const RESEND_RECEIVING_URL = "https://api.resend.com/emails/receiving";
+const MAX_REFERENCE_CANDIDATES = 100;
 
 export interface ReceivedEmailContent {
   text: string | null;
@@ -96,14 +97,35 @@ export async function resolveInboundTenant(args: {
   const { db, referencedIds, fromEmail } = args;
 
   if (referencedIds.length > 0) {
-    const { data } = await db
+    const candidateIds = [...new Set(referencedIds)];
+    if (candidateIds.length > MAX_REFERENCE_CANDIDATES) return { method: "unresolved" };
+
+    const { data, error } = await db
       // d091-allow:service-role-tenant DB-unique resend_message_id references bootstrap the tenant before sender fallback
       .from("email_log")
-      .select("tenant_id, contact_id")
-      .in("resend_message_id", referencedIds)
-      .limit(1);
-    const row = (data as { tenant_id: string; contact_id: string | null }[] | null)?.[0];
-    if (row) return { method: "references", tenant_id: row.tenant_id, contact_id: row.contact_id ?? null };
+      .select("resend_message_id, tenant_id, contact_id")
+      .in("resend_message_id", candidateIds)
+      .limit(candidateIds.length);
+    if (error) throw new Error("email_log reference lookup failed", { cause: error });
+
+    const rows = (data as {
+      resend_message_id: string;
+      tenant_id: string;
+      contact_id: string | null;
+    }[] | null) ?? [];
+    if (new Set(rows.map((row) => row.tenant_id)).size > 1) return { method: "unresolved" };
+
+    const rowsByMessageId = new Map(rows.map((row) => [row.resend_message_id, row]));
+    for (const candidateId of candidateIds) {
+      const row = rowsByMessageId.get(candidateId);
+      if (row) {
+        return {
+          method: "references",
+          tenant_id: row.tenant_id,
+          contact_id: row.contact_id ?? null,
+        };
+      }
+    }
   }
 
   // limit(2) is all the ambiguity check needs — 2+ rows means non-unique.

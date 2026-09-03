@@ -56,6 +56,7 @@ interface State {
   content: ContentRow[];
   emailLog: LogRow[];
   emailLogFilterSets: Array<Array<[string, unknown]>>;
+  emailLogSelectError: unknown;
   suppressions: Array<{ tenant_id: string; email_address: string; reason: string }>;
 }
 
@@ -83,6 +84,7 @@ function makeState(overrides: Partial<ContentRow> = {}): State {
     ],
     emailLog: [{ id: "orig", tenant_id: "t-1", status: "soft_bounced", retry_of: null }],
     emailLogFilterSets: [],
+    emailLogSelectError: null,
     suppressions: [],
   };
 }
@@ -116,7 +118,10 @@ function makeDb(state: State) {
         if (table === "email_log") state.emailLogFilterSets.push([...filters]);
         if (op === "select") {
           const matched = target.filter(matches);
-          return { data: single ? (matched[0] ?? null) : matched, error: null };
+          return {
+            data: single ? (matched[0] ?? null) : matched,
+            error: table === "email_log" ? state.emailLogSelectError : null,
+          };
         }
         if (op === "update") {
           const matched = target.filter(matches);
@@ -239,6 +244,24 @@ describe("§23.7 soft-bounce retry — stored-content fidelity", () => {
 });
 
 describe("§23.7 soft-bounce retry — termination", () => {
+  it("aborts before sending or mutating state when the terminal-status read fails", async () => {
+    const state = makeState();
+    state.emailLogSelectError = { code: "XX000", message: "read failed" };
+    const { deps, calls } = makeDeps(state, ["delivered"]);
+
+    await expect(runSoftBounceRetryAttempt(
+      deps,
+      { email_log_id: "orig", tenant_id: "t-1", attempt: 1 },
+    )).rejects.toThrow("email_log terminal status lookup failed");
+
+    expect(calls).toHaveLength(0);
+    expect(state.emailLog).toEqual([
+      { id: "orig", tenant_id: "t-1", status: "soft_bounced", retry_of: null },
+    ]);
+    expect(state.content[0]?.claimed_attempt).toBe(0);
+    expect(state.suppressions).toHaveLength(0);
+  });
+
   it("delivery on attempt 2 stops the chain with NO suppression", async () => {
     const state = makeState();
     // attempt 1 re-send bounces, attempt 2 re-send delivers.

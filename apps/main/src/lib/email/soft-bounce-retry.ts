@@ -118,12 +118,13 @@ async function isTerminalStatus(
   logId: string,
   tenantId: string,
 ): Promise<boolean> {
-  const { data } = await db
+  const { data, error } = await db
     .from("email_log")
     .select("status")
     .eq("id", logId)
     .eq("tenant_id", tenantId)
     .maybeSingle();
+  if (error) throw new Error("email_log terminal status lookup failed", { cause: error });
   const status = (data as { status?: string } | null)?.status;
   // Delivered = success; hard_bounced / complained = the webhook already
   // suppressed the address. All three mean: stop the chain.
