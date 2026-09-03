@@ -109,6 +109,19 @@ describe("tenantClient proxy", () => {
     ]);
   });
 
+  for (const table of ["email_log", "email_suppressions"]) {
+    it(`scopes service-only ${table} access to the tenant context`, () => {
+      const qb = makeQueryBuilder();
+      mockFrom.mockReturnValue(qb);
+
+      const db = tenantClient(ctx);
+      db.from(table).select("id");
+
+      expect(mockFrom).toHaveBeenCalledWith(table);
+      expect(qb.filterBuilder.eqCalls).toEqual([["tenant_id", "tenant-abc"]]);
+    });
+  }
+
   it("passes through queries against PLATFORM_READABLE_TABLES without auto-scoping", () => {
     // `tier_definitions` has no tenant_id column — callers self-scope.
     const qb = makeQueryBuilder();

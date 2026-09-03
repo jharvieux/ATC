@@ -57,6 +57,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // Look up the email_log row
   const { data: logRow, error: logErr } = await svc
+    // d091-allow:service-role-tenant resend_message_id is DB-unique and resolves the tenant before tenant-scoped processing begins
     .from("email_log")
     .select("id, tenant_id, to_email, retry_of")
     .eq("resend_message_id", resendMessageId)
@@ -83,7 +84,8 @@ export async function POST(req: Request): Promise<Response> {
       await safeAwait(svc
         .from("email_log")
         .update({ status: "delivered", delivered_at: now })
-        .eq("id", logId), "email_log.update");
+        .eq("id", logId)
+        .eq("tenant_id", tenantId), "email_log.update");
       break;
 
     case "email.bounced": {
@@ -94,7 +96,8 @@ export async function POST(req: Request): Promise<Response> {
         await safeAwait(svc
           .from("email_log")
           .update({ status: "hard_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId), "email_log.update");
+          .eq("id", logId)
+          .eq("tenant_id", tenantId), "email_log.update");
         // Suppress future sends to this address for this tenant
         await safeAwait(svc.from("email_suppressions").upsert(
           { tenant_id: tenantId, email_address: toEmail, reason: "hard_bounce", suppressed_at: now },
@@ -106,7 +109,8 @@ export async function POST(req: Request): Promise<Response> {
         await safeAwait(svc
           .from("email_log")
           .update({ status: "soft_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId), "email_log.update");
+          .eq("id", logId)
+          .eq("tenant_id", tenantId), "email_log.update");
         if (!isRetrySend) {
           await inngest.send({
             // Deterministic id → Inngest dedupes a Svix REDELIVERY of this bounce to
@@ -127,7 +131,8 @@ export async function POST(req: Request): Promise<Response> {
       await safeAwait(svc
         .from("email_log")
         .update({ status: "complained", complained_at: now })
-        .eq("id", logId), "email_log.update");
+        .eq("id", logId)
+        .eq("tenant_id", tenantId), "email_log.update");
       await safeAwait(svc.from("email_suppressions").upsert(
         { tenant_id: tenantId, email_address: toEmail, reason: "complaint", suppressed_at: now },
         { onConflict: "tenant_id,email_address,reason" },

@@ -50,11 +50,13 @@ interface ContentRow {
   completed_attempt: number | null;
   last_send_log_id: string | null;
 }
-interface LogRow { id: string; status: string; retry_of: string | null }
+interface LogRow { id: string; tenant_id: string; status: string; retry_of: string | null }
 
 interface State {
   content: ContentRow[];
   emailLog: LogRow[];
+  emailLogFilterSets: Array<Array<[string, unknown]>>;
+  emailLogSelectError: unknown;
   suppressions: Array<{ tenant_id: string; email_address: string; reason: string }>;
 }
 
@@ -80,7 +82,9 @@ function makeState(overrides: Partial<ContentRow> = {}): State {
         ...overrides,
       },
     ],
-    emailLog: [{ id: "orig", status: "soft_bounced", retry_of: null }],
+    emailLog: [{ id: "orig", tenant_id: "t-1", status: "soft_bounced", retry_of: null }],
+    emailLogFilterSets: [],
+    emailLogSelectError: null,
     suppressions: [],
   };
 }
@@ -111,9 +115,13 @@ function makeDb(state: State) {
 
       const run = (single: boolean) => {
         const target = rowsFor();
+        if (table === "email_log") state.emailLogFilterSets.push([...filters]);
         if (op === "select") {
           const matched = target.filter(matches);
-          return { data: single ? (matched[0] ?? null) : matched, error: null };
+          return {
+            data: single ? (matched[0] ?? null) : matched,
+            error: table === "email_log" ? state.emailLogSelectError : null,
+          };
         }
         if (op === "update") {
           const matched = target.filter(matches);
@@ -159,7 +167,7 @@ function makeSendEmail(state: State, statuses: string[]) {
     const status = statuses[n - 1] ?? "soft_bounced";
     if (status === "suppressed") return { status: "suppressed", reason: "hard_bounce" };
     const id = `rs-${n}`;
-    state.emailLog.push({ id, status, retry_of: input.retry_of ?? null });
+    state.emailLog.push({ id, tenant_id: input.tenant.id, status, retry_of: input.retry_of ?? null });
     return { status: "sent", email_log_id: id, resend_message_id: `msg-${n}` };
   });
   return { fn, calls };
@@ -236,6 +244,24 @@ describe("§23.7 soft-bounce retry — stored-content fidelity", () => {
 });
 
 describe("§23.7 soft-bounce retry — termination", () => {
+  it("aborts before sending or mutating state when the terminal-status read fails", async () => {
+    const state = makeState();
+    state.emailLogSelectError = { code: "XX000", message: "read failed" };
+    const { deps, calls } = makeDeps(state, ["delivered"]);
+
+    await expect(runSoftBounceRetryAttempt(
+      deps,
+      { email_log_id: "orig", tenant_id: "t-1", attempt: 1 },
+    )).rejects.toThrow("email_log terminal status lookup failed");
+
+    expect(calls).toHaveLength(0);
+    expect(state.emailLog).toEqual([
+      { id: "orig", tenant_id: "t-1", status: "soft_bounced", retry_of: null },
+    ]);
+    expect(state.content[0]?.claimed_attempt).toBe(0);
+    expect(state.suppressions).toHaveLength(0);
+  });
+
   it("delivery on attempt 2 stops the chain with NO suppression", async () => {
     const state = makeState();
     // attempt 1 re-send bounces, attempt 2 re-send delivers.
@@ -259,6 +285,10 @@ describe("§23.7 soft-bounce retry — termination", () => {
     // original marked hard_bounced; content purged
     expect(state.emailLog.find((r) => r.id === "orig")!.status).toBe("hard_bounced");
     expect(state.content).toHaveLength(0);
+    expect(state.emailLogFilterSets.length).toBeGreaterThan(0);
+    expect(state.emailLogFilterSets.every((filters) =>
+      filters.some(([column, value]) => column === "tenant_id" && value === "t-1")
+    )).toBe(true);
   });
 });
 
