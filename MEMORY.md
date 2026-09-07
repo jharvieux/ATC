@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-386 — 2026-09-07 — Order Resend status events atomically
+
+**Decision.** Signed Resend delivery-status events are serialized through a tenant-scoped, row-locking `SECURITY INVOKER` database function. The function persists the last accepted provider `created_at` and Svix event ID, and a transition applies only when it does not regress the fixed status precedence `complained > hard_bounced > delivered > soft_bounced` or the provider timestamp; equal timestamps require higher precedence. Hard-bounce and complaint suppressions are inserted idempotently in the same transaction even when the status transition is stale. Soft-retry eligibility is returned by that transaction only for an original send whose soft-bounce state is current, including exact redelivery recovery, and the route uses a deterministic Inngest event ID.
+
+**Why.**
+- Resend webhooks are at-least-once and can arrive out of order, so route-level last-write-wins updates can regress a delivered or terminal message and start an invalid retry chain.
+- A row lock plus the persisted provider watermark makes concurrent and reordered events converge on one monotonic state while keeping tenant scope and suppression side effects atomic.
+- Returning retry eligibility from the same transaction removes the read/write race; allowing an exact duplicate only while soft bounce remains current closes the database-commit-before-Inngest handoff without reopening retries after delivery, hard bounce, or complaint.
+
+**Rejected.**
+- *Compare and update only in the webhook route.* Separate reads, status writes, and suppression writes have a TOCTOU window and cannot serialize concurrent deliveries.
+- *Deduplicate only by event ID.* A distinct but older event can still regress state, and remembering only receipt does not prove the downstream retry handoff completed.
+- *Use provider timestamp alone.* A later lower-precedence event could overwrite a stronger terminal observation; deterministic status precedence is also required.
+
+**Related artifacts.** PR #2149, issue #2139, `apps/main/supabase/migrations/20260907030924_resend_event_ordering.sql`, `apps/main/src/app/api/webhooks/resend/route.ts`, `apps/main/test/integration/resend-event-ordering.test.ts`, [[D-333]], [[D-383]].
+
+---
+
 ## D-385 — 2026-09-07 — Gate hosted rollback verification on exact Vercel revision
 
 **Decision.** Human-initiated rollbacks remain manual, but staging and production verification must fail closed unless the health endpoint reports the expected full Git SHA, expected service, and authoritative `commitSource: "vercel"`. This supersedes [[D-025]] only where it described `check-production-version.sh` as having no CI gate; it does not automate rollback execution.

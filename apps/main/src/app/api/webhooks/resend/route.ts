@@ -18,6 +18,7 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ResendEvent {
   type: string;
+  created_at?: string;
   data: {
     email_id?: string;
     bounce?: { type?: string; message?: string };
@@ -55,11 +56,27 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Missing email_id", { status: 400 });
   }
 
+  const isStatusEvent =
+    event.type === "email.delivered"
+    || event.type === "email.bounced"
+    || event.type === "email.complained";
+  let eventCreatedAt: string | null = null;
+  if (isStatusEvent) {
+    if (typeof event.created_at !== "string") {
+      return new Response("Missing created_at", { status: 400 });
+    }
+    const parsedCreatedAt = new Date(event.created_at);
+    if (Number.isNaN(parsedCreatedAt.getTime())) {
+      return new Response("Invalid created_at", { status: 400 });
+    }
+    eventCreatedAt = parsedCreatedAt.toISOString();
+  }
+
   // Look up the email_log row
   const { data: logRow, error: logErr } = await svc
     // d091-allow:service-role-tenant resend_message_id is DB-unique and resolves the tenant before tenant-scoped processing begins
     .from("email_log")
-    .select("id, tenant_id, to_email, retry_of")
+    .select("id, tenant_id")
     .eq("resend_message_id", resendMessageId)
     .maybeSingle();
 
@@ -69,74 +86,33 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("OK", { status: 200 });
   }
 
-  type LogRow = { id: string; tenant_id: string; to_email: string; retry_of: string | null };
+  type LogRow = { id: string; tenant_id: string };
   const logId = (logRow as LogRow).id;
   const tenantId = (logRow as LogRow).tenant_id;
-  const toEmail = (logRow as LogRow).to_email;
-  // §23.7/#1611 — a soft bounce on a re-send row must NOT start a fresh retry
-  // chain: the original send's chain self-drives its +6h/+12h/+24h schedule and
-  // reads this row's status directly. Status is still recorded below for that read.
-  const isRetrySend = (logRow as LogRow).retry_of !== null;
-  const now = new Date().toISOString();
+
+  let status: "delivered" | "soft_bounced" | "hard_bounced" | "complained" | null = null;
+  let bounceReason: string | null = null;
 
   switch (event.type) {
     case "email.delivered":
-      await safeAwait(svc
-        .from("email_log")
-        .update({ status: "delivered", delivered_at: now })
-        .eq("id", logId)
-        .eq("tenant_id", tenantId), "email_log.update");
+      status = "delivered";
       break;
 
     case "email.bounced": {
-      const bounceType = (event.data.bounce as { type?: string } | undefined)?.type;
-      const bounceMessage = (event.data.bounce as { message?: string } | undefined)?.message ?? "unknown";
-
-      if (bounceType === "hard") {
-        await safeAwait(svc
-          .from("email_log")
-          .update({ status: "hard_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId)
-          .eq("tenant_id", tenantId), "email_log.update");
-        // Suppress future sends to this address for this tenant
-        await safeAwait(svc.from("email_suppressions").upsert(
-          { tenant_id: tenantId, email_address: toEmail, reason: "hard_bounce", suppressed_at: now },
-          { onConflict: "tenant_id,email_address,reason" },
-        ), "email_suppressions.upsert");
+      const bounceType = (event.data.bounce as { type?: string } | undefined)?.type?.toLowerCase();
+      if (bounceType === "permanent" || bounceType === "hard") {
+        status = "hard_bounced";
+      } else if (bounceType === "temporary" || bounceType === "soft") {
+        status = "soft_bounced";
       } else {
-        // Soft bounce — record status; trigger a retry chain only for original
-        // sends (re-send rows are driven by the existing chain, not a new one).
-        await safeAwait(svc
-          .from("email_log")
-          .update({ status: "soft_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId)
-          .eq("tenant_id", tenantId), "email_log.update");
-        if (!isRetrySend) {
-          await inngest.send({
-            // Deterministic id → Inngest dedupes a Svix REDELIVERY of this bounce to
-            // a single retry-chain start (installed inngest@4 MinimalEventPayload.id:
-            // "if an event with the same ID is sent again, it will not invoke
-            // functions"). Without it, two concurrent attempt-1 runs would race the
-            // completion marker and compound scheduleNext down the whole chain.
-            id: `soft-retry:${logId}:attempt:1`,
-            name: "email/soft.bounce.retry",
-            data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
-          });
-        }
+        return new Response("Invalid bounce type", { status: 400 });
       }
+      bounceReason = (event.data.bounce as { message?: string } | undefined)?.message ?? "unknown";
       break;
     }
 
     case "email.complained":
-      await safeAwait(svc
-        .from("email_log")
-        .update({ status: "complained", complained_at: now })
-        .eq("id", logId)
-        .eq("tenant_id", tenantId), "email_log.update");
-      await safeAwait(svc.from("email_suppressions").upsert(
-        { tenant_id: tenantId, email_address: toEmail, reason: "complaint", suppressed_at: now },
-        { onConflict: "tenant_id,email_address,reason" },
-      ), "email_suppressions.upsert");
+      status = "complained";
       break;
 
     case "email.opened":
@@ -160,6 +136,36 @@ export async function POST(req: Request): Promise<Response> {
       // event for engineering inspection.
       console.warn("[resend-webhook] unhandled event type (raw value omitted from log; see Sentry breadcrumbs)");
       break;
+    }
+  }
+
+  if (status && eventCreatedAt && msgId) {
+    const rows = await safeAwait(
+      svc.rpc("apply_resend_status_event", {
+        p_tenant_id: tenantId,
+        p_email_log_id: logId,
+        p_event_id: msgId,
+        p_event_created_at: eventCreatedAt,
+        p_status: status,
+        p_bounce_reason: bounceReason,
+      }),
+      "apply_resend_status_event",
+    );
+    const result = (rows as Array<{
+      outcome: "applied" | "duplicate" | "stale" | "not_found";
+      soft_retry_eligible: boolean;
+    }> | null)?.[0];
+    if (!result) throw new Error("apply_resend_status_event returned no row");
+
+    if (status === "soft_bounced" && result.soft_retry_eligible) {
+      await inngest.send({
+        // The RPC also returns true for an exact redelivery while soft_bounced
+        // remains current. This deterministic id makes that recovery handoff a
+        // no-op if the original Inngest send already succeeded.
+        id: `soft-retry:${logId}:attempt:1`,
+        name: "email/soft.bounce.retry",
+        data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
+      });
     }
   }
 
