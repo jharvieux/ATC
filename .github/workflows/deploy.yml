@@ -336,6 +336,13 @@ jobs:
     # 3-way contention is rare; the merge queue with "max entries to build = 1"
     # is the real serializer and removes it entirely — which is the point of
     # this groundwork. See the PR body.
+    #
+    # Hosted-application policy (#2122): pull_request, merge_group, and dev-push
+    # runs deliberately reuse APP_STAGING_URL instead of creating per-event app
+    # deployments. The live probe reports that shared host's own commit, but the
+    # required receipts bind only checked-out code and rebuilt test-DB state to
+    # github.sha. Release staging and production deploys separately require exact
+    # hosted-SHA equality before claiming application acceptance.
     concurrency:
       group: shared-test-db
       cancel-in-progress: false
@@ -752,7 +759,12 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
             exit 1
           fi
-          vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1
+          vercel deploy \
+            --token="$VERCEL_TOKEN" \
+            --yes \
+            --build-env ENABLE_EXPERIMENTAL_COREPACK=1 \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -992,7 +1004,12 @@ jobs:
         run: |
           vercel pull --environment=preview --yes --token=$VERCEL_TOKEN
           vercel build --token=$VERCEL_TOKEN
-          vercel deploy --prebuilt --target=preview --token=$VERCEL_TOKEN
+          vercel deploy \
+            --prebuilt \
+            --target=preview \
+            --token="$VERCEL_TOKEN" \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Run Playwright E2E tests
         # This step is the pre-prod-promotion gate. It runs the full tests/e2e
@@ -1023,14 +1040,11 @@ jobs:
         id: staging-health
         run: |
           sleep 20
-          health_response=$(curl -f --silent --show-error https://staging.ai-travelconcierge.com/api/health)
-          echo "$health_response"
-          health_commit=$(printf '%s' "$health_response" | node -e 'const fs = require("fs"); const health = JSON.parse(fs.readFileSync(0, "utf8")); if (health.status !== "ok" || health.service !== "main" || typeof health.commit !== "string") process.exit(1); process.stdout.write(health.commit.trim());')
-          if [ -z "$health_commit" ] || [ "$health_commit" = "unknown" ]; then
-            echo "::error::Staging health response did not identify a concrete deployed commit."
-            exit 1
-          fi
-          echo "commit=$health_commit" >> "$GITHUB_OUTPUT"
+          bash scripts/check-production-version.sh \
+            https://staging.ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            main
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Record staging revision provenance
         id: staging-provenance
@@ -1181,12 +1195,21 @@ jobs:
         run: npm install -g vercel@54
 
       - name: Vercel deploy (production)
-        run: vercel deploy --target=production --yes --token=$VERCEL_TOKEN
+        run: |
+          vercel deploy \
+            --target=production \
+            --yes \
+            --token="$VERCEL_TOKEN" \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Smoke test production
         run: |
           sleep 30
-          curl -f https://ai-travelconcierge.com/api/health
+          bash scripts/check-production-version.sh \
+            https://ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            main
 
       # #1829 — atc-rag prod deploy, through this SAME job and the SAME
       # `production` GitHub Environment approval gate as atc-main above (one
@@ -1208,14 +1231,23 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
             exit 1
           fi
-          vercel deploy --prod --yes --token="$VERCEL_TOKEN" --build-env ENABLE_EXPERIMENTAL_COREPACK=1
+          vercel deploy \
+            --prod \
+            --yes \
+            --token="$VERCEL_TOKEN" \
+            --build-env ENABLE_EXPERIMENTAL_COREPACK=1 \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Smoke test atc-rag production
         # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md
         # — not a secret, so no new secret needed for this check.
         run: |
           sleep 15
-          curl -f https://rag.ai-travelconcierge.com/api/health
+          bash scripts/check-production-version.sh \
+            https://rag.ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            rag
 
       - name: Sync Inngest app (#835)
         # Vercel CLI deploys don't fire the Vercel→Inngest integration, so a newly

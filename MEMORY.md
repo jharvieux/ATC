@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-385 — 2026-09-07 — Gate hosted rollback verification on exact Vercel revision
+
+**Decision.** Human-initiated rollbacks remain manual, but staging and production verification must fail closed unless the health endpoint reports the expected full Git SHA, expected service, and authoritative `commitSource: "vercel"`. This supersedes [[D-025]] only where it described `check-production-version.sh` as having no CI gate; it does not automate rollback execution.
+
+**Why.**
+- A healthy endpoint can still be serving a stale or wrong deployment, so status alone is not release evidence.
+- Vercel's system-provided `VERCEL_GIT_COMMIT_SHA` identifies the hosted revision; the local `GIT_COMMIT_SHA` fallback is diagnostic only and cannot attest a Vercel deployment.
+- Release staging provenance and both production smoke probes need the same exact, fail-closed contract.
+
+**Rejected.**
+- *Keep the no-argument best-effort checker.* Without an expected SHA and service, it cannot prove that the promoted deployment is the intended revision.
+- *Accept `GIT_COMMIT_SHA` as hosted authority.* It is a local/non-Vercel fallback and can disagree with the revision Vercel is serving.
+- *Automate rollback execution.* Choosing and promoting a rollback remains an operator judgment under [[D-025]].
+
+**Related artifacts.** PR #2146, issue #2122, `scripts/check-production-version.sh`, `.github/workflows/deploy.yml`, `docs/runbooks/rollback-application.md`, `docs/runbooks/vercel-env-checklist.md`, [[D-025]].
+
+---
+
 ## D-384 — 2026-09-03 — Constrain Browserslist to patched major 4
 
 **Decision.** Centrally override `browserslist` to `>=4.28.8 <5` so every transitive consumer resolves a patched 4.x release while preserving the established major-version contract.

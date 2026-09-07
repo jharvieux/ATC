@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Queries the production health endpoint and compares the reported version
-# against the most recent git tag.
+# Fails unless a hosted health endpoint identifies the expected Vercel revision.
 #
-# Usage: bash scripts/check-production-version.sh [URL]
+# Usage: bash scripts/check-production-version.sh [URL] EXPECTED_SHA [EXPECTED_SERVICE]
 # Default URL: https://ai-travelconcierge.com/api/health
 
 set -euo pipefail
 
 HEALTH_URL="${1:-https://ai-travelconcierge.com/api/health}"
+EXPECTED_SHA="${2:-}"
+EXPECTED_SERVICE="${3:-main}"
+
+if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "ERROR: EXPECTED_SHA must be a full 40-character Git SHA." >&2
+  exit 1
+fi
 
 echo "==> Querying health endpoint: $HEALTH_URL"
 
@@ -16,47 +22,37 @@ RESPONSE=$(curl -sf "$HEALTH_URL" 2>/dev/null) || {
   exit 1
 }
 
-STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-VERSION=$(echo "$RESPONSE" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-SUPABASE=$(echo "$RESPONSE" | grep -o '"supabase":"[^"]*"' | cut -d'"' -f4)
+printf '%s' "$RESPONSE" | node -e '
+  const fs = require("node:fs");
+  const expectedSha = process.argv[1].toLowerCase();
+  const expectedService = process.argv[2];
+  let health;
+  try {
+    health = JSON.parse(fs.readFileSync(0, "utf8"));
+  } catch {
+    console.error("ERROR: Health endpoint did not return valid JSON.");
+    process.exit(1);
+  }
+  if (health.status !== "ok") {
+    console.error(`ERROR: Health status is ${JSON.stringify(health.status)}; expected "ok".`);
+    process.exit(1);
+  }
+  if (health.service !== expectedService) {
+    console.error(`ERROR: Health service is ${JSON.stringify(health.service)}; expected ${JSON.stringify(expectedService)}.`);
+    process.exit(1);
+  }
+  if (health.commitSource !== "vercel") {
+    console.error(`ERROR: Hosted commit source is ${JSON.stringify(health.commitSource)}; expected "vercel".`);
+    process.exit(1);
+  }
+  if (typeof health.commit !== "string" || !/^[0-9a-f]{40}$/i.test(health.commit)) {
+    console.error(`ERROR: Hosted commit is missing, unknown, or malformed: ${JSON.stringify(health.commit)}.`);
+    process.exit(1);
+  }
+  if (health.commit.toLowerCase() !== expectedSha) {
+    console.error(`ERROR: Hosted commit mismatch: expected=${expectedSha} hosted=${health.commit}.`);
+    process.exit(1);
+  }
+' "$EXPECTED_SHA" "$EXPECTED_SERVICE"
 
-echo ""
-echo "  status:           ${STATUS:-<not found>}"
-echo "  version (sha):    ${VERSION:-<not found>}"
-echo "  checks.supabase:  ${SUPABASE:-<not found>}"
-echo ""
-
-# Compare against most recent git tag
-LATEST_TAG=$(git tag --sort=-v:refname 2>/dev/null | head -1)
-if [[ -z "$LATEST_TAG" ]]; then
-  echo "WARNING: No git tags found; cannot compare version."
-else
-  TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG" 2>/dev/null || echo "")
-  echo "  latest git tag:   $LATEST_TAG"
-  echo "  tag sha:          ${TAG_SHA:-<not found>}"
-  echo ""
-
-  if [[ -n "$VERSION" && -n "$TAG_SHA" ]]; then
-    # Compare first 12 chars (short SHA match is sufficient)
-    if [[ "${VERSION:0:12}" == "${TAG_SHA:0:12}" ]]; then
-      echo "OK: Production is running the latest tagged release ($LATEST_TAG)."
-    else
-      echo "WARNING: Production SHA does not match latest tag ($LATEST_TAG)."
-      echo "         This may indicate a rollback is in effect or the tag"
-      echo "         has not been deployed yet."
-    fi
-  fi
-fi
-
-echo ""
-
-if [[ "$STATUS" != "ok" ]]; then
-  echo "FAIL: Health status is '$STATUS' (expected 'ok')." >&2
-  exit 1
-fi
-
-if [[ "$SUPABASE" != "ok" ]]; then
-  echo "WARN: Supabase check is '$SUPABASE' — database may be degraded."
-fi
-
-exit 0
+echo "OK: $EXPECTED_SERVICE is serving expected revision $EXPECTED_SHA."

@@ -429,24 +429,31 @@ describe("deploy shared-test-DB provenance", () => {
     expect(runStep(stagingProvenance, { GITHUB_SHA: "stale", HEALTH_COMMIT: "stale" }).status).not.toBe(0);
   });
 
-  it("executes the existing staging health request and rejects unusable hosted revisions", () => {
+  it("requires exact authoritative staging revision evidence before emitting provenance", () => {
     const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
     const health = step(dbCopy, "Smoke test staging");
-    expect(health.body).toContain("curl -f --silent --show-error https://staging.ai-travelconcierge.com/api/health");
+    expect(health.body).toContain("https://staging.ai-travelconcierge.com/api/health");
     const commandDir = fakeStagingCommands();
-    const common = { PATH: `${commandDir}:${process.env.PATH ?? ""}` };
+    const common = { GITHUB_SHA: sha, PATH: `${commandDir}:${process.env.PATH ?? ""}` };
     const valid = runStep(health, {
       ...common,
-      FAKE_CURL_BODY: JSON.stringify({ status: "ok", service: "main", commit: sha }),
+      FAKE_CURL_BODY: JSON.stringify({ status: "ok", service: "main", commit: sha, commitSource: "vercel" }),
     });
     expect(valid.status, `${valid.stdout}\n${valid.stderr}`).toBe(0);
     expect(valid.output).toBe(`commit=${sha}\n`);
     expect(runStep(health, { ...common, FAKE_CURL_STATUS: "22" }).status).not.toBe(0);
     expect(runStep(health, { ...common, FAKE_CURL_BODY: "not-json" }).status).not.toBe(0);
-    expect(runStep(health, {
-      ...common,
-      FAKE_CURL_BODY: JSON.stringify({ status: "ok", service: "main", commit: "unknown" }),
-    }).status).not.toBe(0);
+    for (const body of [
+      { status: "ok", service: "main", commit: sha },
+      { status: "ok", service: "main", commit: sha, commitSource: "git" },
+      { status: "ok", service: "main", commit: "unknown", commitSource: "vercel" },
+      { status: "ok", service: "main", commit: "short-sha", commitSource: "vercel" },
+      { status: "ok", service: "main", commit: "f".repeat(40), commitSource: "vercel" },
+    ]) {
+      const result = runStep(health, { ...common, FAKE_CURL_BODY: JSON.stringify(body) });
+      expect(result.status, JSON.stringify(body)).not.toBe(0);
+      expect(result.output).toBe("");
+    }
   });
 
   it("distinguishes Dependabot exemptions from live acceptance in receipt output", () => {

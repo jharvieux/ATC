@@ -45,6 +45,7 @@ const LIVE_PROBE_AVAILABLE =
   process.env.CROSS_TENANT_FIXTURES === "true";
 
 type AllowlistEntry = { route: string; method: string; reason: string };
+type HostedCommit = { commit: string; source: "vercel" };
 const exemptRoutes = new Set(
   (allowlist as (AllowlistEntry | Record<string, unknown>)[])
     .filter((e): e is AllowlistEntry => "route" in e && "method" in e)
@@ -94,7 +95,7 @@ function makeRequest(
 async function requireLiveAppHealth(
   appBaseUrl: string,
   fetchHealth: typeof fetch = fetch,
-): Promise<string> {
+): Promise<HostedCommit> {
   let response: Response;
   try {
     response = await fetchHealth(new URL("/api/health", appBaseUrl));
@@ -111,12 +112,26 @@ async function requireLiveAppHealth(
   } catch {
     throw new Error("Live app health sentinel did not return JSON");
   }
-  const health = body as { status?: unknown; service?: unknown; commit?: unknown };
+  const health = body as {
+    status?: unknown;
+    service?: unknown;
+    commit?: unknown;
+    commitSource?: unknown;
+  };
   const commit = typeof health.commit === "string" ? health.commit.trim() : "";
-  if (health.status !== "ok" || health.service !== "main" || commit === "" || commit.toLowerCase() === "unknown") {
-    throw new Error("Live app health sentinel did not identify a concrete main-app commit");
+  if (
+    health.status !== "ok" ||
+    health.service !== "main" ||
+    health.commitSource !== "vercel" ||
+    !/^[0-9a-f]{40}$/i.test(commit)
+  ) {
+    throw new Error("Live app health sentinel did not identify an authoritative main-app commit");
   }
-  return commit;
+  return { commit: commit.toLowerCase(), source: "vercel" };
+}
+
+function sharedHostObservation(hosted: HostedCommit): string {
+  return `Shared-host observation: hosted_commit=${hosted.commit} source=${hosted.source}; no event-SHA equality is claimed.`;
 }
 
 async function requireTenantOwnBookingRead(
@@ -403,24 +418,28 @@ describe("Route enumerator", () => {
 
   it("requires the live health sentinel to identify a concrete hosted commit", async () => {
     let healthUrl = "";
+    const commit = "0123456789abcdef0123456789abcdef01234567";
     const ok: typeof fetch = async (request) => {
       healthUrl = request.toString();
       return new Response(JSON.stringify({
         status: "ok",
         service: "main",
-        commit: "hosted-sha",
+        commit,
+        commitSource: "vercel",
       }), { status: 200 });
     };
     await expect(requireLiveAppHealth("https://app.example.test", ok))
-      .resolves.toBe("hosted-sha");
+      .resolves.toEqual({ commit, source: "vercel" });
     expect(healthUrl).toBe("https://app.example.test/api/health");
 
     for (const response of [
       new Response("not found", { status: 404 }),
       new Response("server error", { status: 500 }),
       new Response("not json", { status: 200 }),
-      new Response(JSON.stringify({ status: "ok", service: "main", commit: "unknown" }), { status: 200 }),
-      new Response(JSON.stringify({ status: "ok", service: "main", commit: "" }), { status: 200 }),
+      new Response(JSON.stringify({ status: "ok", service: "main", commit: "unknown", commitSource: "vercel" }), { status: 200 }),
+      new Response(JSON.stringify({ status: "ok", service: "main", commit: "hosted-sha", commitSource: "vercel" }), { status: 200 }),
+      new Response(JSON.stringify({ status: "ok", service: "main", commit, commitSource: "git" }), { status: 200 }),
+      new Response(JSON.stringify({ status: "ok", service: "rag", commit, commitSource: "vercel" }), { status: 200 }),
     ]) {
       await expect(requireLiveAppHealth("https://app.example.test", async () => response.clone()))
         .rejects.toThrow(/health sentinel/i);
@@ -428,6 +447,16 @@ describe("Route enumerator", () => {
     await expect(requireLiveAppHealth("https://app.example.test", async () => {
       throw new Error("network down");
     })).rejects.toThrow(/network down/);
+  });
+
+  it("reports a shared host's stale revision without attributing it to the event", () => {
+    const hostedCommit = "0123456789abcdef0123456789abcdef01234567";
+    const eventCommit = "89abcdef0123456789abcdef0123456789abcdef";
+    const observation = sharedHostObservation({ commit: hostedCommit, source: "vercel" });
+
+    expect(observation).toContain(`hosted_commit=${hostedCommit}`);
+    expect(observation).toContain("no event-SHA equality is claimed");
+    expect(observation).not.toContain(eventCommit);
   });
 
   it("reads tenant B's own booking before probing tenant A resources", async () => {
@@ -661,7 +690,8 @@ describe("Cross-tenant probe", () => {
   // The fixture setup is imported lazily so the skip above short-circuits
   // cleanly when credentials are absent.
   it("tenant B cannot access tenant A resources on any route", async () => {
-    await requireLiveAppHealth(APP_BASE_URL);
+    const hosted = await requireLiveAppHealth(APP_BASE_URL);
+    console.info(sharedHostObservation(hosted));
 
     const { setupCrossTenantFixtures } =
       await import("./fixtures/cross-tenant-setup");

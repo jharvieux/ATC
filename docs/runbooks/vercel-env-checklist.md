@@ -144,8 +144,13 @@ Set each in **both Preview and Production** environments in the Vercel project.
 | `LOG_LEVEL` | `info` | Set to `debug`, `warn`, or `error` only if adjusting observability |
 | `NEXT_PUBLIC_SUPABASE_URL` | (inferred from `SUPABASE_RAG_URL`) | Set explicitly to same value as `SUPABASE_RAG_URL` to ensure health readiness probe works correctly |
 | `NODE_ENV` | `development` | Auto-set by Vercel to `production` — do not override |
-| `GIT_COMMIT_SHA` | (not set) | Auto-populated by Vercel during deployments; read-only |
 | `VERCEL_ENV` | (not set) | Auto-set by Vercel to `production` or `preview` — do not configure |
+
+---
+
+### Hosted revision metadata (do not configure)
+
+Vercel supplies `VERCEL_GIT_COMMIT_SHA` to both applications as system metadata only when the project's **Automatically expose System Environment Variables** setting is enabled. Before deploying, open **Settings → Environment Variables** for both `atc-main` and `atc-rag` and verify that checkbox is selected; see [Vercel's system environment variables documentation](https://vercel.com/docs/environment-variables/system-environment-variables). Workflow-owned CLI deployments must retain both `--meta githubDeployment=1` and `--meta githubCommitSha="$GITHUB_SHA"` so Vercel associates the deployment with the exact workflow revision; see [Vercel's CLI Git metadata guidance](https://vercel.com/kb/guide/branch-variables-and-domains-not-linked-to-cli-deployments). Do not add or override `VERCEL_GIT_COMMIT_SHA` as a project variable. The health routes may read `GIT_COMMIT_SHA` only as a local or non-Vercel fallback; `scripts/check-production-version.sh` rejects that fallback as non-authoritative hosted evidence.
 
 ---
 
