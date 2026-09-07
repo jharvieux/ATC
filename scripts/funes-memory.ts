@@ -221,6 +221,10 @@ function rejectSymlink(target: string): void {
 
 function validateStateSymlinks(root: string): void {
   if (!fs.existsSync(root)) return;
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(`Refusing local Funes state root that is not a real directory: ${root}`);
+  }
   const realRoot = fs.realpathSync(root);
   const pending = [root];
   while (pending.length > 0) {

@@ -528,6 +528,25 @@ describe("local-only Funes commands", () => {
     expect(fs.readdirSync(outside)).toEqual([]);
   });
 
+  it("refuses a symlinked local state root before invoking Funes", () => {
+    const root = tempRoot();
+    const outside = tempRoot();
+    symlinkSync(outside, path.join(root, ".funes-atc"));
+    let called = false;
+
+    expect(() =>
+      recallDecisionMemory("why?", {
+        repoRoot: root,
+        run: () => {
+          called = true;
+          return ok();
+        },
+      }),
+    ).toThrow(/state root that is not a real directory/i);
+    expect(called).toBe(false);
+    expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
   it("allows Hugging Face-style symlinks that stay inside local state", () => {
     const root = tempRoot();
     const huggingface = path.join(root, ".funes-atc", "hf-home");
