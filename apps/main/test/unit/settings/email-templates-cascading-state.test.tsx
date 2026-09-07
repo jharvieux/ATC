@@ -23,7 +23,7 @@
 // reset step.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 
 vi.mock("@/lib/format-date", () => ({
   formatDate: (d: string) => d,
@@ -330,6 +330,102 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     const bookingCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/bookings"));
     expect(bookingCalls).toHaveLength(1);
     expect(String(bookingCalls[0]?.[0])).toContain(encodeURIComponent("Jami"));
+  });
+
+  it("keeps the newest booking results when an older request resolves last", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    let resolveFirst!: (value: ReturnType<typeof jsonRes>) => void;
+    let resolveSecond!: (value: ReturnType<typeof jsonRes>) => void;
+    const first = new Promise<ReturnType<typeof jsonRes>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<ReturnType<typeof jsonRes>>((resolve) => {
+      resolveSecond = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes("contact_query=Ja&")) return first;
+      if (url.includes("contact_query=Jamie&")) return second;
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    const input = screen.getByPlaceholderText("Type a customer name…");
+    fireEvent.change(input, { target: { value: "Ja" } });
+    await vi.advanceTimersByTimeAsync(400);
+    fireEvent.change(input, { target: { value: "Jamie" } });
+    await vi.advanceTimersByTimeAsync(400);
+    const bookingCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/bookings"));
+    expect(bookingCalls).toHaveLength(2);
+    expect((bookingCalls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true);
+
+    await act(async () => {
+      resolveSecond(jsonRes({
+        bookings: [{
+          id: "booking-new",
+          ship_name: "New Ship",
+          cruise_line: "New Line",
+          sailing_date: "2027-04-01",
+          primary_contact: { first_name: "Jamie", last_name: "Newest" },
+        }],
+      }));
+      await second;
+    });
+    expect(screen.getByText("Jamie Newest")).toBeTruthy();
+
+    await act(async () => {
+      resolveFirst(jsonRes({
+        bookings: [{
+          id: "booking-old",
+          ship_name: "Old Ship",
+          cruise_line: "Old Line",
+          sailing_date: "2027-03-01",
+          primary_contact: { first_name: "Jamie", last_name: "Stale" },
+        }],
+      }));
+      await first;
+    });
+    expect(screen.getByText("Jamie Newest")).toBeTruthy();
+    expect(screen.queryByText("Jamie Stale")).toBeNull();
+  });
+
+  it("cancels a pending booking search when the page unmounts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    const { unmount } = render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    fireEvent.change(screen.getByPlaceholderText("Type a customer name…"), {
+      target: { value: "Jamie" },
+    });
+    unmount();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/bookings"))).toBe(false);
+  });
+
+  it("contains a rejected booking search and clears the searching state", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/bookings")) return Promise.reject(new Error("network unavailable"));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    fireEvent.change(screen.getByPlaceholderText("Type a customer name…"), {
+      target: { value: "Jamie" },
+    });
+    await vi.advanceTimersByTimeAsync(400);
+
+    await vi.waitFor(() => expect(screen.queryByText("Searching…")).toBeNull());
+    expect(screen.queryByText("Jamie Rivera")).toBeNull();
   });
 });
 
