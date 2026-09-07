@@ -512,6 +512,8 @@ export default function EmailTemplatesSettingsPage() {
           if (!controller.signal.aborted) {
             dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings } });
           }
+        } else if (!controller.signal.aborted) {
+          dispatch({ type: "patchBooking", patch: { bookingResults: [] } });
         }
       } catch {
         if (!controller.signal.aborted) {

@@ -392,20 +392,55 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     expect(screen.queryByText("Jamie Stale")).toBeNull();
   });
 
-  it("cancels a pending booking search when the page unmounts", async () => {
+  it("clears prior booking results when the current search responds non-OK", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    const input = screen.getByPlaceholderText("Type a customer name…");
+    fireEvent.change(input, { target: { value: "Jamie" } });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(screen.getByText("Jamie Rivera")).toBeTruthy();
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/bookings")) {
+        return Promise.resolve({ ok: false, status: 500 } as Response);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    fireEvent.change(input, { target: { value: "Jamie R" } });
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(screen.queryByText("Jamie Rivera")).toBeNull();
+  });
+
+  it("aborts an in-flight booking search when the page unmounts", async () => {
     vi.useFakeTimers();
     const fetchMock = installFetchRouter();
     const { unmount } = render(<EmailTemplatesSettingsPage />);
     await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
 
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/bookings")) {
+        signal = init?.signal ?? undefined;
+        return new Promise<ReturnType<typeof jsonRes>>(() => {});
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
     fireEvent.click(screen.getByLabelText(/Customer booking/));
     fireEvent.change(screen.getByPlaceholderText("Type a customer name…"), {
       target: { value: "Jamie" },
     });
-    unmount();
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(400);
 
-    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/bookings"))).toBe(false);
+    expect(signal?.aborted).toBe(false);
+    unmount();
+
+    expect(signal?.aborted).toBe(true);
   });
 
   it("contains a rejected booking search and clears the searching state", async () => {
