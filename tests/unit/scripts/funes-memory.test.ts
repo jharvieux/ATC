@@ -1,8 +1,10 @@
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -473,6 +475,27 @@ describe("local-only Funes commands", () => {
       }),
     ).toThrow(/requires Funes 1\.3\.0.*1\.3\.1/i);
     expect(calls).toHaveLength(1);
+  });
+
+  it("refuses nested state symlinks before Funes can write through them", () => {
+    const root = tempRoot();
+    const outside = tempRoot();
+    const state = path.join(root, ".funes-atc");
+    mkdirSync(state);
+    symlinkSync(outside, path.join(state, "hf-home"));
+    let called = false;
+
+    expect(() =>
+      recallDecisionMemory("why?", {
+        repoRoot: root,
+        run: () => {
+          called = true;
+          return ok();
+        },
+      }),
+    ).toThrow(/symlinked local Funes path.*hf-home/i);
+    expect(called).toBe(false);
+    expect(fs.readdirSync(outside)).toEqual([]);
   });
 
   it("pins recall to local memory with no recency decay and rejects blank queries", () => {

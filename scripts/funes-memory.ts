@@ -219,6 +219,21 @@ function rejectSymlink(target: string): void {
   }
 }
 
+function rejectStateSymlinks(root: string): void {
+  if (!fs.existsSync(root)) return;
+  const pending = [root];
+  while (pending.length > 0) {
+    const target = pending.pop();
+    if (target === undefined) break;
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing symlinked local Funes path ${target}`);
+    }
+    if (!stat.isDirectory()) continue;
+    for (const name of fs.readdirSync(target)) pending.push(path.join(target, name));
+  }
+}
+
 function digest(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -449,9 +464,11 @@ function runChild(invocation: ChildInvocation): ChildResult {
 
 function invokeFunes(args: string[], options: RuntimeOptions): ChildResult {
   const repoRoot = options.repoRoot ?? REPO_ROOT;
-  rejectSymlink(path.join(repoRoot, STATE_DIRECTORY));
+  const stateDir = path.join(repoRoot, STATE_DIRECTORY);
+  rejectStateSymlinks(stateDir);
   const env = sanitizedChildEnv(repoRoot, options.env ?? process.env);
   fs.mkdirSync(env.HF_HOME!, { recursive: true });
+  rejectStateSymlinks(stateDir);
   const result = (options.run ?? runChild)({
     command: "funes",
     args,
@@ -459,6 +476,7 @@ function invokeFunes(args: string[], options: RuntimeOptions): ChildResult {
     env,
     shell: false,
   });
+  rejectStateSymlinks(stateDir);
   if (result.error) {
     throw new Error(
       `Could not run external Funes ${FUNES_VERSION}: ${result.error.message}`,
