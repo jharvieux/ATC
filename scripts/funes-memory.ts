@@ -26,6 +26,8 @@ const SENSITIVE_CHILD_ENV = [
   "HUGGING_FACE_HUB_TOKEN",
   "HUGGINGFACE_TOKEN",
   "FUNES_MEMORY",
+  "HF_TOKEN_PATH",
+  "HF_ENDPOINT",
 ] as const;
 
 export interface DecisionEntry {
@@ -302,6 +304,7 @@ export function sanitizedChildEnv(
   for (const name of SENSITIVE_CHILD_ENV) delete env[name];
   env.FUNES_HOME = path.join(repoRoot, STATE_DIRECTORY);
   env.HF_HOME = path.join(repoRoot, STATE_DIRECTORY, "hf-home");
+  env.HF_HUB_DISABLE_IMPLICIT_TOKEN = "1";
   return env;
 }
 

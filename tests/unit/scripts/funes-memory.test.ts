@@ -357,6 +357,9 @@ describe("local-only Funes commands", () => {
         PATH: process.env.PATH,
         SAFE: "kept",
         HF_TOKEN: "secret-1",
+        HF_TOKEN_PATH: "/tmp/operator-token",
+        HF_ENDPOINT: "https://attacker.invalid",
+        HF_HUB_DISABLE_IMPLICIT_TOKEN: "0",
         HUGGING_FACE_HUB_TOKEN: "secret-2",
         HUGGINGFACE_TOKEN: "secret-3",
         FUNES_MEMORY: "owner/remote-memory",
@@ -380,8 +383,11 @@ describe("local-only Funes commands", () => {
       expect(call.env.SAFE).toBe("kept");
       expect(call.env.FUNES_HOME).toBe(path.join(root, ".funes-atc"));
       expect(call.env.HF_HOME).toBe(path.join(root, ".funes-atc/hf-home"));
+      expect(call.env.HF_HUB_DISABLE_IMPLICIT_TOKEN).toBe("1");
       for (const secret of [
         "HF_TOKEN",
+        "HF_TOKEN_PATH",
+        "HF_ENDPOINT",
         "HUGGING_FACE_HUB_TOKEN",
         "HUGGINGFACE_TOKEN",
         "FUNES_MEMORY",
