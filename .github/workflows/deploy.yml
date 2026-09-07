@@ -1030,14 +1030,11 @@ jobs:
         id: staging-health
         run: |
           sleep 20
-          health_response=$(curl -f --silent --show-error https://staging.ai-travelconcierge.com/api/health)
-          echo "$health_response"
-          health_commit=$(printf '%s' "$health_response" | node -e 'const fs = require("fs"); const health = JSON.parse(fs.readFileSync(0, "utf8")); if (health.status !== "ok" || health.service !== "main" || typeof health.commit !== "string") process.exit(1); process.stdout.write(health.commit.trim());')
-          if [ -z "$health_commit" ] || [ "$health_commit" = "unknown" ]; then
-            echo "::error::Staging health response did not identify a concrete deployed commit."
-            exit 1
-          fi
-          echo "commit=$health_commit" >> "$GITHUB_OUTPUT"
+          bash scripts/check-production-version.sh \
+            https://staging.ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            main
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Record staging revision provenance
         id: staging-provenance

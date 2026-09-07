@@ -130,8 +130,9 @@ describe("production hosted revision check", () => {
 });
 
 describe("deployment workflow hosted revision policy", () => {
-  it("uses exact checks for main and RAG production without changing staging attestation", () => {
-    expect(workflow.match(/bash scripts\/check-production-version\.sh/g)).toHaveLength(2);
+  it("uses exact checks for release staging and main and RAG production", () => {
+    expect(workflow.match(/bash scripts\/check-production-version\.sh/g)).toHaveLength(3);
+    expect(workflow).toMatch(/staging\.ai-travelconcierge\.com\/api\/health[\s\\]+"\$GITHUB_SHA"[\s\\]+main/);
     expect(workflow).toMatch(/ai-travelconcierge\.com\/api\/health[\s\\]+"\$GITHUB_SHA"[\s\\]+main/);
     expect(workflow).toMatch(/rag\.ai-travelconcierge\.com\/api\/health[\s\\]+"\$GITHUB_SHA"[\s\\]+rag/);
     expect(workflow).toContain('if [ -z "$HEALTH_COMMIT" ] || [ "$HEALTH_COMMIT" = "unknown" ] || [ "$HEALTH_COMMIT" != "$GITHUB_SHA" ]');
