@@ -105,25 +105,29 @@ while (( ATTEMPT < MAX_ATTEMPTS )); do
   CANDIDATE="$(printf '%014d' "$CANDIDATE_NUM")"
   CANDIDATE_LOCK="$LOCK_ROOT/$CANDIDATE"
   MKDIR_ERROR=""
-  if MKDIR_ERROR="$(mkdir "$CANDIDATE_LOCK" 2>&1)"; then
+  if MKDIR_ERROR="$(LC_ALL=C mkdir "$CANDIDATE_LOCK" 2>&1)"; then
     VERSION="$CANDIDATE"
     LOCK_DIR="$CANDIDATE_LOCK"
     break
   fi
-  if [[ -d "$CANDIDATE_LOCK" ]]; then
-    echo "Version $CANDIDATE already reserved on this machine — retrying in 1s (attempt $ATTEMPT/$MAX_ATTEMPTS)" >&2
-    FLOOR=$CANDIDATE_NUM
-    sleep 1
-    continue
-  fi
 
-  if [[ "$MKDIR_ERROR" =~ [Pp]ermission\ denied|[Oo]peration\ not\ permitted ]]; then
-    FAILURE_CLASS="permission"
-  elif [[ "$MKDIR_ERROR" =~ [Nn]o\ such\ file|[Nn]ot\ a\ directory ]]; then
-    FAILURE_CLASS="parent-path"
-  else
-    FAILURE_CLASS="filesystem"
-  fi
+  case "$MKDIR_ERROR" in
+    *": File exists")
+      echo "Version $CANDIDATE already reserved on this machine — retrying in 1s (attempt $ATTEMPT/$MAX_ATTEMPTS)" >&2
+      FLOOR=$CANDIDATE_NUM
+      sleep 1
+      continue
+      ;;
+    *": Permission denied"|*": Operation not permitted")
+      FAILURE_CLASS="permission"
+      ;;
+    *": No such file or directory"|*": Not a directory")
+      FAILURE_CLASS="parent-path"
+      ;;
+    *)
+      FAILURE_CLASS="filesystem"
+      ;;
+  esac
   echo "Could not reserve migration version at $CANDIDATE_LOCK: $FAILURE_CLASS" >&2
   exit 1
 done
