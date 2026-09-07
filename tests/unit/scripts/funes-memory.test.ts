@@ -400,10 +400,15 @@ describe("local-only Funes commands", () => {
         HF_ENDPOINT: "https://attacker.invalid",
         HF_HUB_CACHE: "/outside/hub",
         HUGGINGFACE_HUB_CACHE: "/outside/legacy",
+        HF_XET_CACHE: "/outside/xet",
+        HF_ASSETS_CACHE: "/outside/assets",
         HF_HUB_DISABLE_IMPLICIT_TOKEN: "0",
         HUGGING_FACE_HUB_TOKEN: "secret-2",
         HUGGINGFACE_TOKEN: "secret-3",
         FUNES_MEMORY: "owner/remote-memory",
+        HF_FUTURE_ESCAPE: "/outside/future-cache",
+        HUGGINGFACE_FUTURE_ESCAPE: "/outside/future-huggingface",
+        HUGGING_FACE_FUTURE_ESCAPE: "/outside/future-hugging-face",
       },
       run,
     });
@@ -430,6 +435,12 @@ describe("local-only Funes commands", () => {
       expect(call.env.HUGGINGFACE_HUB_CACHE).toBe(
         path.join(root, ".funes-atc/hf-home/hub"),
       );
+      expect(call.env.HF_XET_CACHE).toBe(
+        path.join(root, ".funes-atc/hf-home/xet"),
+      );
+      expect(call.env.HF_ASSETS_CACHE).toBe(
+        path.join(root, ".funes-atc/hf-home/assets"),
+      );
       expect(call.env.HF_HUB_DISABLE_IMPLICIT_TOKEN).toBe("1");
       for (const secret of [
         "HF_TOKEN",
@@ -438,6 +449,9 @@ describe("local-only Funes commands", () => {
         "HUGGING_FACE_HUB_TOKEN",
         "HUGGINGFACE_TOKEN",
         "FUNES_MEMORY",
+        "HF_FUTURE_ESCAPE",
+        "HUGGINGFACE_FUTURE_ESCAPE",
+        "HUGGING_FACE_FUTURE_ESCAPE",
       ]) {
         expect(call.env).not.toHaveProperty(secret);
       }

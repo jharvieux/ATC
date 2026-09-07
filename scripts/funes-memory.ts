@@ -26,14 +26,6 @@ const REBUILD_INSTRUCTION =
   "Rebuild explicitly by moving or removing .funes-atc, then rerun `pnpm exec tsx scripts/funes-memory.ts export`.";
 const RECALL_VERIFICATION_INSTRUCTION =
   "Funes recall is navigation only; verify every hit against authoritative MEMORY.md before relying on it.";
-const SENSITIVE_CHILD_ENV = [
-  "HF_TOKEN",
-  "HUGGING_FACE_HUB_TOKEN",
-  "HUGGINGFACE_TOKEN",
-  "FUNES_MEMORY",
-  "HF_TOKEN_PATH",
-  "HF_ENDPOINT",
-] as const;
 
 export interface DecisionEntry {
   id: string;
@@ -419,11 +411,22 @@ export function sanitizedChildEnv(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env = { ...source };
-  for (const name of SENSITIVE_CHILD_ENV) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (
+      name.startsWith("FUNES_") ||
+      name.startsWith("HF_") ||
+      name.startsWith("HUGGINGFACE_") ||
+      name.startsWith("HUGGING_FACE_")
+    ) {
+      delete env[name];
+    }
+  }
   env.FUNES_HOME = path.join(repoRoot, STATE_DIRECTORY);
   env.HF_HOME = path.join(repoRoot, STATE_DIRECTORY, "hf-home");
   env.HF_HUB_CACHE = path.join(env.HF_HOME, "hub");
   env.HUGGINGFACE_HUB_CACHE = env.HF_HUB_CACHE;
+  env.HF_XET_CACHE = path.join(env.HF_HOME, "xet");
+  env.HF_ASSETS_CACHE = path.join(env.HF_HOME, "assets");
   env.HF_HUB_DISABLE_IMPLICIT_TOKEN = "1";
   return env;
 }
