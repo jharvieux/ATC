@@ -219,15 +219,28 @@ function rejectSymlink(target: string): void {
   }
 }
 
-function rejectStateSymlinks(root: string): void {
+function validateStateSymlinks(root: string): void {
   if (!fs.existsSync(root)) return;
+  const realRoot = fs.realpathSync(root);
   const pending = [root];
   while (pending.length > 0) {
     const target = pending.pop();
     if (target === undefined) break;
     const stat = fs.lstatSync(target);
     if (stat.isSymbolicLink()) {
-      throw new Error(`Refusing symlinked local Funes path ${target}`);
+      let realTarget: string;
+      try {
+        realTarget = fs.realpathSync(target);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Refusing unresolved local Funes symlink ${target}: ${detail}`);
+      }
+      const fromRoot = path.relative(realRoot, realTarget);
+      const contained =
+        fromRoot === "" ||
+        (!path.isAbsolute(fromRoot) && fromRoot !== ".." && !fromRoot.startsWith(`..${path.sep}`));
+      if (!contained) throw new Error(`Refusing local Funes symlink that escapes state: ${target}`);
+      continue;
     }
     if (!stat.isDirectory()) continue;
     for (const name of fs.readdirSync(target)) pending.push(path.join(target, name));
@@ -318,6 +331,7 @@ export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
   const stateDir = path.join(repoRoot, STATE_DIRECTORY);
   const sourceDir = path.join(stateDir, SOURCE_DIRECTORY);
   const manifestPath = path.join(stateDir, MANIFEST_FILENAME);
+  const stateExisted = fs.existsSync(stateDir);
   rejectSymlink(stateDir);
   rejectSymlink(sourceDir);
 
@@ -334,9 +348,9 @@ export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
     : [];
 
   const manifest = readManifest(manifestPath);
-  if (!manifest && existing.length > 0) {
+  if (!manifest && stateExisted) {
     throw new Error(
-      `Refusing unmanifested historical generated files in .funes-atc/source. ${REBUILD_INSTRUCTION}`,
+      `Refusing pre-existing local Funes state without its export manifest. ${REBUILD_INSTRUCTION}`,
     );
   }
   const historical = manifest?.entries ?? {};
@@ -465,10 +479,10 @@ function runChild(invocation: ChildInvocation): ChildResult {
 function invokeFunes(args: string[], options: RuntimeOptions): ChildResult {
   const repoRoot = options.repoRoot ?? REPO_ROOT;
   const stateDir = path.join(repoRoot, STATE_DIRECTORY);
-  rejectStateSymlinks(stateDir);
+  validateStateSymlinks(stateDir);
   const env = sanitizedChildEnv(repoRoot, options.env ?? process.env);
   fs.mkdirSync(env.HF_HOME!, { recursive: true });
-  rejectStateSymlinks(stateDir);
+  validateStateSymlinks(stateDir);
   const result = (options.run ?? runChild)({
     command: "funes",
     args,
@@ -476,7 +490,7 @@ function invokeFunes(args: string[], options: RuntimeOptions): ChildResult {
     env,
     shell: false,
   });
-  rejectStateSymlinks(stateDir);
+  validateStateSymlinks(stateDir);
   if (result.error) {
     throw new Error(
       `Could not run external Funes ${FUNES_VERSION}: ${result.error.message}`,

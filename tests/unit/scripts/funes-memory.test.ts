@@ -354,6 +354,36 @@ describe("synthetic Codex export", () => {
     );
   });
 
+  it("rejects selective witness cleanup while the old Funes index survives", () => {
+    const root = tempRoot();
+    const old = {
+      id: "D-100",
+      date: "2026-06-01",
+      title: "Old",
+      body: "old body",
+    };
+    const keep = {
+      id: "D-101",
+      date: "2026-06-02",
+      title: "Keep",
+      body: "keep body",
+    };
+    writeInputs(root, [keep, old]);
+    exportDecisionMemory(root);
+    const state = path.join(root, ".funes-atc");
+    mkdirSync(path.join(state, "memory"));
+    writeFileSync(path.join(state, "memory", "state.json"), "old index\n");
+    rmSync(path.join(state, "source"), { recursive: true });
+    rmSync(path.join(state, "export-manifest.json"));
+    writeInputs(root, [
+      { ...keep, body: "mutated body" },
+    ]);
+
+    expect(() => exportDecisionMemory(root)).toThrow(
+      /pre-existing local Funes state without its export manifest.*rebuild/i,
+    );
+  });
+
   it("reads only the decision log and its two indexes, never SESSION.md", () => {
     const root = tempRoot();
     oneEntry(root);
@@ -493,9 +523,33 @@ describe("local-only Funes commands", () => {
           return ok();
         },
       }),
-    ).toThrow(/symlinked local Funes path.*hf-home/i);
+    ).toThrow(/Funes symlink that escapes state.*hf-home/i);
     expect(called).toBe(false);
     expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
+  it("allows Hugging Face-style symlinks that stay inside local state", () => {
+    const root = tempRoot();
+    const huggingface = path.join(root, ".funes-atc", "hf-home");
+    const model = path.join(huggingface, "hub", "models--BAAI--bge-small");
+    mkdirSync(path.join(model, "blobs"), { recursive: true });
+    mkdirSync(path.join(model, "snapshots", "commit"), { recursive: true });
+    writeFileSync(path.join(model, "blobs", "hash"), "local model\n");
+    symlinkSync(
+      path.join("..", "..", "blobs", "hash"),
+      path.join(model, "snapshots", "commit", "model"),
+    );
+    const calls: ChildInvocation[] = [];
+
+    recallDecisionMemory("why?", {
+      repoRoot: root,
+      run: (invocation) => {
+        calls.push(invocation);
+        return ok();
+      },
+    });
+
+    expect(calls).toHaveLength(1);
   });
 
   it("pins recall to local memory with no recency decay and rejects blank queries", () => {
