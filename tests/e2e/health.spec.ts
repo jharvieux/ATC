@@ -10,5 +10,6 @@ test("health endpoint returns 200 with expected shape", async ({ request }) => {
     status: "ok",
     service: "main",
     commit: expect.any(String),
+    commitSource: expect.stringMatching(/^(vercel|git|unknown)$/),
   });
 });

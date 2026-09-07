@@ -336,6 +336,13 @@ jobs:
     # 3-way contention is rare; the merge queue with "max entries to build = 1"
     # is the real serializer and removes it entirely — which is the point of
     # this groundwork. See the PR body.
+    #
+    # Hosted-application policy (#2122): pull_request, merge_group, and dev-push
+    # runs deliberately reuse APP_STAGING_URL instead of creating per-event app
+    # deployments. The live probe reports that shared host's own commit, but the
+    # required receipts bind only checked-out code and rebuilt test-DB state to
+    # github.sha. Release staging and production deploys separately require exact
+    # hosted-SHA equality before claiming application acceptance.
     concurrency:
       group: shared-test-db
       cancel-in-progress: false
@@ -1186,7 +1193,10 @@ jobs:
       - name: Smoke test production
         run: |
           sleep 30
-          curl -f https://ai-travelconcierge.com/api/health
+          bash scripts/check-production-version.sh \
+            https://ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            main
 
       # #1829 — atc-rag prod deploy, through this SAME job and the SAME
       # `production` GitHub Environment approval gate as atc-main above (one
@@ -1215,7 +1225,10 @@ jobs:
         # — not a secret, so no new secret needed for this check.
         run: |
           sleep 15
-          curl -f https://rag.ai-travelconcierge.com/api/health
+          bash scripts/check-production-version.sh \
+            https://rag.ai-travelconcierge.com/api/health \
+            "$GITHUB_SHA" \
+            rag
 
       - name: Sync Inngest app (#835)
         # Vercel CLI deploys don't fire the Vercel→Inngest integration, so a newly
