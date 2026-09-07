@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-386 — 2026-09-07 — Serialize signed Resend status events in a tenant-scoped row-locking RPC with provider watermarks, monotonic precedence, atomic suppressions, and transaction-derived deterministic soft-retry recovery (PR #2149; issue #2139; refs D-333/D-383)
 - D-385 — 2026-09-07 — Manual rollbacks remain operator-controlled, while staging and production verification now require the expected full SHA, service, and authoritative Vercel commit source; local Git fallback cannot attest a hosted deployment (PR #2146; issue #2122; supersedes D-025 only for revision gating)
 - D-384 — 2026-09-03 — Centrally constrain Browserslist to `>=4.28.8 <5`, removing the vulnerable custom-stats normalization path while preserving verified 4.x compatibility and frozen-install integrity (PR #2141; issue #2128; refs D-374)
 - D-383 — 2026-09-02 — `email_log` and `email_suppressions` are service-role-only; server paths keep tenant predicates, and multi-reference provider bootstrap requires bounded single-tenant consensus with fail-loud database errors (PR #2138; issue #2119; #2139 tracks event ordering; refs D-375)
