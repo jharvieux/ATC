@@ -116,6 +116,8 @@ interface BookingSearchState {
   bookingResults: BookingResult[];
   selectedBooking: BookingResult | null;
   bookingSearching: boolean;
+  bookingSearchError: string | null;
+  bookingSearchRetryKey: number;
 }
 
 interface PreviewSendState {
@@ -169,6 +171,8 @@ const initialPageState: PageState = {
     bookingResults: [],
     selectedBooking: null,
     bookingSearching: false,
+    bookingSearchError: null,
+    bookingSearchRetryKey: 0,
   },
   previewSend: {
     previewHtml: null,
@@ -231,7 +235,6 @@ export default function EmailTemplatesSettingsPage() {
   const [state, dispatch] = useReducer(pageReducer, initialPageState);
   const { edit: editState, sailingCascade: sailingCascadeState, bookingSearch: bookingSearchState, previewSend: previewSendState } = state;
 
-  const bookingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the selectedType the cascade reset last ran for. `templates` gets a
   // new array reference on every load() — including the reload after save()/
   // resetToDefault() — so gating on selectedType alone (not just the effect's
@@ -490,31 +493,54 @@ export default function EmailTemplatesSettingsPage() {
   }
 
   // ── Booking search ───────────────────────────────────────────────────────
-  const searchBookings = useCallback((q: string) => {
-    if (bookingDebounceRef.current) clearTimeout(bookingDebounceRef.current);
-    if (!q.trim() || q.trim().length < 2) {
-      dispatch({ type: "patchBooking", patch: { bookingResults: [] } });
+  useEffect(() => {
+    const query = bookingSearchState.bookingQuery;
+    if (query.trim().length < 2) {
+      dispatch({
+        type: "patchBooking",
+        patch: { bookingResults: [], bookingSearching: false, bookingSearchError: null },
+      });
       return;
     }
-    bookingDebounceRef.current = setTimeout(async () => {
-      dispatch({ type: "patchBooking", patch: { bookingSearching: true } });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      dispatch({ type: "patchBooking", patch: { bookingSearching: true, bookingSearchError: null } });
       try {
         const res = await fetch(
-          `/api/bookings?contact_query=${encodeURIComponent(q)}&page_size=8`,
+          `/api/bookings?contact_query=${encodeURIComponent(query)}&page_size=8`,
+          { signal: controller.signal },
         );
-        if (res.ok) {
+        if (res.ok && !controller.signal.aborted) {
           const data = (await res.json()) as { bookings: BookingResult[] };
-          dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings } });
+          if (!controller.signal.aborted) {
+            dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings, bookingSearchError: null } });
+          }
+        } else if (!controller.signal.aborted) {
+          dispatch({
+            type: "patchBooking",
+            patch: { bookingResults: [], bookingSearchError: "Unable to search bookings. Try again." },
+          });
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          dispatch({
+            type: "patchBooking",
+            patch: { bookingResults: [], bookingSearchError: "Unable to search bookings. Try again." },
+          });
         }
       } finally {
-        dispatch({ type: "patchBooking", patch: { bookingSearching: false } });
+        if (!controller.signal.aborted) {
+          dispatch({ type: "patchBooking", patch: { bookingSearching: false } });
+        }
       }
     }, 400);
-  }, []);
 
-  useEffect(() => {
-    searchBookings(bookingSearchState.bookingQuery);
-  }, [bookingSearchState.bookingQuery, searchBookings]);
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [bookingSearchState.bookingQuery, bookingSearchState.bookingSearchRetryKey]);
 
   // ── Preview URL + load ───────────────────────────────────────────────────
   function previewUrl() {
@@ -929,7 +955,7 @@ export default function EmailTemplatesSettingsPage() {
                       onChange={(e) => {
                         dispatch({
                           type: "patchBooking",
-                          patch: { selectedBooking: null, bookingQuery: e.target.value },
+                          patch: { selectedBooking: null, bookingQuery: e.target.value, bookingSearchError: null },
                         });
                         dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                       }}
@@ -937,6 +963,29 @@ export default function EmailTemplatesSettingsPage() {
                     />
                     {bookingSearchState.bookingSearching ? (
                       <p className="text-[12px] text-muted-foreground mt-1">Searching…</p>
+                    ) : null}
+                    {bookingSearchState.bookingSearchError ? (
+                      <div
+                        role="alert"
+                        className="mt-1 flex items-center gap-2 text-[12px] text-red-700"
+                      >
+                        <span>{bookingSearchState.bookingSearchError}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dispatch({
+                              type: "patchBooking",
+                              patch: {
+                                bookingSearchError: null,
+                                bookingSearchRetryKey: bookingSearchState.bookingSearchRetryKey + 1,
+                              },
+                            });
+                          }}
+                          className="font-medium text-blue-600 hover:underline"
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : null}
                     {!bookingSearchState.selectedBooking && bookingSearchState.bookingResults.length > 0 ? (
                       <ul className="border border-border rounded mt-1 divide-y divide-border max-h-[200px] overflow-y-auto">
