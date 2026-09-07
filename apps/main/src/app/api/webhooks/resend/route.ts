@@ -99,8 +99,14 @@ export async function POST(req: Request): Promise<Response> {
       break;
 
     case "email.bounced": {
-      const bounceType = (event.data.bounce as { type?: string } | undefined)?.type;
-      status = bounceType === "hard" ? "hard_bounced" : "soft_bounced";
+      const bounceType = (event.data.bounce as { type?: string } | undefined)?.type?.toLowerCase();
+      if (bounceType === "permanent" || bounceType === "hard") {
+        status = "hard_bounced";
+      } else if (bounceType === "temporary" || bounceType === "soft") {
+        status = "soft_bounced";
+      } else {
+        return new Response("Invalid bounce type", { status: 400 });
+      }
       bounceReason = (event.data.bounce as { message?: string } | undefined)?.message ?? "unknown";
       break;
     }

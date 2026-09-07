@@ -194,13 +194,13 @@ describe("Resend webhook — event routing", () => {
     }]);
   });
 
-  it("email.bounced hard → updates email_log + upserts email_suppressions", async () => {
+  it("email.bounced Permanent → records a hard bounce without retrying", async () => {
     const body = JSON.stringify({
       type: "email.bounced",
       created_at: "2026-09-01T12:01:00.000Z",
       data: {
         email_id: "resend-abc",
-        bounce: { type: "hard", message: "invalid mailbox" },
+        bounce: { type: "Permanent", message: "invalid mailbox" },
       },
     });
     const res = await POST(makeReq(body));
@@ -213,13 +213,13 @@ describe("Resend webhook — event routing", () => {
     expect(mockInngestSend).not.toHaveBeenCalled();
   });
 
-  it("email.bounced soft → updates email_log + triggers Inngest retry (no suppression)", async () => {
+  it("email.bounced Temporary → records a soft bounce and triggers its retry", async () => {
     const body = JSON.stringify({
       type: "email.bounced",
       created_at: "2026-09-01T12:02:00.000Z",
       data: {
         email_id: "resend-abc",
-        bounce: { type: "soft", message: "mailbox full" },
+        bounce: { type: "Temporary", message: "mailbox full" },
       },
     });
     mockApplyResult = [{ outcome: "applied", soft_retry_eligible: true }];
@@ -241,6 +241,15 @@ describe("Resend webhook — event routing", () => {
       name: "email/soft.bounce.retry",
       data: { email_log_id: "log-1", tenant_id: "tenant-1", attempt: 1 },
     });
+  });
+
+  it("rejects an unknown bounce type before status mutation or retry", async () => {
+    const res = await POST(makeReq(makeBody("email.bounced", {
+      bounce: { type: "Indeterminate", message: "unclassified" },
+    })));
+    expect(res.status).toBe(400);
+    expect(mockRpcCalls).toHaveLength(0);
+    expect(mockInngestSend).not.toHaveBeenCalled();
   });
 
   it("#1611: a soft bounce RPC result for a re-send does NOT start a new retry chain", async () => {
