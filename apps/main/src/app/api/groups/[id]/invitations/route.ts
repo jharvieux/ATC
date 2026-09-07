@@ -15,9 +15,47 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { MAX_INVITEES_PER_GROUP } from "@/lib/groups/constants";
 import { checkInviteFrequency } from "@/lib/groups/invite-rate-limit";
-import { isValidEmail, isGroupVisibilityChoice } from "@/lib/validation/schemas";
+import { z } from "zod";
+import {
+  emailSchema,
+  groupVisibilityChoiceSchema,
+  uuidSchema,
+} from "@/lib/validation/schemas";
 
 type RouteProps = { params: Promise<{ id: string }> };
+
+const InviteActionSchema = z
+  .object({
+    action: z.literal("invite"),
+    invitee_email: z.string().trim().toLowerCase().pipe(emailSchema),
+    invitee_name: z.string().optional(),
+    personal_note: z.string().optional(),
+    visibility_choice: groupVisibilityChoiceSchema.optional().default("no_opinion"),
+  })
+  .strict();
+
+const RevokeActionSchema = z
+  .object({
+    action: z.literal("revoke"),
+    invitation_id: uuidSchema,
+  })
+  .strict();
+
+const RevokeCompromisedActionSchema = z
+  .object({
+    action: z.literal("revoke_suspected_compromise"),
+    invitation_id: uuidSchema,
+  })
+  .strict();
+
+const ReissueAllActionSchema = z.object({ action: z.literal("reissue_all") }).strict();
+
+const InvitationActionSchema = z.discriminatedUnion("action", [
+  InviteActionSchema,
+  RevokeActionSchema,
+  RevokeCompromisedActionSchema,
+  ReissueAllActionSchema,
+]);
 
 export async function GET(req: Request, props: RouteProps): Promise<Response> {
   const params = await props.params;
@@ -56,14 +94,15 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
   const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "group.invitations", action: "manage" });
-    const body = await req.json() as {
-      action: string;
-      invitation_id?: string;
-      invitee_email?: string;
-      invitee_name?: string;
-      personal_note?: string;
-      visibility_choice?: string;
-    };
+    const parsed = InvitationActionSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      const field = parsed.error.issues[0]?.path[0];
+      let error = "Unknown action";
+      if (field === "invitee_email") error = "Invalid invitee_email";
+      if (field === "visibility_choice") error = "Invalid visibility_choice";
+      return Response.json({ error }, { status: 400 });
+    }
+    const body = parsed.data;
 
     const svc = createServiceRoleClient();
 
@@ -96,15 +135,9 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
 
     const now = new Date().toISOString();
 
-    if (body.action === "invite" && body.invitee_email) {
-      const email = (body.invitee_email as string).trim().toLowerCase();
-      if (!isValidEmail(email)) {
-        return Response.json({ error: "Invalid invitee_email" }, { status: 400 });
-      }
-      const vis = (body.visibility_choice as string | undefined) ?? "no_opinion";
-      if (!isGroupVisibilityChoice(vis)) {
-        return Response.json({ error: "Invalid visibility_choice" }, { status: 400 });
-      }
+    if (body.action === "invite") {
+      const email = body.invitee_email;
+      const vis = body.visibility_choice;
 
       // #1654 — per-endpoint frequency gate. group_invitation sends bypass the
       // general per-send email throttle by design (email/rate-limit.ts), so
@@ -137,8 +170,8 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
             {
               id: invId,
               invitee_email: email,
-              invitee_name: (body.invitee_name as string | undefined) ?? null,
-              personal_note: (body.personal_note as string | undefined) ?? null,
+              invitee_name: body.invitee_name ?? null,
+              personal_note: body.personal_note ?? null,
               visibility_choice: vis,
               token,
             },
@@ -183,7 +216,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       return Response.json({ ok: true, invitation_id: invId });
     }
 
-    if (body.action === "revoke" && body.invitation_id) {
+    if (body.action === "revoke") {
       const { error } = await svc
         .from("invitations")
         .update({ token_revoked_at: now, token_revoked_reason: "invitee_removed" })
@@ -194,7 +227,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       return Response.json({ ok: true, action: "revoked" });
     }
 
-    if (body.action === "revoke_suspected_compromise" && body.invitation_id) {
+    if (body.action === "revoke_suspected_compromise") {
       const { error } = await svc
         .from("invitations")
         .update({ token_revoked_at: now, token_revoked_reason: "suspected_compromise" })
@@ -245,7 +278,8 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       return Response.json({ ok: true, action: "reissued", count: active?.length ?? 0 });
     }
 
-    return Response.json({ error: "Unknown action" }, { status: 400 });
+    const exhaustive: never = body;
+    return exhaustive;
   } catch (err) {
     return respondToAuthError(err);
   }
