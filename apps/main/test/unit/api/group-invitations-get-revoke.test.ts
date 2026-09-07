@@ -13,14 +13,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const COORDINATOR_ID = "user-coord-1";
 const GROUP_ID = "g-111";
-const INV_ID = "inv-abc";
+const INV_ID = "11111111-1111-4111-8111-111111111111";
 const TENANT_ID = "t-1";
 
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   groupQuery: vi.fn(),
   invitationsQuery: vi.fn(),
+  reissueSelectQuery: vi.fn(),
   updateQuery: vi.fn(),
+  updatePayload: vi.fn(),
   inviteCountQuery: vi.fn(),
   inviteFreqQuery: vi.fn(),
   inviteInsertQuery: vi.fn(),
@@ -92,6 +94,9 @@ vi.mock("@/lib/db/service-role-client", () => ({
               // GET list query — ends with .eq().order()
               return { eq: () => ({ order: () => mocks.invitationsQuery() }) };
             }
+            if (cols.includes("personal_note,visibility_choice")) {
+              return { eq: () => ({ is: () => mocks.reissueSelectQuery() }) };
+            }
             if (cols === "rsvp_state") {
               // rsvp count inside sendGroupInvitationEmail — ends with .eq().is()
               return { eq: () => ({ is: () => mocks.inviteRsvpSelectQuery() }) };
@@ -102,31 +107,37 @@ vi.mock("@/lib/db/service-role-client", () => ({
           insert: (data: unknown) => ({
             select: () => mocks.inviteInsertQuery(data),
           }),
-          update: () => ({
-            // Every update path filters by .eq(...) FIRST (#1654 — a dropped id
-            // filter mass-stamps every unstamped invitation across all tenants).
-            // The update-return exposes ONLY `.eq`, so a claim chain that skips the
-            // id filter throws here; and the claim resolves rows only when scoped
-            // to the target invitation id.
-            eq: (col: string, id: string) => ({
-              // revoke action — .eq("id").eq("group_id").is("token_revoked_at", null)
-              eq: () => ({ is: () => mocks.updateQuery() }),
-              // claim CAS inside sendGroupInvitationEmail —
-              //   .eq("id", id).is("last_email_sent_at", null).select("id")
-              // The route mints invId via crypto.randomUUID(), so scope on the
-              // filter COLUMN being the invitation id (dropping .eq("id", …)
-              // resolves no row); the exact-id assertion lives in the deterministic
-              // send-invitation-email.test.ts.
-              is: () => ({
-                select: () =>
+          update: (payload: unknown) => {
+            mocks.updatePayload(payload);
+            return {
+              // Every update path filters by .eq(...) FIRST (#1654 — a dropped id
+              // filter mass-stamps every unstamped invitation across all tenants).
+              // The update-return exposes ONLY `.eq`, so a claim chain that skips the
+              // id filter throws here; and the claim resolves rows only when scoped
+              // to the target invitation id.
+              eq: (col: string, id: string) => ({
+                // revoke action — .eq("id").eq("group_id").is("token_revoked_at", null)
+                eq: () => ({
+                  is: () => mocks.updateQuery(),
+                  then: (resolve: (v: unknown) => unknown) => mocks.updateQuery().then(resolve),
+                }),
+                // claim CAS inside sendGroupInvitationEmail —
+                //   .eq("id", id).is("last_email_sent_at", null).select("id")
+                // The route mints invId via crypto.randomUUID(), so scope on the
+                // filter COLUMN being the invitation id (dropping .eq("id", …)
+                // resolves no row); the exact-id assertion lives in the deterministic
+                // send-invitation-email.test.ts.
+                is: () =>
                   col === "id"
-                    ? mocks.inviteClaimQuery()
-                    : Promise.resolve({ data: [], error: null }),
+                    ? {
+                        select: () => mocks.inviteClaimQuery(),
+                      }
+                    : mocks.updateQuery(),
+                // claim revert inside sendGroupInvitationEmail — .eq("id") awaited directly
+                then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
               }),
-              // claim revert inside sendGroupInvitationEmail — .eq("id") awaited directly
-              then: (resolve: (v: unknown) => unknown) => resolve({ error: null }),
-            }),
-          }),
+            };
+          },
         };
       }
       if (table === "tenants") {
@@ -258,7 +269,10 @@ describe("POST /api/groups/[id]/invitations — revoke action (#1064)", () => {
 
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(
-      postReq(GROUP_ID, { action: "revoke", invitation_id: "already-revoked-id" }),
+      postReq(GROUP_ID, {
+        action: "revoke",
+        invitation_id: "22222222-2222-4222-8222-222222222222",
+      }),
       { params: Promise.resolve({ id: GROUP_ID }) },
     );
 
@@ -305,6 +319,8 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteInsertQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
     mocks.reserveRpc.mockResolvedValue({ data: { status: "ok", inserted: 1 }, error: null });
+    mocks.reissueSelectQuery.mockResolvedValue({ data: [], error: null });
+    mocks.updateQuery.mockResolvedValue({ error: null });
     mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
     mocks.incrementGroupInvitees.mockResolvedValue(undefined);
     mocks.inviteEmailSingleQuery.mockResolvedValue({
@@ -343,6 +359,70 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     const body: { ok: boolean; invitation_id: string } = await res.json();
     expect(body.ok).toBe(true);
     expect(body.invitation_id).toBeDefined();
+  });
+
+  it.each([
+    {
+      action: "invite",
+      request: { action: "invite", invitee_email: "bob@example.com" },
+      response: { ok: true },
+      revokedReason: null,
+    },
+    {
+      action: "revoke",
+      request: { action: "revoke", invitation_id: INV_ID },
+      response: { ok: true, action: "revoked" },
+      revokedReason: "invitee_removed",
+    },
+    {
+      action: "revoke_suspected_compromise",
+      request: { action: "revoke_suspected_compromise", invitation_id: INV_ID },
+      response: { ok: true, action: "revoked_suspected_compromise" },
+      revokedReason: "suspected_compromise",
+    },
+    {
+      action: "reissue_all",
+      request: { action: "reissue_all" },
+      response: { ok: true, action: "reissued", count: 0 },
+      revokedReason: "coordinator_revoked",
+    },
+  ])("validates and dispatches $action under the existing manage permission", async ({
+    request,
+    response,
+    revokedReason,
+  }) => {
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const req = postReq(GROUP_ID, request);
+    const res = await POST(req, { params: Promise.resolve({ id: GROUP_ID }) });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject(response);
+    expect(mocks.assertPermission).toHaveBeenCalledWith(req, {
+      resource: "group.invitations",
+      action: "manage",
+    });
+    if (revokedReason) {
+      expect(mocks.updatePayload).toHaveBeenCalledWith(
+        expect.objectContaining({ token_revoked_reason: revokedReason }),
+      );
+    } else {
+      expect(mocks.reserveRpc).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([
+    ["invite", { action: "invite", invitee_email: 42 }],
+    ["revoke", { action: "revoke", invitation_id: 42 }],
+    ["revoke_suspected_compromise", { action: "revoke_suspected_compromise", invitation_id: 42 }],
+    ["reissue_all", { action: "reissue_all", invitation_id: INV_ID }],
+  ])("rejects the invalid %s action shape before group access", async (_action, request) => {
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(postReq(GROUP_ID, request), {
+      params: Promise.resolve({ id: GROUP_ID }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mocks.groupQuery).not.toHaveBeenCalled();
   });
 
   it("routes the invitation through sendEmail with the group_invitation category", async () => {

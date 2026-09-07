@@ -23,7 +23,7 @@
 // reset step.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 
 vi.mock("@/lib/format-date", () => ({
   formatDate: (d: string) => d,
@@ -330,6 +330,160 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     const bookingCalls = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/bookings"));
     expect(bookingCalls).toHaveLength(1);
     expect(String(bookingCalls[0]?.[0])).toContain(encodeURIComponent("Jami"));
+  });
+
+  it("keeps the newest booking results when an older request resolves last", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    let resolveFirst!: (value: ReturnType<typeof jsonRes>) => void;
+    let resolveSecond!: (value: ReturnType<typeof jsonRes>) => void;
+    const first = new Promise<ReturnType<typeof jsonRes>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<ReturnType<typeof jsonRes>>((resolve) => {
+      resolveSecond = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes("contact_query=Ja&")) return first;
+      if (url.includes("contact_query=Jamie&")) return second;
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    const input = screen.getByPlaceholderText("Type a customer name…");
+    fireEvent.change(input, { target: { value: "Ja" } });
+    await vi.advanceTimersByTimeAsync(400);
+    fireEvent.change(input, { target: { value: "Jamie" } });
+    await vi.advanceTimersByTimeAsync(400);
+    const bookingCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/bookings"));
+    expect(bookingCalls).toHaveLength(2);
+    expect((bookingCalls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true);
+
+    await act(async () => {
+      resolveSecond(jsonRes({
+        bookings: [{
+          id: "booking-new",
+          ship_name: "New Ship",
+          cruise_line: "New Line",
+          sailing_date: "2027-04-01",
+          primary_contact: { first_name: "Jamie", last_name: "Newest" },
+        }],
+      }));
+      await second;
+    });
+    expect(screen.getByText("Jamie Newest")).toBeTruthy();
+
+    await act(async () => {
+      resolveFirst(jsonRes({
+        bookings: [{
+          id: "booking-old",
+          ship_name: "Old Ship",
+          cruise_line: "Old Line",
+          sailing_date: "2027-03-01",
+          primary_contact: { first_name: "Jamie", last_name: "Stale" },
+        }],
+      }));
+      await first;
+    });
+    expect(screen.getByText("Jamie Newest")).toBeTruthy();
+    expect(screen.queryByText("Jamie Stale")).toBeNull();
+  });
+
+  it("clears prior booking results when the current search responds non-OK", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    const input = screen.getByPlaceholderText("Type a customer name…");
+    fireEvent.change(input, { target: { value: "Jamie" } });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(screen.getByText("Jamie Rivera")).toBeTruthy();
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/bookings")) {
+        return Promise.resolve({ ok: false, status: 500 } as Response);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    fireEvent.change(input, { target: { value: "Jamie R" } });
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(screen.queryByText("Jamie Rivera")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Unable to search bookings. Try again.");
+  });
+
+  it("aborts an in-flight booking search when the page unmounts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    const { unmount } = render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/bookings")) {
+        signal = init?.signal ?? undefined;
+        return new Promise<ReturnType<typeof jsonRes>>(() => {});
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    fireEvent.change(screen.getByPlaceholderText("Type a customer name…"), {
+      target: { value: "Jamie" },
+    });
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(signal?.aborted).toBe(false);
+    unmount();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("shows a retryable network failure and clears it after a successful retry", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installFetchRouter();
+    render(<EmailTemplatesSettingsPage />);
+    await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+    let bookingSearchAttempts = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/bookings")) {
+        bookingSearchAttempts += 1;
+        if (bookingSearchAttempts === 1) return Promise.reject(new Error("network unavailable"));
+        return Promise.resolve(jsonRes({
+          bookings: [{
+            id: "booking-retry",
+            ship_name: "Wanderer",
+            cruise_line: "Royal Seas",
+            sailing_date: "2027-03-01",
+            primary_contact: { first_name: "Jamie", last_name: "Recovered" },
+          }],
+        }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    fireEvent.click(screen.getByLabelText(/Customer booking/));
+    fireEvent.change(screen.getByPlaceholderText("Type a customer name…"), {
+      target: { value: "Jamie" },
+    });
+    await vi.advanceTimersByTimeAsync(400);
+
+    await vi.waitFor(() => expect(screen.queryByText("Searching…")).toBeNull());
+    expect(screen.queryByText("Jamie Rivera")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Unable to search bookings. Try again.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    await vi.advanceTimersByTimeAsync(400);
+
+    await vi.waitFor(() => expect(screen.getByText("Jamie Recovered")).toBeTruthy());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(bookingSearchAttempts).toBe(2);
   });
 });
 
