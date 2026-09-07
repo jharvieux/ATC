@@ -116,6 +116,8 @@ interface BookingSearchState {
   bookingResults: BookingResult[];
   selectedBooking: BookingResult | null;
   bookingSearching: boolean;
+  bookingSearchError: string | null;
+  bookingSearchRetryKey: number;
 }
 
 interface PreviewSendState {
@@ -169,6 +171,8 @@ const initialPageState: PageState = {
     bookingResults: [],
     selectedBooking: null,
     bookingSearching: false,
+    bookingSearchError: null,
+    bookingSearchRetryKey: 0,
   },
   previewSend: {
     previewHtml: null,
@@ -494,14 +498,14 @@ export default function EmailTemplatesSettingsPage() {
     if (query.trim().length < 2) {
       dispatch({
         type: "patchBooking",
-        patch: { bookingResults: [], bookingSearching: false },
+        patch: { bookingResults: [], bookingSearching: false, bookingSearchError: null },
       });
       return;
     }
 
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
-      dispatch({ type: "patchBooking", patch: { bookingSearching: true } });
+      dispatch({ type: "patchBooking", patch: { bookingSearching: true, bookingSearchError: null } });
       try {
         const res = await fetch(
           `/api/bookings?contact_query=${encodeURIComponent(query)}&page_size=8`,
@@ -510,14 +514,20 @@ export default function EmailTemplatesSettingsPage() {
         if (res.ok && !controller.signal.aborted) {
           const data = (await res.json()) as { bookings: BookingResult[] };
           if (!controller.signal.aborted) {
-            dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings } });
+            dispatch({ type: "patchBooking", patch: { bookingResults: data.bookings, bookingSearchError: null } });
           }
         } else if (!controller.signal.aborted) {
-          dispatch({ type: "patchBooking", patch: { bookingResults: [] } });
+          dispatch({
+            type: "patchBooking",
+            patch: { bookingResults: [], bookingSearchError: "Unable to search bookings. Try again." },
+          });
         }
       } catch {
         if (!controller.signal.aborted) {
-          dispatch({ type: "patchBooking", patch: { bookingResults: [] } });
+          dispatch({
+            type: "patchBooking",
+            patch: { bookingResults: [], bookingSearchError: "Unable to search bookings. Try again." },
+          });
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -530,7 +540,7 @@ export default function EmailTemplatesSettingsPage() {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [bookingSearchState.bookingQuery]);
+  }, [bookingSearchState.bookingQuery, bookingSearchState.bookingSearchRetryKey]);
 
   // ── Preview URL + load ───────────────────────────────────────────────────
   function previewUrl() {
@@ -945,7 +955,7 @@ export default function EmailTemplatesSettingsPage() {
                       onChange={(e) => {
                         dispatch({
                           type: "patchBooking",
-                          patch: { selectedBooking: null, bookingQuery: e.target.value },
+                          patch: { selectedBooking: null, bookingQuery: e.target.value, bookingSearchError: null },
                         });
                         dispatch({ type: "patchPreview", patch: { previewHtml: null } });
                       }}
@@ -953,6 +963,29 @@ export default function EmailTemplatesSettingsPage() {
                     />
                     {bookingSearchState.bookingSearching ? (
                       <p className="text-[12px] text-muted-foreground mt-1">Searching…</p>
+                    ) : null}
+                    {bookingSearchState.bookingSearchError ? (
+                      <div
+                        role="alert"
+                        className="mt-1 flex items-center gap-2 text-[12px] text-red-700"
+                      >
+                        <span>{bookingSearchState.bookingSearchError}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dispatch({
+                              type: "patchBooking",
+                              patch: {
+                                bookingSearchError: null,
+                                bookingSearchRetryKey: bookingSearchState.bookingSearchRetryKey + 1,
+                              },
+                            });
+                          }}
+                          className="font-medium text-blue-600 hover:underline"
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : null}
                     {!bookingSearchState.selectedBooking && bookingSearchState.bookingResults.length > 0 ? (
                       <ul className="border border-border rounded mt-1 divide-y divide-border max-h-[200px] overflow-y-auto">

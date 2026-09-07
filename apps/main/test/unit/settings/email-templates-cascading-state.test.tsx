@@ -414,6 +414,7 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     await vi.advanceTimersByTimeAsync(400);
 
     expect(screen.queryByText("Jamie Rivera")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Unable to search bookings. Try again.");
   });
 
   it("aborts an in-flight booking search when the page unmounts", async () => {
@@ -443,13 +444,26 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
     expect(signal?.aborted).toBe(true);
   });
 
-  it("contains a rejected booking search and clears the searching state", async () => {
+  it("shows a retryable network failure and clears it after a successful retry", async () => {
     vi.useFakeTimers();
     const fetchMock = installFetchRouter();
     render(<EmailTemplatesSettingsPage />);
     await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Booking confirmation" })).toBeTruthy());
+    let bookingSearchAttempts = 0;
     fetchMock.mockImplementation((url: string) => {
-      if (url.startsWith("/api/bookings")) return Promise.reject(new Error("network unavailable"));
+      if (url.startsWith("/api/bookings")) {
+        bookingSearchAttempts += 1;
+        if (bookingSearchAttempts === 1) return Promise.reject(new Error("network unavailable"));
+        return Promise.resolve(jsonRes({
+          bookings: [{
+            id: "booking-retry",
+            ship_name: "Wanderer",
+            cruise_line: "Royal Seas",
+            sailing_date: "2027-03-01",
+            primary_contact: { first_name: "Jamie", last_name: "Recovered" },
+          }],
+        }));
+      }
       throw new Error(`unexpected fetch: ${url}`);
     });
 
@@ -461,6 +475,15 @@ describe("EmailTemplatesSettingsPage — booking search debounce (#1812)", () =>
 
     await vi.waitFor(() => expect(screen.queryByText("Searching…")).toBeNull());
     expect(screen.queryByText("Jamie Rivera")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Unable to search bookings. Try again.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    await vi.advanceTimersByTimeAsync(400);
+
+    await vi.waitFor(() => expect(screen.getByText("Jamie Recovered")).toBeTruthy());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(bookingSearchAttempts).toBe(2);
   });
 });
 
