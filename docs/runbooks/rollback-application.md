@@ -8,7 +8,7 @@ Use this runbook when a production deployment has introduced a critical regressi
 
 - Access to the Vercel Dashboard for the `ai-travelconcierge` project (owner or member role with deployment permissions)
 - The git tag of the last known-good release (e.g. `v0.3.1`) — check `git tag --sort=-v:refname | head -5` if unsure
-- `curl` available locally for the verification step
+- `curl`, `git`, and Node.js available locally for the verification step
 
 ## Steps
 
@@ -60,23 +60,26 @@ Use this runbook when a production deployment has introduced a critical regressi
    ```json
    {
      "status": "ok",
-     "timestamp": "2026-05-16T10:00:00.000Z",
-     "version": "<sha-of-rolled-back-deployment>",
-     "checks": {
-       "supabase": "ok"
-     }
+     "service": "main",
+     "commit": "<full-40-character-sha-of-rolled-back-deployment>",
+     "commitSource": "vercel"
    }
    ```
 
    Confirm:
    - `status` is `"ok"`
-   - `version` matches the SHA of the deployment you promoted
-   - `checks.supabase` is `"ok"`
+   - `service` is `"main"`
+   - `commit` matches the full SHA of the deployment you promoted
+   - `commitSource` is `"vercel"`; a local `GIT_COMMIT_SHA` fallback is not authoritative hosted evidence
 
-   Also run the production version check script:
+   Also run the production version check script with the expected rollback SHA:
 
    ```bash
-   bash scripts/check-production-version.sh
+   ROLLBACK_SHA="$(git rev-list -n 1 v0.3.1)"
+   bash scripts/check-production-version.sh \
+     https://ai-travelconcierge.com/api/health \
+     "$ROLLBACK_SHA" \
+     main
    ```
 
 ## Verification
@@ -84,7 +87,8 @@ Use this runbook when a production deployment has introduced a critical regressi
 The rollback is confirmed when:
 
 - `/api/health` returns HTTP 200 with `status: "ok"`
-- `version` in the health response matches the rolled-back deployment SHA
+- `service` is `"main"`, `commitSource` is `"vercel"`, and `commit` matches the full rolled-back deployment SHA
+- `scripts/check-production-version.sh` exits successfully for that URL, SHA, and service
 - Any user-facing symptom that triggered the rollback is no longer reproducible
 
 ## Post-incident
