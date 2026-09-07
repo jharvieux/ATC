@@ -297,7 +297,7 @@ describe("synthetic Codex export", () => {
     exportDecisionMemory(removedRoot);
     writeInputs(removedRoot, [keep]);
     expect(() => exportDecisionMemory(removedRoot)).toThrow(
-      /removed IDs or unexplained extras.*D-100\.jsonl.*rebuild/i,
+      /removed IDs.*D-100\.jsonl.*rebuild/i,
     );
 
     const extraRoot = tempRoot();
@@ -310,6 +310,45 @@ describe("synthetic Codex export", () => {
     );
     expect(() => exportDecisionMemory(extraRoot)).toThrow(
       /removed IDs or unexplained extras.*surprise\.jsonl.*rebuild/i,
+    );
+  });
+
+  it("uses the independent manifest to reject missing historical witnesses", () => {
+    const removedRoot = tempRoot();
+    const old = {
+      id: "D-100",
+      date: "2026-06-01",
+      title: "Old",
+      body: "old body",
+    };
+    const keep = {
+      id: "D-101",
+      date: "2026-06-02",
+      title: "Keep",
+      body: "keep body",
+    };
+    writeInputs(removedRoot, [keep, old]);
+    const removedExport = exportDecisionMemory(removedRoot);
+    rmSync(path.join(removedExport.sourceDir, "D-100.jsonl"));
+    writeInputs(removedRoot, [keep]);
+    expect(() => exportDecisionMemory(removedRoot)).toThrow(
+      /historical generated files are missing.*D-100\.jsonl.*rebuild/i,
+    );
+
+    const mutatedRoot = tempRoot();
+    oneEntry(mutatedRoot);
+    const mutatedExport = exportDecisionMemory(mutatedRoot);
+    rmSync(path.join(mutatedExport.sourceDir, "D-091b.jsonl"));
+    writeInputs(mutatedRoot, [
+      {
+        id: "D-091b",
+        date: "2026-05-26",
+        title: "Rules",
+        body: "mutated rationale",
+      },
+    ]);
+    expect(() => exportDecisionMemory(mutatedRoot)).toThrow(
+      /historical generated files are missing.*D-091b\.jsonl.*rebuild/i,
     );
   });
 
@@ -359,6 +398,8 @@ describe("local-only Funes commands", () => {
         HF_TOKEN: "secret-1",
         HF_TOKEN_PATH: "/tmp/operator-token",
         HF_ENDPOINT: "https://attacker.invalid",
+        HF_HUB_CACHE: "/outside/hub",
+        HUGGINGFACE_HUB_CACHE: "/outside/legacy",
         HF_HUB_DISABLE_IMPLICIT_TOKEN: "0",
         HUGGING_FACE_HUB_TOKEN: "secret-2",
         HUGGINGFACE_TOKEN: "secret-3",
@@ -383,6 +424,12 @@ describe("local-only Funes commands", () => {
       expect(call.env.SAFE).toBe("kept");
       expect(call.env.FUNES_HOME).toBe(path.join(root, ".funes-atc"));
       expect(call.env.HF_HOME).toBe(path.join(root, ".funes-atc/hf-home"));
+      expect(call.env.HF_HUB_CACHE).toBe(
+        path.join(root, ".funes-atc/hf-home/hub"),
+      );
+      expect(call.env.HUGGINGFACE_HUB_CACHE).toBe(
+        path.join(root, ".funes-atc/hf-home/hub"),
+      );
       expect(call.env.HF_HUB_DISABLE_IMPLICIT_TOKEN).toBe("1");
       for (const secret of [
         "HF_TOKEN",
@@ -453,5 +500,19 @@ describe("local-only Funes commands", () => {
     expect(() =>
       runCli(["push", "owner/memory"], { repoRoot: root, run: () => ok() }),
     ).toThrow(/unknown subcommand.*push.*export.*index.*recall/i);
+  });
+
+  it("tells recall operators to verify every hit against MEMORY.md", () => {
+    const root = tempRoot();
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    runCli(["recall", "why was this chosen?"], {
+      repoRoot: root,
+      run: () => ok(),
+    });
+
+    expect(notice).toHaveBeenCalledWith(
+      expect.stringMatching(/navigation only.*verify every hit.*MEMORY\.md/i),
+    );
   });
 });

@@ -8,6 +8,7 @@
 // Funes and exposes no Hub, add, push, ask, or MCP path.
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,9 +19,13 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const STATE_DIRECTORY = ".funes-atc";
 const SOURCE_DIRECTORY = "source";
+const MANIFEST_FILENAME = "export-manifest.json";
+const MANIFEST_VERSION = 1;
 const DECISION_HEADER_RE = /^## (D-\d+[a-z]?) — (\d{4}-\d{2}-\d{2}) —/gm;
 const REBUILD_INSTRUCTION =
   "Rebuild explicitly by moving or removing .funes-atc, then rerun `pnpm exec tsx scripts/funes-memory.ts export`.";
+const RECALL_VERIFICATION_INSTRUCTION =
+  "Funes recall is navigation only; verify every hit against authoritative MEMORY.md before relying on it.";
 const SENSITIVE_CHILD_ENV = [
   "HF_TOKEN",
   "HUGGING_FACE_HUB_TOKEN",
@@ -64,6 +69,11 @@ export interface RuntimeOptions {
   repoRoot?: string;
   env?: NodeJS.ProcessEnv;
   run?: ChildRunner;
+}
+
+interface ExportManifest {
+  version: typeof MANIFEST_VERSION;
+  entries: Record<string, string>;
 }
 
 const asciiSort = (left: string, right: string): number =>
@@ -217,6 +227,67 @@ function rejectSymlink(target: string): void {
   }
 }
 
+function digest(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function readManifest(manifestPath: string): ExportManifest | undefined {
+  rejectSymlink(manifestPath);
+  if (!fs.existsSync(manifestPath)) return undefined;
+  if (!fs.statSync(manifestPath).isFile()) {
+    throw new Error(
+      `Refusing export because ${manifestPath} is not a file. ${REBUILD_INSTRUCTION}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Refusing invalid Funes export manifest: ${error instanceof Error ? error.message : String(error)}. ${REBUILD_INSTRUCTION}`,
+    );
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    (parsed as { version?: unknown }).version !== MANIFEST_VERSION ||
+    typeof (parsed as { entries?: unknown }).entries !== "object" ||
+    (parsed as { entries?: unknown }).entries === null ||
+    Array.isArray((parsed as { entries?: unknown }).entries)
+  ) {
+    throw new Error(
+      `Refusing invalid Funes export manifest schema. ${REBUILD_INSTRUCTION}`,
+    );
+  }
+
+  const entries = (parsed as { entries: Record<string, unknown> }).entries;
+  for (const [name, hash] of Object.entries(entries)) {
+    if (!/^D-\d+[a-z]?\.jsonl$/.test(name) || !/^[0-9a-f]{64}$/.test(String(hash))) {
+      throw new Error(
+        `Refusing invalid Funes export manifest entry ${JSON.stringify(name)}. ${REBUILD_INSTRUCTION}`,
+      );
+    }
+  }
+  return parsed as ExportManifest;
+}
+
+function writeManifest(manifestPath: string, manifest: ExportManifest): void {
+  const temporaryPath = `${manifestPath}.tmp-${process.pid}`;
+  rejectSymlink(temporaryPath);
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    fs.renameSync(temporaryPath, manifestPath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    throw error;
+  }
+}
+
 /** Validate first, then add only previously absent generated sessions. */
 export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
   const memoryPath = path.join(repoRoot, "MEMORY.md");
@@ -239,6 +310,7 @@ export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
 
   const stateDir = path.join(repoRoot, STATE_DIRECTORY);
   const sourceDir = path.join(stateDir, SOURCE_DIRECTORY);
+  const manifestPath = path.join(stateDir, MANIFEST_FILENAME);
   rejectSymlink(stateDir);
   rejectSymlink(sourceDir);
 
@@ -254,14 +326,49 @@ export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
     ? fs.readdirSync(sourceDir, { withFileTypes: true })
     : [];
 
+  const manifest = readManifest(manifestPath);
+  if (!manifest && existing.length > 0) {
+    throw new Error(
+      `Refusing unmanifested historical generated files in .funes-atc/source. ${REBUILD_INSTRUCTION}`,
+    );
+  }
+  const historical = manifest?.entries ?? {};
+
   const extras = existing
-    .filter((entry) => !entry.isFile() || !expected.has(entry.name))
+    .filter((entry) => !entry.isFile() || !(entry.name in historical))
     .map((entry) => entry.name)
     .sort(asciiSort);
   if (extras.length > 0) {
     throw new Error(
       `Refusing export: removed IDs or unexplained extras remain in .funes-atc/source: ${extras.join(", ")}. ${REBUILD_INSTRUCTION}`,
     );
+  }
+
+  const missingHistorical = Object.keys(historical)
+    .filter((name) => !existing.some((entry) => entry.name === name))
+    .sort(asciiSort);
+  if (missingHistorical.length > 0) {
+    throw new Error(
+      `Refusing export: historical generated files are missing: ${missingHistorical.join(", ")}. ${REBUILD_INSTRUCTION}`,
+    );
+  }
+
+  const removed = Object.keys(historical)
+    .filter((name) => !expected.has(name))
+    .sort(asciiSort);
+  const mutated = Object.entries(historical)
+    .filter(([name, hash]) => {
+      const expectedText = expected.get(name);
+      return expectedText !== undefined && digest(expectedText) !== hash;
+    })
+    .map(([name]) => name.replace(/\.jsonl$/, ""))
+    .sort(asciiSort);
+  if (removed.length > 0 || mutated.length > 0) {
+    const details: string[] = [];
+    if (removed.length > 0) details.push(`removed IDs: ${removed.join(", ")}`);
+    if (mutated.length > 0)
+      details.push(`changed historical decisions: ${mutated.join(", ")}`);
+    throw new Error(`Refusing export: ${details.join("; ")}. ${REBUILD_INSTRUCTION}`);
   }
 
   const changed: string[] = [];
@@ -293,6 +400,17 @@ export function exportDecisionMemory(repoRoot = REPO_ROOT): ExportResult {
     });
     created.push(entry.id);
   }
+
+  const nextManifest: ExportManifest = {
+    version: MANIFEST_VERSION,
+    entries: Object.fromEntries(
+      entries.map((entry) => {
+        const filename = `${entry.id}.jsonl`;
+        return [filename, digest(expected.get(filename)!)];
+      }),
+    ),
+  };
+  if (!manifest || created.length > 0) writeManifest(manifestPath, nextManifest);
   return { sourceDir, created, unchanged };
 }
 
@@ -304,6 +422,8 @@ export function sanitizedChildEnv(
   for (const name of SENSITIVE_CHILD_ENV) delete env[name];
   env.FUNES_HOME = path.join(repoRoot, STATE_DIRECTORY);
   env.HF_HOME = path.join(repoRoot, STATE_DIRECTORY, "hf-home");
+  env.HF_HUB_CACHE = path.join(env.HF_HOME, "hub");
+  env.HUGGINGFACE_HUB_CACHE = env.HF_HUB_CACHE;
   env.HF_HUB_DISABLE_IMPLICIT_TOKEN = "1";
   return env;
 }
@@ -426,6 +546,7 @@ export function runCli(args: string[], options: RuntimeOptions = {}): void {
       return;
     case "recall":
       recallDecisionMemory(rest.join(" "), options);
+      console.error(RECALL_VERIFICATION_INSTRUCTION);
       return;
     case undefined:
       throw usageError();
