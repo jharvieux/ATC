@@ -194,13 +194,13 @@ describe("Resend webhook — event routing", () => {
     }]);
   });
 
-  it("email.bounced Permanent → records a hard bounce without retrying", async () => {
+  it.each(["Permanent", "hard"])("email.bounced %s → records a hard bounce without retrying", async (bounceType) => {
     const body = JSON.stringify({
       type: "email.bounced",
       created_at: "2026-09-01T12:01:00.000Z",
       data: {
         email_id: "resend-abc",
-        bounce: { type: "Permanent", message: "invalid mailbox" },
+        bounce: { type: bounceType, message: "invalid mailbox" },
       },
     });
     const res = await POST(makeReq(body));
