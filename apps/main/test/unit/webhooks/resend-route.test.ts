@@ -18,16 +18,18 @@ vi.mock("@/lib/webhooks/resend-signature", () => ({
 }));
 
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
-  data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: null },
+  data: { id: "log-1", tenant_id: "tenant-1" },
   error: null,
 };
 const mockSafeAwaitCalls: string[] = [];
-const mockEmailLogUpdateFilters: Array<Array<[string, unknown]>> = [];
+let mockApplyResult = [{ outcome: "applied", soft_retry_eligible: false }];
+const mockRpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: async (q: Promise<unknown>, label: string) => {
-    void q;
     mockSafeAwaitCalls.push(label);
-    return { data: null, error: null };
+    const result = await q as { data: unknown; error: unknown };
+    if (result.error) throw result.error;
+    return result.data;
   },
 }));
 
@@ -38,26 +40,17 @@ vi.mock("@/inngest/client", () => ({
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
+    rpc: (name: string, args: Record<string, unknown>) => {
+      mockRpcCalls.push({ name, args });
+      return Promise.resolve({ data: mockApplyResult, error: null });
+    },
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
           maybeSingle: () => Promise.resolve(mockMaybeSingleResult),
         }),
       }),
-      update: () => {
-        const filters: Array<[string, unknown]> = [];
-        if (table === "email_log") mockEmailLogUpdateFilters.push(filters);
-        const chain = {
-          eq: (column: string, value: unknown) => {
-            filters.push([column, value]);
-            return chain;
-          },
-          then: (resolve: (value: unknown) => unknown) =>
-            Promise.resolve(resolve({ data: null, error: null })),
-        };
-        return chain;
-      },
-      upsert: () => Promise.resolve({ data: null, error: null }),
+      table,
     }),
   }),
 }));
@@ -69,6 +62,7 @@ import { POST } from "@/app/api/webhooks/resend/route";
 function makeBody(type: string, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type,
+    created_at: "2026-09-01T12:00:00.000Z",
     data: { email_id: "resend-abc", ...extra },
   });
 }
@@ -91,11 +85,12 @@ beforeEach(() => {
   process.env.RESEND_WEBHOOK_SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
   mockVerifyResult = true;
   mockMaybeSingleResult = {
-    data: { id: "log-1", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: null },
+    data: { id: "log-1", tenant_id: "tenant-1" },
     error: null,
   };
+  mockApplyResult = [{ outcome: "applied", soft_retry_eligible: false }];
   mockSafeAwaitCalls.length = 0;
-  mockEmailLogUpdateFilters.length = 0;
+  mockRpcCalls.length = 0;
   mockInngestSend.mockReset();
 });
 
@@ -134,9 +129,25 @@ describe("Resend webhook — input validation", () => {
   });
 
   it("returns 400 when email_id is missing from event data", async () => {
-    const body = JSON.stringify({ type: "email.delivered", data: {} });
+    const body = JSON.stringify({
+      type: "email.delivered",
+      created_at: "2026-09-01T12:00:00.000Z",
+      data: {},
+    });
     const res = await POST(makeReq(body));
     expect(res.status).toBe(400);
+  });
+
+  it("returns 400 before lookup when a status event has an invalid provider timestamp", async () => {
+    const body = JSON.stringify({
+      type: "email.delivered",
+      created_at: "not-a-timestamp",
+      data: { email_id: "resend-abc" },
+    });
+    const res = await POST(makeReq(body));
+    expect(res.status).toBe(400);
+    expect(mockSafeAwaitCalls).toHaveLength(0);
+    expect(mockRpcCalls).toHaveLength(0);
   });
 });
 
@@ -169,15 +180,24 @@ describe("Resend webhook — event routing", () => {
   it("email.delivered → updates email_log with status='delivered'", async () => {
     const res = await POST(makeReq(makeBody("email.delivered")));
     expect(res.status).toBe(200);
-    expect(mockSafeAwaitCalls).toContain("email_log.update");
-    expect(mockEmailLogUpdateFilters).toEqual([
-      [["id", "log-1"], ["tenant_id", "tenant-1"]],
-    ]);
+    expect(mockSafeAwaitCalls).toEqual(["apply_resend_status_event"]);
+    expect(mockRpcCalls).toEqual([{
+      name: "apply_resend_status_event",
+      args: {
+        p_tenant_id: "tenant-1",
+        p_email_log_id: "log-1",
+        p_event_id: "msg_1",
+        p_event_created_at: "2026-09-01T12:00:00.000Z",
+        p_status: "delivered",
+        p_bounce_reason: null,
+      },
+    }]);
   });
 
   it("email.bounced hard → updates email_log + upserts email_suppressions", async () => {
     const body = JSON.stringify({
       type: "email.bounced",
+      created_at: "2026-09-01T12:01:00.000Z",
       data: {
         email_id: "resend-abc",
         bounce: { type: "hard", message: "invalid mailbox" },
@@ -185,31 +205,31 @@ describe("Resend webhook — event routing", () => {
     });
     const res = await POST(makeReq(body));
     expect(res.status).toBe(200);
-    // Both email_log update and email_suppressions upsert must fire
-    expect(mockSafeAwaitCalls.filter((l) => l === "email_log.update")).toHaveLength(1);
-    expect(mockEmailLogUpdateFilters).toEqual([
-      [["id", "log-1"], ["tenant_id", "tenant-1"]],
-    ]);
-    expect(mockSafeAwaitCalls.filter((l) => l === "email_suppressions.upsert")).toHaveLength(1);
-    // Soft-bounce retry must NOT fire for hard bounce
+    expect(mockRpcCalls[0]?.args).toMatchObject({
+      p_status: "hard_bounced",
+      p_bounce_reason: "invalid mailbox",
+      p_event_created_at: "2026-09-01T12:01:00.000Z",
+    });
     expect(mockInngestSend).not.toHaveBeenCalled();
   });
 
   it("email.bounced soft → updates email_log + triggers Inngest retry (no suppression)", async () => {
     const body = JSON.stringify({
       type: "email.bounced",
+      created_at: "2026-09-01T12:02:00.000Z",
       data: {
         email_id: "resend-abc",
         bounce: { type: "soft", message: "mailbox full" },
       },
     });
+    mockApplyResult = [{ outcome: "applied", soft_retry_eligible: true }];
     const res = await POST(makeReq(body));
     expect(res.status).toBe(200);
-    expect(mockSafeAwaitCalls).toContain("email_log.update");
-    expect(mockEmailLogUpdateFilters).toEqual([
-      [["id", "log-1"], ["tenant_id", "tenant-1"]],
-    ]);
-    // Soft bounce fires Inngest — not email_suppressions
+    expect(mockRpcCalls[0]?.args).toMatchObject({
+      p_status: "soft_bounced",
+      p_bounce_reason: "mailbox full",
+      p_event_created_at: "2026-09-01T12:02:00.000Z",
+    });
     expect(mockInngestSend).toHaveBeenCalledOnce();
     // #1831: the id is load-bearing — it's what collapses a Svix redelivery of
     // this same bounce to a single retry-chain start (Inngest drops a duplicate
@@ -221,38 +241,55 @@ describe("Resend webhook — event routing", () => {
       name: "email/soft.bounce.retry",
       data: { email_log_id: "log-1", tenant_id: "tenant-1", attempt: 1 },
     });
-    expect(mockSafeAwaitCalls).not.toContain("email_suppressions.upsert");
   });
 
-  it("#1611: soft bounce on a RE-SEND row records status but does NOT start a new retry chain", async () => {
+  it("#1611: a soft bounce RPC result for a re-send does NOT start a new retry chain", async () => {
     // A re-send (email_log.retry_of set) that soft-bounces must not spawn a
     // fresh attempt=1 chain — the original send's chain self-drives and reads
     // this row's status. Without the gate the chain would loop forever at +6h,
     // never escalating to +12h/+24h or suppressing.
     mockMaybeSingleResult = {
-      data: { id: "log-2", tenant_id: "tenant-1", to_email: "user@example.com", retry_of: "log-1" },
+      data: { id: "log-2", tenant_id: "tenant-1" },
       error: null,
     };
     const body = JSON.stringify({
       type: "email.bounced",
+      created_at: "2026-09-01T12:03:00.000Z",
       data: { email_id: "resend-abc", bounce: { type: "soft", message: "mailbox full" } },
     });
     const res = await POST(makeReq(body));
     expect(res.status).toBe(200);
-    // Status still recorded (the chain reads it)...
-    expect(mockSafeAwaitCalls).toContain("email_log.update");
-    // ...but no new retry chain is triggered.
+    expect(mockSafeAwaitCalls).toEqual(["apply_resend_status_event"]);
     expect(mockInngestSend).not.toHaveBeenCalled();
+  });
+
+  it("delivery followed by a stale soft bounce cannot start a retry", async () => {
+    mockApplyResult = [{ outcome: "stale", soft_retry_eligible: false }];
+    const res = await POST(makeReq(makeBody("email.bounced", {
+      bounce: { type: "soft", message: "late mailbox full" },
+    })));
+    expect(res.status).toBe(200);
+    expect(mockRpcCalls[0]?.args.p_status).toBe("soft_bounced");
+    expect(mockInngestSend).not.toHaveBeenCalled();
+  });
+
+  it("an exact soft-bounce redelivery retries the same deterministic Inngest handoff", async () => {
+    mockApplyResult = [{ outcome: "duplicate", soft_retry_eligible: true }];
+    const body = makeBody("email.bounced", {
+      bounce: { type: "soft", message: "mailbox full" },
+    });
+    await POST(makeReq(body));
+    await POST(makeReq(body));
+    expect(mockInngestSend).toHaveBeenCalledTimes(2);
+    expect(mockInngestSend.mock.calls[0]).toEqual(mockInngestSend.mock.calls[1]);
+    expect(mockInngestSend.mock.calls[0]?.[0].id).toBe("soft-retry:log-1:attempt:1");
   });
 
   it("email.complained → updates email_log + upserts email_suppressions", async () => {
     const res = await POST(makeReq(makeBody("email.complained")));
     expect(res.status).toBe(200);
-    expect(mockSafeAwaitCalls.filter((l) => l === "email_log.update")).toHaveLength(1);
-    expect(mockEmailLogUpdateFilters).toEqual([
-      [["id", "log-1"], ["tenant_id", "tenant-1"]],
-    ]);
-    expect(mockSafeAwaitCalls.filter((l) => l === "email_suppressions.upsert")).toHaveLength(1);
+    expect(mockRpcCalls[0]?.args.p_status).toBe("complained");
+    expect(mockSafeAwaitCalls).toEqual(["apply_resend_status_event"]);
   });
 
   it("email.opened → returns 200 without any DB mutation (engagement only)", async () => {
