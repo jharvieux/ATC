@@ -759,7 +759,12 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting."
             exit 1
           fi
-          vercel deploy --token="$VERCEL_TOKEN" --yes --build-env ENABLE_EXPERIMENTAL_COREPACK=1
+          vercel deploy \
+            --token="$VERCEL_TOKEN" \
+            --yes \
+            --build-env ENABLE_EXPERIMENTAL_COREPACK=1 \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -999,7 +1004,12 @@ jobs:
         run: |
           vercel pull --environment=preview --yes --token=$VERCEL_TOKEN
           vercel build --token=$VERCEL_TOKEN
-          vercel deploy --prebuilt --target=preview --token=$VERCEL_TOKEN
+          vercel deploy \
+            --prebuilt \
+            --target=preview \
+            --token="$VERCEL_TOKEN" \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Run Playwright E2E tests
         # This step is the pre-prod-promotion gate. It runs the full tests/e2e
@@ -1185,7 +1195,13 @@ jobs:
         run: npm install -g vercel@54
 
       - name: Vercel deploy (production)
-        run: vercel deploy --target=production --yes --token=$VERCEL_TOKEN
+        run: |
+          vercel deploy \
+            --target=production \
+            --yes \
+            --token="$VERCEL_TOKEN" \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Smoke test production
         run: |
@@ -1215,7 +1231,13 @@ jobs:
             echo "::error::VERCEL_RAG_PROJECT_ID secret is not set — see #1829 first-run notes in the PR body. Aborting (fails the deploy loudly rather than silently skipping RAG prod)."
             exit 1
           fi
-          vercel deploy --prod --yes --token="$VERCEL_TOKEN" --build-env ENABLE_EXPERIMENTAL_COREPACK=1
+          vercel deploy \
+            --prod \
+            --yes \
+            --token="$VERCEL_TOKEN" \
+            --build-env ENABLE_EXPERIMENTAL_COREPACK=1 \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$GITHUB_SHA"
 
       - name: Smoke test atc-rag production
         # Domain per apps/main/.env.example's RAG_SERVICE_URL / pentest-scoping.md

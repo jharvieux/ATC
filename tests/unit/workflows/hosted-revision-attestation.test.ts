@@ -130,6 +130,16 @@ describe("production hosted revision check", () => {
 });
 
 describe("deployment workflow hosted revision policy", () => {
+  it("binds every Vercel CLI deployment to the exact GitHub revision", () => {
+    const deployCommands = workflow.match(/^\s*vercel deploy(?:[\s\\\n]+--[^\n]+)*/gm) ?? [];
+
+    expect(deployCommands).toHaveLength(4);
+    for (const command of deployCommands) {
+      expect(command).toContain("--meta githubDeployment=1");
+      expect(command).toContain('--meta githubCommitSha="$GITHUB_SHA"');
+    }
+  });
+
   it("uses exact checks for release staging and main and RAG production", () => {
     expect(workflow.match(/bash scripts\/check-production-version\.sh/g)).toHaveLength(3);
     expect(workflow).toMatch(/staging\.ai-travelconcierge\.com\/api\/health[\s\\]+"\$GITHUB_SHA"[\s\\]+main/);
