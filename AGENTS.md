@@ -139,19 +139,19 @@ names inherited from the existing issue taxonomy. Preserve those exact names whe
 reading, creating, filtering, or updating GitHub issues. They are routing inputs,
 not literal statements about the model provider.
 
-For Codex execution, map them as follows:
+For Codex execution, each label maps to the same-named workload tier in the user-level
+`~/.codex/AGENTS.md` routing matrix:
 
-| GitHub label | Codex profile | Intended work |
+| GitHub label | User-level workload tier | Intended work |
 |---|---|---|
-| `haiku` | `gpt-5.6-luna`, `medium` reasoning | Fast, bounded, mechanical work |
-| `sonnet` | `gpt-5.6-terra`, `high` reasoning | Default implementation and review work |
-| `opus` | `gpt-5.6-sol`, `high` reasoning | High-risk or unusually complex judgment |
-| `fable` | `gpt-5.6-sol`, `xhigh` reasoning | Deepest review, security-critical architecture, or adjudicating reviewer disagreement |
+| `haiku` | `haiku` | Fast, bounded, mechanical work |
+| `sonnet` | `sonnet` | Default implementation and review work |
+| `opus` | `opus` | High-risk or unusually complex judgment |
+| `fable` | `fable` | Deepest review, security-critical architecture, or adjudicating reviewer disagreement |
 
-Keep this table as the single source of truth for Codex model IDs. Other instructions
-and skills should refer to the tier label and this table rather than duplicating model
-IDs. If a model ID becomes unavailable, select its current same-capability successor;
-do not rename, remove, or reinterpret the GitHub label.
+Do not duplicate model IDs or reasoning levels in repository instructions. Resolve the
+profile, fallback, and explicit dispatch fields from the user-level matrix without
+renaming, removing, or reinterpreting the GitHub label.
 
 -----
 

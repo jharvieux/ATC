@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-387 — 2026-09-08 — Make user-level agent routing authoritative
+
+**Decision.** The user-level `~/.codex/AGENTS.md` now owns the Codex workload-tier matrix and delegated-agent dispatch contract across repositories. ATC retains its durable `haiku` / `sonnet` / `opus` / `fable` issue labels but maps them to the same-named user-level tiers; `fable` selects `gpt-6-astra` at `max` reasoning, with a recorded `gpt-5.6-sol` / `xhigh` fallback only when Astra is unavailable in the active subagent runtime.
+
+**Why.**
+- A user-level source applies the same delegation, bounded-context, explicit-profile, and fallback rules in every repository.
+- Keeping model IDs in repository instructions and workflow copies lets the matrices drift and made inherited profiles difficult to detect.
+- Limiting the root agent to orchestration, integration, and at most one executable lane reduces context exhaustion during long multi-agent work.
+
+**Rejected.**
+- *Keep ATC's repository table as the model-ID authority.* That would conflict with the cross-repository policy and require duplicate updates whenever profiles change.
+- *Continue allowing inherited profiles or full-history forks.* Their resolved model and context cost are not explicit or mechanically auditable at dispatch.
+- *Route the deepest tier to Sol permanently.* Astra is the intended top-tier profile; Sol/xhigh remains an explicit availability fallback rather than a silent default.
+
+**Related artifacts.** `~/.codex/AGENTS.md`, `AGENTS.md`, issues #2090 and #2152.
+
+---
+
 ## D-386 — 2026-09-07 — Order Resend status events atomically
 
 **Decision.** Signed Resend delivery-status events are serialized through a tenant-scoped, row-locking `SECURITY INVOKER` database function. The function persists the last accepted provider `created_at` and Svix event ID, and a transition applies only when it does not regress the fixed status precedence `complained > hard_bounced > delivered > soft_bounced` or the provider timestamp; equal timestamps require higher precedence. Hard-bounce and complaint suppressions are inserted idempotently in the same transaction even when the status transition is stale. Soft-retry eligibility is returned by that transaction only for an original send whose soft-bounce state is current, including exact redelivery recovery, and the route uses a deterministic Inngest event ID.

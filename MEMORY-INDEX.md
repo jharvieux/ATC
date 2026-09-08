@@ -17,6 +17,7 @@ session; keep it lean.
 
 ## Entries
 
+- D-387 — 2026-09-08 — Make the user-level Codex workload matrix and explicit delegated-agent dispatch contract authoritative; ATC labels now map upward, with Astra/max for `fable` and a recorded Sol/xhigh availability fallback (issues #2090/#2152)
 - D-386 — 2026-09-07 — Serialize signed Resend status events in a tenant-scoped row-locking RPC with provider watermarks, monotonic precedence, atomic suppressions, and transaction-derived deterministic soft-retry recovery (PR #2149; issue #2139; refs D-333/D-383)
 - D-385 — 2026-09-07 — Manual rollbacks remain operator-controlled, while staging and production verification now require the expected full SHA, service, and authoritative Vercel commit source; local Git fallback cannot attest a hosted deployment (PR #2146; issue #2122; supersedes D-025 only for revision gating)
 - D-384 — 2026-09-03 — Centrally constrain Browserslist to `>=4.28.8 <5`, removing the vulnerable custom-stats normalization path while preserving verified 4.x compatibility and frozen-install integrity (PR #2141; issue #2128; refs D-374)
