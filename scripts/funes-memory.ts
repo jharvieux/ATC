@@ -256,21 +256,42 @@ function digest(text: string): string {
 }
 
 function readManifest(manifestPath: string): ExportManifest | undefined {
-  rejectSymlink(manifestPath);
-  if (!fs.existsSync(manifestPath)) return undefined;
-  if (!fs.statSync(manifestPath).isFile()) {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      manifestPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? String(error.code)
+        : undefined;
+    if (code === "ENOENT") return undefined;
+    if (code === "ELOOP") {
+      throw new Error(`Refusing symlinked local Funes path ${manifestPath}`);
+    }
     throw new Error(
-      `Refusing export because ${manifestPath} is not a file. ${REBUILD_INSTRUCTION}`,
+      `Refusing invalid Funes export manifest: ${error instanceof Error ? error.message : String(error)}. ${REBUILD_INSTRUCTION}`,
     );
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  } catch (error) {
-    throw new Error(
-      `Refusing invalid Funes export manifest: ${error instanceof Error ? error.message : String(error)}. ${REBUILD_INSTRUCTION}`,
-    );
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error(
+        `Refusing export because ${manifestPath} is not a file. ${REBUILD_INSTRUCTION}`,
+      );
+    }
+    try {
+      parsed = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    } catch (error) {
+      throw new Error(
+        `Refusing invalid Funes export manifest: ${error instanceof Error ? error.message : String(error)}. ${REBUILD_INSTRUCTION}`,
+      );
+    }
+  } finally {
+    fs.closeSync(descriptor);
   }
   if (
     typeof parsed !== "object" ||

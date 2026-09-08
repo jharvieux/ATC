@@ -33,6 +33,26 @@ function tempRoot(): string {
   return root;
 }
 
+function stableFileSnapshot(target: string): {
+  contents: Buffer;
+  mtimeMs: number;
+} {
+  const descriptor = fs.openSync(
+    target,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`Expected a regular file: ${target}`);
+    return {
+      contents: fs.readFileSync(descriptor),
+      mtimeMs: stat.mtimeMs,
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function decision(
   id: string,
   date: string,
@@ -206,15 +226,15 @@ describe("synthetic Codex export", () => {
     const file = path.join(first.sourceDir, "D-091b.jsonl");
     const old = new Date("2020-01-02T03:04:05.000Z");
     utimesSync(file, old, old);
-    const before = readFileSync(file);
-    const beforeMtime = statSync(file).mtimeMs;
+    const before = stableFileSnapshot(file);
 
     const second = exportDecisionMemory(root);
+    const after = stableFileSnapshot(file);
 
     expect(second.created).toEqual([]);
     expect(second.unchanged).toEqual(["D-091b"]);
-    expect(readFileSync(file).equals(before)).toBe(true);
-    expect(statSync(file).mtimeMs).toBe(beforeMtime);
+    expect(after.contents.equals(before.contents)).toBe(true);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 
   it("allows append-only additions without rewriting historical files", () => {
@@ -250,7 +270,7 @@ describe("synthetic Codex export", () => {
     oneEntry(root);
     const first = exportDecisionMemory(root);
     const file = path.join(first.sourceDir, "D-091b.jsonl");
-    const before = readFileSync(file);
+    const before = stableFileSnapshot(file);
     writeInputs(root, [
       {
         id: "D-091b",
@@ -263,7 +283,56 @@ describe("synthetic Codex export", () => {
     expect(() => exportDecisionMemory(root)).toThrow(
       /changed historical.*D-091b.*rebuild/i,
     );
-    expect(readFileSync(file).equals(before)).toBe(true);
+    expect(stableFileSnapshot(file).contents.equals(before.contents)).toBe(
+      true,
+    );
+  });
+
+  it("fails closed for symlinked, non-file, and malformed export manifests", () => {
+    const symlinkRoot = tempRoot();
+    oneEntry(symlinkRoot);
+    const symlinkExport = exportDecisionMemory(symlinkRoot);
+    const symlinkManifest = path.join(
+      symlinkRoot,
+      ".funes-atc/export-manifest.json",
+    );
+    const outsideManifest = path.join(symlinkRoot, "outside-manifest.json");
+    writeFileSync(outsideManifest, '{"version":1,"entries":{}}\n', "utf8");
+    rmSync(symlinkManifest);
+    symlinkSync(outsideManifest, symlinkManifest);
+    expect(() => exportDecisionMemory(symlinkRoot)).toThrow(
+      /symlinked local Funes path.*export-manifest\.json/i,
+    );
+    expect(statSync(symlinkExport.sourceDir).isDirectory()).toBe(true);
+
+    const directoryRoot = tempRoot();
+    oneEntry(directoryRoot);
+    exportDecisionMemory(directoryRoot);
+    const directoryManifest = path.join(
+      directoryRoot,
+      ".funes-atc/export-manifest.json",
+    );
+    rmSync(directoryManifest);
+    mkdirSync(directoryManifest);
+    expect(() => exportDecisionMemory(directoryRoot)).toThrow(
+      /export-manifest\.json is not a file.*rebuild/i,
+    );
+
+    const malformedRoot = tempRoot();
+    oneEntry(malformedRoot);
+    exportDecisionMemory(malformedRoot);
+    const malformedManifest = path.join(
+      malformedRoot,
+      ".funes-atc/export-manifest.json",
+    );
+    writeFileSync(malformedManifest, "not json", "utf8");
+    expect(() => exportDecisionMemory(malformedRoot)).toThrow(
+      /invalid Funes export manifest.*rebuild/i,
+    );
+    writeFileSync(malformedManifest, '{"version":2,"entries":{}}\n', "utf8");
+    expect(() => exportDecisionMemory(malformedRoot)).toThrow(
+      /invalid Funes export manifest schema.*rebuild/i,
+    );
   });
 
   it("refuses a changed historical generated file", () => {
