@@ -83,3 +83,4 @@ package-lock.json
 # Repo-local (not shared OS /tmp) so the emitted apply-SQL isn't sitting at a
 # predictable, world-writable path an operator hand-applies via psql.
 /scripts/.signature-drafts/
+/.funes-atc/
